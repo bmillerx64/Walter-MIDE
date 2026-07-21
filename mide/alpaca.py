@@ -51,16 +51,7 @@ class AlpacaClient:
 
     def credential_status(self) -> str:
         """Identify which Alpaca trading environment accepts the configured keys."""
-        errors = []
-        for label, base in (("paper", self.PAPER_TRADING), ("live", self.LIVE_TRADING)):
-            try:
-                payload = self._get(base, "/v2/account")
-                self.diagnostics["credential_environment"] = label
-                self.diagnostics["account_status"] = payload.get("status", "unknown")
-                return label
-            except Exception as exc:
-                errors.append(f"{label}: {exc}")
-        raise AlpacaError("Credentials were rejected by both Alpaca environments (" + " | ".join(errors) + ")")
+        return credential_status(self)
 
     def assets(self):
         """Return active tradable U.S. equities from whichever Alpaca environment accepts the keys."""
@@ -237,3 +228,25 @@ class AlpacaClient:
         })
         frame["timestamp"] = pd.to_datetime(frame["timestamp"], utc=True)
         return frame.set_index("timestamp")[["open", "high", "low", "close", "volume"]].sort_index()
+
+
+def credential_status(client: AlpacaClient) -> str:
+    """Identify which Alpaca trading environment accepts a client's configured keys.
+
+    This module-level helper keeps the Streamlit app from depending on a
+    particular AlpacaClient instance method being present when Streamlit Cloud
+    reuses an older imported class object across deploys. It still performs the
+    same authenticated account check and raises AlpacaError when both
+    environments reject the keys.
+    """
+    errors = []
+    environments = (("paper", client.PAPER_TRADING), ("live", client.LIVE_TRADING))
+    for label, base in environments:
+        try:
+            payload = client._get(base, "/v2/account")
+            client.diagnostics["credential_environment"] = label
+            client.diagnostics["account_status"] = payload.get("status", "unknown")
+            return label
+        except Exception as exc:
+            errors.append(f"{label}: {exc}")
+    raise AlpacaError("Credentials were rejected by both Alpaca environments (" + " | ".join(errors) + ")")
