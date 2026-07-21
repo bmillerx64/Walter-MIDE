@@ -56,8 +56,8 @@ def build_seed_symbols(client, settings, news_items):
         for symbol in rotated:
             if is_valid_us_symbol(symbol):
                 symbols.add(symbol); why.setdefault(symbol, []).append("broad market sweep")
-    except Exception:
-        pass
+    except Exception as exc:
+    client.warnings.append(f"Broad market sweep unavailable: {exc}")
     return list(symbols), why
 
 def prefilter_snapshots(snapshots, settings):
