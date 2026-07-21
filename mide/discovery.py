@@ -44,23 +44,23 @@ def build_seed_symbols(client, settings, news_items):
     # Capped per refresh to remain practical on the first cloud version.
     try:
         eligible_assets = [
-    x["symbol"] for x in client.assets()
-    if x.get("tradable") and x.get("status") == "active"
-]
+            x["symbol"] for x in client.assets()
+            if x.get("tradable") and x.get("status") == "active"
+        ]
 
-client.warnings.append(
-    f"Loaded {len(eligible_assets)} tradable assets"
-)
+        client.warnings.append(
+            f"Loaded {len(eligible_assets)} tradable assets"
+        )
 
-        # Stable rotation by minute means the whole universe is revisited over time.
-        minute_bucket = int(datetime.now(timezone.utc).timestamp() // 60)
-        start = (minute_bucket * settings.max_seed_symbols) % max(1, len(eligible_assets))
-        rotated = eligible_assets[start:start + settings.max_seed_symbols]
-        if len(rotated) < settings.max_seed_symbols:
-            rotated += eligible_assets[:settings.max_seed_symbols - len(rotated)]
-        for symbol in rotated:
-            if is_valid_us_symbol(symbol):
-                symbols.add(symbol); why.setdefault(symbol, []).append("broad market sweep")
+            # Stable rotation by minute means the whole universe is revisited over time.
+            minute_bucket = int(datetime.now(timezone.utc).timestamp() // 60)
+            start = (minute_bucket * settings.max_seed_symbols) % max(1, len(eligible_assets))
+            rotated = eligible_assets[start:start + settings.max_seed_symbols]
+            if len(rotated) < settings.max_seed_symbols:
+                rotated += eligible_assets[:settings.max_seed_symbols - len(rotated)]
+            for symbol in rotated:
+                if is_valid_us_symbol(symbol):
+                    symbols.add(symbol); why.setdefault(symbol, []).append("broad market sweep")
     except Exception as exc:
     client.warnings.append(f"Broad market sweep unavailable: {exc}")
     return list(symbols), why
