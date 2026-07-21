@@ -34,14 +34,26 @@ class AlpacaClient:
         return response.json()
 
     def assets(self):
-        data = self._get(self.TRADING, "/v2/assets", {"status": "active", "asset_class": "us_equity"})
-        return [
-            item for item in data
-            if item.get("tradable")
-            and item.get("status") == "active"
-            and item.get("class") == "us_equity"
-            and not item.get("symbol", "").endswith((".W", ".U", ".R"))
-        ]
+    params = {"status": "active", "asset_class": "us_equity"}
+    last_error = None
+
+    for base in (
+        "https://paper-api.alpaca.markets",
+        "https://api.alpaca.markets",
+    ):
+        try:
+            data = self._get(base, "/v2/assets", params)
+            return [
+                item for item in data
+                if item.get("tradable")
+                and item.get("status") == "active"
+                and item.get("class") == "us_equity"
+                and not item.get("symbol", "").endswith((".W", ".U", ".R"))
+            ]
+        except Exception as exc:
+            last_error = exc
+
+    raise AlpacaError(f"Assets unavailable on paper and live endpoints: {last_error}")
 
     def movers(self, top: int = 50):
         try:
