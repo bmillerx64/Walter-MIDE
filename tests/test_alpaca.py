@@ -81,3 +81,16 @@ def test_assets_accepts_asset_class_field_and_records_counts(monkeypatch):
     assert client.diagnostics["assets_endpoint"] == "paper"
     assert client.diagnostics["assets_raw"] == 3
     assert client.diagnostics["assets_eligible"] == 1
+
+
+def test_bars_limit_is_capped_at_10000(monkeypatch):
+    client = AlpacaClient("key", "secret", feed="sip")
+    calls = []
+
+    def fake_get(base, path, params=None, *, authenticated=True):
+        calls.append(dict(params or {}))
+        return {"bars": {}}
+
+    monkeypatch.setattr(client, "_get", fake_get)
+    client.bars(["AAA"], datetime.now(timezone.utc), limit=25_000)
+    assert calls[0]["limit"] == 10_000
