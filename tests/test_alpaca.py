@@ -1,7 +1,7 @@
 from datetime import datetime, timezone
 from unittest.mock import patch, Mock
 
-from mide.alpaca import AlpacaClient
+from mide.alpaca import AlpacaClient, credential_status
 
 
 def response(payload):
@@ -94,3 +94,24 @@ def test_bars_limit_is_capped_at_10000(monkeypatch):
     monkeypatch.setattr(client, "_get", fake_get)
     client.bars(["AAA"], datetime.now(timezone.utc), limit=25_000)
     assert calls[0]["limit"] == 10_000
+
+
+def test_module_credential_status_supports_legacy_client_without_method():
+    class LegacyClient:
+        PAPER_TRADING = "paper-base"
+        LIVE_TRADING = "live-base"
+
+        def __init__(self):
+            self.diagnostics = {}
+            self.calls = []
+
+        def _get(self, base, path, params=None, *, authenticated=True):
+            self.calls.append((base, path, dict(params or {}), authenticated))
+            return {"status": "ACTIVE"}
+
+    client = LegacyClient()
+
+    assert credential_status(client) == "paper"
+    assert client.calls == [("paper-base", "/v2/account", {}, True)]
+    assert client.diagnostics["credential_environment"] == "paper"
+    assert client.diagnostics["account_status"] == "ACTIVE"

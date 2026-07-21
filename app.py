@@ -5,7 +5,7 @@ import time
 import streamlit as st
 
 from mide.config import Settings
-from mide.alpaca import AlpacaClient, AlpacaError
+from mide.alpaca import AlpacaClient, AlpacaError, credential_status
 from mide.news import index_news
 from mide.discovery import build_seed_symbols, prefilter_snapshots, analyze_candidates
 from mide.memory import MemoryStore
@@ -73,7 +73,7 @@ def run_live():
     client = AlpacaClient(api_key, secret, feed=settings.feed, timeout=12)
     status = st.status("Walter is scanning…", expanded=True)
     try:
-        environment = client.credential_status()
+        environment = credential_status(client)
         status.write(f"Alpaca credentials accepted ({environment} environment)")
         log(f"Credentials accepted by Alpaca {environment} environment")
     except Exception as exc:
