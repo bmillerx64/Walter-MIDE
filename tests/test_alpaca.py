@@ -46,3 +46,21 @@ def test_screener_limits_are_capped_at_50(monkeypatch):
     client.most_actives(500)
     assert calls[0][1]["top"] == 50
     assert calls[1][1]["top"] == 50
+
+
+def test_bars_limit_is_capped_at_50():
+    client = AlpacaClient("k", "s", feed="sip")
+    payload = {"bars": {"AAA": [{"t": "2026-01-01T00:00:00Z"}]}}
+    with patch("mide.alpaca.requests.get", return_value=response(payload)) as get:
+        client.bars(["AAA"], datetime.now(timezone.utc), limit=10_000)
+
+    assert get.call_args.kwargs["params"]["limit"] == 50
+
+
+def test_get_caps_record_params_as_final_guard():
+    client = AlpacaClient("k", "s", feed="sip")
+    with patch("mide.alpaca.requests.get", return_value=response({})) as get:
+        client._get(client.DATA, "/v2/stocks/bars", {"limit": 10_000, "top": 500})
+
+    assert get.call_args.kwargs["params"]["limit"] == 50
+    assert get.call_args.kwargs["params"]["top"] == 50

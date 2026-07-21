@@ -15,9 +15,10 @@ class AlpacaClient:
     DATA = "https://data.alpaca.markets"
     PAPER_TRADING = "https://paper-api.alpaca.markets"
     LIVE_TRADING = "https://api.alpaca.markets"
-    NEWS_MAX_LIMIT = 50
-    SCREENER_MAX_LIMIT = 50
-    BARS_MAX_LIMIT = 10_000
+    ALPACA_MAX_LIMIT = 50
+    NEWS_MAX_LIMIT = ALPACA_MAX_LIMIT
+    SCREENER_MAX_LIMIT = ALPACA_MAX_LIMIT
+    BARS_MAX_LIMIT = ALPACA_MAX_LIMIT
 
     def __init__(self, api_key: str, secret_key: str, feed: str = "iex", timeout: int = 20):
         self.feed = (feed or "iex").lower()
@@ -29,11 +30,19 @@ class AlpacaClient:
             "APCA-API-SECRET-KEY": secret_key.strip(),
         }
 
+    def _cap_record_params(self, params):
+        """Return request params that can never exceed Alpaca's 50-record cap."""
+        capped = dict(params or {})
+        for key in ("limit", "top"):
+            if key in capped and capped[key] is not None:
+                capped[key] = max(1, min(int(capped[key]), self.ALPACA_MAX_LIMIT))
+        return capped
+
     def _get(self, base: str, path: str, params=None, *, authenticated: bool = True):
         response = requests.get(
             base + path,
             headers=self.headers if authenticated else {},
-            params=params or {},
+            params=self._cap_record_params(params),
             timeout=self.timeout,
         )
         if response.status_code >= 400:
