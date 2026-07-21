@@ -19,6 +19,11 @@ class AlpacaClient:
     SCREENER_MAX_LIMIT = 50
     BARS_MAX_LIMIT = 10_000
 
+    @classmethod
+    def _request_limit(cls, requested: int, maximum: int) -> int:
+        """Clamp Alpaca request sizes to the endpoint-supported range."""
+        return max(1, min(int(requested), maximum))
+
     def __init__(self, api_key: str, secret_key: str, feed: str = "iex", timeout: int = 20):
         self.feed = (feed or "iex").lower()
         self.timeout = timeout
@@ -116,7 +121,7 @@ class AlpacaClient:
         try:
             payload = self._get(
                 self.DATA, "/v1beta1/screener/stocks/movers",
-                {"top": max(1, min(int(top), self.SCREENER_MAX_LIMIT))},
+                {"top": self._request_limit(top, self.SCREENER_MAX_LIMIT)},
             )
             items = (payload.get("gainers", []) or []) + (payload.get("losers", []) or [])
             self.diagnostics["movers"] = len(items)
@@ -130,7 +135,7 @@ class AlpacaClient:
         try:
             payload = self._get(
                 self.DATA, "/v1beta1/screener/stocks/most-actives",
-                {"top": max(1, min(int(top), self.SCREENER_MAX_LIMIT)), "by": "volume"},
+                {"top": self._request_limit(top, self.SCREENER_MAX_LIMIT), "by": "volume"},
             )
             items = payload.get("most_actives", []) or []
             self.diagnostics["most_actives"] = len(items)
@@ -149,7 +154,7 @@ class AlpacaClient:
         while len(items) < wanted:
             params = {
                 "start": start.astimezone(timezone.utc).isoformat(),
-                "limit": min(self.NEWS_MAX_LIMIT, wanted - len(items)),
+                "limit": self._request_limit(wanted - len(items), self.NEWS_MAX_LIMIT),
                 "sort": "desc",
                 "include_content": "false",
             }
@@ -194,7 +199,7 @@ class AlpacaClient:
                 cleaned.append(symbol)
         if not cleaned:
             return {}
-        per_page = max(1, min(int(limit), self.BARS_MAX_LIMIT))
+        per_page = self._request_limit(limit, self.BARS_MAX_LIMIT)
 
         def fetch_batch(batch: list[str]) -> dict[str, list]:
             combined: dict[str, list] = {symbol: [] for symbol in batch}
