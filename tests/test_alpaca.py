@@ -46,3 +46,38 @@ def test_screener_limits_are_capped_at_50(monkeypatch):
     client.most_actives(500)
     assert calls[0][1]["top"] == 50
     assert calls[1][1]["top"] == 50
+
+
+def test_credential_status_checks_paper_before_live_and_records_diagnostics(monkeypatch):
+    client = AlpacaClient(" key ", " secret ", feed="sip")
+    calls = []
+
+    def fake_get(base, path, params=None, *, authenticated=True):
+        calls.append((base, path, dict(params or {}), authenticated))
+        return {"status": "ACTIVE"}
+
+    monkeypatch.setattr(client, "_get", fake_get)
+    assert client.credential_status() == "paper"
+    assert calls == [(client.PAPER_TRADING, "/v2/account", {}, True)]
+    assert client.diagnostics["credential_environment"] == "paper"
+    assert client.diagnostics["account_status"] == "ACTIVE"
+    assert client.headers["APCA-API-KEY-ID"] == "key"
+    assert client.headers["APCA-API-SECRET-KEY"] == "secret"
+
+
+def test_assets_accepts_asset_class_field_and_records_counts(monkeypatch):
+    client = AlpacaClient("key", "secret", feed="sip")
+
+    def fake_get(base, path, params=None, *, authenticated=True):
+        return [
+            {"symbol": "GOOD", "tradable": True, "status": "active", "asset_class": "us_equity"},
+            {"symbol": "BAD", "tradable": False, "status": "active", "asset_class": "us_equity"},
+            {"symbol": "UNIT.U", "tradable": True, "status": "active", "asset_class": "us_equity"},
+        ]
+
+    monkeypatch.setattr(client, "_get", fake_get)
+    assets = client.assets()
+    assert [item["symbol"] for item in assets] == ["GOOD"]
+    assert client.diagnostics["assets_endpoint"] == "paper"
+    assert client.diagnostics["assets_raw"] == 3
+    assert client.diagnostics["assets_eligible"] == 1
