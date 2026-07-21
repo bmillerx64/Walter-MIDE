@@ -44,12 +44,14 @@ def build_seed_symbols(client, settings, news_items):
     # Capped per refresh to remain practical on the first cloud version.
     try:
         eligible_assets = [
-            x["symbol"] for x in client.assets()
-            if x.get("tradable") and x.get("status") == "active"
-        ]
-        client.warnings.append(
+    x["symbol"] for x in client.assets()
+    if x.get("tradable") and x.get("status") == "active"
+]
+
+client.warnings.append(
     f"Loaded {len(eligible_assets)} tradable assets"
 )
+
         # Stable rotation by minute means the whole universe is revisited over time.
         minute_bucket = int(datetime.now(timezone.utc).timestamp() // 60)
         start = (minute_bucket * settings.max_seed_symbols) % max(1, len(eligible_assets))
