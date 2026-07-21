@@ -12,7 +12,7 @@ from mide.memory import MemoryStore
 from mide.demo import demo_records
 from mide.ui import inject_css, metric_strip, radar_table, opportunity_card, play_alert
 
-VERSION = "1.0.0"
+VERSION = "1.0.2"
 
 st.set_page_config(page_title="Walter MIDE Radar", page_icon="📡", layout="wide")
 inject_css()
@@ -72,6 +72,12 @@ def run_live():
 
     client = AlpacaClient(api_key, secret, feed=settings.feed, timeout=12)
     status = st.status("Walter is scanning…", expanded=True)
+    try:
+        environment = client.credential_status()
+        status.write(f"Alpaca credentials accepted ({environment} environment)")
+        log(f"Credentials accepted by Alpaca {environment} environment")
+    except Exception as exc:
+        raise AlpacaError(str(exc)) from exc
     progress = st.progress(0, text="Starting")
 
     log("Stage 1/5: fetching news")
@@ -87,6 +93,11 @@ def run_live():
     status.write("2/5 Building discovery universe")
     seeds, reasons = build_seed_symbols(client, settings, news_items)
     progress.progress(0.24, text=f"{len(seeds)} symbols discovered")
+
+    for key, value in client.diagnostics.items():
+        log(f"Discovery diagnostic: {key}={value}")
+    for warning in client.warnings:
+        log(f"Warning: {warning}")
 
     log(f"Stage 3/5: fetching snapshots for {len(seeds)} symbols")
     status.write(f"3/5 Fetching snapshots for {len(seeds)} symbols")
@@ -115,7 +126,7 @@ def run_live():
     progress.progress(1.0, text="Scan complete")
     status.update(label=f"Scan complete: {len(records)} ranked records", state="complete", expanded=False)
     log(f"Complete: {len(records)} ranked records")
-    return records, len(seeds), len(candidates), list(client.warnings)
+    return records, len(seeds), len(candidates), list(client.warnings), dict(client.diagnostics)
 
 
 if "records" not in st.session_state:
@@ -123,6 +134,7 @@ if "records" not in st.session_state:
     st.session_state.source_label = "No scan has been run"
     st.session_state.api_warnings = []
     st.session_state.last_updated = None
+    st.session_state.scan_diagnostics = {}
 
 if use_demo or mode == "Demo":
     st.session_state.records = demo_records()
@@ -131,12 +143,13 @@ if use_demo or mode == "Demo":
     st.session_state.last_updated = datetime.now().astimezone()
 elif run_scan:
     try:
-        records, universe_count, prefiltered, warnings = run_live()
+        records, universe_count, prefiltered, warnings, diagnostics = run_live()
         st.session_state.records = records
         st.session_state.source_label = (
             f"Live {settings.feed.upper()} · {universe_count} symbols sampled · {prefiltered} prefiltered"
         )
         st.session_state.api_warnings = warnings
+        st.session_state.scan_diagnostics = diagnostics
         st.session_state.last_updated = datetime.now().astimezone()
     except Exception as exc:
         log(f"Scan failed: {type(exc).__name__}: {exc}")
@@ -145,12 +158,21 @@ elif run_scan:
 
 records = st.session_state.records
 api_warnings = st.session_state.api_warnings
+scan_diagnostics = st.session_state.scan_diagnostics
 updated = st.session_state.last_updated
 updated_text = updated.strftime("%I:%M:%S %p %Z") if updated else "not yet"
 st.caption(f"{st.session_state.source_label} · Updated {updated_text}")
 
 if not records:
-    st.info("Dashboard loaded successfully. Press **Run live scan** to begin.")
+    if updated:
+        st.warning("The scan completed but produced no ranked records.")
+        if scan_diagnostics:
+            st.subheader("Scan diagnostics")
+            st.json(scan_diagnostics)
+        for warning in api_warnings:
+            st.warning(warning)
+    else:
+        st.info("Dashboard loaded successfully. Press **Run live scan** to begin.")
     st.stop()
 
 local_now = datetime.now().astimezone()
