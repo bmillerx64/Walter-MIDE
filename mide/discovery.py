@@ -26,44 +26,65 @@ def is_valid_us_symbol(symbol):
     return bool(_US_SYMBOL_RE.fullmatch(symbol)) and ":" not in symbol
 
 def build_seed_symbols(client, settings, news_items):
-    symbols, why = set(), {}
-    for item in client.movers(50):
-        symbol = item.get("symbol")
+    symbols: set[str] = set()
+    why: dict[str, list[str]] = {}
+
+    def add(symbol, reason):
+        symbol = str(symbol or "").strip().upper()
         if is_valid_us_symbol(symbol):
-            symbols.add(symbol); why.setdefault(symbol, []).append("market mover")
-    for item in client.most_actives(100):
-        symbol = item.get("symbol")
-        if is_valid_us_symbol(symbol):
-            symbols.add(symbol); why.setdefault(symbol, []).append("most active")
+            symbols.add(symbol)
+            why.setdefault(symbol, []).append(reason)
+
+    movers = client.movers(50)
+    for item in movers:
+        add(item.get("symbol"), "market mover")
+
+    actives = client.most_actives(100)
+    for item in actives:
+        add(item.get("symbol"), "most active")
+
+    news_symbol_count = 0
     for item in news_items:
         for symbol in item.get("symbols", []) or []:
-            if is_valid_us_symbol(symbol):
-                symbols.add(symbol); why.setdefault(symbol, []).append("recent news")
+            before = len(symbols)
+            add(symbol, "recent news")
+            news_symbol_count += int(len(symbols) > before)
 
-    # Broad low-priced universe: snapshot batches are subsequently filtered.
-    # Capped per refresh to remain practical on the first cloud version.
+    client.diagnostics["news_symbols"] = news_symbol_count
+
+    # Add a rotating broad-market slice. Alpaca is preferred; a public symbol
+    # directory is used only when the trading asset endpoint is unavailable.
     try:
         eligible_assets = [
-            x["symbol"] for x in client.assets()
-            if x.get("tradable") and x.get("status") == "active"
+            str(item.get("symbol") or "").strip().upper()
+            for item in client.assets()
+            if item.get("tradable") and item.get("status") == "active"
         ]
-
-        client.warnings.append(
-            f"Loaded {len(eligible_assets)} tradable assets"
-        )
-
-        # Stable rotation by minute means the whole universe is revisited over time.
-        minute_bucket = int(datetime.now(timezone.utc).timestamp() // 60)
-        start = (minute_bucket * settings.max_seed_symbols) % max(1, len(eligible_assets))
-        rotated = eligible_assets[start:start + settings.max_seed_symbols]
-        if len(rotated) < settings.max_seed_symbols:
-            rotated += eligible_assets[:settings.max_seed_symbols - len(rotated)]
-        for symbol in rotated:
-            if is_valid_us_symbol(symbol):
-                    symbols.add(symbol); why.setdefault(symbol, []).append("broad market sweep")
+        source = "Alpaca assets"
     except Exception as exc:
-        client.warnings.append(f"Broad market sweep unavailable: {exc}")
-    return list(symbols), why
+        client.warnings.append(f"Alpaca asset universe unavailable: {exc}")
+        try:
+            eligible_assets = client.public_symbol_fallback()
+            source = "Nasdaq Trader fallback"
+        except Exception as fallback_exc:
+            eligible_assets = []
+            source = "none"
+            client.warnings.append(f"Broad-market fallback unavailable: {fallback_exc}")
+
+    eligible_assets = [s for s in eligible_assets if is_valid_us_symbol(s)]
+    client.diagnostics["broad_source"] = source
+    client.diagnostics["broad_eligible"] = len(eligible_assets)
+
+    if eligible_assets:
+        minute_bucket = int(datetime.now(timezone.utc).timestamp() // 60)
+        window = min(settings.max_seed_symbols, len(eligible_assets))
+        start_index = (minute_bucket * window) % len(eligible_assets)
+        rotated = (eligible_assets[start_index:] + eligible_assets[:start_index])[:window]
+        for symbol in rotated:
+            add(symbol, "broad market sweep")
+
+    client.diagnostics["final_seed_count"] = len(symbols)
+    return sorted(symbols), why
 
 def prefilter_snapshots(snapshots, settings):
     selected = []
