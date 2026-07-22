@@ -16,6 +16,8 @@ def inject_css():
     .mide-alert {border-left:5px solid #ff7a45;}
     .mide-watch {border-left:5px solid #f5c542;}
     .mide-monitor {border-left:5px solid #5da9ff;}
+    .mide-promoted {border:1px solid #34d399; box-shadow:0 0 18px rgba(52,211,153,.32);}
+    .promo-badge {display:inline-block;background:#064e3b;color:#a7f3d0;border:1px solid #34d399;border-radius:999px;padding:3px 9px;margin:6px 0;font-size:.78rem;font-weight:800;text-transform:uppercase;letter-spacing:.05em;}
     .small {font-size:.84rem;color:#aeb9c7}
     .why {font-size:.96rem;font-weight:600;line-height:1.5;margin-top:6px}
     .tier {font-size:.78rem;letter-spacing:.06em;font-weight:800;color:#d9e3ef}
@@ -134,6 +136,29 @@ def _why_sections(r):
     }
 
 
+def promoted_this_scan(r):
+    """Return True only for symbols promoted by the current scan."""
+    return bool(r.get("advanced_state") or r.get("entered_watchlist"))
+
+
+def state_sections(records):
+    """Group Scanner V2 candidates by trading state for dashboard display."""
+    sections = {"Entry Ready": [], "Watching": [], "Emerging": [], "Weakening": [], "Removed": []}
+    for record in records:
+        state = record.get("candidate_status") or record.get("status")
+        if state == "Entry Ready":
+            sections["Entry Ready"].append(record)
+        elif state in {"Watching", "Strengthening"}:
+            sections["Watching"].append(record)
+        elif state in {"Emerging", "New"}:
+            sections["Emerging"].append(record)
+        elif state == "Weakening":
+            sections["Weakening"].append(record)
+        else:
+            sections["Removed"].append(record)
+    return sections
+
+
 def opportunity_card(r):
     klass = {
         "EXCEPTIONAL": "mide-exceptional",
@@ -141,7 +166,10 @@ def opportunity_card(r):
         "WATCH NOW": "mide-watch",
         "MONITOR": "mide-monitor",
     }.get(r["status"], "")
+    if promoted_this_scan(r):
+        klass = f"{klass} mide-promoted".strip()
     reasons = " · ".join(r.get("reasons", [])[:6]) or "No qualifying evidence"
+    promo_badge = "<div class='promo-badge'>Promoted this scan</div>" if promoted_this_scan(r) else ""
     velocity = r.get("velocity", 0)
     arrow = "↑↑" if velocity >= 12 else "↑" if velocity > 2 else "↓" if velocity < -2 else "→"
     tier = r.get("participation_tier", "")
@@ -152,13 +180,6 @@ def opportunity_card(r):
     last_bar = str(r.get("last_bar_timestamp", ""))
     bar_age = float(r.get("bar_age_seconds", 0) or 0)
     freshness = f"Latest bar {bar_age:.0f}s old" if bar_age else "Latest-bar age unavailable"
-    score_boxes = "".join([
-        f"<div class='score-box'><div class='score-name'>Priority</div><div class='score-value'>{attention:.1f}</div></div>",
-        f"<div class='score-box'><div class='score-name'>Dominance</div><div class='score-value'>{dominance:.1f}</div></div>",
-        f"<div class='score-box'><div class='score-name'>Participation</div><div class='score-value'>{r['participation_score']:.1f}</div></div>",
-        f"<div class='score-box'><div class='score-name'>Opportunity</div><div class='score-value'>{r['opportunity_score']:.1f}</div></div>",
-        f"<div class='score-box'><div class='score-name'>Change</div><div class='score-value'>{arrow} {velocity:+.1f}</div></div>",
-    ])
     boxes = "".join(
         f"<div class='why-box'><div class='why-label'>{html.escape(label)}</div>"
         f"<div class='why-text'>{html.escape(text)}</div></div>"
@@ -172,8 +193,8 @@ def opportunity_card(r):
         <span class="tier"> · {html.escape(str(tier))}</span></div>
         <div style="font-size:1.15rem;font-weight:800">{html.escape(str(r['status']))}</div>
       </div>
+      {promo_badge}
       <div class="why">{html.escape(reasons)}</div>
-      <div class="score-grid">{score_boxes}</div>
       <div class="small"><b>Evidence:</b> Feed volume {r['volume']/1_000_000:.2f}M · Dollar volume ${r['dollar_volume']/1_000_000:.2f}M · RVOL {r.get('rvol_proxy',0):.1f}×</div>
       <div class="freshness">{html.escape(freshness)} · evaluated {html.escape(evaluated[-14:-6] if evaluated else 'now')} UTC</div>
       <div class="why-grid">{boxes}</div>
