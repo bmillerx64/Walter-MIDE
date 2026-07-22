@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, time, timezone
+from datetime import datetime, time, timezone, timedelta
 from zoneinfo import ZoneInfo
 import streamlit as st
 
@@ -11,13 +11,14 @@ from mide.discovery import build_seed_symbols, prefilter_snapshots, analyze_cand
 from mide.scanner_v2 import apply_scanner_v2
 from mide.memory import MemoryStore
 from mide.demo import demo_records
-from mide.ui import inject_css, metric_strip, radar_table, opportunity_card, play_alert
+from mide.ui import inject_css, metric_strip, radar_table, opportunity_card, play_alert, state_sections
 
 VERSION = "1.0.2"
 
 VOICE_OPTIONS = ["System default", "Microsoft David", "Google US English", "Samantha"]
 DEFAULT_VOICE = VOICE_OPTIONS[0]
 ALERT_VOICE_SESSION_KEY = "alert_voice_name"
+ALERT_VOICE_QUERY_KEY = "alert_voice"
 
 
 def normalize_alert_voice(voice_name: str) -> str:
@@ -28,6 +29,19 @@ def normalize_alert_voice(voice_name: str) -> str:
 def selected_alert_voice(session_state=None) -> str:
     """Read the current voice choice from session state for every alert path."""
     state = st.session_state if session_state is None else session_state
+    return state.get(ALERT_VOICE_SESSION_KEY, DEFAULT_VOICE)
+
+
+def persisted_alert_voice(query_params=None, session_state=None) -> str:
+    """Resolve voice choice from URL-persisted state, then session state, then default."""
+    state = st.session_state if session_state is None else session_state
+    params = st.query_params if query_params is None else query_params
+    raw = params.get(ALERT_VOICE_QUERY_KEY, "") if params is not None else ""
+    if isinstance(raw, list):
+        raw = raw[0] if raw else ""
+    if raw in VOICE_OPTIONS:
+        state[ALERT_VOICE_SESSION_KEY] = raw
+        return raw
     return state.get(ALERT_VOICE_SESSION_KEY, DEFAULT_VOICE)
 
 
@@ -73,12 +87,12 @@ def scan_alert_phrase(records: list[dict]) -> str:
             symbol_text = f"{', '.join(entry_symbols[:-1])} and {entry_symbols[-1]}"
         return f"Entry Ready: {symbol_text}."
 
-    strengthening_count = sum(
+    watching_count = sum(
         1 for r in records
-        if (r.get("candidate_status") or r.get("status")) == "Strengthening"
+        if (r.get("candidate_status") or r.get("status")) in {"Watching", "Emerging", "Strengthening"}
     )
-    if strengthening_count:
-        return f"Watching {_count_word(strengthening_count)}."
+    if watching_count:
+        return f"Watching {_count_word(watching_count)}."
     return ""
 
 st.set_page_config(page_title="Walter MIDE Radar", page_icon="📡", layout="wide")
@@ -127,6 +141,7 @@ session_defaults = {
 for key, default in session_defaults.items():
     if key not in st.session_state:
         st.session_state[key] = default
+persisted_alert_voice()
 
 with st.sidebar:
     st.header("Control")
@@ -135,7 +150,22 @@ with st.sidebar:
     scanner_version = st.radio("Scanner", ["Scanner V2 (adaptive momentum)", "Scanner V1 (classic screener)"], index=0)
     auto_refresh = st.toggle("Auto live scan every 60 seconds", value=True, disabled=(mode != "Live Alpaca"))
     alerts = st.toggle("Audible watch/advance alerts", value=True)
-    st.selectbox("Alert voice", VOICE_OPTIONS, key=ALERT_VOICE_SESSION_KEY)
+    selected_voice = st.selectbox("Alert voice", VOICE_OPTIONS, key=ALERT_VOICE_SESSION_KEY)
+    st.query_params[ALERT_VOICE_QUERY_KEY] = selected_voice
+    st.components.v1.html(
+        f"""<script>
+        window.localStorage.setItem('walter_alert_voice', {selected_voice!r});
+        const params = new URLSearchParams(window.parent.location.search);
+        if (!params.get('{ALERT_VOICE_QUERY_KEY}')) {{
+          const stored = window.localStorage.getItem('walter_alert_voice');
+          if (stored) {{
+            params.set('{ALERT_VOICE_QUERY_KEY}', stored);
+            window.parent.history.replaceState(null, '', `${{window.parent.location.pathname}}?${{params}}`);
+          }}
+        }}
+        </script>""",
+        height=0,
+    )
     show_pass = st.toggle("Show removed/pass candidates", value=False)
     inspect_symbol = st.text_input("Why did/didn't a symbol appear?", placeholder="BIYA").strip().upper()
     run_scan = st.button("Run live scan", type="primary", use_container_width=True, disabled=(mode != "Live Alpaca"))
@@ -306,9 +336,29 @@ with tabs[0]:
     if not display_records:
         st.success("No stock currently deserves elevated attention.")
     else:
-        for record in display_records[:10]:
-            opportunity_card(record)
-        st.dataframe(radar_table(display_records), width="stretch", hide_index=True)
+        for section_name, section_records in state_sections(display_records).items():
+            if not section_records:
+                continue
+            st.subheader(section_name.upper())
+            sort_choice = st.selectbox(
+                f"Sort {section_name}",
+                ["State priority", "Symbol", "% change", "Dollar volume", "RVOL"],
+                key=f"sort_{section_name.lower().replace(' ', '_')}",
+            )
+            sorted_records = sorted(
+                section_records,
+                key=lambda r: (
+                    str(r.get("symbol", "")) if sort_choice == "Symbol" else
+                    float(r.get("pct_change", 0) or 0) if sort_choice == "% change" else
+                    float(r.get("dollar_volume", 0) or 0) if sort_choice == "Dollar volume" else
+                    float(r.get("rvol_proxy", 0) or 0) if sort_choice == "RVOL" else
+                    float(r.get("scanner_v2_score", r.get("opportunity_score", 0)) or 0)
+                ),
+                reverse=(sort_choice != "Symbol"),
+            )
+            for record in sorted_records[:10]:
+                opportunity_card(record)
+            st.dataframe(radar_table(sorted_records), width="stretch", hide_index=True)
 
 with tabs[1]:
     for record in sorted(records, key=lambda r: abs(r.get("velocity", 0)), reverse=True)[:15]:
