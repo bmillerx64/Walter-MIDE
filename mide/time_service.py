@@ -1,0 +1,81 @@
+from __future__ import annotations
+
+from dataclasses import dataclass
+from datetime import datetime, time
+from typing import Any
+from zoneinfo import ZoneInfo
+
+EASTERN_TIMEZONE = ZoneInfo("America/New_York")
+MARKET_OPEN = time(9, 30)
+MARKET_CLOSE = time(16, 0)
+
+
+@dataclass(frozen=True)
+class MarketClock:
+    """User-facing U.S. equity market clock in Eastern time."""
+
+    now: datetime
+    phase: str
+
+    @property
+    def time_text(self) -> str:
+        return self.now.strftime("%-I:%M:%S %p %Z")
+
+    @property
+    def banner_text(self) -> str:
+        return f"Market Time: {self.time_text} | {self.phase}"
+
+
+def _coerce_datetime(value: Any) -> datetime | None:
+    if value is None or isinstance(value, datetime):
+        return value
+    if isinstance(value, str):
+        text = value.strip()
+        if not text:
+            return None
+        if text.endswith("Z"):
+            text = f"{text[:-1]}+00:00"
+        try:
+            return datetime.fromisoformat(text)
+        except ValueError:
+            return None
+    return None
+
+
+def eastern_time(value: datetime | str | None = None) -> datetime:
+    """Return ``value`` converted to America/New_York, or current Eastern time."""
+    coerced = _coerce_datetime(value)
+    if coerced is None:
+        return datetime.now(EASTERN_TIMEZONE)
+    if coerced.tzinfo is None:
+        coerced = coerced.replace(tzinfo=EASTERN_TIMEZONE)
+    return coerced.astimezone(EASTERN_TIMEZONE)
+
+
+def market_phase_at(value: datetime | None = None) -> str:
+    """Return the U.S. market phase from the shared Eastern market clock."""
+    now = eastern_time(value)
+    market_open = datetime.combine(now.date(), MARKET_OPEN, EASTERN_TIMEZONE)
+    market_close = datetime.combine(now.date(), MARKET_CLOSE, EASTERN_TIMEZONE)
+
+    if now < market_open:
+        return "Pre-Market"
+    if now < market_close:
+        return "Market Open"
+    return "After Hours"
+
+
+def market_clock(value: datetime | None = None) -> MarketClock:
+    """Build the single source of truth for displayed market time and phase."""
+    now = eastern_time(value)
+    return MarketClock(now=now, phase=market_phase_at(now))
+
+
+def format_eastern_time(value: datetime | str | None, fallback: str = "not yet") -> str:
+    """Format a user-facing timestamp in Eastern time with EDT/EST abbreviation."""
+    if value is None or (isinstance(value, str) and not value.strip()):
+        return fallback
+    coerced = _coerce_datetime(value)
+    if coerced is None:
+        return fallback
+    return eastern_time(coerced).strftime("%-I:%M:%S %p %Z")

@@ -5,6 +5,8 @@ from pathlib import Path
 import streamlit as st
 import pandas as pd
 
+from mide.time_service import format_eastern_time
+
 
 def inject_css():
     st.markdown("""
@@ -187,7 +189,7 @@ def opportunity_card(r):
     dominance = r.get("market_dominance_score", 0)
     attention = r.get("attention_score", r["opportunity_score"])
     sections = _why_sections(r)
-    evaluated = str(r.get("timestamp", ""))
+    evaluated = format_eastern_time(r.get("timestamp"), fallback="now")
     last_bar = str(r.get("last_bar_timestamp", ""))
     bar_age = float(r.get("bar_age_seconds", 0) or 0)
     freshness = f"Latest bar {bar_age:.0f}s old" if bar_age else "Latest-bar age unavailable"
@@ -207,7 +209,7 @@ def opportunity_card(r):
       {promo_badge}
       <div class="why">{html.escape(reasons)}</div>
       <div class="small"><b>Evidence:</b> Feed volume {r['volume']/1_000_000:.2f}M · Dollar volume ${r['dollar_volume']/1_000_000:.2f}M · RVOL {r.get('rvol_proxy',0):.1f}×</div>
-      <div class="freshness">{html.escape(freshness)} · evaluated {html.escape(evaluated[-14:-6] if evaluated else 'now')} UTC</div>
+      <div class="freshness">{html.escape(freshness)} · evaluated {html.escape(evaluated)}</div>
       <div class="why-grid">{boxes}</div>
     </div>
     """, unsafe_allow_html=True)
