@@ -14,6 +14,27 @@ from mide.ui import inject_css, metric_strip, radar_table, opportunity_card, pla
 
 VERSION = "1.0.2"
 
+VOICE_OPTIONS = ["System default", "Microsoft David", "Google US English", "Samantha"]
+DEFAULT_VOICE = VOICE_OPTIONS[0]
+ALERT_VOICE_SESSION_KEY = "alert_voice_name"
+
+
+def normalize_alert_voice(voice_name: str) -> str:
+    """Return the speech-synthesis voice name used by both manual and automatic scans."""
+    return "" if voice_name == DEFAULT_VOICE else voice_name
+
+
+def selected_alert_voice(session_state=None) -> str:
+    """Read the current voice choice from session state for every alert path."""
+    state = st.session_state if session_state is None else session_state
+    return state.get(ALERT_VOICE_SESSION_KEY, DEFAULT_VOICE)
+
+
+def alert_voice_for_session(session_state=None) -> str:
+    """Resolve the persisted voice choice into the value passed to play_alert."""
+    return normalize_alert_voice(selected_alert_voice(session_state))
+
+
 st.set_page_config(page_title="Walter MIDE Radar", page_icon="📡", layout="wide")
 inject_css()
 
@@ -48,6 +69,19 @@ st.title("📡 Walter · MIDE Radar")
 st.caption(f"Market Intelligence Decision Engine · $0.02–$5.00 · v{VERSION}")
 st.success("Walter is online. Live mode scans automatically every 60 seconds and still supports manual scans.")
 
+session_defaults = {
+    "records": [],
+    "source_label": "No scan has been run",
+    "api_warnings": [],
+    "last_updated": None,
+    "scan_diagnostics": {},
+    "scan_in_progress": False,
+    ALERT_VOICE_SESSION_KEY: DEFAULT_VOICE,
+}
+for key, default in session_defaults.items():
+    if key not in st.session_state:
+        st.session_state[key] = default
+
 with st.sidebar:
     st.header("Control")
     live_possible = bool(get_secret("ALPACA_API_KEY")) and bool(get_secret("ALPACA_SECRET_KEY"))
@@ -55,7 +89,7 @@ with st.sidebar:
     scanner_version = st.radio("Scanner", ["Scanner V2 (adaptive momentum)", "Scanner V1 (classic screener)"], index=0)
     auto_refresh = st.toggle("Auto live scan every 60 seconds", value=True, disabled=(mode != "Live Alpaca"))
     alerts = st.toggle("Audible watch/advance alerts", value=True)
-    voice_name = st.selectbox("Alert voice", ["System default", "Microsoft David", "Google US English", "Samantha"], index=0)
+    st.selectbox("Alert voice", VOICE_OPTIONS, key=ALERT_VOICE_SESSION_KEY)
     show_pass = st.toggle("Show removed/pass candidates", value=False)
     inspect_symbol = st.text_input("Why did/didn't a symbol appear?", placeholder="BIYA").strip().upper()
     run_scan = st.button("Run live scan", type="primary", use_container_width=True, disabled=(mode != "Live Alpaca"))
@@ -140,18 +174,6 @@ def run_live(scanner_version: str = "Scanner V2 (adaptive momentum)"):
 
 
 should_scan = False
-
-session_defaults = {
-    "records": [],
-    "source_label": "No scan has been run",
-    "api_warnings": [],
-    "last_updated": None,
-    "scan_diagnostics": {},
-    "scan_in_progress": False,
-}
-for key, default in session_defaults.items():
-    if key not in st.session_state:
-        st.session_state[key] = default
 
 if use_demo or mode == "Demo":
     st.session_state.records = demo_records()
@@ -248,7 +270,7 @@ new_alerts = [
 if alerts and new_alerts:
     top = new_alerts[0]
     phrase = f"Walter alert. {top['symbol']}. {top['status']}. " + ". ".join(top.get("reasons", [])[:3])
-    play_alert("assets/alert.wav", phrase, voice_name if voice_name != "System default" else "")
+    play_alert("assets/alert.wav", phrase, alert_voice_for_session())
 
 tabs = st.tabs(["Radar", "What changed", "Data validation", "Method"])
 with tabs[0]:
