@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, time, timedelta, timezone
+from zoneinfo import ZoneInfo
 import streamlit as st
 
 from mide.config import Settings
@@ -34,6 +35,51 @@ def alert_voice_for_session(session_state=None) -> str:
     """Resolve the persisted voice choice into the value passed to play_alert."""
     return normalize_alert_voice(selected_alert_voice(session_state))
 
+
+def market_phase(now: datetime | None = None) -> str:
+    """Return the U.S. equity market phase using local time against Eastern market hours."""
+    local_now = (now or datetime.now().astimezone()).astimezone()
+    eastern = ZoneInfo("America/New_York")
+    eastern_date = local_now.astimezone(eastern).date()
+    market_open_local = datetime.combine(eastern_date, time(9, 30), eastern).astimezone(local_now.tzinfo)
+    market_close_local = datetime.combine(eastern_date, time(16, 0), eastern).astimezone(local_now.tzinfo)
+
+    if local_now < market_open_local:
+        return "Premarket discovery"
+    if local_now < market_open_local + timedelta(hours=1):
+        return "Opening momentum"
+    if local_now < market_close_local - timedelta(hours=2):
+        return "Midday validation"
+    if local_now < market_close_local:
+        return "Late-session momentum"
+    return "After-hours observation"
+
+
+def _count_word(count: int) -> str:
+    words = {
+        1: "one", 2: "two", 3: "three", 4: "four", 5: "five",
+        6: "six", 7: "seven", 8: "eight", 9: "nine", 10: "ten",
+    }
+    return words.get(count, str(count))
+
+
+def scan_alert_phrase(records: list[dict]) -> str:
+    """Build the per-scan audible alert, prioritizing actionable Entry Ready symbols."""
+    entry_symbols = [
+        r.get("symbol") for r in records
+        if r.get("candidate_status") == "Entry Ready" or r.get("status") == "Entry Ready"
+    ]
+    entry_symbols = [str(s).upper() for s in entry_symbols if s]
+    if entry_symbols:
+        return f"Entry Ready - {', '.join(entry_symbols)}."
+
+    watching_count = sum(
+        1 for r in records
+        if (r.get("candidate_status") or r.get("status")) in {"Watching", "Emerging", "Strengthening"}
+    )
+    if watching_count:
+        return f"Watching {_count_word(watching_count)}."
+    return ""
 
 st.set_page_config(page_title="Walter MIDE Radar", page_icon="📡", layout="wide")
 inject_css()
@@ -235,18 +281,7 @@ if not records:
         )
     st.stop()
 
-local_now = datetime.now().astimezone()
-hm = local_now.hour * 60 + local_now.minute
-if hm < 8 * 60 + 30:
-    phase = "Premarket discovery"
-elif hm < 10 * 60 + 30:
-    phase = "Opening momentum"
-elif hm < 14 * 60:
-    phase = "Midday validation"
-elif hm < 16 * 60:
-    phase = "Late-session momentum"
-else:
-    phase = "After-hours observation"
+phase = market_phase()
 st.info(f"Market phase: **{phase}**. Rankings describe evidence; they are not trade instructions.")
 
 display_records = records if show_pass else [r for r in records if r.get("status") not in {"PASS", "Removed"}]
@@ -262,15 +297,9 @@ if inspect_symbol:
             st.warning(f"{inspect_symbol} is not in the current ranked set.")
 
 metric_strip(records)
-new_alerts = [
-    r for r in records
-    if (r.get("alert_event") or (r.get("status") in ("EXCEPTIONAL", "ALERT", "WATCH NOW")
-    and (r.get("status_changed") or r.get("velocity", 0) >= 10)))
-]
-if alerts and new_alerts:
-    top = new_alerts[0]
-    phrase = f"Walter alert. {top['symbol']}. {top['status']}. " + ". ".join(top.get("reasons", [])[:3])
-    play_alert("assets/alert.wav", phrase, alert_voice_for_session())
+alert_phrase = scan_alert_phrase(records)
+if alerts and alert_phrase:
+    play_alert("assets/alert.wav", alert_phrase, alert_voice_for_session())
 
 tabs = st.tabs(["Radar", "What changed", "Data validation", "Method"])
 with tabs[0]:
@@ -302,6 +331,13 @@ with tabs[2]:
 with tabs[3]:
     st.markdown("""
 Scanner V1 is preserved as the classic technical screener. Scanner V2 is an adaptive momentum assistant: Walter rewards fresh catalysts, flat bases beginning to expand, increasing feed and dollar volume, RVOL, float turnover, acceleration and improvements versus the previous scan. VWAP, EMA65 and SuperTrend improve ranking and state progression, but they no longer eliminate promising discovery-stage candidates.
+
+**Indicator verification before formula changes**
+
+- **SuperTrend parameters currently used:** period `10`, multiplier `3.0`, based on `(high + low) / 2` bands and an exponentially smoothed ATR using `alpha = 1 / period`. Walter applies these parameters to the current session's one-minute bars and to resampled 1m/3m/5m/10m confirmation frames.
+- **VWAP calculation currently used:** current-session cumulative typical price VWAP, where typical price is `(high + low + close) / 3`, multiplied by each bar's volume and divided by cumulative volume.
+- **Likely Webull differences:** Webull may source consolidated real-time data, extended-hours/session templates, proprietary tick aggregation, rounding, and configurable indicator presets that can differ from Walter's Alpaca feed and fixed `10, 3.0` SuperTrend settings.
+- **Data limitations:** Walter currently receives Alpaca bars at the configured feed and computes the primary SuperTrend catalyst from the available scan bars; exact Webull matching is limited without Webull's raw bar feed, session settings, extended-hours handling, and confirmed default SuperTrend preset.
 """)
 
 

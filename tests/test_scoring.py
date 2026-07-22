@@ -104,3 +104,37 @@ def test_scanner_v2_alerts_only_when_entering_or_advancing_watch_state():
     assert ranked[0]["candidate_status"] in {"Strengthening", "Entry Ready"}
     assert ranked[0]["advanced_state"] is True
     assert ranked[0]["alert_event"] is True
+
+
+def test_entry_ready_allows_supportive_timeframes_without_all_green():
+    from mide.scanner_v2 import apply_scanner_v2
+
+    prior = {
+        "TEST": {
+            "candidate_status": "Strengthening",
+            "scanner_v2_score": 68,
+            "volume": 1_000_000,
+            "dollar_volume": 500_000,
+            "rvol_proxy": 2.0,
+            "opportunity_score": 68,
+            "vwap_relation": "testing",
+        }
+    }
+    record = {
+        **base(timeframe_confirmations=1).__dict__,
+        "volume": 1_200_000,
+        "dollar_volume": 650_000,
+        "opportunity_score": 74,
+        "participation_score": 80,
+        "status": "MONITOR",
+        "supertrend_30s_flip": True,
+        "timeframes": {
+            "1m": {"above_vwap": True, "supertrend": False, "near_supertrend_flip": True},
+            "3m": {"above_vwap": True, "supertrend": True},
+        },
+        "reasons": [],
+        "cautions": [],
+    }
+
+    ranked = apply_scanner_v2([record], prior)
+    assert ranked[0]["candidate_status"] == "Entry Ready"

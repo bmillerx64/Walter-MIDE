@@ -26,6 +26,38 @@ def _tf_bull(record: dict, label: str) -> bool:
     return bool(item.get("above_vwap") and item.get("supertrend"))
 
 
+def _tf_detail(record: dict, label: str) -> dict:
+    return (record.get("timeframes") or {}).get(label) or {}
+
+
+def _tf_supportive(record: dict, label: str) -> bool:
+    item = _tf_detail(record, label)
+    return bool(
+        item.get("supertrend")
+        or item.get("near_supertrend_flip")
+        or item.get("very_close_to_flipping")
+    )
+
+
+def _entry_ready_requirements(record: dict, prior: dict | None = None) -> bool:
+    prior = prior or {}
+    above_vwap = record.get("vwap_relation") == "above"
+    catalyst_30s = bool(record.get("supertrend_30s_flip", record.get("supertrend_flip")))
+    one_min_support = _tf_supportive(record, "1m") or bool(record.get("supertrend_bullish"))
+    three_min_support = _tf_supportive(record, "3m")
+
+    vol = _num(record, "volume")
+    dollar = _num(record, "dollar_volume")
+    prior_vol = _num(prior, "volume")
+    prior_dollar = _num(prior, "dollar_volume")
+    volume_improving = vol > prior_vol if prior_vol else _num(record, "volume_acceleration", 1) >= 1.2
+    dollar_improving = dollar > prior_dollar if prior_dollar else _num(record, "rvol_proxy", 1) >= 1.5
+
+    return all([
+        above_vwap, catalyst_30s, one_min_support, three_min_support,
+        volume_improving, dollar_improving,
+    ])
+
 def momentum_evidence(record: dict, prior: dict | None = None) -> tuple[float, list[str], list[str]]:
     """Score developing momentum without requiring a completed setup."""
     prior = prior or {}
@@ -125,8 +157,7 @@ def classify_state(record: dict, prior: dict | None = None) -> str:
         return "Removed"
     if prior and score < _num(prior, "scanner_v2_score", _num(prior, "opportunity_score")) - 12:
         return "Weakening"
-    confirmations = _num(record, "timeframe_confirmations")
-    if score >= 78 and record.get("vwap_relation") == "above" and confirmations >= 2:
+    if score >= 70 and _entry_ready_requirements(record, prior):
         return "Entry Ready"
     if score >= 66:
         return "Strengthening"
