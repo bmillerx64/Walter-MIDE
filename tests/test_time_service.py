@@ -18,7 +18,7 @@ def test_last_scan_displays_eastern_standard_time_from_utc():
 def test_main_page_banner_displays_eastern_time_and_phase():
     clock = market_clock(datetime(2026, 7, 22, 21, 42, 18, tzinfo=timezone.utc))
 
-    assert clock.banner_text == "Market Time: 5:42:18 PM EDT | After Hours"
+    assert clock.banner_text == "Market Time: 5:42:18 PM EDT | After-Hours"
 
 
 def test_last_scan_and_banner_share_same_eastern_rendered_time():
@@ -37,6 +37,22 @@ def test_market_phase_is_derived_from_same_eastern_time_source():
     assert pre_market.time_text == "9:29:59 AM EDT"
     assert pre_market.phase == market_phase_at(pre_market.now) == "Pre-Market"
     assert market_open.time_text == "9:30:00 AM EDT"
-    assert market_open.phase == market_phase_at(market_open.now) == "Market Open"
+    assert market_open.phase == market_phase_at(market_open.now) == "Live Market"
     assert after_hours.time_text == "4:00:00 PM EDT"
-    assert after_hours.phase == market_phase_at(after_hours.now) == "After Hours"
+    assert after_hours.phase == market_phase_at(after_hours.now) == "After-Hours"
+
+
+def test_market_banner_phase_boundaries():
+    boundary_cases = [
+        (datetime(2026, 7, 22, 4, 0, 0), "Market Time: 4:00:00 AM EDT | Pre-Market"),
+        (datetime(2026, 7, 22, 9, 29, 59), "Market Time: 9:29:59 AM EDT | Pre-Market"),
+        (datetime(2026, 7, 22, 9, 30, 0), "Market Time: 9:30:00 AM EDT | Live Market"),
+        (datetime(2026, 7, 22, 15, 59, 59), "Market Time: 3:59:59 PM EDT | Live Market"),
+        (datetime(2026, 7, 22, 16, 0, 0), "Market Time: 4:00:00 PM EDT | After-Hours"),
+        (datetime(2026, 7, 22, 19, 59, 59), "Market Time: 7:59:59 PM EDT | After-Hours"),
+        (datetime(2026, 7, 22, 20, 0, 0), "Market Time: 8:00:00 PM EDT | Market Closed"),
+        (datetime(2026, 7, 22, 3, 59, 59), "Market Time: 3:59:59 AM EDT | Market Closed"),
+    ]
+
+    for eastern_datetime, expected_banner in boundary_cases:
+        assert market_clock(eastern_datetime).banner_text == expected_banner
