@@ -1,7 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, time, timezone, timedelta
-from zoneinfo import ZoneInfo
+from datetime import datetime, timezone, timedelta
 import streamlit as st
 
 from mide.config import Settings
@@ -12,6 +11,7 @@ from mide.scanner_v2 import apply_scanner_v2
 from mide.memory import MemoryStore
 from mide.demo import demo_records
 from mide.ui import inject_css, metric_strip, radar_table, opportunity_card, play_alert, state_sections, scanner_v2_dashboard_counts
+from mide.time_service import format_eastern_time, market_clock, market_phase_at
 
 VERSION = "1.0.2"
 
@@ -51,18 +51,8 @@ def alert_voice_for_session(session_state=None) -> str:
 
 
 def market_phase(now: datetime | None = None) -> str:
-    """Return the U.S. equity market phase relative to regular Eastern session hours."""
-    local_now = now.astimezone() if now else datetime.now().astimezone()
-    eastern = ZoneInfo("America/New_York")
-    eastern_now = local_now.astimezone(eastern)
-    market_open = datetime.combine(eastern_now.date(), time(9, 30), eastern)
-    market_close = datetime.combine(eastern_now.date(), time(16, 0), eastern)
-
-    if eastern_now < market_open:
-        return "Pre-market"
-    if eastern_now < market_close:
-        return "Market Open"
-    return "After-hours"
+    """Return the U.S. equity market phase from the shared Eastern clock."""
+    return market_phase_at(now)
 
 
 def scan_alert_phrase(records: list[dict]) -> str:
@@ -280,8 +270,8 @@ records = st.session_state.records
 api_warnings = st.session_state.api_warnings
 scan_diagnostics = st.session_state.scan_diagnostics
 updated = st.session_state.last_updated
-updated_text = updated.strftime("%I:%M:%S %p %Z") if updated else "not yet"
-st.caption(f"{st.session_state.source_label} · Updated {updated_text}")
+updated_text = format_eastern_time(updated)
+st.caption(f"{st.session_state.source_label} · Last Scan {updated_text}")
 
 if not records:
     if updated:
@@ -300,8 +290,8 @@ if not records:
         )
     st.stop()
 
-phase = market_phase()
-st.info(f"Market phase: **{phase}**. Rankings describe evidence; they are not trade instructions.")
+clock = market_clock()
+st.info(f"{clock.banner_text}. Rankings describe evidence; they are not trade instructions.")
 
 display_records = records if show_pass else [r for r in records if r.get("status") not in {"PASS", "Removed"}]
 
