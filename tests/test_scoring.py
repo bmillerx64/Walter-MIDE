@@ -53,3 +53,54 @@ def test_dominance_is_nonzero_and_ranks_leader():
     ranked = apply_attention_ranking(records)
     assert ranked[0]["symbol"] == "LEAD"
     assert ranked[0]["market_dominance_score"] > ranked[1]["market_dominance_score"] > 0
+
+
+def test_scanner_v2_rewards_developing_momentum_without_completed_setup():
+    from mide.scanner_v2 import apply_scanner_v2
+
+    record = {
+        **base(vwap_relation="below", supertrend_bullish=False, supertrend_flip=False,
+               ema65_relation="below", timeframe_confirmations=0).__dict__,
+        "opportunity_score": 48,
+        "participation_score": 72,
+        "status": "PASS",
+        "timeframes": {},
+        "reasons": [],
+        "cautions": [],
+    }
+    ranked = apply_scanner_v2([record], {})
+    assert ranked[0]["candidate_status"] in {"Watching", "Emerging", "Strengthening"}
+    assert "accelerating volume" in " ".join(ranked[0]["reasons"])
+
+
+def test_scanner_v2_alerts_only_when_entering_or_advancing_watch_state():
+    from mide.scanner_v2 import apply_scanner_v2
+
+    prior = {
+        "TEST": {
+            "candidate_status": "Watching",
+            "scanner_v2_score": 40,
+            "volume": 1_000_000,
+            "dollar_volume": 500_000,
+            "rvol_proxy": 1.5,
+            "opportunity_score": 45,
+            "vwap_relation": "below",
+        }
+    }
+    record = {
+        **base(timeframe_confirmations=3).__dict__,
+        "opportunity_score": 70,
+        "participation_score": 80,
+        "status": "MONITOR",
+        "timeframes": {
+            "1m": {"above_vwap": True, "supertrend": True},
+            "3m": {"above_vwap": True, "supertrend": True},
+            "5m": {"above_vwap": True, "supertrend": True},
+        },
+        "reasons": [],
+        "cautions": [],
+    }
+    ranked = apply_scanner_v2([record], prior)
+    assert ranked[0]["candidate_status"] in {"Strengthening", "Entry Ready"}
+    assert ranked[0]["advanced_state"] is True
+    assert ranked[0]["alert_event"] is True

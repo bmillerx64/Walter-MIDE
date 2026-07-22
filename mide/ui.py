@@ -32,7 +32,7 @@ def inject_css():
     """, unsafe_allow_html=True)
 
 
-def play_alert(sound_path: str, phrase: str):
+def play_alert(sound_path: str, phrase: str, voice_name: str = ""):
     path = Path(sound_path)
     if not path.exists():
         return
@@ -43,8 +43,17 @@ def play_alert(sound_path: str, phrase: str):
         <script>
           if ('speechSynthesis' in window) {{
             const u = new SpeechSynthesisUtterance({phrase!r});
-            u.rate = 0.95; u.pitch = 0.9; u.volume = 1.0;
-            window.speechSynthesis.speak(u);
+            const preferred = {voice_name!r};
+            const applyVoice = () => {{
+              if (preferred) {{
+                const voice = window.speechSynthesis.getVoices().find(v => v.name === preferred || v.name.includes(preferred));
+                if (voice) u.voice = voice;
+              }}
+              u.rate = 0.95; u.pitch = 0.9; u.volume = 1.0;
+              window.speechSynthesis.speak(u);
+            }};
+            if (window.speechSynthesis.getVoices().length) applyVoice();
+            else window.speechSynthesis.onvoiceschanged = applyVoice;
           }}
         </script>
         """, height=0
@@ -52,13 +61,13 @@ def play_alert(sound_path: str, phrase: str):
 
 
 def metric_strip(records):
-    statuses = ["EXCEPTIONAL", "ALERT", "WATCH NOW", "MONITOR", "PASS"]
+    statuses = ["EXCEPTIONAL", "ALERT", "WATCH NOW", "MONITOR", "PASS", "New", "Watching", "Emerging", "Strengthening", "Entry Ready", "Weakening", "Removed"]
     counts = {k: sum(r["status"] == k for r in records) for k in statuses}
     cols = st.columns(5)
     cols[0].metric("Candidates", len(records))
-    cols[1].metric("Exceptional", counts["EXCEPTIONAL"])
-    cols[2].metric("Alert / watch", counts["ALERT"] + counts["WATCH NOW"])
-    cols[3].metric("Monitor", counts["MONITOR"])
+    cols[1].metric("Entry ready", counts["Entry Ready"] + counts["EXCEPTIONAL"])
+    cols[2].metric("Watch list", counts["Watching"] + counts["Emerging"] + counts["Strengthening"] + counts["ALERT"] + counts["WATCH NOW"])
+    cols[3].metric("Weak/removed", counts["Weakening"] + counts["Removed"] + counts["PASS"])
     rising = sum(r.get("velocity", 0) >= 8 for r in records)
     cols[4].metric("Strengthening", rising)
 

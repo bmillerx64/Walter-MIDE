@@ -28,8 +28,8 @@ class MemoryStore:
             for item in records:
                 handle.write(json.dumps(item, default=str) + "\n")
 
-    def enrich_velocity(self, records):
-        previous = self.latest_by_symbol()
+    def enrich_velocity(self, records, previous=None):
+        previous = previous if previous is not None else self.latest_by_symbol()
         output = []
         for item in records:
             prior = previous.get(item["symbol"], {})

@@ -1,13 +1,13 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
-import time
 import streamlit as st
 
 from mide.config import Settings
 from mide.alpaca import AlpacaClient, AlpacaError, credential_status
 from mide.news import index_news
 from mide.discovery import build_seed_symbols, prefilter_snapshots, analyze_candidates
+from mide.scanner_v2 import apply_scanner_v2
 from mide.memory import MemoryStore
 from mide.demo import demo_records
 from mide.ui import inject_css, metric_strip, radar_table, opportunity_card, play_alert
@@ -46,14 +46,17 @@ settings = Settings.from_mapping(secrets_mapping())
 
 st.title("📡 Walter · MIDE Radar")
 st.caption(f"Market Intelligence Decision Engine · $0.02–$5.00 · v{VERSION}")
-st.success("Walter is online. A live scan starts only when you press the button below.")
+st.success("Walter is online. Live mode scans automatically every 60 seconds and still supports manual scans.")
 
 with st.sidebar:
     st.header("Control")
     live_possible = bool(get_secret("ALPACA_API_KEY")) and bool(get_secret("ALPACA_SECRET_KEY"))
     mode = st.radio("Data mode", ["Live Alpaca", "Demo"], index=0 if live_possible else 1)
-    alerts = st.toggle("Audible exceptional/watch alerts", value=True)
-    show_pass = st.toggle("Show PASS candidates", value=False)
+    scanner_version = st.radio("Scanner", ["Scanner V2 (adaptive momentum)", "Scanner V1 (classic screener)"], index=0)
+    auto_refresh = st.toggle("Auto live scan every 60 seconds", value=True, disabled=(mode != "Live Alpaca"))
+    alerts = st.toggle("Audible watch/advance alerts", value=True)
+    voice_name = st.selectbox("Alert voice", ["System default", "Microsoft David", "Google US English", "Samantha"], index=0)
+    show_pass = st.toggle("Show removed/pass candidates", value=False)
     inspect_symbol = st.text_input("Why did/didn't a symbol appear?", placeholder="BIYA").strip().upper()
     run_scan = st.button("Run live scan", type="primary", use_container_width=True, disabled=(mode != "Live Alpaca"))
     use_demo = st.button("Load demo data", use_container_width=True)
@@ -64,7 +67,7 @@ with st.sidebar:
         st.warning("IEX feed selected. Set ALPACA_FEED='sip' for consolidated data.")
 
 
-def run_live():
+def run_live(scanner_version: str = "Scanner V2 (adaptive momentum)"):
     api_key = get_secret("ALPACA_API_KEY")
     secret = get_secret("ALPACA_SECRET_KEY")
     if not api_key or not secret:
@@ -121,7 +124,14 @@ def run_live():
     status.write("5/5 Analyzing VWAP, SuperTrend, EMA, volume and catalysts")
     records = analyze_candidates(client, candidates, index_news(news_items), reasons)
     store = get_store()
-    records = store.enrich_velocity(records)
+    previous = store.latest_by_symbol()
+    records = store.enrich_velocity(records, previous=previous)
+    if scanner_version.startswith("Scanner V2"):
+        records = apply_scanner_v2(records, previous)
+    else:
+        for record in records:
+            record["scanner_version"] = "V1"
+            record.setdefault("candidate_status", record.get("status", "PASS"))
     store.append(records)
     progress.progress(1.0, text="Scan complete")
     status.update(label=f"Scan complete: {len(records)} ranked records", state="complete", expanded=False)
@@ -129,21 +139,38 @@ def run_live():
     return records, len(seeds), len(candidates), list(client.warnings), dict(client.diagnostics)
 
 
+should_scan = False
+
 if "records" not in st.session_state:
     st.session_state.records = []
     st.session_state.source_label = "No scan has been run"
     st.session_state.api_warnings = []
     st.session_state.last_updated = None
     st.session_state.scan_diagnostics = {}
+    st.session_state.scan_in_progress = False
 
 if use_demo or mode == "Demo":
     st.session_state.records = demo_records()
     st.session_state.source_label = "Demonstration data"
     st.session_state.api_warnings = []
     st.session_state.last_updated = datetime.now().astimezone()
-elif run_scan:
+else:
+    due = (
+        mode == "Live Alpaca"
+        and auto_refresh
+        and live_possible
+        and not st.session_state.scan_in_progress
+        and (
+            st.session_state.last_updated is None
+            or (datetime.now().astimezone() - st.session_state.last_updated).total_seconds() >= settings.refresh_seconds
+        )
+    )
+    should_scan = run_scan or due
+
+if mode == "Live Alpaca" and should_scan:
     try:
-        records, universe_count, prefiltered, warnings, diagnostics = run_live()
+        st.session_state.scan_in_progress = True
+        records, universe_count, prefiltered, warnings, diagnostics = run_live(scanner_version)
         st.session_state.records = records
         st.session_state.source_label = (
             f"Live {settings.feed.upper()} · {universe_count} symbols sampled · {prefiltered} prefiltered"
@@ -155,6 +182,8 @@ elif run_scan:
         log(f"Scan failed: {type(exc).__name__}: {exc}")
         st.error(f"Live scan could not complete: {exc}")
         st.info("Walter remains online. Correct the issue and press Run live scan again.")
+    finally:
+        st.session_state.scan_in_progress = False
 
 records = st.session_state.records
 api_warnings = st.session_state.api_warnings
@@ -172,7 +201,12 @@ if not records:
         for warning in api_warnings:
             st.warning(warning)
     else:
-        st.info("Dashboard loaded successfully. Press **Run live scan** to begin.")
+        st.info("Dashboard loaded successfully. Walter will scan automatically in live mode, or press **Run live scan** to begin now.")
+    if mode == "Live Alpaca" and auto_refresh:
+        st.components.v1.html(
+            f"<script>setTimeout(() => window.parent.location.reload(), {settings.refresh_seconds * 1000});</script>",
+            height=0,
+        )
     st.stop()
 
 local_now = datetime.now().astimezone()
@@ -189,7 +223,7 @@ else:
     phase = "After-hours observation"
 st.info(f"Market phase: **{phase}**. Rankings describe evidence; they are not trade instructions.")
 
-display_records = records if show_pass else [r for r in records if r.get("status") != "PASS"]
+display_records = records if show_pass else [r for r in records if r.get("status") not in {"PASS", "Removed"}]
 
 if inspect_symbol:
     with st.expander(f"Why / why not: {inspect_symbol}", expanded=True):
@@ -204,13 +238,13 @@ if inspect_symbol:
 metric_strip(records)
 new_alerts = [
     r for r in records
-    if r.get("status") in ("EXCEPTIONAL", "ALERT", "WATCH NOW")
-    and (r.get("status_changed") or r.get("velocity", 0) >= 10)
+    if (r.get("alert_event") or (r.get("status") in ("EXCEPTIONAL", "ALERT", "WATCH NOW")
+    and (r.get("status_changed") or r.get("velocity", 0) >= 10)))
 ]
 if alerts and new_alerts:
     top = new_alerts[0]
     phrase = f"Walter alert. {top['symbol']}. {top['status']}. " + ". ".join(top.get("reasons", [])[:3])
-    play_alert("assets/alert.wav", phrase)
+    play_alert("assets/alert.wav", phrase, voice_name if voice_name != "System default" else "")
 
 tabs = st.tabs(["Radar", "What changed", "Data validation", "Method"])
 with tabs[0]:
@@ -241,5 +275,12 @@ with tabs[2]:
 
 with tabs[3]:
     st.markdown("""
-Walter discovers movers, active stocks, recent-news symbols and a rotating broad-market sweep; then validates participation, VWAP, SuperTrend, 65 EMA, multi-timeframe structure, catalysts and risk flags. The v1.0 foundation deliberately renders the interface before making any live API request.
+Scanner V1 is preserved as the classic technical screener. Scanner V2 is an adaptive momentum assistant: Walter rewards fresh catalysts, flat bases beginning to expand, increasing feed and dollar volume, RVOL, float turnover, acceleration and improvements versus the previous scan. VWAP, EMA65 and SuperTrend improve ranking and state progression, but they no longer eliminate promising discovery-stage candidates.
 """)
+
+
+if mode == "Live Alpaca" and auto_refresh:
+    st.components.v1.html(
+        f"<script>setTimeout(() => window.parent.location.reload(), {settings.refresh_seconds * 1000});</script>",
+        height=0,
+    )
