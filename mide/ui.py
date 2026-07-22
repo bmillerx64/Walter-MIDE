@@ -50,8 +50,18 @@ def play_alert(sound_path: str, phrase: str, voice_name: str = ""):
             const preferred = {voice_name!r};
             const applyVoice = () => {{
               if (preferred) {{
-                const voice = window.speechSynthesis.getVoices().find(v => v.name === preferred || v.name.includes(preferred));
-                if (voice) u.voice = voice;
+                const voices = window.speechSynthesis.getVoices();
+                const voice = voices.find(v => v.name === preferred || v.name.includes(preferred));
+                if (voice) {{
+                  u.voice = voice;
+                }} else {{
+                  const warning = `Walter could not load the selected voice: ${{preferred}}.`;
+                  console.error(warning);
+                  document.body.insertAdjacentHTML(
+                    'beforeend',
+                    `<div style="padding:8px 10px;border:1px solid #f59e0b;border-radius:6px;background:#451a03;color:#fffbeb;font-family:sans-serif;font-size:13px">${{warning}}</div>`
+                  );
+                }}
               }}
               u.rate = 0.95; u.pitch = 0.9; u.volume = 1.0;
               window.speechSynthesis.speak(u);

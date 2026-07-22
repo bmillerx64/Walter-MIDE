@@ -160,6 +160,6 @@ def test_selected_voice_persists_across_multiple_auto_scan_cycles():
 
 
 def test_system_default_voice_normalizes_to_browser_default_across_auto_scans():
-    session_state = {ALERT_VOICE_SESSION_KEY: "System default"}
+    session_state = {ALERT_VOICE_SESSION_KEY: "System"}
 
     assert [alert_voice_for_session(session_state) for _ in range(2)] == ["", ""]

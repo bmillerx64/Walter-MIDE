@@ -3,6 +3,7 @@ from zoneinfo import ZoneInfo
 
 from app import (
     DEFAULT_VOICE,
+    VOICE_OPTIONS,
     ALERT_VOICE_SESSION_KEY,
     alert_voice_for_session,
     market_phase,
@@ -77,9 +78,9 @@ def test_entry_ready_symbols_repeat_every_scan():
 
 
 def test_voice_selection_persists_during_multiple_automatic_scan_cycles():
-    session = {ALERT_VOICE_SESSION_KEY: "Microsoft David"}
+    session = {ALERT_VOICE_SESSION_KEY: "David"}
     auto_cycle_voices = [alert_voice_for_session(session) for _ in range(3)]
-    assert auto_cycle_voices == ["Microsoft David", "Microsoft David", "Microsoft David"]
+    assert auto_cycle_voices == ["David", "David", "David"]
 
 
 def test_voice_selection_persists_after_page_refresh_from_query_state():
@@ -92,6 +93,23 @@ def test_voice_selection_persists_after_page_refresh_from_query_state():
 def test_default_voice_normalizes_to_system_default_code_path():
     session = {ALERT_VOICE_SESSION_KEY: DEFAULT_VOICE}
     assert alert_voice_for_session(session) == ""
+
+
+def test_supported_voice_options_exclude_google():
+    assert VOICE_OPTIONS == ["System", "Samantha", "David"]
+    assert "Google US English" not in VOICE_OPTIONS
+
+
+def test_david_selection_persists_during_multiple_scan_cycles():
+    session = {ALERT_VOICE_SESSION_KEY: "David"}
+    scan_voices = [alert_voice_for_session(session) for _ in range(3)]
+    assert scan_voices == ["David", "David", "David"]
+
+
+def test_unsupported_query_voice_does_not_replace_existing_selection():
+    session = {ALERT_VOICE_SESSION_KEY: "Samantha"}
+    assert persisted_alert_voice({"alert_voice": "Google US English"}, session) == "Samantha"
+    assert session[ALERT_VOICE_SESSION_KEY] == "Samantha"
 
 
 def test_watching_promotions_are_visually_identified_only_for_current_scan():
