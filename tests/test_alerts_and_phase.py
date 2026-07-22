@@ -96,8 +96,9 @@ def test_default_voice_normalizes_to_system_default_code_path():
 
 
 def test_supported_voice_options_exclude_google():
-    assert VOICE_OPTIONS == [DEFAULT_VOICE]
+    assert VOICE_OPTIONS == [DEFAULT_VOICE, "Samantha"]
     assert "Google US English" not in VOICE_OPTIONS
+    assert "David" not in VOICE_OPTIONS
 
 
 def test_david_selection_persists_during_multiple_scan_cycles():
@@ -139,33 +140,33 @@ def test_market_phase_uses_local_time_against_us_equity_hours():
     assert market_phase(datetime(2026, 7, 22, 13, 5, tzinfo=pacific)) == "After-Hours"
 
 
-def test_installed_english_voices_are_discovered_and_deduplicated():
-    from app import normalize_discovered_voices
+def test_stable_voice_options_keep_system_and_samantha_without_dynamic_voices():
+    from app import SYSTEM_DEFAULT_VOICE_ID, stable_voice_options, voice_ids
 
-    voices = normalize_discovered_voices([
-        {"name": "Samantha", "identifier": "com.apple.voice.compact.en-US.Samantha", "language": "en-US"},
-        {"name": "Amelie", "identifier": "com.apple.voice.compact.fr-CA.Amelie", "language": "fr-CA"},
-        {"name": "Samantha", "identifier": "com.apple.voice.compact.en-US.Samantha", "language": "en-US"},
-        {"name": "Google UK English Female", "voiceURI": "Google UK English Female", "lang": "en-GB"},
-    ])
+    options = stable_voice_options(david_available=False)
 
-    assert voices == [
-        {"name": "Google UK English Female", "identifier": "Google UK English Female", "language": "en-GB"},
-        {"name": "Samantha", "identifier": "com.apple.voice.compact.en-US.Samantha", "language": "en-US"},
-    ]
+    assert voice_ids(options) == [SYSTEM_DEFAULT_VOICE_ID, "Samantha"]
+    assert [option["name"] for option in options] == ["System Default", "Samantha"]
 
 
-def test_dropdown_contents_match_discovered_voices_with_system_first():
-    from app import SYSTEM_DEFAULT_VOICE_ID, voice_options_from_discovered, voice_ids
+def test_david_only_displays_when_available():
+    from app import stable_voice_options, voice_ids
 
-    options = voice_options_from_discovered([
-        {"name": "Daniel", "identifier": "daniel-id", "language": "en-GB"},
-        {"name": "Karen", "identifier": "karen-id", "language": "en-AU"},
-    ])
+    assert "David" not in voice_ids(stable_voice_options(david_available=False))
+    assert "David" in voice_ids(stable_voice_options(david_available=True))
 
-    assert voice_ids(options) == [SYSTEM_DEFAULT_VOICE_ID, "daniel-id", "karen-id"]
-    assert options[0]["name"] == "System Default"
 
+
+
+def test_david_availability_comes_from_browser_probe():
+    from app import DAVID_AVAILABLE_SESSION_KEY, david_available_from_query
+
+    session = {}
+
+    assert david_available_from_query({"walter_david_available": "0"}, session) is False
+    assert session[DAVID_AVAILABLE_SESSION_KEY] is False
+    assert david_available_from_query({"walter_david_available": "1"}, session) is True
+    assert session[DAVID_AVAILABLE_SESSION_KEY] is True
 
 def test_voice_preview_uses_selected_voice_identifier():
     from app import normalize_alert_voice
@@ -180,11 +181,11 @@ def test_unavailable_voice_keeps_preference_but_falls_back_for_session():
         SYSTEM_DEFAULT_VOICE_ID,
         VOICE_WARNING_SESSION_KEY,
         active_voice_identifier,
-        voice_options_from_discovered,
+        stable_voice_options,
     )
 
     session = {ALERT_VOICE_SESSION_KEY: "missing-voice"}
-    active = active_voice_identifier("missing-voice", voice_options_from_discovered([]), session)
+    active = active_voice_identifier("missing-voice", stable_voice_options(False), session)
 
     assert active == SYSTEM_DEFAULT_VOICE_ID
     assert session[ALERT_VOICE_SESSION_KEY] == "missing-voice"
