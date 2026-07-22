@@ -138,3 +138,34 @@ def test_entry_ready_allows_supportive_timeframes_without_all_green():
 
     ranked = apply_scanner_v2([record], prior)
     assert ranked[0]["candidate_status"] == "Entry Ready"
+
+
+def test_entry_ready_state_uses_chart_preparation_requirements_only():
+    from mide.scanner_v2 import apply_scanner_v2
+
+    prior = {
+        "TEST": {
+            "candidate_status": "Strengthening",
+            "scanner_v2_score": 95,
+            "opportunity_score": 95,
+        }
+    }
+    record = {
+        **base(timeframe_confirmations=1, volume_acceleration=0.8, rvol_proxy=1.0).__dict__,
+        "volume": 900_000,
+        "dollar_volume": 450_000,
+        "opportunity_score": 52,
+        "participation_score": 55,
+        "status": "MONITOR",
+        "supertrend_30s_flip": True,
+        "vwap_relation": "above",
+        "timeframes": {
+            "1m": {"above_vwap": True, "supertrend": False, "near_supertrend_flip": True},
+            "3m": {"above_vwap": True, "supertrend": False, "very_close_to_flipping": True},
+        },
+        "reasons": [],
+        "cautions": [],
+    }
+
+    ranked = apply_scanner_v2([record], prior)
+    assert ranked[0]["candidate_status"] == "Entry Ready"

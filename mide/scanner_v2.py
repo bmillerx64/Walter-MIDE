@@ -40,22 +40,16 @@ def _tf_supportive(record: dict, label: str) -> bool:
 
 
 def _entry_ready_requirements(record: dict, prior: dict | None = None) -> bool:
-    prior = prior or {}
-    above_vwap = record.get("vwap_relation") == "above"
+    price_at_or_above_vwap = record.get("vwap_relation") == "above" or _num(record, "vwap_distance_pct") >= 0
     catalyst_30s = bool(record.get("supertrend_30s_flip", record.get("supertrend_flip")))
     one_min_support = _tf_supportive(record, "1m") or bool(record.get("supertrend_bullish"))
     three_min_support = _tf_supportive(record, "3m")
 
-    vol = _num(record, "volume")
-    dollar = _num(record, "dollar_volume")
-    prior_vol = _num(prior, "volume")
-    prior_dollar = _num(prior, "dollar_volume")
-    volume_improving = vol > prior_vol if prior_vol else _num(record, "volume_acceleration", 1) >= 1.2
-    dollar_improving = dollar > prior_dollar if prior_dollar else _num(record, "rvol_proxy", 1) >= 1.5
-
     return all([
-        above_vwap, catalyst_30s, one_min_support, three_min_support,
-        volume_improving, dollar_improving,
+        catalyst_30s,
+        price_at_or_above_vwap,
+        one_min_support,
+        three_min_support,
     ])
 
 def momentum_evidence(record: dict, prior: dict | None = None) -> tuple[float, list[str], list[str]]:
@@ -155,10 +149,10 @@ def classify_state(record: dict, prior: dict | None = None) -> str:
     prior_state = (prior or {}).get("candidate_status") or (prior or {}).get("status")
     if _num(record, "dollar_volume") < 50_000 or _num(record, "spread_pct") > 10:
         return "Removed"
+    if _entry_ready_requirements(record, prior):
+        return "Entry Ready"
     if prior and score < _num(prior, "scanner_v2_score", _num(prior, "opportunity_score")) - 12:
         return "Weakening"
-    if score >= 70 and _entry_ready_requirements(record, prior):
-        return "Entry Ready"
     if score >= 66:
         return "Strengthening"
     if score >= 52:

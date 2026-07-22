@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, time, timedelta, timezone
+from datetime import datetime, time, timezone
 from zoneinfo import ZoneInfo
 import streamlit as st
 
@@ -37,22 +37,18 @@ def alert_voice_for_session(session_state=None) -> str:
 
 
 def market_phase(now: datetime | None = None) -> str:
-    """Return the U.S. equity market phase using local time against Eastern market hours."""
-    local_now = (now or datetime.now().astimezone()).astimezone()
+    """Return the U.S. equity market phase relative to regular Eastern session hours."""
+    local_now = now.astimezone() if now else datetime.now().astimezone()
     eastern = ZoneInfo("America/New_York")
-    eastern_date = local_now.astimezone(eastern).date()
-    market_open_local = datetime.combine(eastern_date, time(9, 30), eastern).astimezone(local_now.tzinfo)
-    market_close_local = datetime.combine(eastern_date, time(16, 0), eastern).astimezone(local_now.tzinfo)
+    eastern_now = local_now.astimezone(eastern)
+    market_open = datetime.combine(eastern_now.date(), time(9, 30), eastern)
+    market_close = datetime.combine(eastern_now.date(), time(16, 0), eastern)
 
-    if local_now < market_open_local:
-        return "Premarket discovery"
-    if local_now < market_open_local + timedelta(hours=1):
-        return "Opening momentum"
-    if local_now < market_close_local - timedelta(hours=2):
-        return "Midday validation"
-    if local_now < market_close_local:
-        return "Late-session momentum"
-    return "After-hours observation"
+    if eastern_now < market_open:
+        return "Pre-market"
+    if eastern_now < market_close:
+        return "Market Open"
+    return "After-hours"
 
 
 def _count_word(count: int) -> str:
@@ -71,14 +67,18 @@ def scan_alert_phrase(records: list[dict]) -> str:
     ]
     entry_symbols = [str(s).upper() for s in entry_symbols if s]
     if entry_symbols:
-        return f"Entry Ready - {', '.join(entry_symbols)}."
+        if len(entry_symbols) == 1:
+            symbol_text = entry_symbols[0]
+        else:
+            symbol_text = f"{', '.join(entry_symbols[:-1])} and {entry_symbols[-1]}"
+        return f"Entry Ready: {symbol_text}."
 
-    watching_count = sum(
+    strengthening_count = sum(
         1 for r in records
-        if (r.get("candidate_status") or r.get("status")) in {"Watching", "Emerging", "Strengthening"}
+        if (r.get("candidate_status") or r.get("status")) == "Strengthening"
     )
-    if watching_count:
-        return f"Watching {_count_word(watching_count)}."
+    if strengthening_count:
+        return f"Watching {_count_word(strengthening_count)}."
     return ""
 
 st.set_page_config(page_title="Walter MIDE Radar", page_icon="📡", layout="wide")
