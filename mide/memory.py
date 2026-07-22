@@ -32,8 +32,9 @@ class MemoryStore:
         """Add prior-score velocity fields using an optional preloaded history map.
 
         The live scan path also passes the same ``previous`` snapshot into
-        Scanner V2, so accepting it here keeps V1/V2 enrichment based on a
-        single consistent prior state while preserving the no-argument API.
+        Scanner V2, so the explicit ``enrich_velocity(records, previous=None)``
+        signature keeps V1/V2 enrichment based on a single consistent prior
+        state while preserving the no-argument Scanner V1 API.
         """
         previous = previous if previous is not None else self.latest_by_symbol()
         output = []
