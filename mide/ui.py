@@ -37,6 +37,7 @@ def inject_css():
 
 
 def play_alert(sound_path: str, phrase: str, voice_name: str = ""):
+    """Play Walter alert audio and speak with the requested Web Speech voice identifier."""
     path = Path(sound_path)
     if not path.exists():
         return
@@ -51,7 +52,7 @@ def play_alert(sound_path: str, phrase: str, voice_name: str = ""):
             const applyVoice = () => {{
               if (preferred) {{
                 const voices = window.speechSynthesis.getVoices();
-                const voice = voices.find(v => v.name === preferred || v.name.includes(preferred));
+                const voice = voices.find(v => v.voiceURI === preferred || v.name === preferred || v.name.includes(preferred));
                 if (voice) {{
                   u.voice = voice;
                 }} else {{
