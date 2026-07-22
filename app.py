@@ -15,14 +15,15 @@ from mide.time_service import format_eastern_time, market_clock, market_phase_at
 
 VERSION = "1.0.2"
 
-VOICE_OPTIONS = ["System default", "Microsoft David", "Google US English", "Samantha"]
+VOICE_OPTIONS = ["System", "Samantha", "David"]
 DEFAULT_VOICE = VOICE_OPTIONS[0]
 ALERT_VOICE_SESSION_KEY = "alert_voice_name"
 ALERT_VOICE_QUERY_KEY = "alert_voice"
+VOICE_CONFIRMATION_SESSION_KEY = "alert_voice_confirmation"
 
 
 def normalize_alert_voice(voice_name: str) -> str:
-    """Return the speech-synthesis voice name used by both manual and automatic scans."""
+    """Return the speech-synthesis voice name used by every alert path."""
     return "" if voice_name == DEFAULT_VOICE else voice_name
 
 
@@ -48,6 +49,13 @@ def persisted_alert_voice(query_params=None, session_state=None) -> str:
 def alert_voice_for_session(session_state=None) -> str:
     """Resolve the persisted voice choice into the value passed to play_alert."""
     return normalize_alert_voice(selected_alert_voice(session_state))
+
+
+def persist_selected_alert_voice() -> None:
+    """Persist the single alert voice preference and queue its audible confirmation."""
+    selected = selected_alert_voice()
+    st.query_params[ALERT_VOICE_QUERY_KEY] = selected
+    st.session_state[VOICE_CONFIRMATION_SESSION_KEY] = selected
 
 
 def market_phase(now: datetime | None = None) -> str:
@@ -116,6 +124,7 @@ session_defaults = {
     "scan_diagnostics": {},
     "scan_in_progress": False,
     ALERT_VOICE_SESSION_KEY: DEFAULT_VOICE,
+    VOICE_CONFIRMATION_SESSION_KEY: "",
 }
 for key, default in session_defaults.items():
     if key not in st.session_state:
@@ -129,22 +138,35 @@ with st.sidebar:
     scanner_version = st.radio("Scanner", ["Scanner V2 (adaptive momentum)", "Scanner V1 (classic screener)"], index=0)
     auto_refresh = st.toggle("Auto live scan every 60 seconds", value=True, disabled=(mode != "Live Alpaca"))
     alerts = st.toggle("Audible watch/advance alerts", value=True)
-    selected_voice = st.selectbox("Alert voice", VOICE_OPTIONS, key=ALERT_VOICE_SESSION_KEY)
+    selected_voice = st.selectbox(
+        "Alert voice",
+        VOICE_OPTIONS,
+        key=ALERT_VOICE_SESSION_KEY,
+        on_change=persist_selected_alert_voice,
+    )
     st.query_params[ALERT_VOICE_QUERY_KEY] = selected_voice
     st.components.v1.html(
         f"""<script>
-        window.localStorage.setItem('walter_alert_voice', {selected_voice!r});
         const params = new URLSearchParams(window.parent.location.search);
-        if (!params.get('{ALERT_VOICE_QUERY_KEY}')) {{
-          const stored = window.localStorage.getItem('walter_alert_voice');
-          if (stored) {{
-            params.set('{ALERT_VOICE_QUERY_KEY}', stored);
-            window.parent.history.replaceState(null, '', `${{window.parent.location.pathname}}?${{params}}`);
-          }}
+        const supportedVoices = new Set({VOICE_OPTIONS!r});
+        const selectedVoice = {selected_voice!r};
+        const stored = window.localStorage.getItem('walter_alert_voice');
+        if (!params.get('{ALERT_VOICE_QUERY_KEY}') && supportedVoices.has(stored)) {{
+          params.set('{ALERT_VOICE_QUERY_KEY}', stored);
+          window.parent.location.replace(`${{window.parent.location.pathname}}?${{params}}`);
+        }} else {{
+          window.localStorage.setItem('walter_alert_voice', selectedVoice);
         }}
         </script>""",
         height=0,
     )
+    pending_voice_confirmation = st.session_state.pop(VOICE_CONFIRMATION_SESSION_KEY, "")
+    if pending_voice_confirmation:
+        play_alert(
+            "assets/alert.wav",
+            f"Voice changed to {pending_voice_confirmation}.",
+            alert_voice_for_session(),
+        )
     show_pass = st.toggle("Show removed/pass candidates", value=False)
     inspect_symbol = st.text_input("Why did/didn't a symbol appear?", placeholder="BIYA").strip().upper()
     run_scan = st.button("Run live scan", type="primary", use_container_width=True, disabled=(mode != "Live Alpaca"))
