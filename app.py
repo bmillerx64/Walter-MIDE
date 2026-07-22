@@ -65,14 +65,6 @@ def market_phase(now: datetime | None = None) -> str:
     return "After-hours"
 
 
-def _count_word(count: int) -> str:
-    words = {
-        1: "one", 2: "two", 3: "three", 4: "four", 5: "five",
-        6: "six", 7: "seven", 8: "eight", 9: "nine", 10: "ten",
-    }
-    return words.get(count, str(count))
-
-
 def scan_alert_phrase(records: list[dict]) -> str:
     """Build the per-scan audible alert, prioritizing actionable Entry Ready symbols."""
     entry_symbols = [
@@ -87,12 +79,12 @@ def scan_alert_phrase(records: list[dict]) -> str:
             symbol_text = f"{', '.join(entry_symbols[:-1])} and {entry_symbols[-1]}"
         return f"Entry Ready: {symbol_text}."
 
-    watching_count = sum(
+    strengthening_count = sum(
         1 for r in records
-        if (r.get("candidate_status") or r.get("status")) in {"Watching", "Emerging", "Strengthening"}
+        if (r.get("candidate_status") or r.get("status")) == "Strengthening"
     )
-    if watching_count:
-        return f"Watching {_count_word(watching_count)}."
+    if strengthening_count:
+        return f"Watching {strengthening_count}."
     return ""
 
 st.set_page_config(page_title="Walter MIDE Radar", page_icon="📡", layout="wide")

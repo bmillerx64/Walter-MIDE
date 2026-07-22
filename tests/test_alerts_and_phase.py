@@ -12,18 +12,35 @@ from app import (
 from mide.ui import promoted_this_scan, state_sections
 
 
-def test_watching_announcement_reports_queue_size_without_tickers():
+def test_watch_list_count_is_never_used_for_voice_alerts():
     records = [
         {"symbol": "AAA", "candidate_status": "Watching"},
         {"symbol": "BBB", "candidate_status": "Emerging"},
         {"symbol": "CCC", "candidate_status": "Strengthening"},
     ]
-    assert scan_alert_phrase(records) == "Watching three."
+    assert scan_alert_phrase(records) == "Watching 1."
+
+
+def test_strengthening_three_announces_watching_three():
+    records = [
+        {"symbol": "AAA", "candidate_status": "Strengthening"},
+        {"symbol": "BBB", "candidate_status": "Strengthening"},
+        {"symbol": "CCC", "candidate_status": "Strengthening"},
+    ]
+    assert scan_alert_phrase(records) == "Watching 3."
+
+
+def test_strengthening_zero_produces_no_watching_announcement():
+    records = [
+        {"symbol": "AAA", "candidate_status": "Watching"},
+        {"symbol": "BBB", "candidate_status": "Emerging"},
+    ]
+    assert scan_alert_phrase(records) == ""
 
 
 def test_entry_ready_suppresses_watching_announcement():
     records = [
-        {"symbol": "AAA", "candidate_status": "Watching"},
+        {"symbol": "AAA", "candidate_status": "Strengthening"},
         {"symbol": "INLF", "candidate_status": "Entry Ready"},
     ]
     assert scan_alert_phrase(records) == "Entry Ready: INLF."
