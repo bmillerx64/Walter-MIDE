@@ -141,13 +141,17 @@ def run_live(scanner_version: str = "Scanner V2 (adaptive momentum)"):
 
 should_scan = False
 
-if "records" not in st.session_state:
-    st.session_state.records = []
-    st.session_state.source_label = "No scan has been run"
-    st.session_state.api_warnings = []
-    st.session_state.last_updated = None
-    st.session_state.scan_diagnostics = {}
-    st.session_state.scan_in_progress = False
+session_defaults = {
+    "records": [],
+    "source_label": "No scan has been run",
+    "api_warnings": [],
+    "last_updated": None,
+    "scan_diagnostics": {},
+    "scan_in_progress": False,
+}
+for key, default in session_defaults.items():
+    if key not in st.session_state:
+        st.session_state[key] = default
 
 if use_demo or mode == "Demo":
     st.session_state.records = demo_records()
