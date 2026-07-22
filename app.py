@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone, timedelta
+import json
+import platform
 import streamlit as st
 
 from mide.config import Settings
@@ -15,40 +17,146 @@ from mide.time_service import format_eastern_time, market_clock, market_phase_at
 
 VERSION = "1.0.2"
 
-VOICE_OPTIONS = ["System", "Samantha", "David"]
-DEFAULT_VOICE = VOICE_OPTIONS[0]
+SYSTEM_DEFAULT_VOICE_ID = "__system_default__"
+DEFAULT_VOICE = "System Default"
+VOICE_OPTIONS = [DEFAULT_VOICE]
 ALERT_VOICE_SESSION_KEY = "alert_voice_name"
 ALERT_VOICE_QUERY_KEY = "alert_voice"
 VOICE_CONFIRMATION_SESSION_KEY = "alert_voice_confirmation"
+DISCOVERED_VOICES_SESSION_KEY = "alert_discovered_voices"
+ACTIVE_VOICE_SESSION_KEY = "alert_active_voice_identifier"
+VOICE_WARNING_SESSION_KEY = "alert_voice_warning"
 
 
-def normalize_alert_voice(voice_name: str) -> str:
-    """Return the speech-synthesis voice name used by every alert path."""
-    return "" if voice_name == DEFAULT_VOICE else voice_name
+def voice_option(display_name: str, identifier: str = "", language: str = "") -> dict:
+    """Build the normalized voice metadata used by the selector and diagnostics."""
+    display = (display_name or identifier or DEFAULT_VOICE).strip()
+    voice_id = (identifier or display).strip()
+    return {"name": display, "identifier": voice_id, "language": (language or "").strip()}
+
+
+def system_voice_option() -> dict:
+    """Return Walter's non-persistent system default voice option."""
+    return voice_option(DEFAULT_VOICE, SYSTEM_DEFAULT_VOICE_ID, "")
+
+
+def is_english_voice(voice: dict) -> bool:
+    """Return True when a browser/OS speech voice is identified as English."""
+    language = str(voice.get("language") or voice.get("lang") or "").lower()
+    name = str(voice.get("name") or "").lower()
+    identifier = str(voice.get("identifier") or voice.get("voiceURI") or "").lower()
+    return language.startswith("en") or "english" in name or "english" in identifier
+
+
+def normalize_discovered_voices(voices: list[dict] | None, english_only: bool = True) -> list[dict]:
+    """Deduplicate discovered OS/browser voices and keep English voices by default."""
+    normalized = []
+    seen = set()
+    for raw_voice in voices or []:
+        voice = voice_option(
+            raw_voice.get("name") or raw_voice.get("display_name") or "",
+            raw_voice.get("identifier") or raw_voice.get("voiceURI") or raw_voice.get("id") or "",
+            raw_voice.get("language") or raw_voice.get("lang") or raw_voice.get("locale") or "",
+        )
+        if english_only and not is_english_voice(voice):
+            continue
+        key = voice["identifier"] or voice["name"]
+        if key == SYSTEM_DEFAULT_VOICE_ID or key in seen:
+            continue
+        seen.add(key)
+        normalized.append(voice)
+    return sorted(normalized, key=lambda v: (v["name"].lower(), v["identifier"].lower()))
+
+
+def voice_options_from_discovered(voices: list[dict] | None) -> list[dict]:
+    """Return selector choices with System Default first, followed by discovered voices."""
+    return [system_voice_option(), *normalize_discovered_voices(voices)]
+
+
+def voice_label(voice: dict) -> str:
+    """Return a human-readable label containing name, identifier, and locale when present."""
+    if voice["identifier"] == SYSTEM_DEFAULT_VOICE_ID:
+        return DEFAULT_VOICE
+    detail = voice["identifier"]
+    if voice.get("language"):
+        detail = f"{detail} · {voice['language']}"
+    return f"{voice['name']} ({detail})"
+
+
+def voice_ids(options: list[dict]) -> list[str]:
+    return [voice["identifier"] for voice in options]
+
+
+def voice_by_identifier(options: list[dict], identifier: str) -> dict | None:
+    return next((voice for voice in options if voice["identifier"] == identifier), None)
+
+
+def normalize_alert_voice(voice_identifier: str) -> str:
+    """Return the speech-synthesis voice identifier used by every alert path."""
+    return "" if voice_identifier in {DEFAULT_VOICE, SYSTEM_DEFAULT_VOICE_ID, ""} else voice_identifier
+
+
+def canonical_voice_identifier(voice_identifier: str) -> str:
+    """Normalize legacy and empty voice values to the System Default identifier."""
+    return SYSTEM_DEFAULT_VOICE_ID if voice_identifier in {"", "System", DEFAULT_VOICE} else voice_identifier
 
 
 def selected_alert_voice(session_state=None) -> str:
-    """Read the current voice choice from session state for every alert path."""
+    """Read the current voice identifier from session state for every alert path."""
     state = st.session_state if session_state is None else session_state
-    return state.get(ALERT_VOICE_SESSION_KEY, DEFAULT_VOICE)
+    selected = canonical_voice_identifier(state.get(ALERT_VOICE_SESSION_KEY, SYSTEM_DEFAULT_VOICE_ID))
+    state[ALERT_VOICE_SESSION_KEY] = selected
+    return selected
 
 
 def persisted_alert_voice(query_params=None, session_state=None) -> str:
-    """Resolve voice choice from URL-persisted state, then session state, then default."""
+    """Resolve voice choice from URL state, preserving unavailable saved preferences."""
     state = st.session_state if session_state is None else session_state
     params = st.query_params if query_params is None else query_params
     raw = params.get(ALERT_VOICE_QUERY_KEY, "") if params is not None else ""
     if isinstance(raw, list):
         raw = raw[0] if raw else ""
-    if raw in VOICE_OPTIONS:
-        state[ALERT_VOICE_SESSION_KEY] = raw
-        return raw
-    return state.get(ALERT_VOICE_SESSION_KEY, DEFAULT_VOICE)
+    if raw:
+        state[ALERT_VOICE_SESSION_KEY] = canonical_voice_identifier(raw)
+        return state[ALERT_VOICE_SESSION_KEY]
+    return selected_alert_voice(state)
 
+
+
+def discovered_voices_from_query(query_params=None, session_state=None) -> list[dict]:
+    """Read browser-discovered voice metadata from URL/localStorage bridge state."""
+    state = st.session_state if session_state is None else session_state
+    params = st.query_params if query_params is None else query_params
+    raw = params.get("walter_voices", "") if params is not None else ""
+    if isinstance(raw, list):
+        raw = raw[0] if raw else ""
+    if raw:
+        try:
+            state[DISCOVERED_VOICES_SESSION_KEY] = normalize_discovered_voices(json.loads(raw))
+        except (TypeError, ValueError, json.JSONDecodeError):
+            state[VOICE_WARNING_SESSION_KEY] = "Walter could not parse the installed voice list from this browser."
+    return state.get(DISCOVERED_VOICES_SESSION_KEY, [])
+
+
+def active_voice_identifier(selected: str, options: list[dict], session_state=None) -> str:
+    """Return selected voice when installed; otherwise keep preference and use System this session."""
+    state = st.session_state if session_state is None else session_state
+    selected = canonical_voice_identifier(selected)
+    if selected == SYSTEM_DEFAULT_VOICE_ID or voice_by_identifier(options, selected):
+        state[ACTIVE_VOICE_SESSION_KEY] = selected
+        state[VOICE_WARNING_SESSION_KEY] = ""
+        return selected
+    state[ACTIVE_VOICE_SESSION_KEY] = SYSTEM_DEFAULT_VOICE_ID
+    state[VOICE_WARNING_SESSION_KEY] = (
+        "The selected voice is not available on this system. Walter kept your preference "
+        "and will use System Default for this session."
+    )
+    return SYSTEM_DEFAULT_VOICE_ID
 
 def alert_voice_for_session(session_state=None) -> str:
-    """Resolve the persisted voice choice into the value passed to play_alert."""
-    return normalize_alert_voice(selected_alert_voice(session_state))
+    """Resolve the active voice for alerts while preserving unavailable preferences."""
+    state = st.session_state if session_state is None else session_state
+    return normalize_alert_voice(state.get(ACTIVE_VOICE_SESSION_KEY, selected_alert_voice(state)))
 
 
 def persist_selected_alert_voice() -> None:
@@ -123,7 +231,10 @@ session_defaults = {
     "last_updated": None,
     "scan_diagnostics": {},
     "scan_in_progress": False,
-    ALERT_VOICE_SESSION_KEY: DEFAULT_VOICE,
+    ALERT_VOICE_SESSION_KEY: SYSTEM_DEFAULT_VOICE_ID,
+    DISCOVERED_VOICES_SESSION_KEY: [],
+    ACTIVE_VOICE_SESSION_KEY: SYSTEM_DEFAULT_VOICE_ID,
+    VOICE_WARNING_SESSION_KEY: "",
     VOICE_CONFIRMATION_SESSION_KEY: "",
 }
 for key, default in session_defaults.items():
@@ -138,35 +249,63 @@ with st.sidebar:
     scanner_version = st.radio("Scanner", ["Scanner V2 (adaptive momentum)", "Scanner V1 (classic screener)"], index=0)
     auto_refresh = st.toggle("Auto live scan every 60 seconds", value=True, disabled=(mode != "Live Alpaca"))
     alerts = st.toggle("Audible watch/advance alerts", value=True)
+    discovered_voices = discovered_voices_from_query()
+    voice_options = voice_options_from_discovered(discovered_voices)
+    current_voice = selected_alert_voice()
+    if current_voice not in voice_ids(voice_options):
+        voice_options.append(voice_option(current_voice, current_voice, "Unavailable"))
     selected_voice = st.selectbox(
         "Alert voice",
-        VOICE_OPTIONS,
+        voice_ids(voice_options),
         key=ALERT_VOICE_SESSION_KEY,
+        format_func=lambda voice_id: voice_label(voice_by_identifier(voice_options, voice_id) or voice_option(voice_id, voice_id, "Unavailable")),
         on_change=persist_selected_alert_voice,
     )
+    active_voice = active_voice_identifier(selected_voice, voice_options)
     st.query_params[ALERT_VOICE_QUERY_KEY] = selected_voice
+    if st.session_state.get(VOICE_WARNING_SESSION_KEY):
+        st.warning(st.session_state[VOICE_WARNING_SESSION_KEY])
     st.components.v1.html(
         f"""<script>
+        const voiceParam = '{ALERT_VOICE_QUERY_KEY}';
         const params = new URLSearchParams(window.parent.location.search);
-        const supportedVoices = new Set({VOICE_OPTIONS!r});
         const selectedVoice = {selected_voice!r};
-        const stored = window.localStorage.getItem('walter_alert_voice');
-        if (!params.get('{ALERT_VOICE_QUERY_KEY}') && supportedVoices.has(stored)) {{
-          params.set('{ALERT_VOICE_QUERY_KEY}', stored);
-          window.parent.location.replace(`${{window.parent.location.pathname}}?${{params}}`);
-        }} else {{
+        const discover = () => {{
+          const voices = ('speechSynthesis' in window) ? window.speechSynthesis.getVoices() : [];
+          const englishVoices = voices
+            .filter(v => (v.lang || '').toLowerCase().startsWith('en') || v.name.toLowerCase().includes('english') || v.voiceURI.toLowerCase().includes('english'))
+            .map(v => ({{name: v.name, identifier: v.voiceURI || v.name, language: v.lang || ''}}));
           window.localStorage.setItem('walter_alert_voice', selectedVoice);
+          window.localStorage.setItem('walter_voices', JSON.stringify(englishVoices));
+          const storedVoice = window.localStorage.getItem('walter_alert_voice');
+          const storedVoices = window.localStorage.getItem('walter_voices') || '[]';
+          let changed = false;
+          if (!params.get(voiceParam) && storedVoice) {{ params.set(voiceParam, storedVoice); changed = true; }}
+          if (params.get('walter_voices') !== storedVoices) {{ params.set('walter_voices', storedVoices); changed = true; }}
+          if (changed) window.parent.location.replace(`${{window.parent.location.pathname}}?${{params}}`);
+        }};
+        if ('speechSynthesis' in window) {{
+          if (window.speechSynthesis.getVoices().length) discover();
+          else window.speechSynthesis.onvoiceschanged = discover;
         }}
         </script>""",
         height=0,
     )
     pending_voice_confirmation = st.session_state.pop(VOICE_CONFIRMATION_SESSION_KEY, "")
     if pending_voice_confirmation:
+        selected_meta = voice_by_identifier(voice_options, pending_voice_confirmation) or voice_option(pending_voice_confirmation, pending_voice_confirmation)
         play_alert(
             "assets/alert.wav",
-            f"Voice changed to {pending_voice_confirmation}.",
-            alert_voice_for_session(),
+            f"Voice changed to {selected_meta['name']}.",
+            normalize_alert_voice(active_voice),
         )
+    with st.expander("Speech Diagnostics", expanded=False):
+        st.write("Speech engine in use: Browser Web Speech API")
+        st.write(f"Operating system: {platform.system()} {platform.release()}".strip())
+        st.write("Installed voices discovered:")
+        st.dataframe(discovered_voices, use_container_width=True, hide_index=True)
+        st.write(f"Active voice identifier: {st.session_state.get(ACTIVE_VOICE_SESSION_KEY, SYSTEM_DEFAULT_VOICE_ID)}")
+        st.write(f"Voice currently selected: {selected_voice}")
     show_pass = st.toggle("Show removed/pass candidates", value=False)
     inspect_symbol = st.text_input("Why did/didn't a symbol appear?", placeholder="BIYA").strip().upper()
     run_scan = st.button("Run live scan", type="primary", use_container_width=True, disabled=(mode != "Live Alpaca"))
