@@ -28,8 +28,14 @@ class MemoryStore:
             for item in records:
                 handle.write(json.dumps(item, default=str) + "\n")
 
-    def enrich_velocity(self, records):
-        previous = self.latest_by_symbol()
+    def enrich_velocity(self, records, previous=None):
+        """Add prior-score velocity fields using an optional preloaded history map.
+
+        Accepting a caller-provided ``previous`` snapshot keeps live-scan
+        enrichment compatible with ``app.run_live`` while preserving the
+        original no-argument Scanner V1 behavior.
+        """
+        previous = previous if previous is not None else self.latest_by_symbol()
         output = []
         for item in records:
             prior = previous.get(item["symbol"], {})
