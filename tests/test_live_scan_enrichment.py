@@ -1,4 +1,5 @@
 import json
+import inspect
 
 from app import run_live
 from mide.memory import MemoryStore
@@ -29,6 +30,10 @@ class DummyClient:
 
 
 def test_run_live_enrichment_path_passes_previous_state(monkeypatch, tmp_path):
+    signature = inspect.signature(MemoryStore.enrich_velocity)
+    assert list(signature.parameters) == ["self", "records", "previous"]
+    assert signature.parameters["previous"].default is None
+
     monkeypatch.setattr("app.get_secret", lambda name, default="": "secret")
     monkeypatch.setattr("app.credential_status", lambda client: "paper")
     monkeypatch.setattr("app.AlpacaClient", lambda *args, **kwargs: DummyClient())
@@ -46,7 +51,7 @@ def test_run_live_enrichment_path_passes_previous_state(monkeypatch, tmp_path):
                 "candidate_status": "Watching",
                 "scanner_v2_score": 55,
                 "volume": 1000,
-                "dollar_volume": 5000,
+                "dollar_volume": 50_000,
                 "rvol_proxy": 2,
                 "vwap_relation": "above",
                 "participation_score": 60,
@@ -79,6 +84,8 @@ def test_run_live_enrichment_path_passes_previous_state(monkeypatch, tmp_path):
     assert records[0]["previous_score"] == 42
     assert records[0]["velocity"] == 13
     assert records[0]["status_changed"] is True
+    assert records[0]["scanner_version"] == "V2"
+    assert records[0]["candidate_status"] in {"Watching", "Emerging", "Strengthening", "Entry Ready"}
     assert records[0]["previous_candidate_status"] == "Watching"
     persisted = [json.loads(line) for line in history_path.read_text().splitlines()]
     assert persisted[-1]["symbol"] == records[0]["symbol"]
