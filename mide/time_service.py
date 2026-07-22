@@ -6,8 +6,10 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 EASTERN_TIMEZONE = ZoneInfo("America/New_York")
-MARKET_OPEN = time(9, 30)
-MARKET_CLOSE = time(16, 0)
+PRE_MARKET_START = time(4, 0)
+LIVE_MARKET_START = time(9, 30)
+AFTER_HOURS_START = time(16, 0)
+MARKET_CLOSED_START = time(20, 0)
 
 
 @dataclass(frozen=True)
@@ -55,14 +57,15 @@ def eastern_time(value: datetime | str | None = None) -> datetime:
 def market_phase_at(value: datetime | None = None) -> str:
     """Return the U.S. market phase from the shared Eastern market clock."""
     now = eastern_time(value)
-    market_open = datetime.combine(now.date(), MARKET_OPEN, EASTERN_TIMEZONE)
-    market_close = datetime.combine(now.date(), MARKET_CLOSE, EASTERN_TIMEZONE)
+    current_time = now.time()
 
-    if now < market_open:
+    if PRE_MARKET_START <= current_time < LIVE_MARKET_START:
         return "Pre-Market"
-    if now < market_close:
-        return "Market Open"
-    return "After Hours"
+    if LIVE_MARKET_START <= current_time < AFTER_HOURS_START:
+        return "Live Market"
+    if AFTER_HOURS_START <= current_time < MARKET_CLOSED_START:
+        return "After-Hours"
+    return "Market Closed"
 
 
 def market_clock(value: datetime | None = None) -> MarketClock:

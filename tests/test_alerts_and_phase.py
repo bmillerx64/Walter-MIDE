@@ -115,7 +115,7 @@ def test_entry_ready_promotions_are_visually_identified():
 def test_market_phase_uses_local_time_against_us_equity_hours():
     pacific = ZoneInfo("America/Los_Angeles")
     assert market_phase(datetime(2026, 7, 22, 6, 0, tzinfo=pacific)) == "Pre-Market"
-    assert market_phase(datetime(2026, 7, 22, 6, 30, tzinfo=pacific)) == "Market Open"
-    assert market_phase(datetime(2026, 7, 22, 12, 59, tzinfo=pacific)) == "Market Open"
-    assert market_phase(datetime(2026, 7, 22, 13, 0, tzinfo=pacific)) == "After Hours"
-    assert market_phase(datetime(2026, 7, 22, 13, 5, tzinfo=pacific)) == "After Hours"
+    assert market_phase(datetime(2026, 7, 22, 6, 30, tzinfo=pacific)) == "Live Market"
+    assert market_phase(datetime(2026, 7, 22, 12, 59, tzinfo=pacific)) == "Live Market"
+    assert market_phase(datetime(2026, 7, 22, 13, 0, tzinfo=pacific)) == "After-Hours"
+    assert market_phase(datetime(2026, 7, 22, 13, 5, tzinfo=pacific)) == "After-Hours"
