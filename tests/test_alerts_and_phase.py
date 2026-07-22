@@ -9,7 +9,7 @@ from app import (
     persisted_alert_voice,
     scan_alert_phrase,
 )
-from mide.ui import promoted_this_scan, state_sections
+from mide.ui import promoted_this_scan, scanner_v2_dashboard_counts, state_sections
 
 
 def test_watch_list_count_is_never_used_for_voice_alerts():
@@ -37,6 +37,27 @@ def test_strengthening_zero_produces_no_watching_announcement():
     ]
     assert scan_alert_phrase(records) == ""
 
+
+def test_strengthening_metric_and_voice_alert_share_dashboard_count():
+    zero_records = [
+        {"symbol": "AAA", "candidate_status": "Watching", "velocity": 12},
+        {"symbol": "BBB", "candidate_status": "Emerging", "velocity": 9},
+    ]
+    assert scanner_v2_dashboard_counts(zero_records)["strengthening"] == 0
+    assert scan_alert_phrase(zero_records) == ""
+
+    five_records = [
+        {"symbol": f"ST{i}", "candidate_status": "Strengthening", "velocity": 0}
+        for i in range(5)
+    ]
+    assert scanner_v2_dashboard_counts(five_records)["strengthening"] == 5
+    assert scan_alert_phrase(five_records) == "Watching 5."
+
+    for records in (zero_records, five_records):
+        dashboard_strengthening = scanner_v2_dashboard_counts(records)["strengthening"]
+        phrase = scan_alert_phrase(records)
+        announced_strengthening = int(phrase.removeprefix("Watching ").removesuffix(".")) if phrase else 0
+        assert announced_strengthening == dashboard_strengthening
 
 def test_entry_ready_suppresses_watching_announcement():
     records = [

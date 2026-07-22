@@ -62,16 +62,27 @@ def play_alert(sound_path: str, phrase: str, voice_name: str = ""):
     )
 
 
-def metric_strip(records):
+def scanner_v2_dashboard_counts(records):
+    """Return Scanner V2 dashboard counts used by visible metrics and alerts."""
     statuses = ["EXCEPTIONAL", "ALERT", "WATCH NOW", "MONITOR", "PASS", "New", "Watching", "Emerging", "Strengthening", "Entry Ready", "Weakening", "Removed"]
-    counts = {k: sum(r["status"] == k for r in records) for k in statuses}
+    counts = {k: sum((r.get("candidate_status") or r.get("status")) == k for r in records) for k in statuses}
+    return {
+        "candidates": len(records),
+        "entry_ready": counts["Entry Ready"] + counts["EXCEPTIONAL"],
+        "watch_list": counts["Watching"] + counts["Emerging"] + counts["Strengthening"] + counts["ALERT"] + counts["WATCH NOW"],
+        "weak_removed": counts["Weakening"] + counts["Removed"] + counts["PASS"],
+        "strengthening": counts["Strengthening"],
+    }
+
+
+def metric_strip(records):
+    metrics = scanner_v2_dashboard_counts(records)
     cols = st.columns(5)
-    cols[0].metric("Candidates", len(records))
-    cols[1].metric("Entry ready", counts["Entry Ready"] + counts["EXCEPTIONAL"])
-    cols[2].metric("Watch list", counts["Watching"] + counts["Emerging"] + counts["Strengthening"] + counts["ALERT"] + counts["WATCH NOW"])
-    cols[3].metric("Weak/removed", counts["Weakening"] + counts["Removed"] + counts["PASS"])
-    rising = sum(r.get("velocity", 0) >= 8 for r in records)
-    cols[4].metric("Strengthening", rising)
+    cols[0].metric("Candidates", metrics["candidates"])
+    cols[1].metric("Entry ready", metrics["entry_ready"])
+    cols[2].metric("Watch list", metrics["watch_list"])
+    cols[3].metric("Weak/removed", metrics["weak_removed"])
+    cols[4].metric("Strengthening", metrics["strengthening"])
 
 
 def radar_table(records):
