@@ -11,7 +11,7 @@ from mide.discovery import build_seed_symbols, prefilter_snapshots, analyze_cand
 from mide.scanner_v2 import apply_scanner_v2
 from mide.memory import MemoryStore
 from mide.demo import demo_records
-from mide.ui import inject_css, metric_strip, radar_table, opportunity_card, play_alert, state_sections
+from mide.ui import inject_css, metric_strip, radar_table, opportunity_card, play_alert, state_sections, scanner_v2_dashboard_counts
 
 VERSION = "1.0.2"
 
@@ -79,12 +79,9 @@ def scan_alert_phrase(records: list[dict]) -> str:
             symbol_text = f"{', '.join(entry_symbols[:-1])} and {entry_symbols[-1]}"
         return f"Entry Ready: {symbol_text}."
 
-    strengthening_count = sum(
-        1 for r in records
-        if (r.get("candidate_status") or r.get("status")) == "Strengthening"
-    )
-    if strengthening_count:
-        return f"Watching {strengthening_count}."
+    dashboard_counts = scanner_v2_dashboard_counts(records)
+    if dashboard_counts["strengthening"]:
+        return f"Watching {dashboard_counts['strengthening']}."
     return ""
 
 st.set_page_config(page_title="Walter MIDE Radar", page_icon="📡", layout="wide")
