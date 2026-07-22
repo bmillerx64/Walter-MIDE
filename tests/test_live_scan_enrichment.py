@@ -1,7 +1,7 @@
 import json
 import inspect
 
-from app import run_live
+from app import ALERT_VOICE_SESSION_KEY, alert_voice_for_session, run_live
 from mide.memory import MemoryStore
 
 
@@ -147,3 +147,19 @@ def test_run_live_scanner_v1_enrichment_path_accepts_previous_state(monkeypatch,
     assert persisted[-1]["symbol"] == records[0]["symbol"]
     assert persisted[-1]["scanner_version"] == "V1"
     assert persisted[-1]["velocity"] == records[0]["velocity"]
+
+
+def test_selected_voice_persists_across_multiple_auto_scan_cycles():
+    session_state = {ALERT_VOICE_SESSION_KEY: "Samantha"}
+
+    manual_scan_voice = alert_voice_for_session(session_state)
+    auto_scan_voices = [alert_voice_for_session(session_state) for _ in range(3)]
+
+    assert manual_scan_voice == "Samantha"
+    assert auto_scan_voices == ["Samantha", "Samantha", "Samantha"]
+
+
+def test_system_default_voice_normalizes_to_browser_default_across_auto_scans():
+    session_state = {ALERT_VOICE_SESSION_KEY: "System default"}
+
+    assert [alert_voice_for_session(session_state) for _ in range(2)] == ["", ""]
