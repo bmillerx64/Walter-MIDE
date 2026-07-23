@@ -103,19 +103,18 @@ def david_available_from_query(query_params=None, session_state=None) -> bool:
 
 
 def active_voice_identifier(selected: str, options: list[dict], session_state=None) -> str:
-    """Return selected voice when installed; otherwise keep preference and use System this session."""
+    """Keep the requested voice active and warn when Walter cannot verify it."""
     state = st.session_state if session_state is None else session_state
     selected = canonical_voice_identifier(selected)
+    state[ACTIVE_VOICE_SESSION_KEY] = selected
     if selected == SYSTEM_DEFAULT_VOICE_ID or voice_by_identifier(options, selected):
-        state[ACTIVE_VOICE_SESSION_KEY] = selected
         state[VOICE_WARNING_SESSION_KEY] = ""
-        return selected
-    state[ACTIVE_VOICE_SESSION_KEY] = SYSTEM_DEFAULT_VOICE_ID
-    state[VOICE_WARNING_SESSION_KEY] = (
-        "The selected voice is not available on this system. Walter kept your preference "
-        "and will use System Default for this session."
-    )
-    return SYSTEM_DEFAULT_VOICE_ID
+    else:
+        state[VOICE_WARNING_SESSION_KEY] = (
+            "The selected voice is not available on this system. Walter kept your preference "
+            "and will not fall back to System Default."
+        )
+    return selected
 
 def alert_voice_for_session(session_state=None) -> str:
     """Resolve the active voice for alerts while preserving unavailable preferences."""
@@ -286,6 +285,35 @@ with st.sidebar:
         st.warning("IEX feed selected. Set ALPACA_FEED='sip' for consolidated data.")
 
 
+def arm_auto_scan_timer(enabled: bool, refresh_seconds: int) -> None:
+    """Install one browser timer that survives Streamlit reruns by rearming itself."""
+    if not enabled:
+        st.components.v1.html(
+            """<script>
+            if (window.parent.__walterAutoScanTimer) {
+              window.parent.clearTimeout(window.parent.__walterAutoScanTimer);
+              window.parent.__walterAutoScanTimer = null;
+            }
+            </script>""",
+            height=0,
+        )
+        return
+
+    delay_ms = max(1, int(refresh_seconds)) * 1000
+    st.components.v1.html(
+        f"""<script>
+        if (window.parent.__walterAutoScanTimer) {{
+          window.parent.clearTimeout(window.parent.__walterAutoScanTimer);
+        }}
+        window.parent.__walterAutoScanTimer = window.parent.setTimeout(() => {{
+          window.parent.__walterAutoScanTimer = null;
+          window.parent.location.reload();
+        }}, {delay_ms});
+        </script>""",
+        height=0,
+    )
+
+
 def run_live(scanner_version: str = "Scanner V2 (adaptive momentum)"):
     api_key = get_secret("ALPACA_API_KEY")
     secret = get_secret("ALPACA_SECRET_KEY")
@@ -413,17 +441,15 @@ if not records:
             st.warning(warning)
     else:
         st.info("Dashboard loaded successfully. Walter will scan automatically in live mode, or press **Run live scan** to begin now.")
-    if mode == "Live Alpaca" and auto_refresh:
-        st.components.v1.html(
-            f"<script>setTimeout(() => window.parent.location.reload(), {settings.refresh_seconds * 1000});</script>",
-            height=0,
-        )
+    arm_auto_scan_timer(mode == "Live Alpaca" and auto_refresh and live_possible, settings.refresh_seconds)
     st.stop()
 
 clock = market_clock()
 st.info(f"{clock.banner_text}. Rankings describe evidence; they are not trade instructions.")
 
 display_records = records if show_pass else [r for r in records if r.get("status") not in {"PASS", "Removed"}]
+
+arm_auto_scan_timer(mode == "Live Alpaca" and auto_refresh and live_possible, settings.refresh_seconds)
 
 if inspect_symbol:
     with st.expander("Diagnostics", expanded=False):

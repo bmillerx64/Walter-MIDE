@@ -71,6 +71,7 @@ def play_alert(sound_path: str, phrase: str, voice_name: str = ""):
                     'beforeend',
                     `<div style="padding:8px 10px;border:1px solid #f59e0b;border-radius:6px;background:#451a03;color:#fffbeb;font-family:sans-serif;font-size:13px">${{warning}}</div>`
                   );
+                  return;
                 }}
               }}
               u.rate = 0.95; u.pitch = 0.9; u.volume = 1.0;
@@ -80,7 +81,7 @@ def play_alert(sound_path: str, phrase: str, voice_name: str = ""):
             else window.speechSynthesis.onvoiceschanged = applyVoice;
           }}
         </script>
-        """, height=0
+        """, height=48 if voice_name else 0
     )
 
 
