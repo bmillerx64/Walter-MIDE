@@ -1,4 +1,4 @@
-from mide.ui import radar_table
+from mide.ui import radar_table, summary_reasons
 
 
 def sample_record(**overrides):
@@ -58,3 +58,42 @@ def test_radar_table_alignment_preserves_other_metric_columns():
     assert table.iloc[0]["Conv."] == 70.0
     assert table.iloc[0]["Status"] == "WATCH NOW"
     assert table.iloc[0]["VWAP"] == "above"
+
+
+def test_summary_reasons_prioritize_entry_ready_state_over_list_order():
+    reasons = summary_reasons(
+        sample_record(
+            status="Entry Ready",
+            candidate_status="Entry Ready",
+            reasons=[
+                "Above 65 EMA",
+                "Higher lows",
+                "Fresh SuperTrend flip",
+                "Above VWAP",
+                "rising RVOL 4.2×",
+            ],
+            supertrend_flip=True,
+            rvol_proxy=4.2,
+        )
+    )
+
+    assert reasons == ["30-second SuperTrend flipped", "Above VWAP", "RVOL 4.2× and increasing"]
+
+
+def test_summary_reasons_prioritize_watch_list_state_over_list_order():
+    reasons = summary_reasons(
+        sample_record(
+            status="WATCH NOW",
+            candidate_status="Watching",
+            reasons=[
+                "SuperTrend supportive",
+                "flat base with activity expanding",
+                "Testing VWAP",
+                "rising RVOL 2.8×",
+            ],
+            vwap_relation="testing",
+            rvol_proxy=2.8,
+        )
+    )
+
+    assert reasons == ["RVOL 2.8× and increasing", "Flat base maintained", "Near VWAP"]
