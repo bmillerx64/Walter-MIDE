@@ -26,13 +26,13 @@ def test_scanner_v2_display_sections_follow_trader_workflow_order():
     display_sections = scanner_v2_display_sections(records)
 
     assert [name for name, _records, _expanded in display_sections] == [
-        "Candidates",
-        "Weak / Removed",
-        "Watch List",
-        "Strengthening",
         "Entry Ready",
+        "Strengthening",
+        "Watch List",
+        "Weak / Removed",
+        "Candidates",
     ]
-    assert [expanded for _name, _records, expanded in display_sections] == [True, False, True, True, True]
+    assert [expanded for _name, _records, expanded in display_sections] == [True, True, True, False, False]
 
 
 def test_scanner_v2_display_sections_do_not_lose_or_duplicate_symbols():

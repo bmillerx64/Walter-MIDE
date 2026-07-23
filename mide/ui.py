@@ -179,7 +179,7 @@ def automatic_watching_sort_key(record):
     )
 
 
-SCANNER_V2_DISPLAY_ORDER = ("Candidates", "Weak / Removed", "Watch List", "Strengthening", "Entry Ready")
+SCANNER_V2_DISPLAY_ORDER = ("Entry Ready", "Strengthening", "Watch List", "Weak / Removed", "Candidates")
 
 
 def state_sections(records):
@@ -209,11 +209,11 @@ def scanner_v2_display_sections(records):
     """Return Scanner V2 sections in the trader review order without changing state logic."""
     sections = state_sections(records)
     return [
-        ("Candidates", sections["Emerging"], True),
-        ("Weak / Removed", sections["Weakening"] + sections["Removed"], False),
-        ("Watch List", sections["Watching"], True),
-        ("Strengthening", sections["Strengthening"], True),
         ("Entry Ready", sections["Entry Ready"], True),
+        ("Strengthening", sections["Strengthening"], True),
+        ("Watch List", sections["Watching"], True),
+        ("Weak / Removed", sections["Weakening"] + sections["Removed"], False),
+        ("Candidates", sections["Emerging"], False),
     ]
 
 
