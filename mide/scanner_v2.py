@@ -15,6 +15,8 @@ STATE_RANK = {
 
 WATCH_STATES = {"Watching", "Emerging", "Strengthening", "Entry Ready"}
 TIMED_STATES = {"Emerging", "Strengthening", "Entry Ready"}
+TRANSITION_HISTORY_STATES = {"Emerging", "Watching", "Strengthening", "Entry Ready"}
+MAX_TRANSITION_HISTORY = 4
 
 
 def _iso_timestamp(value: datetime) -> str:
@@ -38,6 +40,29 @@ def state_elapsed_seconds(record: dict, now: datetime | None = None) -> int:
         entered = entered.replace(tzinfo=timezone.utc)
     return max(0, int((now.astimezone(timezone.utc) - entered.astimezone(timezone.utc)).total_seconds()))
 
+
+def _transition_history(prior: dict, state: str, previous_state: str | None, entered_at: str | None) -> list[dict]:
+    """Return this session's compact state progression for a scanner card."""
+    if state not in TRANSITION_HISTORY_STATES or not entered_at:
+        return []
+    if previous_state not in TRANSITION_HISTORY_STATES:
+        return [{"state": state, "entered_at": entered_at}]
+
+    history = [
+        {"state": item.get("state"), "entered_at": item.get("entered_at")}
+        for item in (prior.get("transition_history") or [])
+        if item.get("state") in TRANSITION_HISTORY_STATES and item.get("entered_at")
+    ]
+    if not history:
+        prior_entered_at = prior.get("state_entered_at")
+        if previous_state and prior_entered_at:
+            history = [{"state": previous_state, "entered_at": prior_entered_at}]
+
+    if history and history[-1]["state"] == state:
+        history[-1] = {"state": state, "entered_at": entered_at}
+    else:
+        history.append({"state": state, "entered_at": entered_at})
+    return history[-MAX_TRANSITION_HISTORY:]
 
 def _num(record: dict, key: str, default: float = 0.0) -> float:
     try:
@@ -204,13 +229,14 @@ def apply_scanner_v2(records: list[dict], previous_by_symbol: dict[str, dict], s
         advanced = STATE_RANK.get(state, 0) > STATE_RANK.get(previous_state, 0)
         entered_watch = state in WATCH_STATES and previous_state not in WATCH_STATES
         prior_entered_at = prior.get("state_entered_at")
-        if state in TIMED_STATES and state == previous_state and prior_entered_at:
+        if state in TRANSITION_HISTORY_STATES and state == previous_state and prior_entered_at:
             state_entered_at = prior_entered_at
-        elif state in TIMED_STATES:
+        elif state in TRANSITION_HISTORY_STATES:
             state_entered_at = scan_time_iso
         else:
             state_entered_at = None
         state_elapsed = state_elapsed_seconds({"state_entered_at": state_entered_at}, scan_time)
+        transition_history = _transition_history(prior, state, previous_state, state_entered_at)
         record.update({
             "scanner_version": "V2",
             "scanner_v2_score": round(score, 1),
@@ -222,6 +248,7 @@ def apply_scanner_v2(records: list[dict], previous_by_symbol: dict[str, dict], s
             "status": state,
             "state_entered_at": state_entered_at,
             "state_elapsed_seconds": state_elapsed,
+            "transition_history": transition_history,
             "reasons": reasons or record.get("reasons", []),
             "cautions": list(dict.fromkeys((record.get("cautions") or []) + cautions)),
         })

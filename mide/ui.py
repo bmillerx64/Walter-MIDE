@@ -38,6 +38,9 @@ def inject_css():
     .score-name {font-size:.67rem;text-transform:uppercase;letter-spacing:.07em;color:#8190a2;font-weight:800}
     .score-value {font-size:1.02rem;font-weight:800;color:#eef4fb;margin-top:2px}
     .freshness {font-size:.76rem;color:#8fa0b3;margin-top:7px}
+    .transition-history {display:flex;align-items:center;flex-wrap:wrap;gap:5px;margin-top:7px;font-size:.78rem;color:#d9e3ef}
+    .transition-node {background:#0c121a;border:1px solid #202c3c;border-radius:999px;padding:2px 7px;font-weight:700}
+    .transition-arrow {color:#8fa0b3}
     </style>
     """, unsafe_allow_html=True)
 
@@ -338,6 +341,43 @@ def format_state_elapsed(record, now: datetime | None = None) -> str:
     return f"{seconds // 60}:{seconds % 60:02d}"
 
 
+def _format_transition_duration(seconds: int) -> str:
+    seconds = max(0, int(seconds))
+    minutes, remainder = divmod(seconds, 60)
+    if minutes:
+        return f"{minutes}m {remainder:02d}s" if remainder else f"{minutes}m"
+    return f"{remainder}s"
+
+
+def _state_display_name(state: str) -> str:
+    return "Watch List" if state == "Watching" else state
+
+
+def _parse_transition_time(value: object) -> datetime | None:
+    try:
+        return datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+
+def transition_history_markup(record: dict) -> str:
+    """Render a compact current-session state progression for a symbol card."""
+    history = record.get("transition_history") or []
+    if len(history) < 2:
+        return ""
+    pieces = []
+    for index, item in enumerate(history):
+        pieces.append(f"<span class='transition-node'>{html.escape(_state_display_name(str(item.get('state', ''))))}</span>")
+        if index + 1 < len(history):
+            next_item = history[index + 1]
+            next_entered = _parse_transition_time(next_item.get("entered_at"))
+            if next_entered is None:
+                continue
+            seconds = state_elapsed_seconds({"state_entered_at": item.get("entered_at")}, next_entered)
+            pieces.append(f"<span class='transition-arrow'>↓ {html.escape(_format_transition_duration(seconds))}</span>")
+    return f"<div class='transition-history'>{''.join(pieces)}</div>"
+
+
 def opportunity_card(r):
     klass = {
         "EXCEPTIONAL": "mide-exceptional",
@@ -383,6 +423,7 @@ def opportunity_card(r):
       {promo_badge}
       {summary_markup}
       <div class="why">{html.escape(reasons)}</div>
+      {transition_history_markup(r)}
       <div class="small"><b>Evidence:</b> Feed volume {r['volume']/1_000_000:.2f}M · Dollar volume ${r['dollar_volume']/1_000_000:.2f}M · RVOL {r.get('rvol_proxy',0):.1f}×</div>
       <div class="freshness">{html.escape(freshness)} · evaluated {html.escape(evaluated)}</div>
       <div class="why-grid">{boxes}</div>
