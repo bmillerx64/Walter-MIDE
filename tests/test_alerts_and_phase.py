@@ -10,7 +10,49 @@ from app import (
     persisted_alert_voice,
     scan_alert_phrase,
 )
-from mide.ui import promoted_this_scan, scanner_v2_dashboard_counts, state_sections
+from mide.ui import promoted_this_scan, scanner_v2_dashboard_counts, scanner_v2_display_sections, state_sections
+
+
+def test_scanner_v2_display_sections_follow_trader_workflow_order():
+    records = [
+        {"symbol": "READY", "candidate_status": "Entry Ready"},
+        {"symbol": "WEAK", "candidate_status": "Weakening"},
+        {"symbol": "WATCH", "candidate_status": "Watching"},
+        {"symbol": "NEW", "candidate_status": "New"},
+        {"symbol": "STRONG", "candidate_status": "Strengthening"},
+        {"symbol": "REMOVED", "candidate_status": "Removed"},
+    ]
+
+    display_sections = scanner_v2_display_sections(records)
+
+    assert [name for name, _records, _expanded in display_sections] == [
+        "Candidates",
+        "Weak / Removed",
+        "Watch List",
+        "Strengthening",
+        "Entry Ready",
+    ]
+    assert [expanded for _name, _records, expanded in display_sections] == [True, False, True, True, True]
+
+
+def test_scanner_v2_display_sections_do_not_lose_or_duplicate_symbols():
+    records = [
+        {"symbol": "READY", "candidate_status": "Entry Ready"},
+        {"symbol": "WEAK", "candidate_status": "Weakening"},
+        {"symbol": "WATCH", "candidate_status": "Watching"},
+        {"symbol": "EMERGE", "candidate_status": "Emerging"},
+        {"symbol": "STRONG", "candidate_status": "Strengthening"},
+        {"symbol": "REMOVED", "candidate_status": "Removed"},
+    ]
+
+    rendered_symbols = [
+        record["symbol"]
+        for _name, section_records, _expanded in scanner_v2_display_sections(records)
+        for record in section_records
+    ]
+
+    assert sorted(rendered_symbols) == sorted(record["symbol"] for record in records)
+    assert len(rendered_symbols) == len(set(rendered_symbols))
 
 
 def test_watch_list_count_is_never_used_for_voice_alerts():
@@ -242,4 +284,4 @@ def test_watching_sort_dropdown_no_longer_appears():
     app_source = Path("app.py").read_text()
 
     assert 'f"Sort {section_name}"' in app_source
-    assert 'section_name == "Watching"' in app_source
+    assert 'section_name == "Watch List"' in app_source

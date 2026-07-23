@@ -11,7 +11,7 @@ from mide.discovery import build_seed_symbols, prefilter_snapshots, analyze_cand
 from mide.scanner_v2 import apply_scanner_v2
 from mide.memory import MemoryStore
 from mide.demo import demo_records
-from mide.ui import inject_css, metric_strip, radar_table, opportunity_card, play_alert, state_sections, scanner_v2_dashboard_counts, automatic_watching_sort_key
+from mide.ui import inject_css, metric_strip, radar_table, opportunity_card, play_alert, scanner_v2_display_sections, scanner_v2_dashboard_counts, automatic_watching_sort_key
 from mide.time_service import format_eastern_time, market_clock, market_phase_at
 
 VERSION = "1.0.2"
@@ -446,34 +446,34 @@ with tabs[0]:
     if not display_records:
         st.success("No stock currently deserves elevated attention.")
     else:
-        for section_name, section_records in state_sections(display_records).items():
+        for section_name, section_records, expanded in scanner_v2_display_sections(display_records):
             if not section_records:
                 continue
-            st.subheader(section_name.upper())
-            if section_name == "Watching":
-                sorted_records = sorted(section_records, key=automatic_watching_sort_key, reverse=True)
-            else:
-                sort_choice = st.selectbox(
-                    f"Sort {section_name}",
-                    ["State priority", "Symbol", "% change", "Dollar volume", "RVOL"],
-                    key=f"sort_{section_name.lower().replace(' ', '_')}",
-                )
-                sorted_records = sorted(
-                    section_records,
-                    key=lambda r: (
-                        str(r.get("symbol", "")) if sort_choice == "Symbol" else
-                        float(r.get("pct_change", 0) or 0) if sort_choice == "% change" else
-                        float(r.get("dollar_volume", 0) or 0) if sort_choice == "Dollar volume" else
-                        float(r.get("rvol_proxy", 0) or 0) if sort_choice == "RVOL" else
-                        str(r.get("state_entered_at") or "")
-                        if sort_choice == "State priority" and r.get("candidate_status") in {"Emerging", "Strengthening", "Entry Ready"} else
-                        float(r.get("scanner_v2_score", r.get("opportunity_score", 0)) or 0)
-                    ),
-                    reverse=(sort_choice != "Symbol"),
-                )
-            for record in sorted_records[:10]:
-                opportunity_card(record)
-            st.dataframe(radar_table(sorted_records), width="stretch", hide_index=True)
+            with st.expander(f"{section_name.upper()} ({len(section_records)})", expanded=expanded):
+                if section_name == "Watch List":
+                    sorted_records = sorted(section_records, key=automatic_watching_sort_key, reverse=True)
+                else:
+                    sort_choice = st.selectbox(
+                        f"Sort {section_name}",
+                        ["State priority", "Symbol", "% change", "Dollar volume", "RVOL"],
+                        key=f"sort_{section_name.lower().replace(' ', '_').replace('/', '_')}",
+                    )
+                    sorted_records = sorted(
+                        section_records,
+                        key=lambda r: (
+                            str(r.get("symbol", "")) if sort_choice == "Symbol" else
+                            float(r.get("pct_change", 0) or 0) if sort_choice == "% change" else
+                            float(r.get("dollar_volume", 0) or 0) if sort_choice == "Dollar volume" else
+                            float(r.get("rvol_proxy", 0) or 0) if sort_choice == "RVOL" else
+                            str(r.get("state_entered_at") or "")
+                            if sort_choice == "State priority" and r.get("candidate_status") in {"Emerging", "Strengthening", "Entry Ready"} else
+                            float(r.get("scanner_v2_score", r.get("opportunity_score", 0)) or 0)
+                        ),
+                        reverse=(sort_choice != "Symbol"),
+                    )
+                for record in sorted_records[:10]:
+                    opportunity_card(record)
+                st.dataframe(radar_table(sorted_records), width="stretch", hide_index=True)
 
 with tabs[1]:
     for record in sorted(records, key=lambda r: abs(r.get("velocity", 0)), reverse=True)[:15]:

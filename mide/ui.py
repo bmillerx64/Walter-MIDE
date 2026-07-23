@@ -94,10 +94,10 @@ def metric_strip(records):
     metrics = scanner_v2_dashboard_counts(records)
     cols = st.columns(5)
     cols[0].metric("Candidates", metrics["candidates"])
-    cols[1].metric("Entry ready", metrics["entry_ready"])
+    cols[1].metric("Weak/removed", metrics["weak_removed"])
     cols[2].metric("Watch list", metrics["watch_list"])
-    cols[3].metric("Weak/removed", metrics["weak_removed"])
-    cols[4].metric("Strengthening", metrics["strengthening"])
+    cols[3].metric("Strengthening", metrics["strengthening"])
+    cols[4].metric("Entry ready", metrics["entry_ready"])
 
 
 def radar_table(records):
@@ -179,6 +179,9 @@ def automatic_watching_sort_key(record):
     )
 
 
+SCANNER_V2_DISPLAY_ORDER = ("Candidates", "Weak / Removed", "Watch List", "Strengthening", "Entry Ready")
+
+
 def state_sections(records):
     """Group Scanner V2 candidates by trading state for dashboard display."""
     sections = {"Entry Ready": [], "Strengthening": [], "Watching": [], "Emerging": [], "Weakening": [], "Removed": []}
@@ -200,6 +203,18 @@ def state_sections(records):
         sections[state].sort(key=lambda r: r.get("state_entered_at") or "", reverse=True)
     sections["Watching"].sort(key=automatic_watching_sort_key, reverse=True)
     return sections
+
+
+def scanner_v2_display_sections(records):
+    """Return Scanner V2 sections in the trader review order without changing state logic."""
+    sections = state_sections(records)
+    return [
+        ("Candidates", sections["Emerging"], True),
+        ("Weak / Removed", sections["Weakening"] + sections["Removed"], False),
+        ("Watch List", sections["Watching"], True),
+        ("Strengthening", sections["Strengthening"], True),
+        ("Entry Ready", sections["Entry Ready"], True),
+    ]
 
 
 def format_state_elapsed(record, now: datetime | None = None) -> str:
