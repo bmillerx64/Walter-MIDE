@@ -573,14 +573,50 @@ def test_scanner_v2_sort_normalizes_mixed_prior_state_entered_values():
 
     from mide.scanner_v2 import apply_scanner_v2
 
-    string_record = {**base(symbol="STRING", vwap_relation="below", supertrend_bullish=False, supertrend_flip=False).__dict__, "opportunity_score": 55, "status": "PASS", "timeframes": {}, "reasons": [], "cautions": []}
-    datetime_record = {**base(symbol="DATETIME", vwap_relation="below", supertrend_bullish=False, supertrend_flip=False).__dict__, "opportunity_score": 55, "status": "PASS", "timeframes": {}, "reasons": [], "cautions": []}
+    string_record = {
+        **base(
+            symbol="STRING",
+            vwap_relation="below",
+            supertrend_bullish=False,
+            supertrend_flip=False,
+        ).__dict__,
+        "opportunity_score": 55,
+        "status": "PASS",
+        "timeframes": {},
+        "reasons": [],
+        "cautions": [],
+    }
+    datetime_record = {
+        **base(
+            symbol="DATETIME",
+            vwap_relation="below",
+            supertrend_bullish=False,
+            supertrend_flip=False,
+        ).__dict__,
+        "opportunity_score": 55,
+        "status": "PASS",
+        "timeframes": {},
+        "reasons": [],
+        "cautions": [],
+    }
     prior = {
-        "STRING": {"candidate_status": "Strengthening", "state_entered_at": "2026-07-23T14:29:00+00:00", "scanner_v2_score": "55"},
-        "DATETIME": {"candidate_status": "Strengthening", "state_entered_at": datetime(2026, 7, 23, 14, 30, tzinfo=timezone.utc), "scanner_v2_score": None},
+        "STRING": {
+            "candidate_status": "Strengthening",
+            "state_entered_at": "2026-07-23T14:29:00+00:00",
+            "scanner_v2_score": "55",
+        },
+        "DATETIME": {
+            "candidate_status": "Strengthening",
+            "state_entered_at": datetime(2026, 7, 23, 14, 30, tzinfo=timezone.utc),
+            "scanner_v2_score": None,
+        },
     }
 
-    ranked = apply_scanner_v2([string_record, datetime_record], prior, scan_time=datetime(2026, 7, 23, 14, 32, tzinfo=timezone.utc))
+    ranked = apply_scanner_v2(
+        [string_record, datetime_record],
+        prior,
+        scan_time=datetime(2026, 7, 23, 14, 32, tzinfo=timezone.utc),
+    )
 
     assert [record["symbol"] for record in ranked] == ["DATETIME", "STRING"]
 
@@ -772,3 +808,99 @@ def test_scanner_v2_exports_strengthening_diagnostics_for_startup_import():
         "strengthening_diagnostics"
         in __import__("mide.scanner_v2", fromlist=["__all__"]).__all__
     )
+
+
+def test_scanner_v2_prioritizes_tmng_vwap_st_volume_strengthening(caplog):
+    from datetime import datetime, timezone
+    import logging
+
+    from mide.scanner_v2 import apply_scanner_v2
+
+    prior = {
+        "TMNG": {
+            "candidate_status": "Emerging",
+            "scanner_v2_score": 54,
+            "volume": 620_000,
+            "dollar_volume": 310_000,
+            "rvol_proxy": 1.7,
+            "volume_acceleration": 1.1,
+            "opportunity_score": 50,
+            "vwap_relation": "below",
+            "supertrend_flip": False,
+        }
+    }
+    tmng = {
+        **base(
+            symbol="TMNG",
+            vwap_relation="testing",
+            vwap_distance_pct=-0.1,
+            supertrend_bullish=True,
+            supertrend_flip=True,
+            ema65_relation="below",
+            higher_lows=False,
+            headline="",
+            catalyst_score=0,
+            news_age_hours=None,
+            pct_change=3.2,
+            volume_acceleration=2.4,
+            rvol_proxy=2.1,
+        ).__dict__,
+        "volume": 780_000,
+        "dollar_volume": 390_000,
+        "opportunity_score": 52,
+        "participation_score": 45,
+        "market_dominance_score": 20,
+        "status": "MONITOR",
+        "timeframes": {
+            "1m": {"above_vwap": True, "supertrend": True},
+            "3m": {"above_vwap": True, "supertrend": True},
+        },
+        "reasons": [],
+        "cautions": [],
+    }
+    secondary = {
+        **base(
+            symbol="BIGV",
+            vwap_relation="below",
+            vwap_distance_pct=-4.0,
+            supertrend_bullish=False,
+            supertrend_flip=False,
+            pct_change=48,
+            volume_acceleration=1.3,
+            rvol_proxy=9.0,
+        ).__dict__,
+        "volume": 60_000_000,
+        "dollar_volume": 30_000_000,
+        "opportunity_score": 95,
+        "participation_score": 98,
+        "market_dominance_score": 99,
+        "status": "ALERT",
+        "timeframes": {},
+        "reasons": [],
+        "cautions": [],
+    }
+
+    with caplog.at_level(logging.INFO, logger="mide.scanner_v2"):
+        ranked = apply_scanner_v2(
+            [secondary, tmng],
+            prior,
+            scan_time=datetime(2026, 7, 23, 14, 35, tzinfo=timezone.utc),
+        )
+
+    tmng_ranked = next(record for record in ranked if record["symbol"] == "TMNG")
+    secondary_ranked = next(record for record in ranked if record["symbol"] == "BIGV")
+
+    assert tmng_ranked["candidate_status"] == "Strengthening"
+    assert tmng_ranked["scanner_v2_score"] > secondary_ranked["scanner_v2_score"]
+    assert tmng_ranked["strengthening_promotion_diagnostic"] == {
+        "vwap_relationship": "testing",
+        "supertrend_30s_state": "flipped green",
+        "supertrend_1m_state": "green",
+        "supertrend_3m_state": "green",
+        "volume_acceleration": 2.4,
+        "final_weighted_score": tmng_ranked["scanner_v2_score"],
+    }
+    assert "Strengthening promotion TMNG" in caplog.text
+    assert "VWAP=testing" in caplog.text
+    assert "30s ST=flipped green" in caplog.text
+    assert "volume acceleration=2.4" in caplog.text
