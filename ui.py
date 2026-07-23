@@ -78,7 +78,6 @@ def radar_table(records):
             "Tier": r.get("participation_tier", ""),
             "Opp.": r["opportunity_score"],
             "Conv.": r["conviction_score"],
-            "Velocity": r.get("velocity", 0),
             "Status": r["status"],
             "VWAP": r["vwap_relation"],
             "ST": "Bull" if r["supertrend_bullish"] else "Bear",
