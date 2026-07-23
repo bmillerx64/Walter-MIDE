@@ -167,6 +167,19 @@ def promoted_this_scan(r):
     return bool(r.get("advanced_state") or r.get("entered_watchlist"))
 
 
+def _state_entered_sort_value(record):
+    return record.get("state_entered_at") or record.get("timestamp") or ""
+
+
+def automatic_watching_sort_key(record):
+    """Return Walter's automatic live-trading priority for Watching symbols."""
+    return (
+        _state_entered_sort_value(record),
+        float(record.get("scanner_v2_score", record.get("opportunity_score", 0)) or 0),
+        float(record.get("dollar_volume", 0) or 0),
+    )
+
+
 def state_sections(records):
     """Group Scanner V2 candidates by trading state for dashboard display."""
     sections = {"Entry Ready": [], "Strengthening": [], "Watching": [], "Emerging": [], "Weakening": [], "Removed": []}
@@ -186,6 +199,7 @@ def state_sections(records):
             sections["Removed"].append(record)
     for state in ("Entry Ready", "Strengthening", "Emerging"):
         sections[state].sort(key=lambda r: r.get("state_entered_at") or "", reverse=True)
+    sections["Watching"].sort(key=automatic_watching_sort_key, reverse=True)
     return sections
 
 
