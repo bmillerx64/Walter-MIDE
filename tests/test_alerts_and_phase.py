@@ -10,7 +10,7 @@ from app import (
     persisted_alert_voice,
     scan_alert_phrase,
 )
-from mide.ui import promoted_this_scan, scanner_v2_dashboard_counts, scanner_v2_display_sections, state_sections
+from mide.ui import promoted_this_scan, scanner_v2_dashboard_counts, scanner_v2_display_sections, state_sections, transition_history_markup
 
 
 def test_scanner_v2_display_sections_follow_trader_workflow_order():
@@ -285,3 +285,19 @@ def test_watching_sort_dropdown_no_longer_appears():
 
     assert 'f"Sort {section_name}"' in app_source
     assert 'section_name == "Watch List"' in app_source
+
+
+def test_transition_history_markup_stays_compact_under_prioritized_reasons():
+    markup = transition_history_markup({
+        "transition_history": [
+            {"state": "Emerging", "entered_at": "2026-07-23T14:30:00+00:00"},
+            {"state": "Watching", "entered_at": "2026-07-23T14:31:42+00:00"},
+            {"state": "Strengthening", "entered_at": "2026-07-23T14:32:30+00:00"},
+        ]
+    })
+
+    assert "transition-history" in markup
+    assert "Emerging" in markup
+    assert "Watch List" in markup
+    assert "↓ 1m 42s" in markup
+    assert "↓ 48s" in markup
