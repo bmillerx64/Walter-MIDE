@@ -11,7 +11,16 @@ from mide.discovery import build_seed_symbols, prefilter_snapshots, analyze_cand
 from mide.scanner_v2 import apply_scanner_v2, strengthening_diagnostics
 from mide.memory import MemoryStore
 from mide.demo import demo_records
-from mide.ui import inject_css, metric_strip, radar_table, opportunity_card, play_alert, scanner_v2_display_sections, scanner_v2_dashboard_counts, automatic_watching_sort_key
+from mide.ui import (
+    inject_css,
+    metric_strip,
+    radar_table,
+    opportunity_card,
+    play_alert,
+    scanner_v2_display_sections,
+    scanner_v2_dashboard_counts,
+    automatic_watching_sort_key,
+)
 from mide.time_service import format_eastern_time, market_clock, market_phase_at
 
 VERSION = "1.0.2"
@@ -60,20 +69,31 @@ def voice_ids(options: list[dict]) -> list[str]:
 def voice_by_identifier(options: list[dict], identifier: str) -> dict | None:
     return next((voice for voice in options if voice["identifier"] == identifier), None)
 
+
 def normalize_alert_voice(voice_identifier: str) -> str:
     """Return the speech-synthesis voice identifier used by every alert path."""
-    return "" if voice_identifier in {DEFAULT_VOICE, SYSTEM_DEFAULT_VOICE_ID, ""} else voice_identifier
+    return (
+        ""
+        if voice_identifier in {DEFAULT_VOICE, SYSTEM_DEFAULT_VOICE_ID, ""}
+        else voice_identifier
+    )
 
 
 def canonical_voice_identifier(voice_identifier: str) -> str:
     """Normalize legacy and empty voice values to the System Default identifier."""
-    return SYSTEM_DEFAULT_VOICE_ID if voice_identifier in {"", "System", DEFAULT_VOICE} else voice_identifier
+    return (
+        SYSTEM_DEFAULT_VOICE_ID
+        if voice_identifier in {"", "System", DEFAULT_VOICE}
+        else voice_identifier
+    )
 
 
 def selected_alert_voice(session_state=None) -> str:
     """Read the current voice identifier from session state without mutating widgets."""
     state = st.session_state if session_state is None else session_state
-    return canonical_voice_identifier(state.get(ALERT_VOICE_SESSION_KEY, SYSTEM_DEFAULT_VOICE_ID))
+    return canonical_voice_identifier(
+        state.get(ALERT_VOICE_SESSION_KEY, SYSTEM_DEFAULT_VOICE_ID)
+    )
 
 
 def persisted_alert_voice(query_params=None, session_state=None) -> str:
@@ -89,7 +109,6 @@ def persisted_alert_voice(query_params=None, session_state=None) -> str:
     return selected_alert_voice(state)
 
 
-
 def david_available_from_query(query_params=None, session_state=None) -> bool:
     """Read whether the browser can actually select David."""
     state = st.session_state if session_state is None else session_state
@@ -102,7 +121,9 @@ def david_available_from_query(query_params=None, session_state=None) -> bool:
     return bool(state.get(DAVID_AVAILABLE_SESSION_KEY, False))
 
 
-def active_voice_identifier(selected: str, options: list[dict], session_state=None) -> str:
+def active_voice_identifier(
+    selected: str, options: list[dict], session_state=None
+) -> str:
     """Keep the requested voice active and warn when Walter cannot verify it."""
     state = st.session_state if session_state is None else session_state
     selected = canonical_voice_identifier(selected)
@@ -116,15 +137,20 @@ def active_voice_identifier(selected: str, options: list[dict], session_state=No
         )
     return selected
 
+
 def alert_voice_for_session(session_state=None) -> str:
     """Resolve the active voice for alerts while preserving unavailable preferences."""
     state = st.session_state if session_state is None else session_state
-    return normalize_alert_voice(state.get(ACTIVE_VOICE_SESSION_KEY, selected_alert_voice(state)))
+    return normalize_alert_voice(
+        state.get(ACTIVE_VOICE_SESSION_KEY, selected_alert_voice(state))
+    )
 
 
 def persist_selected_alert_voice() -> None:
     """Persist the selected widget voice and queue its audible confirmation."""
-    selected = canonical_voice_identifier(st.session_state.get(ALERT_VOICE_WIDGET_KEY, SYSTEM_DEFAULT_VOICE_ID))
+    selected = canonical_voice_identifier(
+        st.session_state.get(ALERT_VOICE_WIDGET_KEY, SYSTEM_DEFAULT_VOICE_ID)
+    )
     st.session_state[ALERT_VOICE_SESSION_KEY] = selected
     st.query_params[ALERT_VOICE_QUERY_KEY] = selected
     st.session_state[VOICE_CONFIRMATION_SESSION_KEY] = selected
@@ -138,8 +164,10 @@ def market_phase(now: datetime | None = None) -> str:
 def scan_alert_phrase(records: list[dict]) -> str:
     """Build the per-scan audible alert, prioritizing actionable Entry Ready symbols."""
     entry_symbols = [
-        r.get("symbol") for r in records
-        if r.get("candidate_status") == "Entry Ready" or r.get("status") == "Entry Ready"
+        r.get("symbol")
+        for r in records
+        if r.get("candidate_status") == "Entry Ready"
+        or r.get("status") == "Entry Ready"
     ]
     entry_symbols = [str(s).upper() for s in entry_symbols if s]
     if entry_symbols:
@@ -153,6 +181,7 @@ def scan_alert_phrase(records: list[dict]) -> str:
     if dashboard_counts["strengthening"]:
         return f"Watching {dashboard_counts['strengthening']}."
     return ""
+
 
 st.set_page_config(page_title="Walter MIDE Radar", page_icon="📡", layout="wide")
 inject_css()
@@ -186,7 +215,9 @@ settings = Settings.from_mapping(secrets_mapping())
 
 st.title("📡 Walter · MIDE Radar")
 st.caption(f"Market Intelligence Decision Engine · $0.02–$5.00 · v{VERSION}")
-st.success("Walter is online. Live mode scans automatically every 60 seconds and still supports manual scans.")
+st.success(
+    "Walter is online. Live mode scans automatically every 60 seconds and still supports manual scans."
+)
 
 session_defaults = {
     "records": [],
@@ -208,16 +239,30 @@ persisted_alert_voice()
 
 with st.sidebar:
     st.header("Control")
-    live_possible = bool(get_secret("ALPACA_API_KEY")) and bool(get_secret("ALPACA_SECRET_KEY"))
-    mode = st.radio("Data mode", ["Live Alpaca", "Demo"], index=0 if live_possible else 1)
-    scanner_version = st.radio("Scanner", ["Scanner V2 (adaptive momentum)", "Scanner V1 (classic screener)"], index=0)
-    auto_refresh = st.toggle("Auto live scan every 60 seconds", value=True, disabled=(mode != "Live Alpaca"))
+    live_possible = bool(get_secret("ALPACA_API_KEY")) and bool(
+        get_secret("ALPACA_SECRET_KEY")
+    )
+    mode = st.radio(
+        "Data mode", ["Live Alpaca", "Demo"], index=0 if live_possible else 1
+    )
+    scanner_version = st.radio(
+        "Scanner",
+        ["Scanner V2 (adaptive momentum)", "Scanner V1 (classic screener)"],
+        index=0,
+    )
+    auto_refresh = st.toggle(
+        "Auto live scan every 60 seconds", value=True, disabled=(mode != "Live Alpaca")
+    )
     alerts = st.toggle("Audible watch/advance alerts", value=True)
     david_available = david_available_from_query()
     voice_options = stable_voice_options(david_available)
     available_voice_ids = voice_ids(voice_options)
     requested_voice = selected_alert_voice()
-    widget_voice = requested_voice if requested_voice in available_voice_ids else SYSTEM_DEFAULT_VOICE_ID
+    widget_voice = (
+        requested_voice
+        if requested_voice in available_voice_ids
+        else SYSTEM_DEFAULT_VOICE_ID
+    )
     if st.session_state.get(ALERT_VOICE_WIDGET_KEY) != widget_voice:
         st.session_state[ALERT_VOICE_WIDGET_KEY] = widget_voice
     selected_voice = st.selectbox(
@@ -225,10 +270,19 @@ with st.sidebar:
         available_voice_ids,
         index=available_voice_ids.index(widget_voice),
         key=ALERT_VOICE_WIDGET_KEY,
-        format_func=lambda voice_id: voice_label(voice_by_identifier(voice_options, voice_id) or system_voice_option()),
+        format_func=lambda voice_id: voice_label(
+            voice_by_identifier(voice_options, voice_id) or system_voice_option()
+        ),
         on_change=persist_selected_alert_voice,
     )
-    active_voice = active_voice_identifier(requested_voice if requested_voice not in available_voice_ids else selected_voice, voice_options)
+    active_voice = active_voice_identifier(
+        (
+            requested_voice
+            if requested_voice not in available_voice_ids
+            else selected_voice
+        ),
+        voice_options,
+    )
     st.query_params[ALERT_VOICE_QUERY_KEY] = selected_voice
     if st.session_state.get(VOICE_WARNING_SESSION_KEY):
         st.warning(st.session_state[VOICE_WARNING_SESSION_KEY])
@@ -256,9 +310,13 @@ with st.sidebar:
         </script>""",
         height=0,
     )
-    pending_voice_confirmation = st.session_state.pop(VOICE_CONFIRMATION_SESSION_KEY, "")
+    pending_voice_confirmation = st.session_state.pop(
+        VOICE_CONFIRMATION_SESSION_KEY, ""
+    )
     if pending_voice_confirmation:
-        selected_meta = voice_by_identifier(voice_options, pending_voice_confirmation) or named_voice_option(pending_voice_confirmation)
+        selected_meta = voice_by_identifier(
+            voice_options, pending_voice_confirmation
+        ) or named_voice_option(pending_voice_confirmation)
         play_alert(
             "assets/alert.wav",
             f"Voice changed to {selected_meta['name']}.",
@@ -267,16 +325,27 @@ with st.sidebar:
     show_pass = False
     inspect_symbol = ""
     with st.expander("Diagnostics", expanded=False):
-        st.caption("Optional troubleshooting tools are hidden here to keep the trading view focused.")
+        st.caption(
+            "Optional troubleshooting tools are hidden here to keep the trading view focused."
+        )
         show_pass = st.toggle("Show removed/pass candidates", value=False)
-        inspect_symbol = st.text_input("Symbol lookup", placeholder="BIYA").strip().upper()
+        inspect_symbol = (
+            st.text_input("Symbol lookup", placeholder="BIYA").strip().upper()
+        )
         st.divider()
         st.write("Speech engine in use: Browser Web Speech API")
         st.write(f"Operating system: {platform.system()} {platform.release()}".strip())
         st.write(f"David available: {david_available}")
-        st.write(f"Active voice identifier: {st.session_state.get(ACTIVE_VOICE_SESSION_KEY, SYSTEM_DEFAULT_VOICE_ID)}")
+        st.write(
+            f"Active voice identifier: {st.session_state.get(ACTIVE_VOICE_SESSION_KEY, SYSTEM_DEFAULT_VOICE_ID)}"
+        )
         st.write(f"Voice currently selected: {selected_voice}")
-    run_scan = st.button("Run live scan", type="primary", use_container_width=True, disabled=(mode != "Live Alpaca"))
+    run_scan = st.button(
+        "Run live scan",
+        type="primary",
+        use_container_width=True,
+        disabled=(mode != "Live Alpaca"),
+    )
     use_demo = st.button("Load demo data", use_container_width=True)
     st.divider()
     if settings.feed == "sip":
@@ -333,7 +402,9 @@ def run_live(scanner_version: str = "Scanner V2 (adaptive momentum)"):
     log("Stage 1/5: fetching news")
     status.write("1/5 Fetching recent news")
     try:
-        news_items = client.news(datetime.now(timezone.utc) - timedelta(days=3), limit=200)
+        news_items = client.news(
+            datetime.now(timezone.utc) - timedelta(days=3), limit=200
+        )
     except Exception as exc:
         client.warnings.append(f"News unavailable; scan continued: {exc}")
         news_items = []
@@ -354,13 +425,15 @@ def run_live(scanner_version: str = "Scanner V2 (adaptive momentum)"):
     snapshots = {}
     total = max(1, len(seeds))
     for i in range(0, len(seeds), settings.batch_size):
-        batch = seeds[i:i + settings.batch_size]
+        batch = seeds[i : i + settings.batch_size]
         try:
             snapshots.update(client.snapshots(batch))
         except Exception as exc:
             client.warnings.append(f"Snapshot batch skipped: {exc}")
         done = min(i + len(batch), len(seeds))
-        progress.progress(0.24 + 0.36 * (done / total), text=f"Snapshots {done}/{len(seeds)}")
+        progress.progress(
+            0.24 + 0.36 * (done / total), text=f"Snapshots {done}/{len(seeds)}"
+        )
 
     log("Stage 4/5: prefiltering")
     status.write("4/5 Filtering the strongest candidates")
@@ -382,9 +455,19 @@ def run_live(scanner_version: str = "Scanner V2 (adaptive momentum)"):
             record.setdefault("candidate_status", record.get("status", "PASS"))
     store.append(records)
     progress.progress(1.0, text="Scan complete")
-    status.update(label=f"Scan complete: {len(records)} ranked records", state="complete", expanded=False)
+    status.update(
+        label=f"Scan complete: {len(records)} ranked records",
+        state="complete",
+        expanded=False,
+    )
     log(f"Complete: {len(records)} ranked records")
-    return records, len(seeds), len(candidates), list(client.warnings), dict(client.diagnostics)
+    return (
+        records,
+        len(seeds),
+        len(candidates),
+        list(client.warnings),
+        dict(client.diagnostics),
+    )
 
 
 should_scan = False
@@ -402,7 +485,10 @@ else:
         and not st.session_state.scan_in_progress
         and (
             st.session_state.last_updated is None
-            or (datetime.now().astimezone() - st.session_state.last_updated).total_seconds() >= settings.refresh_seconds
+            or (
+                datetime.now().astimezone() - st.session_state.last_updated
+            ).total_seconds()
+            >= settings.refresh_seconds
         )
     )
     should_scan = run_scan or due
@@ -410,18 +496,20 @@ else:
 if mode == "Live Alpaca" and should_scan:
     try:
         st.session_state.scan_in_progress = True
-        records, universe_count, prefiltered, warnings, diagnostics = run_live(scanner_version)
-        st.session_state.records = records
-        st.session_state.source_label = (
-            f"Live {settings.feed.upper()} · {universe_count} symbols sampled · {prefiltered} prefiltered"
+        records, universe_count, prefiltered, warnings, diagnostics = run_live(
+            scanner_version
         )
+        st.session_state.records = records
+        st.session_state.source_label = f"Live {settings.feed.upper()} · {universe_count} symbols sampled · {prefiltered} prefiltered"
         st.session_state.api_warnings = warnings
         st.session_state.scan_diagnostics = diagnostics
         st.session_state.last_updated = datetime.now().astimezone()
     except Exception as exc:
         log(f"Scan failed: {type(exc).__name__}: {exc}")
         st.error(f"Live scan could not complete: {exc}")
-        st.info("Walter remains online. Correct the issue and press Run live scan again.")
+        st.info(
+            "Walter remains online. Correct the issue and press Run live scan again."
+        )
     finally:
         st.session_state.scan_in_progress = False
 
@@ -441,48 +529,84 @@ if not records:
         for warning in api_warnings:
             st.warning(warning)
     else:
-        st.info("Dashboard loaded successfully. Walter will scan automatically in live mode, or press **Run live scan** to begin now.")
-    arm_auto_scan_timer(mode == "Live Alpaca" and auto_refresh and live_possible, settings.refresh_seconds)
+        st.info(
+            "Dashboard loaded successfully. Walter will scan automatically in live mode, or press **Run live scan** to begin now."
+        )
+    arm_auto_scan_timer(
+        mode == "Live Alpaca" and auto_refresh and live_possible,
+        settings.refresh_seconds,
+    )
     st.stop()
 
 clock = market_clock()
-st.info(f"{clock.banner_text}. Rankings describe evidence; they are not trade instructions.")
+st.info(
+    f"{clock.banner_text}. Rankings describe evidence; they are not trade instructions."
+)
 
-display_records = records if show_pass else [r for r in records if r.get("status") not in {"PASS", "Removed"}]
+display_records = (
+    records
+    if show_pass
+    else [r for r in records if r.get("status") not in {"PASS", "Removed"}]
+)
 
-arm_auto_scan_timer(mode == "Live Alpaca" and auto_refresh and live_possible, settings.refresh_seconds)
+arm_auto_scan_timer(
+    mode == "Live Alpaca" and auto_refresh and live_possible, settings.refresh_seconds
+)
 
 with st.expander("Diagnostics", expanded=False):
     if inspect_symbol:
         st.subheader(f"Symbol lookup: {inspect_symbol}")
         match = next((r for r in records if r.get("symbol") == inspect_symbol), None)
         if match:
-            st.success(f"{inspect_symbol} was analyzed and ranked {match.get('status', 'UNKNOWN')}.")
-            st.write("; ".join(match.get("reasons", [])) or "No elevated evidence recorded.")
-            st.write("Cautions: " + ("; ".join(match.get("cautions", [])) or "None recorded."))
+            st.success(
+                f"{inspect_symbol} was analyzed and ranked {match.get('status', 'UNKNOWN')}."
+            )
+            st.write(
+                "; ".join(match.get("reasons", [])) or "No elevated evidence recorded."
+            )
+            st.write(
+                "Cautions: "
+                + ("; ".join(match.get("cautions", [])) or "None recorded.")
+            )
         else:
             st.warning(f"{inspect_symbol} is not in the current ranked set.")
 
-    strengthening = scan_diagnostics.get("strengthening") if isinstance(scan_diagnostics, dict) else None
+    strengthening = (
+        scan_diagnostics.get("strengthening")
+        if isinstance(scan_diagnostics, dict)
+        else None
+    )
     if strengthening:
         st.subheader("Strengthening qualification")
         c1, c2 = st.columns(2)
-        c1.metric("Candidates discovered", strengthening.get("candidates_discovered", 0))
+        c1.metric(
+            "Candidates discovered", strengthening.get("candidates_discovered", 0)
+        )
         c2.metric("Candidates rejected", strengthening.get("candidates_rejected", 0))
         st.write("Rejected by first rule")
         st.json(strengthening.get("rejected_by_rule", {}))
         for decision in strengthening.get("decisions", []):
             symbol = decision.get("symbol", "UNKNOWN")
-            with st.expander(f"{symbol} — {decision.get('status', 'Strengthening decision')}", expanded=False):
+            with st.expander(
+                f"{symbol} — {decision.get('status', 'Strengthening decision')}",
+                expanded=False,
+            ):
                 st.markdown(f"**{symbol}**")
                 st.markdown(decision.get("status", "Strengthening decision"))
                 for check in decision.get("checks", []):
                     mark = "✓" if check.get("passed") else "✗"
                     st.write(f"{mark} {check.get('rule')}")
-                    if not check.get("passed") and decision.get("first_rejection_rule") == check.get("rule"):
+                    if not check.get("passed") and decision.get(
+                        "first_rejection_rule"
+                    ) == check.get("rule"):
                         break
                 if decision.get("first_rejection_rule"):
-                    st.caption(f"First rejection rule: {decision.get('first_rejection_rule')}")
+                    st.caption(
+                        f"First rejection rule: {decision.get('first_rejection_rule')}"
+                    )
+                if decision.get("volume_pace"):
+                    st.write("Volume Pace Intelligence diagnostics")
+                    st.json(decision.get("volume_pace"))
                 if decision.get("vwap_gate"):
                     st.write("VWAP gate diagnostics")
                     st.json(decision.get("vwap_gate"))
@@ -499,37 +623,77 @@ with tabs[0]:
     if not display_records:
         st.success("No stock currently deserves elevated attention.")
     else:
-        for section_name, section_records, expanded in scanner_v2_display_sections(display_records):
+        for section_name, section_records, expanded in scanner_v2_display_sections(
+            display_records
+        ):
             if not section_records:
                 continue
-            with st.expander(f"{section_name.upper()} ({len(section_records)})", expanded=expanded):
+            with st.expander(
+                f"{section_name.upper()} ({len(section_records)})", expanded=expanded
+            ):
                 if section_name == "Watch List":
-                    sorted_records = sorted(section_records, key=automatic_watching_sort_key, reverse=True)
+                    sorted_records = sorted(
+                        section_records, key=automatic_watching_sort_key, reverse=True
+                    )
                 else:
                     sort_choice = st.selectbox(
                         f"Sort {section_name}",
-                        ["State priority", "Symbol", "% change", "Dollar volume", "RVOL"],
+                        [
+                            "State priority",
+                            "Symbol",
+                            "% change",
+                            "Dollar volume",
+                            "RVOL",
+                        ],
                         key=f"sort_{section_name.lower().replace(' ', '_').replace('/', '_')}",
                     )
                     sorted_records = sorted(
                         section_records,
                         key=lambda r: (
-                            str(r.get("symbol", "")) if sort_choice == "Symbol" else
-                            float(r.get("pct_change", 0) or 0) if sort_choice == "% change" else
-                            float(r.get("dollar_volume", 0) or 0) if sort_choice == "Dollar volume" else
-                            float(r.get("rvol_proxy", 0) or 0) if sort_choice == "RVOL" else
-                            str(r.get("state_entered_at") or "")
-                            if sort_choice == "State priority" and r.get("candidate_status") in {"Emerging", "Strengthening", "Entry Ready"} else
-                            float(r.get("scanner_v2_score", r.get("opportunity_score", 0)) or 0)
+                            str(r.get("symbol", ""))
+                            if sort_choice == "Symbol"
+                            else (
+                                float(r.get("pct_change", 0) or 0)
+                                if sort_choice == "% change"
+                                else (
+                                    float(r.get("dollar_volume", 0) or 0)
+                                    if sort_choice == "Dollar volume"
+                                    else (
+                                        float(r.get("rvol_proxy", 0) or 0)
+                                        if sort_choice == "RVOL"
+                                        else (
+                                            str(r.get("state_entered_at") or "")
+                                            if sort_choice == "State priority"
+                                            and r.get("candidate_status")
+                                            in {
+                                                "Emerging",
+                                                "Strengthening",
+                                                "Entry Ready",
+                                            }
+                                            else float(
+                                                r.get(
+                                                    "scanner_v2_score",
+                                                    r.get("opportunity_score", 0),
+                                                )
+                                                or 0
+                                            )
+                                        )
+                                    )
+                                )
+                            )
                         ),
                         reverse=(sort_choice != "Symbol"),
                     )
                 for record in sorted_records[:10]:
                     opportunity_card(record)
-                st.dataframe(radar_table(sorted_records), width="stretch", hide_index=True)
+                st.dataframe(
+                    radar_table(sorted_records), width="stretch", hide_index=True
+                )
 
 with tabs[1]:
-    for record in sorted(records, key=lambda r: abs(r.get("velocity", 0)), reverse=True)[:15]:
+    for record in sorted(
+        records, key=lambda r: abs(r.get("velocity", 0)), reverse=True
+    )[:15]:
         direction = "strengthened" if record.get("velocity", 0) > 0 else "weakened"
         st.markdown(
             f"**{record['symbol']}** {direction}: "
@@ -541,7 +705,10 @@ with tabs[2]:
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("Configured feed", settings.feed.upper())
     c2.metric("Ranked records", len(records))
-    c3.metric("Nonzero dominance", sum(r.get("market_dominance_score", 0) > 0 for r in records))
+    c3.metric(
+        "Nonzero dominance",
+        sum(r.get("market_dominance_score", 0) > 0 for r in records),
+    )
     c4.metric("API warnings", len(api_warnings))
     for warning in api_warnings:
         st.warning(warning)

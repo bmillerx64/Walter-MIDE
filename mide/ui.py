@@ -12,7 +12,8 @@ from mide.time_service import format_eastern_time
 
 
 def inject_css():
-    st.markdown("""
+    st.markdown(
+        """
     <style>
     .block-container {padding-top: 1.1rem; max-width: 1450px;}
     .mide-card {background:#111821;border:1px solid #253143;border-radius:12px;
@@ -43,7 +44,9 @@ def inject_css():
     .transition-node {background:#0c121a;border:1px solid #202c3c;border-radius:999px;padding:2px 7px;font-weight:700}
     .transition-arrow {color:#8fa0b3}
     </style>
-    """, unsafe_allow_html=True)
+    """,
+        unsafe_allow_html=True,
+    )
 
 
 def play_alert(sound_path: str, phrase: str, voice_name: str = ""):
@@ -82,18 +85,39 @@ def play_alert(sound_path: str, phrase: str, voice_name: str = ""):
             else window.speechSynthesis.onvoiceschanged = applyVoice;
           }}
         </script>
-        """, height=48 if voice_name else 0
+        """,
+        height=48 if voice_name else 0,
     )
 
 
 def scanner_v2_dashboard_counts(records):
     """Return Scanner V2 dashboard counts used by visible metrics and alerts."""
-    statuses = ["EXCEPTIONAL", "ALERT", "WATCH NOW", "MONITOR", "PASS", "New", "Watching", "Emerging", "Strengthening", "Entry Ready", "Weakening", "Removed"]
-    counts = {k: sum((r.get("candidate_status") or r.get("status")) == k for r in records) for k in statuses}
+    statuses = [
+        "EXCEPTIONAL",
+        "ALERT",
+        "WATCH NOW",
+        "MONITOR",
+        "PASS",
+        "New",
+        "Watching",
+        "Emerging",
+        "Strengthening",
+        "Entry Ready",
+        "Weakening",
+        "Removed",
+    ]
+    counts = {
+        k: sum((r.get("candidate_status") or r.get("status")) == k for r in records)
+        for k in statuses
+    }
     return {
         "candidates": len(records),
         "entry_ready": counts["Entry Ready"] + counts["EXCEPTIONAL"],
-        "watch_list": counts["Watching"] + counts["Emerging"] + counts["Strengthening"] + counts["ALERT"] + counts["WATCH NOW"],
+        "watch_list": counts["Watching"]
+        + counts["Emerging"]
+        + counts["Strengthening"]
+        + counts["ALERT"]
+        + counts["WATCH NOW"],
         "weak_removed": counts["Weakening"] + counts["Removed"] + counts["PASS"],
         "strengthening": counts["Strengthening"],
     }
@@ -112,25 +136,27 @@ def metric_strip(records):
 def radar_table(records):
     rows = []
     for r in records:
-        rows.append({
-            "Symbol": r["symbol"],
-            "Price": r["price"],
-            "% Chg": r["pct_change"],
-            "Feed Vol": int(r["volume"]),
-            "$ Vol": r["dollar_volume"],
-            "Attention": r.get("attention_score", r["opportunity_score"]),
-            "Dominance": r.get("market_dominance_score", 0),
-            "Participation": r["participation_score"],
-            "Tier": r.get("participation_tier", ""),
-            "Opp.": r["opportunity_score"],
-            "Conv.": r["conviction_score"],
-            "Status": r["status"],
-            "VWAP": r["vwap_relation"],
-            "ST": "Bull" if r["supertrend_bullish"] else "Bear",
-            "RVOL": r["rvol_proxy"],
-            "Vol accel": r["volume_acceleration"],
-            "Spread %": r["spread_pct"],
-        })
+        rows.append(
+            {
+                "Symbol": r["symbol"],
+                "Price": r["price"],
+                "% Chg": r["pct_change"],
+                "Feed Vol": int(r["volume"]),
+                "$ Vol": r["dollar_volume"],
+                "Attention": r.get("attention_score", r["opportunity_score"]),
+                "Dominance": r.get("market_dominance_score", 0),
+                "Participation": r["participation_score"],
+                "Tier": r.get("participation_tier", ""),
+                "Opp.": r["opportunity_score"],
+                "Conv.": r["conviction_score"],
+                "Status": r["status"],
+                "VWAP": r["vwap_relation"],
+                "ST": "Bull" if r["supertrend_bullish"] else "Bear",
+                "RVOL": r["rvol_proxy"],
+                "Vol accel": r["volume_acceleration"],
+                "Spread %": r["spread_pct"],
+            }
+        )
     return pd.DataFrame(rows)
 
 
@@ -141,6 +167,10 @@ def _why_sections(r):
     elif r.get("volume", 0) >= 1_000_000:
         participation.append(f"{r['volume']/1_000_000:.1f}M shares")
     participation.append(f"RVOL {r.get('rvol_proxy', 0):.1f}×")
+    if r.get("volume_pace_ratio"):
+        participation.append(f"VPI {r.get('volume_pace_ratio', 0):.1f}× pace")
+    if r.get("acceleration_ratio"):
+        participation.append(f"5m acceleration {r.get('acceleration_ratio', 0):.1f}×")
     participation.append(f"acceleration {r.get('volume_acceleration', 0):.1f}×")
 
     structure = []
@@ -154,8 +184,14 @@ def _why_sections(r):
         structure.append("below VWAP")
     if vwap_value:
         structure.append(f"VWAP ${vwap_value:.4f}")
-    structure.append("SuperTrend bullish" if r.get("supertrend_bullish") else "SuperTrend not bullish")
-    structure.append("above 65 EMA" if r.get("ema65_relation") == "above" else "below 65 EMA")
+    structure.append(
+        "SuperTrend bullish"
+        if r.get("supertrend_bullish")
+        else "SuperTrend not bullish"
+    )
+    structure.append(
+        "above 65 EMA" if r.get("ema65_relation") == "above" else "below 65 EMA"
+    )
     if r.get("higher_lows"):
         structure.append("higher lows")
     structure.append(f"{r.get('timeframe_confirmations', 0)}/4 timeframe confirmations")
@@ -220,24 +256,56 @@ def _reason_for_signal(record, signal, fallback):
     acceleration = float(record.get("volume_acceleration", 0) or 0)
 
     if signal == "supertrend_flip":
-        if record.get("supertrend_flip") or "supertrend flip" in joined or "fresh supertrend flip" in joined:
+        if (
+            record.get("supertrend_flip")
+            or "supertrend flip" in joined
+            or "fresh supertrend flip" in joined
+        ):
             return fallback
     elif signal == "supertrend":
-        if record.get("supertrend_bullish") or "supertrend supportive" in joined or "supertrend bullish" in joined:
+        if (
+            record.get("supertrend_bullish")
+            or "supertrend supportive" in joined
+            or "supertrend bullish" in joined
+        ):
             return fallback
     elif signal == "above_vwap":
-        if record.get("vwap_relation") == "above" or "above vwap" in joined or "vwap reclaim" in joined:
+        if (
+            record.get("vwap_relation") == "above"
+            or "above vwap" in joined
+            or "vwap reclaim" in joined
+        ):
             return fallback
     elif signal == "near_vwap":
-        if record.get("vwap_relation") in {"above", "testing"} or "near/above vwap" in joined or "testing vwap" in joined:
+        if (
+            record.get("vwap_relation") in {"above", "testing"}
+            or "near/above vwap" in joined
+            or "testing vwap" in joined
+        ):
             return "Near VWAP" if record.get("vwap_relation") == "testing" else fallback
     elif signal == "rvol":
         if rvol > 0 or "rvol" in joined:
-            direction = " and increasing" if "rising rvol" in joined or "rvol improved" in joined else ""
-            return f"RVOL {rvol:.1f}×{direction}" if rvol > 0 else "Relative volume increasing"
+            direction = (
+                " and increasing"
+                if "rising rvol" in joined or "rvol improved" in joined
+                else ""
+            )
+            return (
+                f"RVOL {rvol:.1f}×{direction}"
+                if rvol > 0
+                else "Relative volume increasing"
+            )
     elif signal == "volume_acceleration":
-        if acceleration > 1 or "accelerating volume" in joined or "volume accelerating" in joined:
-            return f"Volume accelerating {acceleration:.1f}×" if acceleration > 0 else "Volume accelerating"
+        if (
+            acceleration > 1
+            or "accelerating volume" in joined
+            or "volume accelerating" in joined
+        ):
+            return (
+                f"Volume accelerating {acceleration:.1f}×"
+                if acceleration > 0
+                else "Volume accelerating"
+            )
     elif signal == "dollar_volume":
         if record.get("dollar_volume", 0) > 0 or "dollar" in joined:
             return fallback
@@ -252,7 +320,11 @@ def _reason_for_signal(record, signal, fallback):
         if "flat base" in joined:
             return fallback
     elif signal == "ema65":
-        if record.get("ema65_relation") == "above" or "above 65 ema" in joined or "above ema65" in joined:
+        if (
+            record.get("ema65_relation") == "above"
+            or "above 65 ema" in joined
+            or "above ema65" in joined
+        ):
             return fallback
     return None
 
@@ -261,7 +333,9 @@ def summary_reasons(record):
     """Return the three state-prioritized reasons to headline a stock card."""
     state = record.get("candidate_status") or record.get("status")
     summary_state = _SUMMARY_ALIASES.get(state, state)
-    priorities = _SUMMARY_PRIORITIES.get(summary_state, _SUMMARY_PRIORITIES["Watch List"])
+    priorities = _SUMMARY_PRIORITIES.get(
+        summary_state, _SUMMARY_PRIORITIES["Watch List"]
+    )
     selected = []
     seen = set()
     for signal, fallback in priorities:
@@ -320,17 +394,32 @@ def automatic_watching_sort_key(record):
     """
     return (
         _state_entered_sort_value(record),
-        _sortable_number(record.get("scanner_v2_score", record.get("opportunity_score", 0))),
+        _sortable_number(
+            record.get("scanner_v2_score", record.get("opportunity_score", 0))
+        ),
         _sortable_number(record.get("dollar_volume", 0)),
     )
 
 
-SCANNER_V2_DISPLAY_ORDER = ("Entry Ready", "Strengthening", "Watch List", "Weak / Removed", "Candidates")
+SCANNER_V2_DISPLAY_ORDER = (
+    "Entry Ready",
+    "Strengthening",
+    "Watch List",
+    "Weak / Removed",
+    "Candidates",
+)
 
 
 def state_sections(records):
     """Group Scanner V2 candidates by trading state for dashboard display."""
-    sections = {"Entry Ready": [], "Strengthening": [], "Watching": [], "Emerging": [], "Weakening": [], "Removed": []}
+    sections = {
+        "Entry Ready": [],
+        "Strengthening": [],
+        "Watching": [],
+        "Emerging": [],
+        "Weakening": [],
+        "Removed": [],
+    }
     for record in records:
         state = record.get("candidate_status") or record.get("status")
         if state == "Entry Ready":
@@ -395,14 +484,20 @@ def transition_history_markup(record: dict) -> str:
         return ""
     pieces = []
     for index, item in enumerate(history):
-        pieces.append(f"<span class='transition-node'>{html.escape(_state_display_name(str(item.get('state', ''))))}</span>")
+        pieces.append(
+            f"<span class='transition-node'>{html.escape(_state_display_name(str(item.get('state', ''))))}</span>"
+        )
         if index + 1 < len(history):
             next_item = history[index + 1]
             next_entered = _parse_transition_time(next_item.get("entered_at"))
             if next_entered is None:
                 continue
-            seconds = state_elapsed_seconds({"state_entered_at": item.get("entered_at")}, next_entered)
-            pieces.append(f"<span class='transition-arrow'>↓ {html.escape(_format_transition_duration(seconds))}</span>")
+            seconds = state_elapsed_seconds(
+                {"state_entered_at": item.get("entered_at")}, next_entered
+            )
+            pieces.append(
+                f"<span class='transition-arrow'>↓ {html.escape(_format_transition_duration(seconds))}</span>"
+            )
     return f"<div class='transition-history'>{''.join(pieces)}</div>"
 
 
@@ -417,30 +512,52 @@ def opportunity_card(r):
         klass = f"{klass} mide-promoted".strip()
     reasons = " · ".join(r.get("reasons", [])[:6]) or "No qualifying evidence"
     headline_reasons = summary_reasons(r)
-    summary_items = "".join(f"<li>✓ {html.escape(reason)}</li>" for reason in headline_reasons)
+    summary_items = "".join(
+        f"<li>✓ {html.escape(reason)}</li>" for reason in headline_reasons
+    )
     summary_markup = (
         f"<div class='why-summary'><div class='why-summary-title'>Top reasons now</div><ul>{summary_items}</ul></div>"
-        if summary_items else "<div class='why-summary'><div class='why-summary-title'>Top reasons now</div>No qualifying evidence</div>"
+        if summary_items
+        else "<div class='why-summary'><div class='why-summary-title'>Top reasons now</div>No qualifying evidence</div>"
     )
-    promo_badge = "<div class='promo-badge'>Promoted this scan</div>" if promoted_this_scan(r) else ""
+    promo_badge = (
+        "<div class='promo-badge'>Promoted this scan</div>"
+        if promoted_this_scan(r)
+        else ""
+    )
     velocity = r.get("velocity", 0)
-    arrow = "↑↑" if velocity >= 12 else "↑" if velocity > 2 else "↓" if velocity < -2 else "→"
+    arrow = (
+        "↑↑"
+        if velocity >= 12
+        else "↑" if velocity > 2 else "↓" if velocity < -2 else "→"
+    )
     tier = r.get("participation_tier", "")
     dominance = r.get("market_dominance_score", 0)
     attention = r.get("attention_score", r["opportunity_score"])
     sections = _why_sections(r)
     evaluated = format_eastern_time(r.get("timestamp"), fallback="now")
-    state_elapsed = format_state_elapsed(r) if r.get("candidate_status") in {"Emerging", "Strengthening", "Entry Ready"} else ""
-    state_elapsed_markup = f'<span class="small"> · {html.escape(state_elapsed)}</span>' if state_elapsed else ""
+    state_elapsed = (
+        format_state_elapsed(r)
+        if r.get("candidate_status") in {"Emerging", "Strengthening", "Entry Ready"}
+        else ""
+    )
+    state_elapsed_markup = (
+        f'<span class="small"> · {html.escape(state_elapsed)}</span>'
+        if state_elapsed
+        else ""
+    )
     last_bar = str(r.get("last_bar_timestamp", ""))
     bar_age = float(r.get("bar_age_seconds", 0) or 0)
-    freshness = f"Latest bar {bar_age:.0f}s old" if bar_age else "Latest-bar age unavailable"
+    freshness = (
+        f"Latest bar {bar_age:.0f}s old" if bar_age else "Latest-bar age unavailable"
+    )
     boxes = "".join(
         f"<div class='why-box'><div class='why-label'>{html.escape(label)}</div>"
         f"<div class='why-text'>{html.escape(text)}</div></div>"
         for label, text in sections.items()
     )
-    st.markdown(f"""
+    st.markdown(
+        f"""
     <div class="mide-card {klass}">
       <div style="display:flex;justify-content:space-between;gap:12px">
         <div><span style="font-size:1.55rem;font-weight:800">{html.escape(str(r['symbol']))}</span>{state_elapsed_markup}
@@ -456,4 +573,6 @@ def opportunity_card(r):
       <div class="freshness">{html.escape(freshness)} · evaluated {html.escape(evaluated)}</div>
       <div class="why-grid">{boxes}</div>
     </div>
-    """, unsafe_allow_html=True)
+    """,
+        unsafe_allow_html=True,
+    )
