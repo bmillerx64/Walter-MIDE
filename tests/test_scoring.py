@@ -106,6 +106,93 @@ def test_scanner_v2_alerts_only_when_entering_or_advancing_watch_state():
     assert ranked[0]["alert_event"] is True
 
 
+def test_scanner_v2_promotion_delta_marks_state_advancement_without_behavior_change():
+    from datetime import datetime, timezone
+
+    from mide.scanner_v2 import apply_scanner_v2
+
+    prior_entered = "2026-07-23T14:20:00+00:00"
+    prior = {
+        "TEST": {
+            "candidate_status": "Watching",
+            "state_entered_at": prior_entered,
+            "transition_history": [{"state": "Watching", "entered_at": prior_entered}],
+            "scanner_v2_score": 42,
+            "volume": 900_000,
+            "dollar_volume": 450_000,
+            "rvol_proxy": 1.8,
+            "opportunity_score": 45,
+            "vwap_relation": "below",
+        }
+    }
+    record = {
+        **base(timeframe_confirmations=3).__dict__,
+        "opportunity_score": 72,
+        "participation_score": 82,
+        "status": "MONITOR",
+        "timeframes": {
+            "1m": {"above_vwap": True, "supertrend": True},
+            "3m": {"above_vwap": True, "supertrend": True},
+            "5m": {"above_vwap": True, "supertrend": True},
+        },
+        "reasons": [],
+        "cautions": [],
+    }
+
+    ranked = apply_scanner_v2([record], prior, scan_time=datetime(2026, 7, 23, 14, 31, tzinfo=timezone.utc))
+
+    assert ranked[0]["previous_candidate_status"] == "Watching"
+    assert ranked[0]["candidate_status"] in {"Strengthening", "Entry Ready"}
+    assert ranked[0]["advanced_state"] is True
+    assert ranked[0]["entered_watchlist"] is False
+    assert ranked[0]["alert_event"] is True
+    assert ranked[0]["state_entered_at"] == "2026-07-23T14:31:00+00:00"
+    assert ranked[0]["transition_history"][0] == {"state": "Watching", "entered_at": prior_entered}
+    assert ranked[0]["transition_history"][-1] == {
+        "state": ranked[0]["candidate_status"],
+        "entered_at": "2026-07-23T14:31:00+00:00",
+    }
+
+
+def test_scanner_v2_no_promotion_delta_when_state_is_unchanged():
+    from datetime import datetime, timezone
+
+    from mide.scanner_v2 import apply_scanner_v2
+
+    entered = "2026-07-23T14:20:00+00:00"
+    prior = {
+        "TEST": {
+            "candidate_status": "Strengthening",
+            "state_entered_at": entered,
+            "transition_history": [{"state": "Strengthening", "entered_at": entered}],
+            "scanner_v2_score": 70,
+            "volume": 1_000_000,
+            "dollar_volume": 600_000,
+            "rvol_proxy": 2.0,
+            "opportunity_score": 70,
+            "vwap_relation": "below",
+        }
+    }
+    record = {
+        **base(vwap_relation="below", supertrend_bullish=False, supertrend_flip=False).__dict__,
+        "opportunity_score": 72,
+        "status": "MONITOR",
+        "timeframes": {},
+        "reasons": [],
+        "cautions": [],
+    }
+
+    ranked = apply_scanner_v2([record], prior, scan_time=datetime(2026, 7, 23, 14, 31, tzinfo=timezone.utc))
+
+    assert ranked[0]["candidate_status"] == "Strengthening"
+    assert ranked[0]["advanced_state"] is False
+    assert ranked[0]["entered_watchlist"] is False
+    assert ranked[0]["alert_event"] is False
+    assert ranked[0]["state_entered_at"] == entered
+    assert ranked[0]["state_elapsed_seconds"] == 660
+    assert ranked[0]["transition_history"] == prior["TEST"]["transition_history"]
+
+
 def test_entry_ready_allows_supportive_timeframes_without_all_green():
     from mide.scanner_v2 import apply_scanner_v2
 

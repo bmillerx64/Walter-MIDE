@@ -173,6 +173,20 @@ def test_entry_ready_promotions_are_visually_identified():
     assert promoted_this_scan(record) is True
 
 
+def test_promotion_delta_visuals_cover_watchlist_entry_and_state_advancement():
+    entered = {"symbol": "NEW", "candidate_status": "Watching", "entered_watchlist": True, "advanced_state": False}
+    advanced = {"symbol": "MOVE", "candidate_status": "Strengthening", "entered_watchlist": False, "advanced_state": True}
+    unchanged = {"symbol": "HOLD", "candidate_status": "Strengthening", "entered_watchlist": False, "advanced_state": False}
+
+    sections = state_sections([entered, advanced, unchanged])
+
+    assert [record["symbol"] for record in sections["Watching"]] == ["NEW"]
+    assert [record["symbol"] for record in sections["Strengthening"]] == ["MOVE", "HOLD"]
+    assert promoted_this_scan(entered) is True
+    assert promoted_this_scan(advanced) is True
+    assert promoted_this_scan(unchanged) is False
+
+
 def test_market_phase_uses_local_time_against_us_equity_hours():
     pacific = ZoneInfo("America/Los_Angeles")
     assert market_phase(datetime(2026, 7, 22, 6, 0, tzinfo=pacific)) == "Pre-Market"
