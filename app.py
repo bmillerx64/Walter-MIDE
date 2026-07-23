@@ -462,6 +462,8 @@ with tabs[0]:
                     float(r.get("pct_change", 0) or 0) if sort_choice == "% change" else
                     float(r.get("dollar_volume", 0) or 0) if sort_choice == "Dollar volume" else
                     float(r.get("rvol_proxy", 0) or 0) if sort_choice == "RVOL" else
+                    str(r.get("state_entered_at") or "")
+                    if sort_choice == "State priority" and r.get("candidate_status") in {"Emerging", "Strengthening", "Entry Ready"} else
                     float(r.get("scanner_v2_score", r.get("opportunity_score", 0)) or 0)
                 ),
                 reverse=(sort_choice != "Symbol"),

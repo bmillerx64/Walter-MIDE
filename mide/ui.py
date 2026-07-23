@@ -1,10 +1,12 @@
 from __future__ import annotations
 import base64
 import html
+from datetime import datetime
 from pathlib import Path
 import streamlit as st
 import pandas as pd
 
+from mide.scanner_v2 import state_elapsed_seconds
 from mide.time_service import format_eastern_time
 
 
@@ -167,12 +169,14 @@ def promoted_this_scan(r):
 
 def state_sections(records):
     """Group Scanner V2 candidates by trading state for dashboard display."""
-    sections = {"Entry Ready": [], "Watching": [], "Emerging": [], "Weakening": [], "Removed": []}
+    sections = {"Entry Ready": [], "Strengthening": [], "Watching": [], "Emerging": [], "Weakening": [], "Removed": []}
     for record in records:
         state = record.get("candidate_status") or record.get("status")
         if state == "Entry Ready":
             sections["Entry Ready"].append(record)
-        elif state in {"Watching", "Strengthening"}:
+        elif state == "Strengthening":
+            sections["Strengthening"].append(record)
+        elif state == "Watching":
             sections["Watching"].append(record)
         elif state in {"Emerging", "New"}:
             sections["Emerging"].append(record)
@@ -180,7 +184,15 @@ def state_sections(records):
             sections["Weakening"].append(record)
         else:
             sections["Removed"].append(record)
+    for state in ("Entry Ready", "Strengthening", "Emerging"):
+        sections[state].sort(key=lambda r: r.get("state_entered_at") or "", reverse=True)
     return sections
+
+
+def format_state_elapsed(record, now: datetime | None = None) -> str:
+    """Format elapsed time in the current Scanner V2 state as M:SS."""
+    seconds = state_elapsed_seconds(record, now)
+    return f"{seconds // 60}:{seconds % 60:02d}"
 
 
 def opportunity_card(r):
@@ -201,6 +213,8 @@ def opportunity_card(r):
     attention = r.get("attention_score", r["opportunity_score"])
     sections = _why_sections(r)
     evaluated = format_eastern_time(r.get("timestamp"), fallback="now")
+    state_elapsed = format_state_elapsed(r) if r.get("candidate_status") in {"Emerging", "Strengthening", "Entry Ready"} else ""
+    state_elapsed_markup = f'<span class="small"> · {html.escape(state_elapsed)}</span>' if state_elapsed else ""
     last_bar = str(r.get("last_bar_timestamp", ""))
     bar_age = float(r.get("bar_age_seconds", 0) or 0)
     freshness = f"Latest bar {bar_age:.0f}s old" if bar_age else "Latest-bar age unavailable"
@@ -212,7 +226,7 @@ def opportunity_card(r):
     st.markdown(f"""
     <div class="mide-card {klass}">
       <div style="display:flex;justify-content:space-between;gap:12px">
-        <div><span style="font-size:1.55rem;font-weight:800">{html.escape(str(r['symbol']))}</span>
+        <div><span style="font-size:1.55rem;font-weight:800">{html.escape(str(r['symbol']))}</span>{state_elapsed_markup}
         <span class="small"> ${r['price']:.4f} · {r['pct_change']:+.1f}%</span>
         <span class="tier"> · {html.escape(str(tier))}</span></div>
         <div style="font-size:1.15rem;font-weight:800">{html.escape(str(r['status']))}</div>

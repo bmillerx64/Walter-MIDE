@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
+
+
 STATE_RANK = {
     "Removed": 0,
     "Weakening": 1,
@@ -11,6 +14,29 @@ STATE_RANK = {
 }
 
 WATCH_STATES = {"Watching", "Emerging", "Strengthening", "Entry Ready"}
+TIMED_STATES = {"Emerging", "Strengthening", "Entry Ready"}
+
+
+def _iso_timestamp(value: datetime) -> str:
+    return value.astimezone(timezone.utc).isoformat()
+
+
+def state_elapsed_seconds(record: dict, now: datetime | None = None) -> int:
+    """Return seconds elapsed since the symbol entered its current timed state."""
+    entered_at = record.get("state_entered_at")
+    if not entered_at:
+        return 0
+    if now is None:
+        now = datetime.now(timezone.utc)
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=timezone.utc)
+    try:
+        entered = datetime.fromisoformat(str(entered_at).replace("Z", "+00:00"))
+    except ValueError:
+        return 0
+    if entered.tzinfo is None:
+        entered = entered.replace(tzinfo=timezone.utc)
+    return max(0, int((now.astimezone(timezone.utc) - entered.astimezone(timezone.utc)).total_seconds()))
 
 
 def _num(record: dict, key: str, default: float = 0.0) -> float:
@@ -162,8 +188,13 @@ def classify_state(record: dict, prior: dict | None = None) -> str:
     return "New" if not prior_state else "Removed"
 
 
-def apply_scanner_v2(records: list[dict], previous_by_symbol: dict[str, dict]) -> list[dict]:
+def apply_scanner_v2(records: list[dict], previous_by_symbol: dict[str, dict], scan_time: datetime | None = None) -> list[dict]:
     output = []
+    if scan_time is None:
+        scan_time = datetime.now(timezone.utc)
+    if scan_time.tzinfo is None:
+        scan_time = scan_time.replace(tzinfo=timezone.utc)
+    scan_time_iso = _iso_timestamp(scan_time)
     for source in records:
         record = dict(source)
         prior = previous_by_symbol.get(record.get("symbol"), {})
@@ -172,6 +203,14 @@ def apply_scanner_v2(records: list[dict], previous_by_symbol: dict[str, dict]) -
         previous_state = prior.get("candidate_status") or prior.get("status")
         advanced = STATE_RANK.get(state, 0) > STATE_RANK.get(previous_state, 0)
         entered_watch = state in WATCH_STATES and previous_state not in WATCH_STATES
+        prior_entered_at = prior.get("state_entered_at")
+        if state in TIMED_STATES and state == previous_state and prior_entered_at:
+            state_entered_at = prior_entered_at
+        elif state in TIMED_STATES:
+            state_entered_at = scan_time_iso
+        else:
+            state_entered_at = None
+        state_elapsed = state_elapsed_seconds({"state_entered_at": state_entered_at}, scan_time)
         record.update({
             "scanner_version": "V2",
             "scanner_v2_score": round(score, 1),
@@ -181,8 +220,18 @@ def apply_scanner_v2(records: list[dict], previous_by_symbol: dict[str, dict]) -
             "entered_watchlist": entered_watch,
             "alert_event": bool(entered_watch or advanced),
             "status": state,
+            "state_entered_at": state_entered_at,
+            "state_elapsed_seconds": state_elapsed,
             "reasons": reasons or record.get("reasons", []),
             "cautions": list(dict.fromkeys((record.get("cautions") or []) + cautions)),
         })
         output.append(record)
-    return sorted(output, key=lambda r: (STATE_RANK.get(r.get("candidate_status"), 0), r.get("scanner_v2_score", 0)), reverse=True)
+    return sorted(
+        output,
+        key=lambda r: (
+            STATE_RANK.get(r.get("candidate_status"), 0),
+            r.get("state_entered_at") or "",
+            r.get("scanner_v2_score", 0),
+        ),
+        reverse=True,
+    )

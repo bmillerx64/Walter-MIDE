@@ -169,3 +169,112 @@ def test_entry_ready_state_uses_chart_preparation_requirements_only():
 
     ranked = apply_scanner_v2([record], prior)
     assert ranked[0]["candidate_status"] == "Entry Ready"
+
+
+def test_scanner_v2_timer_starts_when_entering_timed_state():
+    from datetime import datetime, timezone
+
+    from mide.scanner_v2 import apply_scanner_v2
+
+    scan_time = datetime(2026, 7, 23, 14, 30, tzinfo=timezone.utc)
+    record = {
+        **base(vwap_relation="below", supertrend_bullish=False, supertrend_flip=False).__dict__,
+        "opportunity_score": 55,
+        "status": "PASS",
+        "timeframes": {},
+        "reasons": [],
+        "cautions": [],
+    }
+
+    ranked = apply_scanner_v2([record], {}, scan_time=scan_time)
+
+    assert ranked[0]["candidate_status"] == "Strengthening"
+    assert ranked[0]["state_entered_at"] == "2026-07-23T14:30:00+00:00"
+    assert ranked[0]["state_elapsed_seconds"] == 0
+
+
+def test_scanner_v2_timer_resets_on_state_change():
+    from datetime import datetime, timezone
+
+    from mide.scanner_v2 import apply_scanner_v2
+
+    prior_entered = "2026-07-23T14:20:00+00:00"
+    scan_time = datetime(2026, 7, 23, 14, 30, tzinfo=timezone.utc)
+    prior = {
+        "TEST": {
+            "candidate_status": "Emerging",
+            "state_entered_at": prior_entered,
+            "scanner_v2_score": 55,
+            "opportunity_score": 55,
+            "volume": 1_000_000,
+            "dollar_volume": 600_000,
+            "rvol_proxy": 2.0,
+        }
+    }
+    record = {
+        **base(vwap_relation="below", supertrend_bullish=True, supertrend_flip=False, timeframe_confirmations=3).__dict__,
+        "opportunity_score": 75,
+        "status": "MONITOR",
+        "timeframes": {
+            "1m": {"above_vwap": True, "supertrend": True},
+            "3m": {"above_vwap": False, "supertrend": True},
+            "5m": {"above_vwap": True, "supertrend": True},
+        },
+        "reasons": [],
+        "cautions": [],
+    }
+
+    ranked = apply_scanner_v2([record], prior, scan_time=scan_time)
+
+    assert ranked[0]["candidate_status"] == "Strengthening"
+    assert ranked[0]["state_entered_at"] == "2026-07-23T14:30:00+00:00"
+    assert ranked[0]["state_elapsed_seconds"] == 0
+
+
+def test_scanner_v2_timer_continues_across_automatic_scans():
+    from datetime import datetime, timezone
+
+    from mide.scanner_v2 import apply_scanner_v2
+
+    prior = {
+        "TEST": {
+            "candidate_status": "Strengthening",
+            "state_entered_at": "2026-07-23T14:30:00+00:00",
+            "scanner_v2_score": 55,
+            "opportunity_score": 55,
+            "volume": 1_000_000,
+            "dollar_volume": 600_000,
+            "rvol_proxy": 2.0,
+        }
+    }
+    record = {
+        **base(vwap_relation="below", supertrend_bullish=False, supertrend_flip=False).__dict__,
+        "opportunity_score": 55,
+        "status": "PASS",
+        "timeframes": {},
+        "reasons": [],
+        "cautions": [],
+    }
+
+    ranked = apply_scanner_v2([record], prior, scan_time=datetime(2026, 7, 23, 14, 32, 15, tzinfo=timezone.utc))
+
+    assert ranked[0]["candidate_status"] == "Strengthening"
+    assert ranked[0]["state_entered_at"] == "2026-07-23T14:30:00+00:00"
+    assert ranked[0]["state_elapsed_seconds"] == 135
+
+
+def test_scanner_v2_sorts_newest_promotions_within_state():
+    from datetime import datetime, timezone
+
+    from mide.scanner_v2 import apply_scanner_v2
+
+    older = {**base(symbol="OLD", vwap_relation="below", supertrend_bullish=False, supertrend_flip=False).__dict__, "opportunity_score": 55, "status": "PASS", "timeframes": {}, "reasons": [], "cautions": []}
+    newer = {**base(symbol="NEW", vwap_relation="below", supertrend_bullish=False, supertrend_flip=False).__dict__, "opportunity_score": 55, "status": "PASS", "timeframes": {}, "reasons": [], "cautions": []}
+    prior = {
+        "OLD": {"candidate_status": "Strengthening", "state_entered_at": "2026-07-23T14:20:00+00:00", "scanner_v2_score": 55, "opportunity_score": 55, "volume": 1_000_000, "dollar_volume": 600_000, "rvol_proxy": 2.0},
+        "NEW": {"candidate_status": "Strengthening", "state_entered_at": "2026-07-23T14:29:00+00:00", "scanner_v2_score": 55, "opportunity_score": 55, "volume": 1_000_000, "dollar_volume": 600_000, "rvol_proxy": 2.0},
+    }
+
+    ranked = apply_scanner_v2([older, newer], prior, scan_time=datetime(2026, 7, 23, 14, 30, tzinfo=timezone.utc))
+
+    assert [record["symbol"] for record in ranked] == ["NEW", "OLD"]
