@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-
 STATE_RANK = {
     "Removed": 0,
     "Weakening": 1,
@@ -17,9 +16,17 @@ WATCH_STATES = {"Watching", "Emerging", "Strengthening", "Entry Ready"}
 TIMED_STATES = {"Emerging", "Strengthening", "Entry Ready"}
 TRANSITION_HISTORY_STATES = {"Emerging", "Watching", "Strengthening", "Entry Ready"}
 MAX_TRANSITION_HISTORY = 4
+PROMOTION_TARGET_STATES = {"Strengthening", "Entry Ready"}
 
 STRENGTHENING_RULE_ORDER = ("News", "RVOL", "Dollar Volume", "VWAP", "SuperTrend")
-STRENGTHENING_REJECTION_BUCKETS = ("Below VWAP", "RVOL", "SuperTrend", "Dollar Volume", "News", "Other")
+STRENGTHENING_REJECTION_BUCKETS = (
+    "Below VWAP",
+    "RVOL",
+    "SuperTrend",
+    "Dollar Volume",
+    "News",
+    "Other",
+)
 
 __all__ = [
     "apply_scanner_v2",
@@ -56,19 +63,34 @@ def strengthening_decision(record: dict) -> dict:
         ("News", _has_strengthening_news(record), "News"),
         ("RVOL", _num(record, "rvol_proxy", 1) >= 1.5, "RVOL"),
         ("Dollar Volume", _num(record, "dollar_volume") >= 250_000, "Dollar Volume"),
-        ("VWAP", record.get("vwap_relation") in {"testing", "above"} or _num(record, "vwap_distance_pct") >= 0, "Below VWAP"),
+        (
+            "VWAP",
+            record.get("vwap_relation") in {"testing", "above"}
+            or _num(record, "vwap_distance_pct") >= 0,
+            "Below VWAP",
+        ),
         ("SuperTrend", _has_strengthening_supertrend(record), "SuperTrend"),
     ]
     state = record.get("candidate_status") or record.get("status")
     accepted = state in {"Strengthening", "Entry Ready"}
-    first_failed = next(((label, bucket) for label, passed, bucket in checks if not passed), None)
+    first_failed = next(
+        ((label, bucket) for label, passed, bucket in checks if not passed), None
+    )
     return {
         "symbol": record.get("symbol", ""),
         "accepted": accepted,
-        "status": "Accepted for Strengthening" if accepted else "Rejected from Strengthening",
-        "checks": [{"rule": label, "passed": bool(passed)} for label, passed, _bucket in checks],
-        "first_rejection_rule": None if accepted else (first_failed[0] if first_failed else "Other"),
-        "first_rejection_bucket": None if accepted else (first_failed[1] if first_failed else "Other"),
+        "status": (
+            "Accepted for Strengthening" if accepted else "Rejected from Strengthening"
+        ),
+        "checks": [
+            {"rule": label, "passed": bool(passed)} for label, passed, _bucket in checks
+        ],
+        "first_rejection_rule": (
+            None if accepted else (first_failed[0] if first_failed else "Other")
+        ),
+        "first_rejection_bucket": (
+            None if accepted else (first_failed[1] if first_failed else "Other")
+        ),
         "candidate_status": state,
         "scanner_v2_score": record.get("scanner_v2_score"),
     }
@@ -108,10 +130,19 @@ def state_elapsed_seconds(record: dict, now: datetime | None = None) -> int:
         return 0
     if entered.tzinfo is None:
         entered = entered.replace(tzinfo=timezone.utc)
-    return max(0, int((now.astimezone(timezone.utc) - entered.astimezone(timezone.utc)).total_seconds()))
+    return max(
+        0,
+        int(
+            (
+                now.astimezone(timezone.utc) - entered.astimezone(timezone.utc)
+            ).total_seconds()
+        ),
+    )
 
 
-def _transition_history(prior: dict, state: str, previous_state: str | None, entered_at: str | None) -> list[dict]:
+def _transition_history(
+    prior: dict, state: str, previous_state: str | None, entered_at: str | None
+) -> list[dict]:
     """Return this session's compact state progression for a scanner card."""
     if state not in TRANSITION_HISTORY_STATES or not entered_at:
         return []
@@ -133,6 +164,7 @@ def _transition_history(prior: dict, state: str, previous_state: str | None, ent
     else:
         history.append({"state": state, "entered_at": entered_at})
     return history[-MAX_TRANSITION_HISTORY:]
+
 
 def _num(record: dict, key: str, default: float = 0.0) -> float:
     try:
@@ -160,20 +192,111 @@ def _tf_supportive(record: dict, label: str) -> bool:
     )
 
 
+def _condition_crossed(current_passed: bool, prior_passed: bool) -> bool:
+    return bool(current_passed and not prior_passed)
+
+
+def _promotion_condition_changes(record: dict, prior: dict) -> list[str]:
+    """Return positive scan-to-scan condition changes that explain a promotion."""
+    changes: list[str] = []
+
+    prior_vwap_relation = prior.get("vwap_relation")
+    current_vwap_above = (
+        record.get("vwap_relation") == "above" or _num(record, "vwap_distance_pct") >= 0
+    )
+    current_vwap_supportive = (
+        record.get("vwap_relation") in {"testing", "above"}
+        or _num(record, "vwap_distance_pct") >= 0
+    )
+    prior_vwap_supportive = (
+        prior_vwap_relation in {"testing", "above"}
+        or _num(prior, "vwap_distance_pct") >= 0
+    )
+    if current_vwap_above and prior_vwap_relation in {"below", "testing"}:
+        changes.append("VWAP reclaim")
+    elif _condition_crossed(current_vwap_supportive, prior_vwap_supportive):
+        changes.append("VWAP support crossed")
+
+    current_30s_flip = bool(
+        record.get("supertrend_30s_flip", record.get("supertrend_flip"))
+    )
+    prior_30s_flip = bool(
+        prior.get("supertrend_30s_flip", prior.get("supertrend_flip"))
+    )
+    if _condition_crossed(current_30s_flip, prior_30s_flip):
+        changes.append("30s ST flip")
+    elif _condition_crossed(
+        bool(record.get("supertrend_flip")), bool(prior.get("supertrend_flip"))
+    ):
+        changes.append("30s ST flip")
+
+    if _condition_crossed(
+        bool(record.get("supertrend_bullish")),
+        bool(prior.get("supertrend_bullish")),
+    ):
+        changes.append("SuperTrend supportive")
+
+    for label in ("1m", "3m", "5m"):
+        if _condition_crossed(
+            _tf_supportive(record, label), _tf_supportive(prior, label)
+        ):
+            changes.append(f"{label} ST confirmation")
+        elif _condition_crossed(_tf_bull(record, label), _tf_bull(prior, label)):
+            changes.append(f"{label} VWAP/ST confirmation")
+
+    thresholds = [
+        ("volume threshold crossed", "volume", 500_000, 0),
+        ("dollar volume threshold crossed", "dollar_volume", 250_000, 0),
+        ("RVOL threshold crossed", "rvol_proxy", 1.5, 1),
+        ("volume acceleration threshold crossed", "volume_acceleration", 1.2, 1),
+        ("float turnover threshold crossed", "float_turnover_pct", 3, 0),
+    ]
+    for label, key, threshold, default in thresholds:
+        if _condition_crossed(
+            _num(record, key, default) >= threshold,
+            _num(prior, key, default) >= threshold,
+        ):
+            changes.append(label)
+
+    current_news = bool(
+        record.get("headline")
+        or "recent news" in set(record.get("discovery_reasons") or [])
+    )
+    prior_news = bool(
+        prior.get("headline")
+        or "recent news" in set(prior.get("discovery_reasons") or [])
+    )
+    if _condition_crossed(current_news, prior_news):
+        changes.append("news catalyst appeared")
+
+    return changes
+
+
 def _entry_ready_requirements(record: dict, prior: dict | None = None) -> bool:
-    price_at_or_above_vwap = record.get("vwap_relation") == "above" or _num(record, "vwap_distance_pct") >= 0
-    catalyst_30s = bool(record.get("supertrend_30s_flip", record.get("supertrend_flip")))
-    one_min_support = _tf_supportive(record, "1m") or bool(record.get("supertrend_bullish"))
+    price_at_or_above_vwap = (
+        record.get("vwap_relation") == "above" or _num(record, "vwap_distance_pct") >= 0
+    )
+    catalyst_30s = bool(
+        record.get("supertrend_30s_flip", record.get("supertrend_flip"))
+    )
+    one_min_support = _tf_supportive(record, "1m") or bool(
+        record.get("supertrend_bullish")
+    )
     three_min_support = _tf_supportive(record, "3m")
 
-    return all([
-        catalyst_30s,
-        price_at_or_above_vwap,
-        one_min_support,
-        three_min_support,
-    ])
+    return all(
+        [
+            catalyst_30s,
+            price_at_or_above_vwap,
+            one_min_support,
+            three_min_support,
+        ]
+    )
 
-def momentum_evidence(record: dict, prior: dict | None = None) -> tuple[float, list[str], list[str]]:
+
+def momentum_evidence(
+    record: dict, prior: dict | None = None
+) -> tuple[float, list[str], list[str]]:
     """Score developing momentum without requiring a completed setup."""
     prior = prior or {}
     reasons: list[str] = []
@@ -229,7 +352,11 @@ def momentum_evidence(record: dict, prior: dict | None = None) -> tuple[float, l
         points += 5
         reasons.append("SuperTrend supportive")
 
-    for label, text, pts in [("1m", "1-minute confirmation", 7), ("3m", "3-minute confirmation", 6), ("5m", "5-minute confirmation", 5)]:
+    for label, text, pts in [
+        ("1m", "1-minute confirmation", 7),
+        ("3m", "3-minute confirmation", 6),
+        ("5m", "5-minute confirmation", 5),
+    ]:
         if _tf_bull(record, label):
             points += pts
             reasons.append(text)
@@ -272,7 +399,11 @@ def classify_state(record: dict, prior: dict | None = None) -> str:
         return "Removed"
     if _entry_ready_requirements(record, prior):
         return "Entry Ready"
-    if prior and score < _num(prior, "scanner_v2_score", _num(prior, "opportunity_score")) - 12:
+    if (
+        prior
+        and score
+        < _num(prior, "scanner_v2_score", _num(prior, "opportunity_score")) - 12
+    ):
         return "Weakening"
     if score >= 66:
         return "Strengthening"
@@ -283,7 +414,11 @@ def classify_state(record: dict, prior: dict | None = None) -> str:
     return "New" if not prior_state else "Removed"
 
 
-def apply_scanner_v2(records: list[dict], previous_by_symbol: dict[str, dict], scan_time: datetime | None = None) -> list[dict]:
+def apply_scanner_v2(
+    records: list[dict],
+    previous_by_symbol: dict[str, dict],
+    scan_time: datetime | None = None,
+) -> list[dict]:
     output = []
     if scan_time is None:
         scan_time = datetime.now(timezone.utc)
@@ -299,29 +434,50 @@ def apply_scanner_v2(records: list[dict], previous_by_symbol: dict[str, dict], s
         advanced = STATE_RANK.get(state, 0) > STATE_RANK.get(previous_state, 0)
         entered_watch = state in WATCH_STATES and previous_state not in WATCH_STATES
         prior_entered_at = prior.get("state_entered_at")
-        if state in TRANSITION_HISTORY_STATES and state == previous_state and prior_entered_at:
+        if (
+            state in TRANSITION_HISTORY_STATES
+            and state == previous_state
+            and prior_entered_at
+        ):
             state_entered_at = prior_entered_at
         elif state in TRANSITION_HISTORY_STATES:
             state_entered_at = scan_time_iso
         else:
             state_entered_at = None
-        state_elapsed = state_elapsed_seconds({"state_entered_at": state_entered_at}, scan_time)
-        transition_history = _transition_history(prior, state, previous_state, state_entered_at)
-        record.update({
-            "scanner_version": "V2",
-            "scanner_v2_score": round(score, 1),
-            "candidate_status": state,
-            "previous_candidate_status": previous_state or "None",
-            "advanced_state": advanced,
-            "entered_watchlist": entered_watch,
-            "alert_event": bool(entered_watch or advanced),
-            "status": state,
-            "state_entered_at": state_entered_at,
-            "state_elapsed_seconds": state_elapsed,
-            "transition_history": transition_history,
-            "reasons": reasons or record.get("reasons", []),
-            "cautions": list(dict.fromkeys((record.get("cautions") or []) + cautions)),
-        })
+        state_elapsed = state_elapsed_seconds(
+            {"state_entered_at": state_entered_at}, scan_time
+        )
+        transition_history = _transition_history(
+            prior, state, previous_state, state_entered_at
+        )
+        promotion_changes = (
+            _promotion_condition_changes(record, prior)
+            if advanced and state in PROMOTION_TARGET_STATES
+            else []
+        )
+        record.update(
+            {
+                "scanner_version": "V2",
+                "scanner_v2_score": round(score, 1),
+                "candidate_status": state,
+                "previous_candidate_status": previous_state or "None",
+                "advanced_state": advanced,
+                "entered_watchlist": entered_watch,
+                "alert_event": bool(entered_watch or advanced),
+                "promotion_condition_changes": promotion_changes,
+                "promotion_trigger": (
+                    promotion_changes[0] if promotion_changes else None
+                ),
+                "status": state,
+                "state_entered_at": state_entered_at,
+                "state_elapsed_seconds": state_elapsed,
+                "transition_history": transition_history,
+                "reasons": reasons or record.get("reasons", []),
+                "cautions": list(
+                    dict.fromkeys((record.get("cautions") or []) + cautions)
+                ),
+            }
+        )
         record["strengthening_decision"] = strengthening_decision(record)
         output.append(record)
     return sorted(
