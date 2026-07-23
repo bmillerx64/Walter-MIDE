@@ -964,3 +964,61 @@ def test_scanner_v2_prioritizes_tmng_vwap_st_volume_strengthening(caplog):
     assert "VWAP=testing" in caplog.text
     assert "30s ST=flipped green" in caplog.text
     assert "volume acceleration=2.4" in caplog.text
+
+
+def test_strengthening_vwap_gate_uses_current_intraday_vwap_values():
+    from mide.scanner_v2 import apply_scanner_v2, strengthening_diagnostics
+
+    def candidate(symbol, price, vwap):
+        return {
+            **base(
+                symbol=symbol,
+                price=price,
+                vwap_relation="above",  # stale label must not control the gate
+                vwap_distance_pct=25.0,  # stale percentage must not control the gate
+                supertrend_bullish=True,
+                supertrend_flip=True,
+                volume_acceleration=3.0,
+                rvol_proxy=7.0,
+            ).__dict__,
+            "vwap_value": vwap,
+            "vwap_bar_timeframe_source": "test 1Min current-session bars",
+            "volume": 50_000_000,
+            "dollar_volume": 25_000_000,
+            "opportunity_score": 90,
+            "status": "ALERT",
+            "timeframes": {
+                "1m": {"above_vwap": True, "supertrend": True},
+                "3m": {"above_vwap": True, "supertrend": True},
+            },
+            "reasons": [],
+            "cautions": [],
+        }
+
+    ranked = apply_scanner_v2(
+        [
+            candidate("DEEP", 97.0, 100.0),
+            candidate("NEAR", 99.5, 100.0),
+            candidate("ABOVE", 101.0, 100.0),
+        ],
+        {},
+    )
+    by_symbol = {record["symbol"]: record for record in ranked}
+    decisions = {
+        item["symbol"]: item for item in strengthening_diagnostics(ranked)["decisions"]
+    }
+
+    assert by_symbol["DEEP"]["candidate_status"] != "Strengthening"
+    assert decisions["DEEP"]["vwap_gate"]["distance_pct"] == -3.0
+    assert decisions["DEEP"]["vwap_gate"]["gate_passed"] is False
+
+    assert by_symbol["NEAR"]["candidate_status"] == "Strengthening"
+    assert decisions["NEAR"]["vwap_gate"]["distance_pct"] == -0.5
+    assert decisions["NEAR"]["vwap_gate"]["gate_passed"] is True
+
+    assert by_symbol["ABOVE"]["candidate_status"] in {"Strengthening", "Entry Ready"}
+    assert decisions["ABOVE"]["vwap_gate"]["distance_pct"] == 1.0
+    assert decisions["ABOVE"]["vwap_gate"]["gate_passed"] is True
+
+    for symbol, record in by_symbol.items():
+        assert record["vwap_distance_pct"] == decisions[symbol]["vwap_gate"]["distance_pct"]

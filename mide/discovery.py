@@ -236,8 +236,8 @@ def analyze_candidates(client, candidates, news_index, discovery_reasons):
         expected_so_far = previous_volume * elapsed_fraction
         rvol_proxy = item["volume"] / expected_so_far if expected_so_far > 0 else 1.0
 
-        vwap_distance = proximity_pct(price, vw)
-        vwap_relation = "testing" if vwap_distance <= 1.0 else ("above" if price > vw else "below")
+        vwap_distance = ((price - vw) / vw * 100.0) if vw and not math.isnan(vw) else 999.0
+        vwap_relation = "above" if vwap_distance >= 0 else ("testing" if vwap_distance >= -1.0 else "below")
         last_bar_time = session.index[-1]
         bar_age_seconds = max(0.0, (datetime.now(timezone.utc) - last_bar_time.to_pydatetime()).total_seconds())
 
@@ -275,5 +275,6 @@ def analyze_candidates(client, candidates, news_index, discovery_reasons):
             "last_bar_timestamp": last_bar_time.isoformat(),
             "bar_age_seconds": round(bar_age_seconds, 1),
             "vwap_value": round(vw, 6),
+            "vwap_bar_timeframe_source": "Alpaca 1Min current-session bars (same bars as primary SuperTrend)",
         })
     return apply_attention_ranking(output)

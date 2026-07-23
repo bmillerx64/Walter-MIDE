@@ -21,6 +21,7 @@ TIMED_STATES = {"Emerging", "Strengthening", "Entry Ready"}
 TRANSITION_HISTORY_STATES = {"Emerging", "Watching", "Strengthening", "Entry Ready"}
 MAX_TRANSITION_HISTORY = 4
 PROMOTION_TARGET_STATES = {"Strengthening", "Entry Ready"}
+STRENGTHENING_VWAP_MAX_BELOW_PCT = 1.0
 
 STRENGTHENING_RULE_ORDER = ("News", "RVOL", "Dollar Volume", "VWAP", "SuperTrend")
 STRENGTHENING_REJECTION_BUCKETS = (
@@ -123,6 +124,7 @@ def strengthening_decision(record: dict) -> dict:
         ),
         "candidate_status": state,
         "scanner_v2_score": record.get("scanner_v2_score"),
+        "vwap_gate": record.get("strengthening_vwap_gate") or _current_vwap_diagnostics(record),
     }
 
 
@@ -302,23 +304,50 @@ def _promotion_condition_changes(record: dict, prior: dict) -> list[str]:
     return changes
 
 
-def _strengthening_vwap_qualified(record: dict) -> bool:
-    """Return whether VWAP structure is strong enough to allow Strengthening.
+def _current_vwap_diagnostics(record: dict, prior: dict | None = None) -> dict:
+    """Calculate the live VWAP gate inputs from the current bar-derived VWAP."""
+    price = _num(record, "price")
+    vwap = _num(record, "calculated_vwap", _num(record, "vwap_value"))
+    distance = (
+        (price - vwap) / vwap * 100.0
+        if price and vwap
+        else _num(record, "vwap_distance_pct")
+    )
+    prior_distance = None
+    if prior:
+        prior_price = _num(prior, "price")
+        prior_vwap = _num(prior, "calculated_vwap", _num(prior, "vwap_value"))
+        prior_distance = (
+            (prior_price - prior_vwap) / prior_vwap * 100.0
+            if prior_price and prior_vwap
+            else _num(prior, "vwap_distance_pct")
+        )
+    fresh_reclaim = bool(prior_distance is not None and prior_distance < 0 <= distance)
+    passed = bool(
+        distance >= 0
+        or fresh_reclaim
+        or distance >= -STRENGTHENING_VWAP_MAX_BELOW_PCT
+    )
+    return {
+        "current_price": round(price, 6) if price else None,
+        "calculated_vwap": round(vwap, 6) if vwap else None,
+        "distance_pct": round(distance, 4),
+        "bar_timeframe_source": record.get("vwap_bar_timeframe_source")
+        or record.get("bar_timeframe_source")
+        or "current intraday bars used for SuperTrend",
+        "gate_passed": passed,
+        "fresh_reclaim": fresh_reclaim,
+        "max_below_tolerance_pct": STRENGTHENING_VWAP_MAX_BELOW_PCT,
+    }
 
-    VWAP is a Strengthening prerequisite rather than another weighted score:
-    symbols well below VWAP are held below Strengthening even if volume and
-    SuperTrend evidence are strong. Near/test VWAP setups may qualify, while
-    reclaimed/above-VWAP setups naturally retain priority in the existing score.
-    """
-    relation = record.get("vwap_relation")
-    distance = _num(record, "vwap_distance_pct")
-    return relation in {"testing", "above"} or distance >= -1.0
+
+def _strengthening_vwap_qualified(record: dict, prior: dict | None = None) -> bool:
+    """Return whether current VWAP structure allows Strengthening."""
+    return bool(_current_vwap_diagnostics(record, prior).get("gate_passed"))
 
 
 def _entry_ready_requirements(record: dict, prior: dict | None = None) -> bool:
-    price_at_or_above_vwap = (
-        record.get("vwap_relation") == "above" or _num(record, "vwap_distance_pct") >= 0
-    )
+    price_at_or_above_vwap = _current_vwap_diagnostics(record, prior)["distance_pct"] >= 0
     catalyst_30s = bool(
         record.get("supertrend_30s_flip", record.get("supertrend_flip"))
     )
@@ -497,7 +526,7 @@ def classify_state(record: dict, prior: dict | None = None) -> str:
         < _num(prior, "scanner_v2_score", _num(prior, "opportunity_score")) - 12
     ):
         return "Weakening"
-    if score >= 66 and _strengthening_vwap_qualified(record):
+    if score >= 66 and _strengthening_vwap_qualified(record, prior):
         return "Strengthening"
     if score >= 52:
         return "Emerging"
@@ -563,6 +592,7 @@ def apply_scanner_v2(
                 strengthening_promotion_diagnostic["volume_acceleration"],
                 strengthening_promotion_diagnostic["final_weighted_score"],
             )
+        vwap_gate_diagnostics = _current_vwap_diagnostics(record, prior)
         record.update(
             {
                 "scanner_version": "V2",
@@ -577,6 +607,8 @@ def apply_scanner_v2(
                     promotion_changes[0] if promotion_changes else None
                 ),
                 "strengthening_promotion_diagnostic": strengthening_promotion_diagnostic,
+                "strengthening_vwap_gate": vwap_gate_diagnostics,
+                "vwap_distance_pct": vwap_gate_diagnostics["distance_pct"],
                 "status": state,
                 "state_entered_at": state_entered_at,
                 "state_elapsed_seconds": state_elapsed,
