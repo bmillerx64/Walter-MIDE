@@ -367,6 +367,23 @@ def test_scanner_v2_sorts_newest_promotions_within_state():
     assert [record["symbol"] for record in ranked] == ["NEW", "OLD"]
 
 
+def test_scanner_v2_sort_normalizes_mixed_prior_state_entered_values():
+    from datetime import datetime, timezone
+
+    from mide.scanner_v2 import apply_scanner_v2
+
+    string_record = {**base(symbol="STRING", vwap_relation="below", supertrend_bullish=False, supertrend_flip=False).__dict__, "opportunity_score": 55, "status": "PASS", "timeframes": {}, "reasons": [], "cautions": []}
+    datetime_record = {**base(symbol="DATETIME", vwap_relation="below", supertrend_bullish=False, supertrend_flip=False).__dict__, "opportunity_score": 55, "status": "PASS", "timeframes": {}, "reasons": [], "cautions": []}
+    prior = {
+        "STRING": {"candidate_status": "Strengthening", "state_entered_at": "2026-07-23T14:29:00+00:00", "scanner_v2_score": "55"},
+        "DATETIME": {"candidate_status": "Strengthening", "state_entered_at": datetime(2026, 7, 23, 14, 30, tzinfo=timezone.utc), "scanner_v2_score": None},
+    }
+
+    ranked = apply_scanner_v2([string_record, datetime_record], prior, scan_time=datetime(2026, 7, 23, 14, 32, tzinfo=timezone.utc))
+
+    assert [record["symbol"] for record in ranked] == ["DATETIME", "STRING"]
+
+
 def test_scanner_v2_transition_history_records_state_changes():
     from datetime import datetime, timezone
 
