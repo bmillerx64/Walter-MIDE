@@ -21,6 +21,15 @@ MAX_TRANSITION_HISTORY = 4
 STRENGTHENING_RULE_ORDER = ("News", "RVOL", "Dollar Volume", "VWAP", "SuperTrend")
 STRENGTHENING_REJECTION_BUCKETS = ("Below VWAP", "RVOL", "SuperTrend", "Dollar Volume", "News", "Other")
 
+__all__ = [
+    "apply_scanner_v2",
+    "classify_state",
+    "momentum_evidence",
+    "state_elapsed_seconds",
+    "strengthening_decision",
+    "strengthening_diagnostics",
+]
+
 
 def _has_strengthening_news(record: dict) -> bool:
     discovery = set(record.get("discovery_reasons") or [])

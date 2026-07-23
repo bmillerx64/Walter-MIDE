@@ -521,3 +521,10 @@ def test_strengthening_diagnostics_records_first_rejection_rule():
     assert [check["rule"] for check in lowrvol["checks"]][:2] == ["News", "RVOL"]
     assert lowrvol["checks"][0]["passed"] is True
     assert lowrvol["checks"][1]["passed"] is False
+
+
+def test_scanner_v2_exports_strengthening_diagnostics_for_startup_import():
+    from mide.scanner_v2 import strengthening_diagnostics
+
+    assert callable(strengthening_diagnostics)
+    assert "strengthening_diagnostics" in __import__("mide.scanner_v2", fromlist=["__all__"]).__all__
