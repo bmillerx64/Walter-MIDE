@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, time, timezone
+from zoneinfo import ZoneInfo
 import logging
 from numbers import Real
 
@@ -22,6 +23,17 @@ TRANSITION_HISTORY_STATES = {"Emerging", "Watching", "Strengthening", "Entry Rea
 MAX_TRANSITION_HISTORY = 4
 PROMOTION_TARGET_STATES = {"Strengthening", "Entry Ready"}
 STRENGTHENING_VWAP_MAX_BELOW_PCT = 1.0
+MARKET_TZ = ZoneInfo("America/New_York")
+BASE_MIN_VOLUME = 500_000
+BASE_MIN_DOLLAR_VOLUME = 250_000
+BASE_MIN_RVOL = 1.5
+SESSION_VOLUME_PROFILES = {
+    "Pre-Market": 0.45,
+    "Open": 1.6,
+    "Midday": 0.75,
+    "Power Hour": 1.25,
+    "After Hours": 0.35,
+}
 
 STRENGTHENING_RULE_ORDER = ("News", "RVOL", "Dollar Volume", "VWAP", "SuperTrend")
 STRENGTHENING_REJECTION_BUCKETS = (
@@ -37,6 +49,7 @@ __all__ = [
     "apply_scanner_v2",
     "classify_state",
     "momentum_evidence",
+    "session_volume_diagnostics",
     "state_elapsed_seconds",
     "strengthening_decision",
     "strengthening_diagnostics",
@@ -84,17 +97,20 @@ def _has_strengthening_supertrend(record: dict) -> bool:
     )
 
 
-def strengthening_decision(record: dict) -> dict:
+def strengthening_decision(record: dict, scan_time: datetime | None = None) -> dict:
     """Explain the first observable rule that kept a symbol below Strengthening.
 
     This is diagnostic-only instrumentation. The scanner still uses the existing
     score/state rules; these checks mirror the major evidence buckets so tuning
     can see which bucket first goes missing.
     """
+    volume_gate = record.get(
+        "volume_session_diagnostics"
+    ) or session_volume_diagnostics(record, scan_time)
     checks = [
         ("News", _has_strengthening_news(record), "News"),
-        ("RVOL", _num(record, "rvol_proxy", 1) >= 1.5, "RVOL"),
-        ("Dollar Volume", _num(record, "dollar_volume") >= 250_000, "Dollar Volume"),
+        ("RVOL", volume_gate["rvol_passed"], "RVOL"),
+        ("Dollar Volume", volume_gate["dollar_volume_passed"], "Dollar Volume"),
         (
             "VWAP",
             _strengthening_vwap_qualified(record),
@@ -124,7 +140,9 @@ def strengthening_decision(record: dict) -> dict:
         ),
         "candidate_status": state,
         "scanner_v2_score": record.get("scanner_v2_score"),
-        "vwap_gate": record.get("strengthening_vwap_gate") or _current_vwap_diagnostics(record),
+        "vwap_gate": record.get("strengthening_vwap_gate")
+        or _current_vwap_diagnostics(record),
+        "volume_gate": volume_gate,
     }
 
 
@@ -228,7 +246,9 @@ def _condition_crossed(current_passed: bool, prior_passed: bool) -> bool:
     return bool(current_passed and not prior_passed)
 
 
-def _promotion_condition_changes(record: dict, prior: dict) -> list[str]:
+def _promotion_condition_changes(
+    record: dict, prior: dict, scan_time: datetime | None = None
+) -> list[str]:
     """Return positive scan-to-scan condition changes that explain a promotion."""
     changes: list[str] = []
 
@@ -276,10 +296,26 @@ def _promotion_condition_changes(record: dict, prior: dict) -> list[str]:
         elif _condition_crossed(_tf_bull(record, label), _tf_bull(prior, label)):
             changes.append(f"{label} VWAP/ST confirmation")
 
+    session_gate = session_volume_diagnostics(record, scan_time)
     thresholds = [
-        ("volume threshold crossed", "volume", 500_000, 0),
-        ("dollar volume threshold crossed", "dollar_volume", 250_000, 0),
-        ("RVOL threshold crossed", "rvol_proxy", 1.5, 1),
+        (
+            "volume threshold crossed",
+            "volume",
+            session_gate["expected_minimum_volume"],
+            0,
+        ),
+        (
+            "dollar volume threshold crossed",
+            "dollar_volume",
+            session_gate["expected_minimum_dollar_volume"],
+            0,
+        ),
+        (
+            "RVOL threshold crossed",
+            "rvol_proxy",
+            session_gate["expected_minimum_rvol"],
+            1,
+        ),
         ("volume acceleration threshold crossed", "volume_acceleration", 1.2, 1),
         ("float turnover threshold crossed", "float_turnover_pct", 3, 0),
     ]
@@ -304,6 +340,50 @@ def _promotion_condition_changes(record: dict, prior: dict) -> list[str]:
     return changes
 
 
+def _market_session(now: datetime | None = None) -> str:
+    if now is None:
+        now = datetime.now(timezone.utc)
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=timezone.utc)
+    market_time = now.astimezone(MARKET_TZ).time()
+    if time(4, 0) <= market_time < time(9, 30):
+        return "Pre-Market"
+    if time(9, 30) <= market_time < time(10, 0):
+        return "Open"
+    if time(10, 0) <= market_time < time(15, 0):
+        return "Midday"
+    if time(15, 0) <= market_time < time(16, 0):
+        return "Power Hour"
+    return "After Hours"
+
+
+def session_volume_diagnostics(record: dict, scan_time: datetime | None = None) -> dict:
+    session = _market_session(scan_time)
+    multiplier = SESSION_VOLUME_PROFILES[session]
+    expected_volume = BASE_MIN_VOLUME * multiplier
+    expected_dollar = BASE_MIN_DOLLAR_VOLUME * multiplier
+    expected_rvol = BASE_MIN_RVOL * multiplier
+    actual_volume = _num(record, "volume")
+    actual_dollar = _num(record, "dollar_volume")
+    actual_rvol = _num(record, "rvol_proxy", 1)
+    volume_passed = actual_volume >= expected_volume
+    dollar_passed = actual_dollar >= expected_dollar
+    rvol_passed = actual_rvol >= expected_rvol
+    return {
+        "current_session": session,
+        "expected_minimum_volume": round(expected_volume),
+        "actual_volume": round(actual_volume),
+        "volume_passed": volume_passed,
+        "expected_minimum_dollar_volume": round(expected_dollar),
+        "actual_dollar_volume": round(actual_dollar),
+        "dollar_volume_passed": dollar_passed,
+        "expected_minimum_rvol": round(expected_rvol, 2),
+        "actual_rvol": round(actual_rvol, 2),
+        "rvol_passed": rvol_passed,
+        "passed": bool(volume_passed and dollar_passed and rvol_passed),
+    }
+
+
 def _current_vwap_diagnostics(record: dict, prior: dict | None = None) -> dict:
     """Calculate the live VWAP gate inputs from the current bar-derived VWAP."""
     price = _num(record, "price")
@@ -324,9 +404,7 @@ def _current_vwap_diagnostics(record: dict, prior: dict | None = None) -> dict:
         )
     fresh_reclaim = bool(prior_distance is not None and prior_distance < 0 <= distance)
     passed = bool(
-        distance >= 0
-        or fresh_reclaim
-        or distance >= -STRENGTHENING_VWAP_MAX_BELOW_PCT
+        distance >= 0 or fresh_reclaim or distance >= -STRENGTHENING_VWAP_MAX_BELOW_PCT
     )
     return {
         "current_price": round(price, 6) if price else None,
@@ -347,7 +425,9 @@ def _strengthening_vwap_qualified(record: dict, prior: dict | None = None) -> bo
 
 
 def _entry_ready_requirements(record: dict, prior: dict | None = None) -> bool:
-    price_at_or_above_vwap = _current_vwap_diagnostics(record, prior)["distance_pct"] >= 0
+    price_at_or_above_vwap = (
+        _current_vwap_diagnostics(record, prior)["distance_pct"] >= 0
+    )
     catalyst_30s = bool(
         record.get("supertrend_30s_flip", record.get("supertrend_flip"))
     )
@@ -367,7 +447,7 @@ def _entry_ready_requirements(record: dict, prior: dict | None = None) -> bool:
 
 
 def momentum_evidence(
-    record: dict, prior: dict | None = None
+    record: dict, prior: dict | None = None, scan_time: datetime | None = None
 ) -> tuple[float, list[str], list[str]]:
     """Score developing momentum without requiring a completed setup."""
     prior = prior or {}
@@ -388,20 +468,24 @@ def momentum_evidence(
     rvol = _num(record, "rvol_proxy", 1)
     accel = _num(record, "volume_acceleration", 1)
     turnover = _num(record, "float_turnover_pct")
+    volume_gate = session_volume_diagnostics(record, scan_time)
+    expected_vol = volume_gate["expected_minimum_volume"]
+    expected_dollar = volume_gate["expected_minimum_dollar_volume"]
+    expected_rvol = volume_gate["expected_minimum_rvol"]
 
-    if vol >= 500_000:
-        points += min(10, 4 + vol / 3_000_000)
-        reasons.append("increasing feed volume")
-    if dollar >= 250_000:
-        points += min(8, 3 + dollar / 2_000_000)
-        reasons.append("increasing dollar volume")
-    if rvol >= 1.5:
-        points += min(10, 4 + (rvol - 1.5) * 1.8)
-        reasons.append(f"rising RVOL {rvol:.1f}×")
+    if volume_gate["volume_passed"]:
+        points += min(10, 4 + vol / max(expected_vol * 6, 1))
+        reasons.append(f"{volume_gate['current_session']} feed volume qualified")
+    if volume_gate["dollar_volume_passed"]:
+        points += min(8, 3 + dollar / max(expected_dollar * 8, 1))
+        reasons.append(f"{volume_gate['current_session']} dollar volume qualified")
+    if volume_gate["rvol_passed"]:
+        points += min(10, 4 + (rvol - expected_rvol) * 1.8)
+        reasons.append(f"{volume_gate['current_session']} RVOL {rvol:.1f}×")
     if accel >= 1.2:
         points += min(18, 7 + (accel - 1.0) * 10)
         reasons.append(f"accelerating volume {accel:.1f}×")
-    elif vol < 500_000 and rvol < 1.2:
+    elif not volume_gate["passed"] and rvol < max(1.2, expected_rvol * 0.8):
         points -= 15
         cautions.append("inactive volume")
     if turnover >= 3:
@@ -513,8 +597,10 @@ def _strengthening_promotion_diagnostic(record: dict, score: float) -> dict:
     }
 
 
-def classify_state(record: dict, prior: dict | None = None) -> str:
-    score, reasons, cautions = momentum_evidence(record, prior)
+def classify_state(
+    record: dict, prior: dict | None = None, scan_time: datetime | None = None
+) -> str:
+    score, reasons, cautions = momentum_evidence(record, prior, scan_time)
     prior_state = (prior or {}).get("candidate_status") or (prior or {}).get("status")
     if _num(record, "dollar_volume") < 50_000 or _num(record, "spread_pct") > 10:
         return "Removed"
@@ -530,7 +616,11 @@ def classify_state(record: dict, prior: dict | None = None) -> str:
         return "Strengthening"
     if score >= 52:
         return "Emerging"
-    if score >= 34 or record.get("headline") or _num(record, "rvol_proxy", 1) >= 1.5:
+    if (
+        score >= 34
+        or record.get("headline")
+        or session_volume_diagnostics(record, scan_time)["rvol_passed"]
+    ):
         return "Watching"
     return "New" if not prior_state else "Removed"
 
@@ -549,8 +639,8 @@ def apply_scanner_v2(
     for source in records:
         record = dict(source)
         prior = previous_by_symbol.get(record.get("symbol"), {})
-        score, reasons, cautions = momentum_evidence(record, prior)
-        state = classify_state(record, prior)
+        score, reasons, cautions = momentum_evidence(record, prior, scan_time)
+        state = classify_state(record, prior, scan_time)
         previous_state = prior.get("candidate_status") or prior.get("status")
         advanced = STATE_RANK.get(state, 0) > STATE_RANK.get(previous_state, 0)
         entered_watch = state in WATCH_STATES and previous_state not in WATCH_STATES
@@ -572,7 +662,7 @@ def apply_scanner_v2(
             prior, state, previous_state, state_entered_at
         )
         promotion_changes = (
-            _promotion_condition_changes(record, prior)
+            _promotion_condition_changes(record, prior, scan_time)
             if advanced and state in PROMOTION_TARGET_STATES
             else []
         )
@@ -593,6 +683,7 @@ def apply_scanner_v2(
                 strengthening_promotion_diagnostic["final_weighted_score"],
             )
         vwap_gate_diagnostics = _current_vwap_diagnostics(record, prior)
+        volume_session_diagnostics = session_volume_diagnostics(record, scan_time)
         record.update(
             {
                 "scanner_version": "V2",
@@ -608,6 +699,7 @@ def apply_scanner_v2(
                 ),
                 "strengthening_promotion_diagnostic": strengthening_promotion_diagnostic,
                 "strengthening_vwap_gate": vwap_gate_diagnostics,
+                "volume_session_diagnostics": volume_session_diagnostics,
                 "vwap_distance_pct": vwap_gate_diagnostics["distance_pct"],
                 "status": state,
                 "state_entered_at": state_entered_at,
@@ -619,6 +711,6 @@ def apply_scanner_v2(
                 ),
             }
         )
-        record["strengthening_decision"] = strengthening_decision(record)
+        record["strengthening_decision"] = strengthening_decision(record, scan_time)
         output.append(record)
     return sorted(output, key=_ranked_record_sort_key, reverse=True)
