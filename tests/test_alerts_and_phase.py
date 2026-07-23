@@ -230,11 +230,10 @@ def test_voice_preview_uses_selected_voice_identifier():
     assert normalize_alert_voice("com.apple.voice.compact.en-US.Samantha") == "com.apple.voice.compact.en-US.Samantha"
 
 
-def test_unavailable_voice_keeps_preference_but_falls_back_for_session():
+def test_unavailable_voice_keeps_preference_without_system_fallback():
     from app import (
         ACTIVE_VOICE_SESSION_KEY,
         ALERT_VOICE_SESSION_KEY,
-        SYSTEM_DEFAULT_VOICE_ID,
         VOICE_WARNING_SESSION_KEY,
         active_voice_identifier,
         stable_voice_options,
@@ -243,10 +242,11 @@ def test_unavailable_voice_keeps_preference_but_falls_back_for_session():
     session = {ALERT_VOICE_SESSION_KEY: "missing-voice"}
     active = active_voice_identifier("missing-voice", stable_voice_options(False), session)
 
-    assert active == SYSTEM_DEFAULT_VOICE_ID
+    assert active == "missing-voice"
     assert session[ALERT_VOICE_SESSION_KEY] == "missing-voice"
-    assert session[ACTIVE_VOICE_SESSION_KEY] == SYSTEM_DEFAULT_VOICE_ID
+    assert session[ACTIVE_VOICE_SESSION_KEY] == "missing-voice"
     assert "not available" in session[VOICE_WARNING_SESSION_KEY]
+    assert "not fall back" in session[VOICE_WARNING_SESSION_KEY]
 
 
 def test_state_sections_sort_timed_states_by_newest_promotion():
