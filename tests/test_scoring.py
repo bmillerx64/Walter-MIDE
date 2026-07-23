@@ -800,6 +800,66 @@ def test_strengthening_diagnostics_records_first_rejection_rule():
     assert lowrvol["checks"][1]["passed"] is False
 
 
+def test_scanner_v2_blocks_strengthening_when_well_below_vwap():
+    from mide.scanner_v2 import apply_scanner_v2, strengthening_diagnostics
+
+    record = {
+        **base(
+            symbol="DEEP",
+            vwap_relation="below",
+            vwap_distance_pct=-4.0,
+            supertrend_bullish=True,
+            supertrend_flip=True,
+            volume_acceleration=3.0,
+            rvol_proxy=7.0,
+        ).__dict__,
+        "volume": 50_000_000,
+        "dollar_volume": 25_000_000,
+        "opportunity_score": 90,
+        "status": "ALERT",
+        "timeframes": {
+            "1m": {"above_vwap": True, "supertrend": True},
+            "3m": {"above_vwap": True, "supertrend": True},
+        },
+        "reasons": [],
+        "cautions": [],
+    }
+
+    ranked = apply_scanner_v2([record], {})
+    decision = strengthening_diagnostics(ranked)["decisions"][0]
+
+    assert ranked[0]["candidate_status"] == "Emerging"
+    assert decision["first_rejection_rule"] == "VWAP"
+    assert decision["first_rejection_bucket"] == "Below VWAP"
+
+
+def test_scanner_v2_allows_strengthening_near_vwap():
+    from mide.scanner_v2 import apply_scanner_v2
+
+    record = {
+        **base(
+            symbol="NEAR",
+            vwap_relation="below",
+            vwap_distance_pct=-0.8,
+            supertrend_bullish=True,
+            supertrend_flip=True,
+            volume_acceleration=3.0,
+            rvol_proxy=7.0,
+        ).__dict__,
+        "opportunity_score": 90,
+        "status": "ALERT",
+        "timeframes": {
+            "1m": {"above_vwap": True, "supertrend": True},
+            "3m": {"above_vwap": True, "supertrend": True},
+        },
+        "reasons": [],
+        "cautions": [],
+    }
+
+    ranked = apply_scanner_v2([record], {})
+
+    assert ranked[0]["candidate_status"] == "Strengthening"
+
 def test_scanner_v2_exports_strengthening_diagnostics_for_startup_import():
     from mide.scanner_v2 import strengthening_diagnostics
 

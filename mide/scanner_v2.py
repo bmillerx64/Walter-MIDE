@@ -96,8 +96,7 @@ def strengthening_decision(record: dict) -> dict:
         ("Dollar Volume", _num(record, "dollar_volume") >= 250_000, "Dollar Volume"),
         (
             "VWAP",
-            record.get("vwap_relation") in {"testing", "above"}
-            or _num(record, "vwap_distance_pct") >= 0,
+            _strengthening_vwap_qualified(record),
             "Below VWAP",
         ),
         ("SuperTrend", _has_strengthening_supertrend(record), "SuperTrend"),
@@ -303,6 +302,19 @@ def _promotion_condition_changes(record: dict, prior: dict) -> list[str]:
     return changes
 
 
+def _strengthening_vwap_qualified(record: dict) -> bool:
+    """Return whether VWAP structure is strong enough to allow Strengthening.
+
+    VWAP is a Strengthening prerequisite rather than another weighted score:
+    symbols well below VWAP are held below Strengthening even if volume and
+    SuperTrend evidence are strong. Near/test VWAP setups may qualify, while
+    reclaimed/above-VWAP setups naturally retain priority in the existing score.
+    """
+    relation = record.get("vwap_relation")
+    distance = _num(record, "vwap_distance_pct")
+    return relation in {"testing", "above"} or distance >= -1.0
+
+
 def _entry_ready_requirements(record: dict, prior: dict | None = None) -> bool:
     price_at_or_above_vwap = (
         record.get("vwap_relation") == "above" or _num(record, "vwap_distance_pct") >= 0
@@ -485,7 +497,7 @@ def classify_state(record: dict, prior: dict | None = None) -> str:
         < _num(prior, "scanner_v2_score", _num(prior, "opportunity_score")) - 12
     ):
         return "Weakening"
-    if score >= 66:
+    if score >= 66 and _strengthening_vwap_qualified(record):
         return "Strengthening"
     if score >= 52:
         return "Emerging"
