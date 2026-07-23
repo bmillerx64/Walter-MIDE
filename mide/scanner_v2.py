@@ -27,6 +27,8 @@ MARKET_TZ = ZoneInfo("America/New_York")
 BASE_MIN_VOLUME = 500_000
 BASE_MIN_DOLLAR_VOLUME = 250_000
 BASE_MIN_RVOL = 1.5
+VPI_MIN_PACE_RATIO = 1.2
+VPI_MIN_ACCELERATION_RATIO = 1.2
 SESSION_VOLUME_PROFILES = {
     "Pre-Market": 0.45,
     "Open": 1.6,
@@ -50,6 +52,7 @@ __all__ = [
     "classify_state",
     "momentum_evidence",
     "session_volume_diagnostics",
+    "volume_pace_diagnostics",
     "state_elapsed_seconds",
     "strengthening_decision",
     "strengthening_diagnostics",
@@ -143,6 +146,7 @@ def strengthening_decision(record: dict, scan_time: datetime | None = None) -> d
         "vwap_gate": record.get("strengthening_vwap_gate")
         or _current_vwap_diagnostics(record),
         "volume_gate": volume_gate,
+        "volume_pace": volume_pace_diagnostics(record),
     }
 
 
@@ -384,6 +388,40 @@ def session_volume_diagnostics(record: dict, scan_time: datetime | None = None) 
     }
 
 
+def volume_pace_diagnostics(record: dict) -> dict:
+    current_volume = _num(record, "volume")
+    expected_volume = _num(record, "expected_volume_by_time")
+    vpr = _num(
+        record,
+        "volume_pace_ratio",
+        current_volume / expected_volume if expected_volume > 0 else 1,
+    )
+    five_minute_volume = _num(record, "five_minute_volume")
+    expected_five_minute = _num(record, "expected_five_minute_volume")
+    acceleration = _num(
+        record,
+        "acceleration_ratio",
+        five_minute_volume / expected_five_minute if expected_five_minute > 0 else 1,
+    )
+    passed = bool(
+        record.get(
+            "volume_pace_passed",
+            vpr >= VPI_MIN_PACE_RATIO and acceleration >= VPI_MIN_ACCELERATION_RATIO,
+        )
+    )
+    return {
+        "current_volume": round(current_volume),
+        "expected_volume": round(expected_volume),
+        "volume_pace_ratio": round(vpr, 2),
+        "five_minute_volume": round(five_minute_volume),
+        "expected_five_minute_volume": round(expected_five_minute),
+        "acceleration_ratio": round(acceleration, 2),
+        "passed": passed,
+        "minimum_volume_pace_ratio": VPI_MIN_PACE_RATIO,
+        "minimum_acceleration_ratio": VPI_MIN_ACCELERATION_RATIO,
+    }
+
+
 def _current_vwap_diagnostics(record: dict, prior: dict | None = None) -> dict:
     """Calculate the live VWAP gate inputs from the current bar-derived VWAP."""
     price = _num(record, "price")
@@ -467,11 +505,26 @@ def momentum_evidence(
     dollar = _num(record, "dollar_volume")
     rvol = _num(record, "rvol_proxy", 1)
     accel = _num(record, "volume_acceleration", 1)
+    vpi = volume_pace_diagnostics(record)
+    vpr = vpi["volume_pace_ratio"]
+    acceleration_ratio = vpi["acceleration_ratio"]
     turnover = _num(record, "float_turnover_pct")
     volume_gate = session_volume_diagnostics(record, scan_time)
     expected_vol = volume_gate["expected_minimum_volume"]
     expected_dollar = volume_gate["expected_minimum_dollar_volume"]
     expected_rvol = volume_gate["expected_minimum_rvol"]
+
+    if vpi["passed"]:
+        points += min(24, 8 + (vpr - 1.0) * 7 + (acceleration_ratio - 1.0) * 5)
+        reasons.append(
+            f"VPI {vpr:.1f}× pace / {acceleration_ratio:.1f}× 5m acceleration"
+        )
+    elif vpr >= 1.2:
+        points += min(12, 4 + (vpr - 1.0) * 5)
+        reasons.append(f"VPI {vpr:.1f}× participation pace")
+    elif vpr < 0.8:
+        points -= 8
+        cautions.append("below normal volume pace")
 
     if volume_gate["volume_passed"]:
         points += min(10, 4 + vol / max(expected_vol * 6, 1))
@@ -554,6 +607,9 @@ def momentum_evidence(
         if dollar > _num(prior, "dollar_volume") * 1.05:
             points += 7
             reasons.append("dollar flow increased since prior scan")
+        if vpr > _num(prior, "volume_pace_ratio", 1) + 0.25:
+            points += 8
+            reasons.append("VPI improved since prior scan")
         if rvol > _num(prior, "rvol_proxy", 1) + 0.25:
             points += 6
             reasons.append("RVOL improved since prior scan")
@@ -684,6 +740,7 @@ def apply_scanner_v2(
             )
         vwap_gate_diagnostics = _current_vwap_diagnostics(record, prior)
         volume_session_diagnostics = session_volume_diagnostics(record, scan_time)
+        volume_pace = volume_pace_diagnostics(record)
         record.update(
             {
                 "scanner_version": "V2",
@@ -700,6 +757,8 @@ def apply_scanner_v2(
                 "strengthening_promotion_diagnostic": strengthening_promotion_diagnostic,
                 "strengthening_vwap_gate": vwap_gate_diagnostics,
                 "volume_session_diagnostics": volume_session_diagnostics,
+                "volume_pace_diagnostics": volume_pace,
+                "volume_pace_passed": volume_pace["passed"],
                 "vwap_distance_pct": vwap_gate_diagnostics["distance_pct"],
                 "status": state,
                 "state_entered_at": state_entered_at,
