@@ -860,6 +860,7 @@ def test_scanner_v2_allows_strengthening_near_vwap():
 
     assert ranked[0]["candidate_status"] == "Strengthening"
 
+
 def test_scanner_v2_exports_strengthening_diagnostics_for_startup_import():
     from mide.scanner_v2 import strengthening_diagnostics
 
@@ -1021,4 +1022,83 @@ def test_strengthening_vwap_gate_uses_current_intraday_vwap_values():
     assert decisions["ABOVE"]["vwap_gate"]["gate_passed"] is True
 
     for symbol, record in by_symbol.items():
-        assert record["vwap_distance_pct"] == decisions[symbol]["vwap_gate"]["distance_pct"]
+        assert (
+            record["vwap_distance_pct"]
+            == decisions[symbol]["vwap_gate"]["distance_pct"]
+        )
+
+
+def test_scanner_v2_volume_gate_adapts_by_market_session():
+    from datetime import datetime, timezone
+
+    from mide.scanner_v2 import apply_scanner_v2
+
+    record = {
+        **base(
+            symbol="ADAPT",
+            volume=300_000,
+            dollar_volume=160_000,
+            rvol_proxy=1.0,
+            volume_acceleration=1.3,
+        ).__dict__,
+        "timeframes": {"1m": {"above_vwap": True, "supertrend": True}},
+        "reasons": [],
+        "cautions": [],
+    }
+
+    premarket = apply_scanner_v2(
+        [record], {}, scan_time=datetime(2026, 7, 23, 12, 0, tzinfo=timezone.utc)
+    )[0]
+    open_scan = apply_scanner_v2(
+        [record], {}, scan_time=datetime(2026, 7, 23, 13, 45, tzinfo=timezone.utc)
+    )[0]
+
+    assert premarket["volume_session_diagnostics"] == {
+        "current_session": "Pre-Market",
+        "expected_minimum_volume": 225_000,
+        "actual_volume": 300_000,
+        "volume_passed": True,
+        "expected_minimum_dollar_volume": 112_500,
+        "actual_dollar_volume": 160_000,
+        "dollar_volume_passed": True,
+        "expected_minimum_rvol": 0.68,
+        "actual_rvol": 1.0,
+        "rvol_passed": True,
+        "passed": True,
+    }
+    assert open_scan["volume_session_diagnostics"]["current_session"] == "Open"
+    assert open_scan["volume_session_diagnostics"]["expected_minimum_volume"] == 800_000
+    assert open_scan["volume_session_diagnostics"]["actual_volume"] == 300_000
+    assert open_scan["volume_session_diagnostics"]["passed"] is False
+    assert open_scan["strengthening_decision"]["volume_gate"]["passed"] is False
+
+
+def test_scanner_v2_midday_and_power_hour_volume_expectations():
+    from datetime import datetime, timezone
+
+    from mide.scanner_v2 import apply_scanner_v2
+
+    record = {
+        **base(
+            symbol="DAY", volume=500_000, dollar_volume=250_000, rvol_proxy=1.5
+        ).__dict__,
+        "timeframes": {"1m": {"above_vwap": True, "supertrend": True}},
+        "reasons": [],
+        "cautions": [],
+    }
+
+    midday = apply_scanner_v2(
+        [record], {}, scan_time=datetime(2026, 7, 23, 16, 30, tzinfo=timezone.utc)
+    )[0]
+    power_hour = apply_scanner_v2(
+        [record], {}, scan_time=datetime(2026, 7, 23, 19, 30, tzinfo=timezone.utc)
+    )[0]
+
+    assert midday["volume_session_diagnostics"]["current_session"] == "Midday"
+    assert midday["volume_session_diagnostics"]["expected_minimum_volume"] == 375_000
+    assert midday["volume_session_diagnostics"]["passed"] is True
+    assert power_hour["volume_session_diagnostics"]["current_session"] == "Power Hour"
+    assert (
+        power_hour["volume_session_diagnostics"]["expected_minimum_volume"] == 625_000
+    )
+    assert power_hour["volume_session_diagnostics"]["passed"] is False
