@@ -191,3 +191,14 @@ def test_unavailable_voice_keeps_preference_but_falls_back_for_session():
     assert session[ALERT_VOICE_SESSION_KEY] == "missing-voice"
     assert session[ACTIVE_VOICE_SESSION_KEY] == SYSTEM_DEFAULT_VOICE_ID
     assert "not available" in session[VOICE_WARNING_SESSION_KEY]
+
+
+def test_state_sections_sort_timed_states_by_newest_promotion():
+    records = [
+        {"symbol": "OLD", "candidate_status": "Entry Ready", "state_entered_at": "2026-07-23T14:20:00+00:00"},
+        {"symbol": "NEW", "candidate_status": "Entry Ready", "state_entered_at": "2026-07-23T14:29:00+00:00"},
+    ]
+
+    sections = state_sections(records)
+
+    assert [record["symbol"] for record in sections["Entry Ready"]] == ["NEW", "OLD"]
