@@ -22,6 +22,9 @@ def inject_css():
     .mide-monitor {border-left:5px solid #5da9ff;}
     .mide-promoted {border:1px solid #34d399; box-shadow:0 0 18px rgba(52,211,153,.32);}
     .promo-badge {display:inline-block;background:#064e3b;color:#a7f3d0;border:1px solid #34d399;border-radius:999px;padding:3px 9px;margin:6px 0;font-size:.78rem;font-weight:800;text-transform:uppercase;letter-spacing:.05em;}
+    .promo-delta {margin:2px 0 9px;padding:8px 11px;background:#071913;border:1px solid #1f5f46;border-radius:9px;color:#d1fae5;font-size:.9rem;font-weight:750;line-height:1.45}
+    .promo-delta ul {list-style:none;margin:0;padding:0;display:grid;gap:3px}
+    .promo-delta li::before {content:"+ ";color:#34d399;font-weight:900}
     .small {font-size:.84rem;color:#aeb9c7}
     .why {font-size:.96rem;font-weight:600;line-height:1.5;margin-top:6px}
     .why-summary {margin:10px 0 8px;padding:9px 11px;background:#0c1713;border:1px solid #1f5f46;border-radius:9px}
@@ -355,6 +358,13 @@ def opportunity_card(r):
         if summary_items else "<div class='why-summary'><div class='why-summary-title'>Top reasons now</div>No qualifying evidence</div>"
     )
     promo_badge = "<div class='promo-badge'>Promoted this scan</div>" if promoted_this_scan(r) else ""
+    delta_items = r.get("promotion_delta") or []
+    promo_delta = (
+        "<div class='promo-delta'><ul>"
+        + "".join(f"<li>{html.escape(str(item))}</li>" for item in delta_items)
+        + "</ul></div>"
+        if promoted_this_scan(r) and delta_items else ""
+    )
     velocity = r.get("velocity", 0)
     arrow = "↑↑" if velocity >= 12 else "↑" if velocity > 2 else "↓" if velocity < -2 else "→"
     tier = r.get("participation_tier", "")
@@ -381,6 +391,7 @@ def opportunity_card(r):
         <div style="font-size:1.15rem;font-weight:800">{html.escape(str(r['status']))}</div>
       </div>
       {promo_badge}
+      {promo_delta}
       {summary_markup}
       <div class="why">{html.escape(reasons)}</div>
       <div class="small"><b>Evidence:</b> Feed volume {r['volume']/1_000_000:.2f}M · Dollar volume ${r['dollar_volume']/1_000_000:.2f}M · RVOL {r.get('rvol_proxy',0):.1f}×</div>

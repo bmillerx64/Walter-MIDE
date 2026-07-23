@@ -278,3 +278,89 @@ def test_scanner_v2_sorts_newest_promotions_within_state():
     ranked = apply_scanner_v2([older, newer], prior, scan_time=datetime(2026, 7, 23, 14, 30, tzinfo=timezone.utc))
 
     assert [record["symbol"] for record in ranked] == ["NEW", "OLD"]
+
+
+def test_scanner_v2_promotion_delta_lists_only_changed_metrics():
+    from mide.scanner_v2 import apply_scanner_v2
+
+    prior = {
+        "TEST": {
+            "candidate_status": "Watching",
+            "scanner_v2_score": 40,
+            "opportunity_score": 45,
+            "volume": 1_000_000,
+            "dollar_volume": 500_000,
+            "rvol_proxy": 2.1,
+            "vwap_relation": "below",
+            "supertrend_bullish": False,
+            "near_hod": False,
+        }
+    }
+    record = {
+        **base(timeframe_confirmations=3).__dict__,
+        "opportunity_score": 70,
+        "participation_score": 80,
+        "status": "MONITOR",
+        "volume": 1_000_000,
+        "dollar_volume": 710_000,
+        "rvol_proxy": 3.4,
+        "headline": "Company wins contract",
+        "vwap_relation": "above",
+        "supertrend_bullish": True,
+        "supertrend_flip": True,
+        "near_hod": False,
+        "timeframes": {
+            "1m": {"above_vwap": True, "supertrend": True},
+            "3m": {"above_vwap": True, "supertrend": True},
+        },
+        "reasons": [],
+        "cautions": [],
+    }
+
+    ranked = apply_scanner_v2([record], prior)
+
+    assert ranked[0]["advanced_state"] is True
+    assert ranked[0]["promotion_delta"] == [
+        "Above VWAP",
+        "30-second SuperTrend turned green",
+        "News catalyst detected",
+        "RVOL increased from 2.1× → 3.4×",
+        "Dollar volume +42%",
+    ]
+    assert all("Feed volume" not in item for item in ranked[0]["promotion_delta"])
+
+
+def test_scanner_v2_promotion_delta_only_on_first_promoted_scan():
+    from mide.scanner_v2 import apply_scanner_v2
+
+    prior = {
+        "TEST": {
+            "candidate_status": "Watching",
+            "scanner_v2_score": 40,
+            "opportunity_score": 45,
+            "volume": 1_000_000,
+            "dollar_volume": 500_000,
+            "rvol_proxy": 2.1,
+            "vwap_relation": "below",
+        }
+    }
+    record = {
+        **base(timeframe_confirmations=3).__dict__,
+        "opportunity_score": 70,
+        "status": "MONITOR",
+        "timeframes": {
+            "1m": {"above_vwap": True, "supertrend": True},
+            "3m": {"above_vwap": True, "supertrend": True},
+        },
+        "reasons": [],
+        "cautions": [],
+    }
+
+    first_scan = apply_scanner_v2([record], prior)[0]
+    next_scan = apply_scanner_v2([record], {"TEST": first_scan})[0]
+
+    assert first_scan["promotion_delta"]
+    assert next_scan["candidate_status"] == first_scan["candidate_status"]
+    assert next_scan["advanced_state"] is False
+    assert next_scan["entered_watchlist"] is False
+    assert next_scan["promotion_delta"] == []

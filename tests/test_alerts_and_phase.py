@@ -285,3 +285,38 @@ def test_watching_sort_dropdown_no_longer_appears():
 
     assert 'f"Sort {section_name}"' in app_source
     assert 'section_name == "Watch List"' in app_source
+
+
+def test_opportunity_card_places_delta_immediately_below_promotion_badge(monkeypatch):
+    import mide.ui as ui
+
+    rendered = []
+    monkeypatch.setattr(ui.st, "markdown", lambda markup, unsafe_allow_html=True: rendered.append(markup))
+    record = {
+        "symbol": "TEST",
+        "status": "Entry Ready",
+        "candidate_status": "Entry Ready",
+        "advanced_state": True,
+        "promotion_delta": ["Above VWAP", "RVOL increased from 2.1× → 3.4×"],
+        "price": 1.23,
+        "pct_change": 12.0,
+        "volume": 1_000_000,
+        "dollar_volume": 710_000,
+        "rvol_proxy": 3.4,
+        "opportunity_score": 70,
+        "reasons": ["near/above VWAP"],
+        "velocity": 0,
+        "participation_tier": "ACTIVE",
+        "market_dominance_score": 0,
+        "timestamp": "2026-07-23T14:30:00+00:00",
+        "last_bar_timestamp": "2026-07-23T14:30:00+00:00",
+        "bar_age_seconds": 10,
+    }
+
+    ui.opportunity_card(record)
+
+    markup = rendered[0]
+    assert "promo-badge" in markup
+    assert "promo-delta" in markup
+    assert markup.index("promo-badge") < markup.index("promo-delta") < markup.index("why-summary")
+    assert "Above VWAP" in markup

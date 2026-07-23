@@ -170,6 +170,57 @@ def momentum_evidence(record: dict, prior: dict | None = None) -> tuple[float, l
     return max(0.0, min(100.0, points)), reasons[:12], cautions[:6]
 
 
+def _material_change_summary(record: dict, prior: dict) -> list[str]:
+    """Describe material scan-over-scan changes for first-scan promotions."""
+    if not prior:
+        return []
+
+    changes: list[str] = []
+
+    if prior.get("vwap_relation") != "above" and record.get("vwap_relation") == "above":
+        changes.append("Above VWAP")
+
+    prior_30s_green = bool(
+        prior.get("supertrend_30s_flip", prior.get("supertrend_flip"))
+        or prior.get("supertrend_bullish")
+    )
+    current_30s_green = bool(
+        record.get("supertrend_30s_flip", record.get("supertrend_flip"))
+        or record.get("supertrend_bullish")
+    )
+    if current_30s_green and not prior_30s_green:
+        changes.append("30-second SuperTrend turned green")
+
+    if not prior.get("headline") and record.get("headline"):
+        changes.append("News catalyst detected")
+
+    previous_rvol = _num(prior, "rvol_proxy", 1)
+    current_rvol = _num(record, "rvol_proxy", 1)
+    if current_rvol >= previous_rvol + 0.25 and current_rvol >= previous_rvol * 1.15:
+        changes.append(f"RVOL increased from {previous_rvol:.1f}× → {current_rvol:.1f}×")
+
+    previous_dollar = _num(prior, "dollar_volume")
+    current_dollar = _num(record, "dollar_volume")
+    if previous_dollar > 0 and current_dollar >= previous_dollar * 1.15:
+        pct = (current_dollar - previous_dollar) / previous_dollar * 100
+        changes.append(f"Dollar volume +{pct:.0f}%")
+
+    previous_volume = _num(prior, "volume")
+    current_volume = _num(record, "volume")
+    if previous_volume > 0 and current_volume >= previous_volume * 1.20:
+        pct = (current_volume - previous_volume) / previous_volume * 100
+        changes.append(f"Feed volume +{pct:.0f}%")
+
+    previous_score = _num(prior, "opportunity_score")
+    current_score = _num(record, "opportunity_score")
+    if current_score >= previous_score + 5:
+        changes.append(f"Momentum score +{current_score - previous_score:.0f} points")
+
+    if record.get("near_hod") and not prior.get("near_hod"):
+        changes.append("New intraday high")
+
+    return changes[:5]
+
 def classify_state(record: dict, prior: dict | None = None) -> str:
     score, reasons, cautions = momentum_evidence(record, prior)
     prior_state = (prior or {}).get("candidate_status") or (prior or {}).get("status")
@@ -219,6 +270,7 @@ def apply_scanner_v2(records: list[dict], previous_by_symbol: dict[str, dict], s
             "advanced_state": advanced,
             "entered_watchlist": entered_watch,
             "alert_event": bool(entered_watch or advanced),
+            "promotion_delta": _material_change_summary(record, prior) if (entered_watch or advanced) else [],
             "status": state,
             "state_entered_at": state_entered_at,
             "state_elapsed_seconds": state_elapsed,
