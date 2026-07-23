@@ -3,13 +3,29 @@ from mide.scoring import Evidence, score
 
 def base(**updates):
     values = dict(
-        symbol="TEST", price=.50, pct_change=20, volume=5_000_000,
-        dollar_volume=2_500_000, spread_pct=1.0, vwap_relation="above",
-        vwap_distance_pct=.2, supertrend_bullish=True, supertrend_flip=True,
-        ema65_relation="above", ema65_distance_pct=.3, volume_acceleration=2.0,
-        green_volume_ratio=2.0, rvol_proxy=5.0, higher_lows=True, near_hod=True,
-        catalyst_score=10, headline="Company wins contract", news_age_hours=2,
-        risk_flags=[], timeframe_confirmations=4, discovery_reasons=["market mover"]
+        symbol="TEST",
+        price=0.50,
+        pct_change=20,
+        volume=5_000_000,
+        dollar_volume=2_500_000,
+        spread_pct=1.0,
+        vwap_relation="above",
+        vwap_distance_pct=0.2,
+        supertrend_bullish=True,
+        supertrend_flip=True,
+        ema65_relation="above",
+        ema65_distance_pct=0.3,
+        volume_acceleration=2.0,
+        green_volume_ratio=2.0,
+        rvol_proxy=5.0,
+        higher_lows=True,
+        near_hod=True,
+        catalyst_score=10,
+        headline="Company wins contract",
+        news_age_hours=2,
+        risk_flags=[],
+        timeframe_confirmations=4,
+        discovery_reasons=["market mover"],
     )
     values.update(updates)
     return Evidence(**values)
@@ -22,10 +38,13 @@ def test_aligned_setup_is_elevated():
 
 
 def test_offering_is_pass():
-    result = score(base(
-        headline="Company announces registered direct offering",
-        catalyst_score=-28, risk_flags=["registered direct", "offering"]
-    ))
+    result = score(
+        base(
+            headline="Company announces registered direct offering",
+            catalyst_score=-28,
+            risk_flags=["registered direct", "offering"],
+        )
+    )
     assert result.status == "PASS"
 
 
@@ -44,11 +63,30 @@ def test_major_volume_scores_higher_than_modest_volume():
 
 def test_dominance_is_nonzero_and_ranks_leader():
     from mide.discovery import apply_attention_ranking
+
     records = [
-        {"symbol":"LEAD","volume":30_000_000,"dollar_volume":15_000_000,"pct_change":40,
-         "rvol_proxy":8,"opportunity_score":90,"participation_score":94,"status":"ALERT","reasons":[]},
-        {"symbol":"OTHER","volume":3_000_000,"dollar_volume":1_000_000,"pct_change":10,
-         "rvol_proxy":2,"opportunity_score":65,"participation_score":55,"status":"MONITOR","reasons":[]},
+        {
+            "symbol": "LEAD",
+            "volume": 30_000_000,
+            "dollar_volume": 15_000_000,
+            "pct_change": 40,
+            "rvol_proxy": 8,
+            "opportunity_score": 90,
+            "participation_score": 94,
+            "status": "ALERT",
+            "reasons": [],
+        },
+        {
+            "symbol": "OTHER",
+            "volume": 3_000_000,
+            "dollar_volume": 1_000_000,
+            "pct_change": 10,
+            "rvol_proxy": 2,
+            "opportunity_score": 65,
+            "participation_score": 55,
+            "status": "MONITOR",
+            "reasons": [],
+        },
     ]
     ranked = apply_attention_ranking(records)
     assert ranked[0]["symbol"] == "LEAD"
@@ -59,8 +97,13 @@ def test_scanner_v2_rewards_developing_momentum_without_completed_setup():
     from mide.scanner_v2 import apply_scanner_v2
 
     record = {
-        **base(vwap_relation="below", supertrend_bullish=False, supertrend_flip=False,
-               ema65_relation="below", timeframe_confirmations=0).__dict__,
+        **base(
+            vwap_relation="below",
+            supertrend_bullish=False,
+            supertrend_flip=False,
+            ema65_relation="below",
+            timeframe_confirmations=0,
+        ).__dict__,
         "opportunity_score": 48,
         "participation_score": 72,
         "status": "PASS",
@@ -139,7 +182,9 @@ def test_scanner_v2_promotion_delta_marks_state_advancement_without_behavior_cha
         "cautions": [],
     }
 
-    ranked = apply_scanner_v2([record], prior, scan_time=datetime(2026, 7, 23, 14, 31, tzinfo=timezone.utc))
+    ranked = apply_scanner_v2(
+        [record], prior, scan_time=datetime(2026, 7, 23, 14, 31, tzinfo=timezone.utc)
+    )
 
     assert ranked[0]["previous_candidate_status"] == "Watching"
     assert ranked[0]["candidate_status"] in {"Strengthening", "Entry Ready"}
@@ -147,11 +192,88 @@ def test_scanner_v2_promotion_delta_marks_state_advancement_without_behavior_cha
     assert ranked[0]["entered_watchlist"] is False
     assert ranked[0]["alert_event"] is True
     assert ranked[0]["state_entered_at"] == "2026-07-23T14:31:00+00:00"
-    assert ranked[0]["transition_history"][0] == {"state": "Watching", "entered_at": prior_entered}
+    assert ranked[0]["transition_history"][0] == {
+        "state": "Watching",
+        "entered_at": prior_entered,
+    }
     assert ranked[0]["transition_history"][-1] == {
         "state": ranked[0]["candidate_status"],
         "entered_at": "2026-07-23T14:31:00+00:00",
     }
+
+
+def test_strengthening_promotion_records_changed_conditions():
+    from mide.scanner_v2 import apply_scanner_v2
+
+    prior = {
+        "TEST": {
+            "candidate_status": "Emerging",
+            "scanner_v2_score": 55,
+            "volume": 450_000,
+            "dollar_volume": 200_000,
+            "rvol_proxy": 1.2,
+            "opportunity_score": 55,
+            "vwap_relation": "below",
+            "supertrend_flip": False,
+            "timeframes": {"1m": {"above_vwap": True, "supertrend": False}},
+        }
+    }
+    record = {
+        **base(
+            vwap_relation="above", supertrend_flip=True, timeframe_confirmations=2
+        ).__dict__,
+        "volume": 700_000,
+        "dollar_volume": 300_000,
+        "rvol_proxy": 1.8,
+        "opportunity_score": 72,
+        "status": "MONITOR",
+        "timeframes": {
+            "1m": {"above_vwap": True, "supertrend": True},
+            "3m": {"above_vwap": True, "supertrend": False},
+        },
+        "reasons": [],
+        "cautions": [],
+    }
+
+    ranked = apply_scanner_v2([record], prior)
+
+    assert ranked[0]["candidate_status"] in {"Strengthening", "Entry Ready"}
+    assert ranked[0]["advanced_state"] is True
+    assert ranked[0]["promotion_trigger"] == "VWAP reclaim"
+    assert "30s ST flip" in ranked[0]["promotion_condition_changes"]
+    assert "1m ST confirmation" in ranked[0]["promotion_condition_changes"]
+    assert "volume threshold crossed" in ranked[0]["promotion_condition_changes"]
+
+
+def test_unchanged_strengthening_state_does_not_record_promotion_trigger():
+    from mide.scanner_v2 import apply_scanner_v2
+
+    prior = {
+        "TEST": {
+            "candidate_status": "Strengthening",
+            "scanner_v2_score": 70,
+            "volume": 900_000,
+            "dollar_volume": 500_000,
+            "rvol_proxy": 2.0,
+            "opportunity_score": 70,
+            "vwap_relation": "above",
+            "supertrend_flip": True,
+        }
+    }
+    record = {
+        **base().__dict__,
+        "opportunity_score": 72,
+        "status": "MONITOR",
+        "timeframes": {"1m": {"above_vwap": True, "supertrend": True}},
+        "reasons": [],
+        "cautions": [],
+    }
+
+    ranked = apply_scanner_v2([record], prior)
+
+    assert ranked[0]["candidate_status"] in {"Strengthening", "Entry Ready"}
+    assert ranked[0]["promotion_condition_changes"] == []
+    assert ranked[0]["promotion_trigger"] is None
 
 
 def test_scanner_v2_no_promotion_delta_when_state_is_unchanged():
@@ -174,7 +296,9 @@ def test_scanner_v2_no_promotion_delta_when_state_is_unchanged():
         }
     }
     record = {
-        **base(vwap_relation="below", supertrend_bullish=False, supertrend_flip=False).__dict__,
+        **base(
+            vwap_relation="below", supertrend_bullish=False, supertrend_flip=False
+        ).__dict__,
         "opportunity_score": 72,
         "status": "MONITOR",
         "timeframes": {},
@@ -182,7 +306,9 @@ def test_scanner_v2_no_promotion_delta_when_state_is_unchanged():
         "cautions": [],
     }
 
-    ranked = apply_scanner_v2([record], prior, scan_time=datetime(2026, 7, 23, 14, 31, tzinfo=timezone.utc))
+    ranked = apply_scanner_v2(
+        [record], prior, scan_time=datetime(2026, 7, 23, 14, 31, tzinfo=timezone.utc)
+    )
 
     assert ranked[0]["candidate_status"] == "Strengthening"
     assert ranked[0]["advanced_state"] is False
@@ -216,7 +342,11 @@ def test_entry_ready_allows_supportive_timeframes_without_all_green():
         "status": "MONITOR",
         "supertrend_30s_flip": True,
         "timeframes": {
-            "1m": {"above_vwap": True, "supertrend": False, "near_supertrend_flip": True},
+            "1m": {
+                "above_vwap": True,
+                "supertrend": False,
+                "near_supertrend_flip": True,
+            },
             "3m": {"above_vwap": True, "supertrend": True},
         },
         "reasons": [],
@@ -225,6 +355,8 @@ def test_entry_ready_allows_supportive_timeframes_without_all_green():
 
     ranked = apply_scanner_v2([record], prior)
     assert ranked[0]["candidate_status"] == "Entry Ready"
+    assert ranked[0]["promotion_trigger"] in {"VWAP reclaim", "30s ST flip"}
+    assert "30s ST flip" in ranked[0]["promotion_condition_changes"]
 
 
 def test_entry_ready_state_uses_chart_preparation_requirements_only():
@@ -238,7 +370,9 @@ def test_entry_ready_state_uses_chart_preparation_requirements_only():
         }
     }
     record = {
-        **base(timeframe_confirmations=1, volume_acceleration=0.8, rvol_proxy=1.0).__dict__,
+        **base(
+            timeframe_confirmations=1, volume_acceleration=0.8, rvol_proxy=1.0
+        ).__dict__,
         "volume": 900_000,
         "dollar_volume": 450_000,
         "opportunity_score": 52,
@@ -247,8 +381,16 @@ def test_entry_ready_state_uses_chart_preparation_requirements_only():
         "supertrend_30s_flip": True,
         "vwap_relation": "above",
         "timeframes": {
-            "1m": {"above_vwap": True, "supertrend": False, "near_supertrend_flip": True},
-            "3m": {"above_vwap": True, "supertrend": False, "very_close_to_flipping": True},
+            "1m": {
+                "above_vwap": True,
+                "supertrend": False,
+                "near_supertrend_flip": True,
+            },
+            "3m": {
+                "above_vwap": True,
+                "supertrend": False,
+                "very_close_to_flipping": True,
+            },
         },
         "reasons": [],
         "cautions": [],
@@ -256,6 +398,8 @@ def test_entry_ready_state_uses_chart_preparation_requirements_only():
 
     ranked = apply_scanner_v2([record], prior)
     assert ranked[0]["candidate_status"] == "Entry Ready"
+    assert ranked[0]["promotion_trigger"] in {"VWAP reclaim", "30s ST flip"}
+    assert "30s ST flip" in ranked[0]["promotion_condition_changes"]
 
 
 def test_scanner_v2_timer_starts_when_entering_timed_state():
@@ -265,7 +409,9 @@ def test_scanner_v2_timer_starts_when_entering_timed_state():
 
     scan_time = datetime(2026, 7, 23, 14, 30, tzinfo=timezone.utc)
     record = {
-        **base(vwap_relation="below", supertrend_bullish=False, supertrend_flip=False).__dict__,
+        **base(
+            vwap_relation="below", supertrend_bullish=False, supertrend_flip=False
+        ).__dict__,
         "opportunity_score": 55,
         "status": "PASS",
         "timeframes": {},
@@ -299,7 +445,12 @@ def test_scanner_v2_timer_resets_on_state_change():
         }
     }
     record = {
-        **base(vwap_relation="below", supertrend_bullish=True, supertrend_flip=False, timeframe_confirmations=3).__dict__,
+        **base(
+            vwap_relation="below",
+            supertrend_bullish=True,
+            supertrend_flip=False,
+            timeframe_confirmations=3,
+        ).__dict__,
         "opportunity_score": 75,
         "status": "MONITOR",
         "timeframes": {
@@ -335,7 +486,9 @@ def test_scanner_v2_timer_continues_across_automatic_scans():
         }
     }
     record = {
-        **base(vwap_relation="below", supertrend_bullish=False, supertrend_flip=False).__dict__,
+        **base(
+            vwap_relation="below", supertrend_bullish=False, supertrend_flip=False
+        ).__dict__,
         "opportunity_score": 55,
         "status": "PASS",
         "timeframes": {},
@@ -343,7 +496,11 @@ def test_scanner_v2_timer_continues_across_automatic_scans():
         "cautions": [],
     }
 
-    ranked = apply_scanner_v2([record], prior, scan_time=datetime(2026, 7, 23, 14, 32, 15, tzinfo=timezone.utc))
+    ranked = apply_scanner_v2(
+        [record],
+        prior,
+        scan_time=datetime(2026, 7, 23, 14, 32, 15, tzinfo=timezone.utc),
+    )
 
     assert ranked[0]["candidate_status"] == "Strengthening"
     assert ranked[0]["state_entered_at"] == "2026-07-23T14:30:00+00:00"
@@ -355,14 +512,58 @@ def test_scanner_v2_sorts_newest_promotions_within_state():
 
     from mide.scanner_v2 import apply_scanner_v2
 
-    older = {**base(symbol="OLD", vwap_relation="below", supertrend_bullish=False, supertrend_flip=False).__dict__, "opportunity_score": 55, "status": "PASS", "timeframes": {}, "reasons": [], "cautions": []}
-    newer = {**base(symbol="NEW", vwap_relation="below", supertrend_bullish=False, supertrend_flip=False).__dict__, "opportunity_score": 55, "status": "PASS", "timeframes": {}, "reasons": [], "cautions": []}
+    older = {
+        **base(
+            symbol="OLD",
+            vwap_relation="below",
+            supertrend_bullish=False,
+            supertrend_flip=False,
+        ).__dict__,
+        "opportunity_score": 55,
+        "status": "PASS",
+        "timeframes": {},
+        "reasons": [],
+        "cautions": [],
+    }
+    newer = {
+        **base(
+            symbol="NEW",
+            vwap_relation="below",
+            supertrend_bullish=False,
+            supertrend_flip=False,
+        ).__dict__,
+        "opportunity_score": 55,
+        "status": "PASS",
+        "timeframes": {},
+        "reasons": [],
+        "cautions": [],
+    }
     prior = {
-        "OLD": {"candidate_status": "Strengthening", "state_entered_at": "2026-07-23T14:20:00+00:00", "scanner_v2_score": 55, "opportunity_score": 55, "volume": 1_000_000, "dollar_volume": 600_000, "rvol_proxy": 2.0},
-        "NEW": {"candidate_status": "Strengthening", "state_entered_at": "2026-07-23T14:29:00+00:00", "scanner_v2_score": 55, "opportunity_score": 55, "volume": 1_000_000, "dollar_volume": 600_000, "rvol_proxy": 2.0},
+        "OLD": {
+            "candidate_status": "Strengthening",
+            "state_entered_at": "2026-07-23T14:20:00+00:00",
+            "scanner_v2_score": 55,
+            "opportunity_score": 55,
+            "volume": 1_000_000,
+            "dollar_volume": 600_000,
+            "rvol_proxy": 2.0,
+        },
+        "NEW": {
+            "candidate_status": "Strengthening",
+            "state_entered_at": "2026-07-23T14:29:00+00:00",
+            "scanner_v2_score": 55,
+            "opportunity_score": 55,
+            "volume": 1_000_000,
+            "dollar_volume": 600_000,
+            "rvol_proxy": 2.0,
+        },
     }
 
-    ranked = apply_scanner_v2([older, newer], prior, scan_time=datetime(2026, 7, 23, 14, 30, tzinfo=timezone.utc))
+    ranked = apply_scanner_v2(
+        [older, newer],
+        prior,
+        scan_time=datetime(2026, 7, 23, 14, 30, tzinfo=timezone.utc),
+    )
 
     assert [record["symbol"] for record in ranked] == ["NEW", "OLD"]
 
@@ -377,7 +578,9 @@ def test_scanner_v2_transition_history_records_state_changes():
         "TEST": {
             "candidate_status": "Emerging",
             "state_entered_at": emerging_entered,
-            "transition_history": [{"state": "Emerging", "entered_at": emerging_entered}],
+            "transition_history": [
+                {"state": "Emerging", "entered_at": emerging_entered}
+            ],
             "scanner_v2_score": 55,
             "opportunity_score": 55,
             "volume": 1_000_000,
@@ -386,7 +589,12 @@ def test_scanner_v2_transition_history_records_state_changes():
         }
     }
     record = {
-        **base(vwap_relation="below", supertrend_bullish=True, supertrend_flip=False, timeframe_confirmations=3).__dict__,
+        **base(
+            vwap_relation="below",
+            supertrend_bullish=True,
+            supertrend_flip=False,
+            timeframe_confirmations=3,
+        ).__dict__,
         "opportunity_score": 75,
         "status": "MONITOR",
         "timeframes": {
@@ -398,7 +606,11 @@ def test_scanner_v2_transition_history_records_state_changes():
         "cautions": [],
     }
 
-    ranked = apply_scanner_v2([record], prior, scan_time=datetime(2026, 7, 23, 14, 31, 42, tzinfo=timezone.utc))
+    ranked = apply_scanner_v2(
+        [record],
+        prior,
+        scan_time=datetime(2026, 7, 23, 14, 31, 42, tzinfo=timezone.utc),
+    )
 
     assert ranked[0]["transition_history"] == [
         {"state": "Emerging", "entered_at": emerging_entered},
@@ -428,7 +640,9 @@ def test_scanner_v2_transition_history_updates_when_state_does_not_change():
         }
     }
     record = {
-        **base(vwap_relation="below", supertrend_bullish=False, supertrend_flip=False).__dict__,
+        **base(
+            vwap_relation="below", supertrend_bullish=False, supertrend_flip=False
+        ).__dict__,
         "opportunity_score": 55,
         "status": "PASS",
         "timeframes": {},
@@ -436,7 +650,11 @@ def test_scanner_v2_transition_history_updates_when_state_does_not_change():
         "cautions": [],
     }
 
-    ranked = apply_scanner_v2([record], prior, scan_time=datetime(2026, 7, 23, 14, 32, 15, tzinfo=timezone.utc))
+    ranked = apply_scanner_v2(
+        [record],
+        prior,
+        scan_time=datetime(2026, 7, 23, 14, 32, 15, tzinfo=timezone.utc),
+    )
 
     assert ranked[0]["candidate_status"] == "Strengthening"
     assert ranked[0]["state_entered_at"] == entered
@@ -465,7 +683,9 @@ def test_scanner_v2_transition_history_resets_after_symbol_reenters_scanner():
         }
     }
     record = {
-        **base(vwap_relation="below", supertrend_bullish=False, supertrend_flip=False).__dict__,
+        **base(
+            vwap_relation="below", supertrend_bullish=False, supertrend_flip=False
+        ).__dict__,
         "opportunity_score": 55,
         "status": "PASS",
         "timeframes": {},
@@ -473,7 +693,9 @@ def test_scanner_v2_transition_history_resets_after_symbol_reenters_scanner():
         "cautions": [],
     }
 
-    ranked = apply_scanner_v2([record], prior, scan_time=datetime(2026, 7, 23, 14, 35, tzinfo=timezone.utc))
+    ranked = apply_scanner_v2(
+        [record], prior, scan_time=datetime(2026, 7, 23, 14, 35, tzinfo=timezone.utc)
+    )
 
     assert ranked[0]["candidate_status"] == "Strengthening"
     assert ranked[0]["transition_history"] == [
@@ -511,7 +733,9 @@ def test_strengthening_diagnostics_records_first_rejection_rule():
 
     ranked = apply_scanner_v2([accepted, rejected], {})
     diagnostics = strengthening_diagnostics(ranked)
-    lowrvol = next(item for item in diagnostics["decisions"] if item["symbol"] == "LOWRVOL")
+    lowrvol = next(
+        item for item in diagnostics["decisions"] if item["symbol"] == "LOWRVOL"
+    )
 
     assert diagnostics["candidates_discovered"] == 2
     assert diagnostics["candidates_rejected"] == 1
@@ -527,4 +751,7 @@ def test_scanner_v2_exports_strengthening_diagnostics_for_startup_import():
     from mide.scanner_v2 import strengthening_diagnostics
 
     assert callable(strengthening_diagnostics)
-    assert "strengthening_diagnostics" in __import__("mide.scanner_v2", fromlist=["__all__"]).__all__
+    assert (
+        "strengthening_diagnostics"
+        in __import__("mide.scanner_v2", fromlist=["__all__"]).__all__
+    )
