@@ -2,6 +2,7 @@ from __future__ import annotations
 import base64
 import html
 from datetime import datetime
+from numbers import Real
 from pathlib import Path
 import streamlit as st
 import pandas as pd
@@ -285,16 +286,42 @@ def promoted_this_scan(r):
     return bool(r.get("advanced_state") or r.get("entered_watchlist"))
 
 
+def _sortable_text(value) -> str:
+    """Return a stable text value for sort keys that may contain mixed types."""
+    if value is None:
+        return ""
+    if isinstance(value, datetime):
+        return value.isoformat()
+    return str(value)
+
+
+def _sortable_number(value) -> float:
+    """Return a numeric sort value while treating missing/non-numeric values predictably."""
+    if value is None or value == "":
+        return 0.0
+    if isinstance(value, Real):
+        return float(value)
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return 0.0
+
+
 def _state_entered_sort_value(record):
-    return record.get("state_entered_at") or record.get("timestamp") or ""
+    return _sortable_text(record.get("state_entered_at") or record.get("timestamp"))
 
 
 def automatic_watching_sort_key(record):
-    """Return Walter's automatic live-trading priority for Watching symbols."""
+    """Return Walter's automatic live-trading priority for Watching symbols.
+
+    The newest-promotion field can arrive as None, a timestamp string, or a
+    datetime object depending on the scan path.  Normalize every key segment so
+    Python never compares mixed types while preserving the ranking order.
+    """
     return (
         _state_entered_sort_value(record),
-        float(record.get("scanner_v2_score", record.get("opportunity_score", 0)) or 0),
-        float(record.get("dollar_volume", 0) or 0),
+        _sortable_number(record.get("scanner_v2_score", record.get("opportunity_score", 0))),
+        _sortable_number(record.get("dollar_volume", 0)),
     )
 
 
@@ -319,7 +346,7 @@ def state_sections(records):
         else:
             sections["Removed"].append(record)
     for state in ("Entry Ready", "Strengthening", "Emerging"):
-        sections[state].sort(key=lambda r: r.get("state_entered_at") or "", reverse=True)
+        sections[state].sort(key=_state_entered_sort_value, reverse=True)
     sections["Watching"].sort(key=automatic_watching_sort_key, reverse=True)
     return sections
 

@@ -292,6 +292,26 @@ def test_watching_auto_sort_is_stable_across_automatic_scans():
     assert next_scan == first_scan
 
 
+def test_watching_auto_sort_normalizes_mixed_key_types():
+    from datetime import datetime, timezone
+
+    records = [
+        {"symbol": "MISSING", "candidate_status": "Watching", "state_entered_at": None, "scanner_v2_score": None, "dollar_volume": ""},
+        {"symbol": "STRING", "candidate_status": "Watching", "state_entered_at": "2026-07-23T14:30:00+00:00", "scanner_v2_score": "80", "dollar_volume": "2000000"},
+        {"symbol": "DATETIME", "candidate_status": "Watching", "state_entered_at": datetime(2026, 7, 23, 14, 31, tzinfo=timezone.utc), "scanner_v2_score": 75.5, "dollar_volume": 1_000_000},
+        {"symbol": "BAD_NUMBERS", "candidate_status": "Watching", "timestamp": 12345, "scanner_v2_score": "n/a", "dollar_volume": object()},
+    ]
+
+    sections = state_sections(records)
+
+    assert [record["symbol"] for record in sections["Watching"]] == [
+        "DATETIME",
+        "STRING",
+        "BAD_NUMBERS",
+        "MISSING",
+    ]
+
+
 def test_watching_sort_dropdown_no_longer_appears():
     from pathlib import Path
 

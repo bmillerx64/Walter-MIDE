@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from numbers import Real
 
 STATE_RANK = {
     "Removed": 0,
@@ -36,6 +37,33 @@ __all__ = [
     "strengthening_decision",
     "strengthening_diagnostics",
 ]
+
+
+def _sortable_text(value) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, datetime):
+        return value.isoformat()
+    return str(value)
+
+
+def _sortable_number(value) -> float:
+    if value is None or value == "":
+        return 0.0
+    if isinstance(value, Real):
+        return float(value)
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _ranked_record_sort_key(record: dict) -> tuple[float, str, float]:
+    return (
+        _sortable_number(STATE_RANK.get(record.get("candidate_status"), 0)),
+        _sortable_text(record.get("state_entered_at")),
+        _sortable_number(record.get("scanner_v2_score", 0)),
+    )
 
 
 def _has_strengthening_news(record: dict) -> bool:
@@ -480,12 +508,4 @@ def apply_scanner_v2(
         )
         record["strengthening_decision"] = strengthening_decision(record)
         output.append(record)
-    return sorted(
-        output,
-        key=lambda r: (
-            STATE_RANK.get(r.get("candidate_status"), 0),
-            r.get("state_entered_at") or "",
-            r.get("scanner_v2_score", 0),
-        ),
-        reverse=True,
-    )
+    return sorted(output, key=_ranked_record_sort_key, reverse=True)
