@@ -18,6 +18,67 @@ TIMED_STATES = {"Emerging", "Strengthening", "Entry Ready"}
 TRANSITION_HISTORY_STATES = {"Emerging", "Watching", "Strengthening", "Entry Ready"}
 MAX_TRANSITION_HISTORY = 4
 
+STRENGTHENING_RULE_ORDER = ("News", "RVOL", "Dollar Volume", "VWAP", "SuperTrend")
+STRENGTHENING_REJECTION_BUCKETS = ("Below VWAP", "RVOL", "SuperTrend", "Dollar Volume", "News", "Other")
+
+
+def _has_strengthening_news(record: dict) -> bool:
+    discovery = set(record.get("discovery_reasons") or [])
+    return bool(record.get("headline") or "recent news" in discovery)
+
+
+def _has_strengthening_supertrend(record: dict) -> bool:
+    return bool(
+        record.get("supertrend_flip")
+        or record.get("supertrend_bullish")
+        or _tf_supportive(record, "1m")
+        or _tf_supportive(record, "3m")
+    )
+
+
+def strengthening_decision(record: dict) -> dict:
+    """Explain the first observable rule that kept a symbol below Strengthening.
+
+    This is diagnostic-only instrumentation. The scanner still uses the existing
+    score/state rules; these checks mirror the major evidence buckets so tuning
+    can see which bucket first goes missing.
+    """
+    checks = [
+        ("News", _has_strengthening_news(record), "News"),
+        ("RVOL", _num(record, "rvol_proxy", 1) >= 1.5, "RVOL"),
+        ("Dollar Volume", _num(record, "dollar_volume") >= 250_000, "Dollar Volume"),
+        ("VWAP", record.get("vwap_relation") in {"testing", "above"} or _num(record, "vwap_distance_pct") >= 0, "Below VWAP"),
+        ("SuperTrend", _has_strengthening_supertrend(record), "SuperTrend"),
+    ]
+    state = record.get("candidate_status") or record.get("status")
+    accepted = state in {"Strengthening", "Entry Ready"}
+    first_failed = next(((label, bucket) for label, passed, bucket in checks if not passed), None)
+    return {
+        "symbol": record.get("symbol", ""),
+        "accepted": accepted,
+        "status": "Accepted for Strengthening" if accepted else "Rejected from Strengthening",
+        "checks": [{"rule": label, "passed": bool(passed)} for label, passed, _bucket in checks],
+        "first_rejection_rule": None if accepted else (first_failed[0] if first_failed else "Other"),
+        "first_rejection_bucket": None if accepted else (first_failed[1] if first_failed else "Other"),
+        "candidate_status": state,
+        "scanner_v2_score": record.get("scanner_v2_score"),
+    }
+
+
+def strengthening_diagnostics(records: list[dict]) -> dict:
+    decisions = [strengthening_decision(record) for record in records]
+    rejected = [decision for decision in decisions if not decision["accepted"]]
+    by_rule = {bucket: 0 for bucket in STRENGTHENING_REJECTION_BUCKETS}
+    for decision in rejected:
+        bucket = decision.get("first_rejection_bucket") or "Other"
+        by_rule[bucket if bucket in by_rule else "Other"] += 1
+    return {
+        "candidates_discovered": len(records),
+        "candidates_rejected": len(rejected),
+        "rejected_by_rule": by_rule,
+        "decisions": decisions,
+    }
+
 
 def _iso_timestamp(value: datetime) -> str:
     return value.astimezone(timezone.utc).isoformat()
@@ -252,6 +313,7 @@ def apply_scanner_v2(records: list[dict], previous_by_symbol: dict[str, dict], s
             "reasons": reasons or record.get("reasons", []),
             "cautions": list(dict.fromkeys((record.get("cautions") or []) + cautions)),
         })
+        record["strengthening_decision"] = strengthening_decision(record)
         output.append(record)
     return sorted(
         output,

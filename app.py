@@ -8,7 +8,7 @@ from mide.config import Settings
 from mide.alpaca import AlpacaClient, AlpacaError, credential_status
 from mide.news import index_news
 from mide.discovery import build_seed_symbols, prefilter_snapshots, analyze_candidates
-from mide.scanner_v2 import apply_scanner_v2
+from mide.scanner_v2 import apply_scanner_v2, strengthening_diagnostics
 from mide.memory import MemoryStore
 from mide.demo import demo_records
 from mide.ui import inject_css, metric_strip, radar_table, opportunity_card, play_alert, scanner_v2_display_sections, scanner_v2_dashboard_counts, automatic_watching_sort_key
@@ -375,6 +375,7 @@ def run_live(scanner_version: str = "Scanner V2 (adaptive momentum)"):
     records = store.enrich_velocity(records, previous=previous)
     if scanner_version.startswith("Scanner V2"):
         records = apply_scanner_v2(records, previous)
+        client.diagnostics["strengthening"] = strengthening_diagnostics(records)
     else:
         for record in records:
             record["scanner_version"] = "V1"
@@ -451,8 +452,8 @@ display_records = records if show_pass else [r for r in records if r.get("status
 
 arm_auto_scan_timer(mode == "Live Alpaca" and auto_refresh and live_possible, settings.refresh_seconds)
 
-if inspect_symbol:
-    with st.expander("Diagnostics", expanded=False):
+with st.expander("Diagnostics", expanded=False):
+    if inspect_symbol:
         st.subheader(f"Symbol lookup: {inspect_symbol}")
         match = next((r for r in records if r.get("symbol") == inspect_symbol), None)
         if match:
@@ -461,6 +462,29 @@ if inspect_symbol:
             st.write("Cautions: " + ("; ".join(match.get("cautions", [])) or "None recorded."))
         else:
             st.warning(f"{inspect_symbol} is not in the current ranked set.")
+
+    strengthening = scan_diagnostics.get("strengthening") if isinstance(scan_diagnostics, dict) else None
+    if strengthening:
+        st.subheader("Strengthening qualification")
+        c1, c2 = st.columns(2)
+        c1.metric("Candidates discovered", strengthening.get("candidates_discovered", 0))
+        c2.metric("Candidates rejected", strengthening.get("candidates_rejected", 0))
+        st.write("Rejected by first rule")
+        st.json(strengthening.get("rejected_by_rule", {}))
+        for decision in strengthening.get("decisions", []):
+            symbol = decision.get("symbol", "UNKNOWN")
+            with st.expander(f"{symbol} — {decision.get('status', 'Strengthening decision')}", expanded=False):
+                st.markdown(f"**{symbol}**")
+                st.markdown(decision.get("status", "Strengthening decision"))
+                for check in decision.get("checks", []):
+                    mark = "✓" if check.get("passed") else "✗"
+                    st.write(f"{mark} {check.get('rule')}")
+                    if not check.get("passed") and decision.get("first_rejection_rule") == check.get("rule"):
+                        break
+                if decision.get("first_rejection_rule"):
+                    st.caption(f"First rejection rule: {decision.get('first_rejection_rule')}")
+    elif not inspect_symbol:
+        st.caption("No diagnostics recorded for this scan yet.")
 
 metric_strip(records)
 alert_phrase = scan_alert_phrase(records)
