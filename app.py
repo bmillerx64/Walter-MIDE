@@ -483,6 +483,9 @@ with st.expander("Diagnostics", expanded=False):
                         break
                 if decision.get("first_rejection_rule"):
                     st.caption(f"First rejection rule: {decision.get('first_rejection_rule')}")
+                if decision.get("vwap_gate"):
+                    st.write("VWAP gate diagnostics")
+                    st.json(decision.get("vwap_gate"))
     elif not inspect_symbol:
         st.caption("No diagnostics recorded for this scan yet.")
 
