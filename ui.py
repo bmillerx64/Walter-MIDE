@@ -18,6 +18,10 @@ def inject_css():
     .mide-monitor {border-left:5px solid #5da9ff;}
     .small {font-size:.84rem;color:#aeb9c7}
     .why {font-size:.96rem;font-weight:600;line-height:1.5;margin-top:6px}
+    .why-summary {margin:10px 0 8px;padding:9px 11px;background:#0c1713;border:1px solid #1f5f46;border-radius:9px}
+    .why-summary-title {font-size:.72rem;text-transform:uppercase;letter-spacing:.08em;color:#86efac;font-weight:900;margin-bottom:5px}
+    .why-summary ul {list-style:none;margin:0;padding:0;display:grid;gap:3px}
+    .why-summary li {font-size:.96rem;font-weight:800;color:#eefbf3;line-height:1.35}
     .tier {font-size:.78rem;letter-spacing:.06em;font-weight:800;color:#d9e3ef}
     .why-grid {display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:8px;margin-top:10px}
     .why-box {background:#0c121a;border:1px solid #202c3c;border-radius:8px;padding:9px 10px}
@@ -124,6 +128,118 @@ def _why_sections(r):
     }
 
 
+
+_SUMMARY_PRIORITIES = {
+    "Entry Ready": [
+        ("supertrend_flip", "30-second SuperTrend flipped"),
+        ("above_vwap", "Above VWAP"),
+        ("rvol", None),
+        ("dollar_volume", "Dollar volume accelerating"),
+        ("volume_acceleration", None),
+        ("higher_lows", "Higher lows forming"),
+        ("news", "News catalyst"),
+        ("ema65", "Above 65 EMA"),
+    ],
+    "Strengthening": [
+        ("news", "News catalyst"),
+        ("dollar_volume", "Dollar volume accelerating"),
+        ("volume_acceleration", None),
+        ("higher_lows", "Higher lows forming"),
+        ("rvol", None),
+        ("flat_base", "Flat base expanding"),
+        ("near_vwap", "Near VWAP"),
+        ("supertrend", "SuperTrend supportive"),
+    ],
+    "Watch List": [
+        ("rvol", None),
+        ("flat_base", "Flat base maintained"),
+        ("near_vwap", "Near VWAP"),
+        ("news", "News catalyst"),
+        ("dollar_volume", "Dollar volume building"),
+        ("higher_lows", "Higher lows forming"),
+        ("supertrend", "SuperTrend supportive"),
+    ],
+}
+
+_SUMMARY_ALIASES = {
+    "Watching": "Watch List",
+    "Emerging": "Watch List",
+    "New": "Watch List",
+    "WATCH NOW": "Watch List",
+    "ALERT": "Watch List",
+    "MONITOR": "Watch List",
+    "EXCEPTIONAL": "Entry Ready",
+}
+
+
+def _reason_for_signal(record, signal, fallback):
+    reasons = [str(reason) for reason in record.get("reasons", []) if reason]
+    joined = " ".join(reasons).lower()
+    rvol = float(record.get("rvol_proxy", 0) or 0)
+    acceleration = float(record.get("volume_acceleration", 0) or 0)
+
+    if signal == "supertrend_flip":
+        if record.get("supertrend_flip") or "supertrend flip" in joined or "fresh supertrend flip" in joined:
+            return fallback
+    elif signal == "supertrend":
+        if record.get("supertrend_bullish") or "supertrend supportive" in joined or "supertrend bullish" in joined:
+            return fallback
+    elif signal == "above_vwap":
+        if record.get("vwap_relation") == "above" or "above vwap" in joined or "vwap reclaim" in joined:
+            return fallback
+    elif signal == "near_vwap":
+        if record.get("vwap_relation") in {"above", "testing"} or "near/above vwap" in joined or "testing vwap" in joined:
+            return "Near VWAP" if record.get("vwap_relation") == "testing" else fallback
+    elif signal == "rvol":
+        if rvol > 0 or "rvol" in joined:
+            direction = " and increasing" if "rising rvol" in joined or "rvol improved" in joined else ""
+            return f"RVOL {rvol:.1f}×{direction}" if rvol > 0 else "Relative volume increasing"
+    elif signal == "volume_acceleration":
+        if acceleration > 1 or "accelerating volume" in joined or "volume accelerating" in joined:
+            return f"Volume accelerating {acceleration:.1f}×" if acceleration > 0 else "Volume accelerating"
+    elif signal == "dollar_volume":
+        if record.get("dollar_volume", 0) > 0 or "dollar" in joined:
+            return fallback
+    elif signal == "higher_lows":
+        if record.get("higher_lows") or "higher lows" in joined:
+            return fallback
+    elif signal == "news":
+        headline = record.get("headline")
+        if headline or "news" in joined or "catalyst" in joined:
+            return fallback
+    elif signal == "flat_base":
+        if "flat base" in joined:
+            return fallback
+    elif signal == "ema65":
+        if record.get("ema65_relation") == "above" or "above 65 ema" in joined or "above ema65" in joined:
+            return fallback
+    return None
+
+
+def summary_reasons(record):
+    """Return the three state-prioritized reasons to headline a stock card."""
+    state = record.get("candidate_status") or record.get("status")
+    summary_state = _SUMMARY_ALIASES.get(state, state)
+    priorities = _SUMMARY_PRIORITIES.get(summary_state, _SUMMARY_PRIORITIES["Watch List"])
+    selected = []
+    seen = set()
+    for signal, fallback in priorities:
+        reason = _reason_for_signal(record, signal, fallback)
+        if reason and reason.lower() not in seen:
+            selected.append(reason)
+            seen.add(reason.lower())
+        if len(selected) == 3:
+            return selected
+    for reason in record.get("reasons", []):
+        clean = str(reason)
+        if clean and clean.lower() not in seen:
+            selected.append(clean)
+            seen.add(clean.lower())
+        if len(selected) == 3:
+            break
+    return selected
+
+
 def opportunity_card(r):
     klass = {
         "EXCEPTIONAL": "mide-exceptional",
@@ -132,6 +248,12 @@ def opportunity_card(r):
         "MONITOR": "mide-monitor",
     }.get(r["status"], "")
     reasons = " · ".join(r.get("reasons", [])[:6]) or "No qualifying evidence"
+    headline_reasons = summary_reasons(r)
+    summary_items = "".join(f"<li>✓ {html.escape(reason)}</li>" for reason in headline_reasons)
+    summary_markup = (
+        f"<div class='why-summary'><div class='why-summary-title'>Top reasons now</div><ul>{summary_items}</ul></div>"
+        if summary_items else "<div class='why-summary'><div class='why-summary-title'>Top reasons now</div>No qualifying evidence</div>"
+    )
     velocity = r.get("velocity", 0)
     arrow = "↑↑" if velocity >= 12 else "↑" if velocity > 2 else "↓" if velocity < -2 else "→"
     tier = r.get("participation_tier", "")
@@ -162,6 +284,7 @@ def opportunity_card(r):
         <span class="tier"> · {html.escape(str(tier))}</span></div>
         <div style="font-size:1.15rem;font-weight:800">{html.escape(str(r['status']))}</div>
       </div>
+      {summary_markup}
       <div class="why">{html.escape(reasons)}</div>
       <div class="score-grid">{score_boxes}</div>
       <div class="small"><b>Evidence:</b> Feed volume {r['volume']/1_000_000:.2f}M · Dollar volume ${r['dollar_volume']/1_000_000:.2f}M · RVOL {r.get('rvol_proxy',0):.1f}×</div>
