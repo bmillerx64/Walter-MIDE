@@ -202,3 +202,44 @@ def test_state_sections_sort_timed_states_by_newest_promotion():
     sections = state_sections(records)
 
     assert [record["symbol"] for record in sections["Entry Ready"]] == ["NEW", "OLD"]
+
+
+def test_watching_symbols_auto_sort_by_promotion_score_and_dollar_volume():
+    records = [
+        {"symbol": "OLDER", "candidate_status": "Watching", "state_entered_at": "2026-07-23T14:20:00+00:00", "scanner_v2_score": 99, "dollar_volume": 9_000_000},
+        {"symbol": "LOWER_DOLLAR", "candidate_status": "Watching", "state_entered_at": "2026-07-23T14:30:00+00:00", "scanner_v2_score": 75, "dollar_volume": 1_000_000},
+        {"symbol": "HIGHER_DOLLAR", "candidate_status": "Watching", "state_entered_at": "2026-07-23T14:30:00+00:00", "scanner_v2_score": 75, "dollar_volume": 2_000_000},
+        {"symbol": "HIGHER_SCORE", "candidate_status": "Watching", "state_entered_at": "2026-07-23T14:30:00+00:00", "scanner_v2_score": 80, "dollar_volume": 500_000},
+    ]
+
+    sections = state_sections(records)
+
+    assert [record["symbol"] for record in sections["Watching"]] == [
+        "HIGHER_SCORE",
+        "HIGHER_DOLLAR",
+        "LOWER_DOLLAR",
+        "OLDER",
+    ]
+
+
+def test_watching_auto_sort_is_stable_across_automatic_scans():
+    records = [
+        {"symbol": "AAA", "candidate_status": "Watching", "state_entered_at": "2026-07-23T14:30:00+00:00", "scanner_v2_score": 70, "dollar_volume": 1_000_000},
+        {"symbol": "BBB", "candidate_status": "Watching", "state_entered_at": "2026-07-23T14:29:00+00:00", "scanner_v2_score": 90, "dollar_volume": 5_000_000},
+        {"symbol": "CCC", "candidate_status": "Watching", "state_entered_at": "2026-07-23T14:30:00+00:00", "scanner_v2_score": 65, "dollar_volume": 9_000_000},
+    ]
+
+    first_scan = [record["symbol"] for record in state_sections(records)["Watching"]]
+    next_scan = [record["symbol"] for record in state_sections(list(records))["Watching"]]
+
+    assert first_scan == ["AAA", "CCC", "BBB"]
+    assert next_scan == first_scan
+
+
+def test_watching_sort_dropdown_no_longer_appears():
+    from pathlib import Path
+
+    app_source = Path("app.py").read_text()
+
+    assert 'f"Sort {section_name}"' in app_source
+    assert 'section_name == "Watching"' in app_source
