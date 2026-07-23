@@ -265,14 +265,18 @@ with st.sidebar:
             f"Voice changed to {selected_meta['name']}.",
             normalize_alert_voice(active_voice),
         )
-    with st.expander("Speech Diagnostics", expanded=False):
+    show_pass = False
+    inspect_symbol = ""
+    with st.expander("Diagnostics", expanded=False):
+        st.caption("Optional troubleshooting tools are hidden here to keep the trading view focused.")
+        show_pass = st.toggle("Show removed/pass candidates", value=False)
+        inspect_symbol = st.text_input("Symbol lookup", placeholder="BIYA").strip().upper()
+        st.divider()
         st.write("Speech engine in use: Browser Web Speech API")
         st.write(f"Operating system: {platform.system()} {platform.release()}".strip())
         st.write(f"David available: {david_available}")
         st.write(f"Active voice identifier: {st.session_state.get(ACTIVE_VOICE_SESSION_KEY, SYSTEM_DEFAULT_VOICE_ID)}")
         st.write(f"Voice currently selected: {selected_voice}")
-    show_pass = st.toggle("Show removed/pass candidates", value=False)
-    inspect_symbol = st.text_input("Why did/didn't a symbol appear?", placeholder="BIYA").strip().upper()
     run_scan = st.button("Run live scan", type="primary", use_container_width=True, disabled=(mode != "Live Alpaca"))
     use_demo = st.button("Load demo data", use_container_width=True)
     st.divider()
@@ -422,7 +426,8 @@ st.info(f"{clock.banner_text}. Rankings describe evidence; they are not trade in
 display_records = records if show_pass else [r for r in records if r.get("status") not in {"PASS", "Removed"}]
 
 if inspect_symbol:
-    with st.expander(f"Why / why not: {inspect_symbol}", expanded=True):
+    with st.expander("Diagnostics", expanded=False):
+        st.subheader(f"Symbol lookup: {inspect_symbol}")
         match = next((r for r in records if r.get("symbol") == inspect_symbol), None)
         if match:
             st.success(f"{inspect_symbol} was analyzed and ranked {match.get('status', 'UNKNOWN')}.")
