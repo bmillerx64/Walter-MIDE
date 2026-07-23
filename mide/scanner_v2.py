@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import logging
 from numbers import Real
+
+logger = logging.getLogger(__name__)
 
 STATE_RANK = {
     "Removed": 0,
@@ -333,10 +336,10 @@ def momentum_evidence(
 
     discovery = set(record.get("discovery_reasons") or [])
     if record.get("headline"):
-        points += 16
+        points += 12
         reasons.append("recent news catalyst")
     elif "recent news" in discovery:
-        points += 10
+        points += 7
         reasons.append("news-driven discovery")
 
     vol = _num(record, "volume")
@@ -346,54 +349,77 @@ def momentum_evidence(
     turnover = _num(record, "float_turnover_pct")
 
     if vol >= 500_000:
-        points += min(14, 5 + vol / 2_000_000)
+        points += min(10, 4 + vol / 3_000_000)
         reasons.append("increasing feed volume")
     if dollar >= 250_000:
-        points += min(12, 4 + dollar / 1_500_000)
+        points += min(8, 3 + dollar / 2_000_000)
         reasons.append("increasing dollar volume")
     if rvol >= 1.5:
-        points += min(14, 5 + (rvol - 1.5) * 2.5)
+        points += min(10, 4 + (rvol - 1.5) * 1.8)
         reasons.append(f"rising RVOL {rvol:.1f}×")
     if accel >= 1.2:
-        points += min(14, 4 + (accel - 1.0) * 8)
+        points += min(18, 7 + (accel - 1.0) * 10)
         reasons.append(f"accelerating volume {accel:.1f}×")
+    elif vol < 500_000 and rvol < 1.2:
+        points -= 15
+        cautions.append("inactive volume")
     if turnover >= 3:
-        points += min(10, turnover)
+        points += min(6, turnover * 0.75)
         reasons.append(f"float turnover {turnover:.1f}%")
 
     if abs(_num(record, "pct_change")) <= 4 and accel >= 1.2:
-        points += 8
+        points += 6
         reasons.append("flat base with activity expanding")
 
     was_below = prior.get("vwap_relation") == "below"
-    if record.get("vwap_relation") in {"testing", "above"}:
-        points += 8
-        reasons.append("VWAP improving" if was_below else "near/above VWAP")
-    if was_below and record.get("vwap_relation") == "above":
-        points += 12
+    vwap_relation = record.get("vwap_relation")
+    if vwap_relation == "above":
+        points += 18
+        reasons.append("VWAP improving" if was_below else "above VWAP")
+    elif vwap_relation == "testing":
+        points += 14
+        reasons.append("VWAP improving" if was_below else "near VWAP")
+    else:
+        distance = _num(record, "vwap_distance_pct")
+        if distance >= 0:
+            points += 18
+            reasons.append("above VWAP")
+        elif distance >= -1.0:
+            points += 8
+            reasons.append("near VWAP")
+        else:
+            points -= min(24, 12 + abs(distance) * 3)
+            cautions.append("poor VWAP relationship")
+    if was_below and (
+        vwap_relation == "above" or _num(record, "vwap_distance_pct") >= 0
+    ):
+        points += 16
         reasons.append("VWAP reclaim")
 
-    if record.get("supertrend_flip"):
-        points += 10
+    current_30s_flip = bool(
+        record.get("supertrend_30s_flip", record.get("supertrend_flip"))
+    )
+    if current_30s_flip:
+        points += 22
         reasons.append("30-second SuperTrend flip")
     elif record.get("supertrend_bullish"):
-        points += 5
+        points += 8
         reasons.append("SuperTrend supportive")
 
     for label, text, pts in [
-        ("1m", "1-minute confirmation", 7),
-        ("3m", "3-minute confirmation", 6),
-        ("5m", "5-minute confirmation", 5),
+        ("1m", "1-minute confirmation", 12),
+        ("3m", "3-minute confirmation", 11),
+        ("5m", "5-minute confirmation", 3),
     ]:
         if _tf_bull(record, label):
             points += pts
             reasons.append(text)
 
     if record.get("higher_lows"):
-        points += 8
+        points += 5
         reasons.append("higher lows")
     if record.get("ema65_relation") == "above":
-        points += 5
+        points += 3
         reasons.append("above EMA65")
 
     if prior:
@@ -407,7 +433,7 @@ def momentum_evidence(
             points += 6
             reasons.append("RVOL improved since prior scan")
         if _num(record, "opportunity_score") > _num(prior, "opportunity_score") + 3:
-            points += 5
+            points += 2
             reasons.append("momentum score improving")
 
     if _num(record, "spread_pct") > 6:
@@ -418,6 +444,32 @@ def momentum_evidence(
         cautions.append("headline risk flags present")
 
     return max(0.0, min(100.0, points)), reasons[:12], cautions[:6]
+
+
+def _supertrend_state(record: dict, label: str) -> str:
+    if label == "30s":
+        if record.get("supertrend_30s_flip", record.get("supertrend_flip")):
+            return "flipped green"
+        if record.get("supertrend_bullish"):
+            return "green"
+        return "not green"
+    detail = _tf_detail(record, label)
+    if detail.get("supertrend"):
+        return "green"
+    if detail.get("near_supertrend_flip") or detail.get("very_close_to_flipping"):
+        return "near flip"
+    return "not green"
+
+
+def _strengthening_promotion_diagnostic(record: dict, score: float) -> dict:
+    return {
+        "vwap_relationship": record.get("vwap_relation"),
+        "supertrend_30s_state": _supertrend_state(record, "30s"),
+        "supertrend_1m_state": _supertrend_state(record, "1m"),
+        "supertrend_3m_state": _supertrend_state(record, "3m"),
+        "volume_acceleration": round(_num(record, "volume_acceleration", 1), 2),
+        "final_weighted_score": round(score, 1),
+    }
 
 
 def classify_state(record: dict, prior: dict | None = None) -> str:
@@ -483,6 +535,22 @@ def apply_scanner_v2(
             if advanced and state in PROMOTION_TARGET_STATES
             else []
         )
+        strengthening_promotion_diagnostic = (
+            _strengthening_promotion_diagnostic(record, score)
+            if advanced and state == "Strengthening"
+            else None
+        )
+        if strengthening_promotion_diagnostic:
+            logger.info(
+                "Strengthening promotion %s: VWAP=%s, 30s ST=%s, 1m ST=%s, 3m ST=%s, volume acceleration=%s, final weighted score=%s",
+                record.get("symbol", ""),
+                strengthening_promotion_diagnostic["vwap_relationship"],
+                strengthening_promotion_diagnostic["supertrend_30s_state"],
+                strengthening_promotion_diagnostic["supertrend_1m_state"],
+                strengthening_promotion_diagnostic["supertrend_3m_state"],
+                strengthening_promotion_diagnostic["volume_acceleration"],
+                strengthening_promotion_diagnostic["final_weighted_score"],
+            )
         record.update(
             {
                 "scanner_version": "V2",
@@ -496,6 +564,7 @@ def apply_scanner_v2(
                 "promotion_trigger": (
                     promotion_changes[0] if promotion_changes else None
                 ),
+                "strengthening_promotion_diagnostic": strengthening_promotion_diagnostic,
                 "status": state,
                 "state_entered_at": state_entered_at,
                 "state_elapsed_seconds": state_elapsed,
