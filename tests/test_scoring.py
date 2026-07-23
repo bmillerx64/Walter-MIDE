@@ -479,3 +479,45 @@ def test_scanner_v2_transition_history_resets_after_symbol_reenters_scanner():
     assert ranked[0]["transition_history"] == [
         {"state": "Strengthening", "entered_at": "2026-07-23T14:35:00+00:00"}
     ]
+
+
+def test_strengthening_diagnostics_records_first_rejection_rule():
+    from mide.scanner_v2 import apply_scanner_v2, strengthening_diagnostics
+
+    accepted = {
+        **base().__dict__,
+        "opportunity_score": 80,
+        "status": "MONITOR",
+        "timeframes": {"1m": {"above_vwap": True, "supertrend": True}},
+        "reasons": [],
+        "cautions": [],
+    }
+    rejected = {
+        **base(
+            symbol="LOWRVOL",
+            volume=1_000,
+            dollar_volume=250_000,
+            rvol_proxy=1.0,
+            volume_acceleration=1.0,
+            higher_lows=False,
+            ema65_relation="below",
+        ).__dict__,
+        "opportunity_score": 45,
+        "status": "PASS",
+        "timeframes": {"1m": {"above_vwap": True, "supertrend": True}},
+        "reasons": [],
+        "cautions": [],
+    }
+
+    ranked = apply_scanner_v2([accepted, rejected], {})
+    diagnostics = strengthening_diagnostics(ranked)
+    lowrvol = next(item for item in diagnostics["decisions"] if item["symbol"] == "LOWRVOL")
+
+    assert diagnostics["candidates_discovered"] == 2
+    assert diagnostics["candidates_rejected"] == 1
+    assert diagnostics["rejected_by_rule"]["RVOL"] == 1
+    assert lowrvol["status"] == "Rejected from Strengthening"
+    assert lowrvol["first_rejection_rule"] == "RVOL"
+    assert [check["rule"] for check in lowrvol["checks"]][:2] == ["News", "RVOL"]
+    assert lowrvol["checks"][0]["passed"] is True
+    assert lowrvol["checks"][1]["passed"] is False
