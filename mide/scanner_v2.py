@@ -64,6 +64,7 @@ __all__ = [
     "strengthening_diagnostics",
     "sequential_trend_confirmation",
     "participation_surge_diagnostics",
+    "momentum_quality_diagnostics",
 ]
 
 
@@ -697,6 +698,145 @@ def participation_surge_diagnostics(
     }
 
 
+def _quality_band(score: float) -> str:
+    if score >= 90:
+        return "Exceptional"
+    if score >= 75:
+        return "Strong"
+    if score >= 55:
+        return "Acceptable"
+    if score >= 30:
+        return "Weak"
+    return "Poor"
+
+
+def momentum_quality_diagnostics(
+    record: dict, prior: dict | None = None, scan_time: datetime | None = None
+) -> dict:
+    """Score how orderly and sustainable the current momentum move is.
+
+    Participation Surge asks whether meaningful participation began; this
+    diagnostic asks whether the resulting move is being absorbed cleanly.
+    """
+    prior = prior or {}
+    if scan_time is None:
+        scan_time = datetime.now(timezone.utc)
+    if scan_time.tzinfo is None:
+        scan_time = scan_time.replace(tzinfo=timezone.utc)
+
+    distance = _current_vwap_diagnostics(record, prior)["distance_pct"]
+    abs_distance = abs(distance)
+    if record.get("vwap_relation") == "above" or distance >= 0:
+        vwap_respect = 92 - max(0.0, abs_distance - 0.75) * 9
+        vwap_note = "riding VWAP" if distance <= 2.0 else "extended above VWAP"
+    elif distance >= -0.65 or record.get("vwap_relation") == "testing":
+        vwap_respect = 74 - max(0.0, abs_distance - 0.35) * 10
+        vwap_note = "VWAP pullback holding"
+    else:
+        vwap_respect = 42 - min(32.0, (abs_distance - 1.0) * 8)
+        vwap_note = "VWAP failures / wide oscillation"
+    if prior.get("vwap_relation") == "below" and distance >= 0:
+        vwap_respect += 8
+        vwap_note = "quick VWAP reclaim"
+
+    trend_sequence = sequential_trend_confirmation(record, prior, scan_time)
+    progression = trend_sequence["progression_count"]
+    conflicts = trend_sequence["conflict_count"]
+    if progression >= 4:
+        st_integrity = 94
+        st_note = "full sequential ST support"
+    elif progression == 3:
+        st_integrity = 82
+        st_note = "multi-timeframe ST support"
+    elif progression == 2:
+        st_integrity = 68
+        st_note = "early ST confirmation"
+    elif record.get("supertrend_bullish"):
+        st_integrity = 56
+        st_note = "single-frame ST support"
+    else:
+        st_integrity = 28
+        st_note = "trend structure not green"
+    if record.get("supertrend_30s_flip", record.get("supertrend_flip")):
+        st_integrity += 6
+    st_integrity -= conflicts * 18
+    if prior.get("supertrend_bullish") and not record.get("supertrend_bullish"):
+        st_integrity -= 22
+        st_note = "recent ST break"
+
+    expansion_quality = _num(record, "expansion_quality", 50)
+    structure = 0.55 * expansion_quality
+    structure += 14 if record.get("higher_lows") else -10
+    structure += 9 if record.get("near_hod") else -6
+    if _num(record, "pct_change") < -1:
+        structure -= 12
+    structure_note = (
+        "orderly higher-low expansion"
+        if record.get("higher_lows")
+        else "overlapping / reversal-prone candles"
+    )
+
+    volume_ratios = [
+        _num(record, "volume_acceleration_1m", _num(record, "volume_acceleration", 1)),
+        _num(record, "volume_acceleration_3m", _num(record, "volume_acceleration", 1)),
+        _num(record, "volume_acceleration_5m", _num(record, "acceleration_ratio", 1)),
+    ]
+    sustained = (volume_ratios[1] + volume_ratios[2]) / 2
+    one_bar_spike = volume_ratios[0] > max(2.5, sustained * 1.9)
+    green_ratio = _num(record, "green_volume_ratio", 1)
+    participation = 46 + min(28.0, max(0.0, sustained - 1.0) * 16)
+    participation += min(16.0, max(0.0, green_ratio - 1.0) * 12)
+    if one_bar_spike:
+        participation -= 28
+    participation_note = (
+        "sustained buying pressure"
+        if not one_bar_spike and sustained >= 1.4
+        else "one-bar spike / fading participation"
+    )
+
+    pct_change = abs(_num(record, "pct_change"))
+    churn_penalty = max(0.0, max(volume_ratios) - sustained) * 9
+    extension_penalty = max(0.0, abs_distance - 3.0) * 5
+    efficiency = 42 + min(35.0, pct_change * 1.4) + (expansion_quality - 50) * 0.35
+    efficiency -= churn_penalty + extension_penalty
+    if record.get("near_hod") and distance >= -0.5:
+        efficiency += 8
+    efficiency_note = (
+        "directional progress per participation"
+        if efficiency >= 60
+        else "chaotic volatility versus net progress"
+    )
+
+    factors = {
+        "vwap_respect": round(max(0.0, min(100.0, vwap_respect)), 1),
+        "st_integrity": round(max(0.0, min(100.0, st_integrity)), 1),
+        "structure": round(max(0.0, min(100.0, structure)), 1),
+        "participation": round(max(0.0, min(100.0, participation)), 1),
+        "efficiency": round(max(0.0, min(100.0, efficiency)), 1),
+    }
+    score = round(
+        factors["vwap_respect"] * 0.22
+        + factors["st_integrity"] * 0.22
+        + factors["structure"] * 0.22
+        + factors["participation"] * 0.18
+        + factors["efficiency"] * 0.16,
+        1,
+    )
+    return {
+        "timestamp": _iso_timestamp(scan_time),
+        "score": score,
+        "band": _quality_band(score),
+        "factors": factors,
+        "factor_notes": {
+            "vwap_respect": vwap_note,
+            "st_integrity": st_note,
+            "structure": structure_note,
+            "participation": participation_note,
+            "efficiency": efficiency_note,
+        },
+    }
+
+
 def momentum_evidence(
     record: dict, prior: dict | None = None, scan_time: datetime | None = None
 ) -> tuple[float, list[str], list[str]]:
@@ -759,12 +899,22 @@ def momentum_evidence(
         reasons.append(f"float turnover {turnover:.1f}%")
 
     surge = participation_surge_diagnostics(record, prior, scan_time)
+    quality = momentum_quality_diagnostics(record, prior, scan_time)
     if surge["participation_score"] >= 55:
         points += min(22, (surge["participation_score"] - 45) * 0.55)
         reasons.append(f"Participation Surge {surge['participation_score']:.0f}/100")
     if surge["detected"]:
         points += 10
         reasons.append("Participation Surge Detected")
+
+    quality_score = quality["score"]
+    points += (quality_score - 50) * 0.22
+    if quality_score >= 75:
+        reasons.append(
+            f"Momentum Quality {quality_score:.0f}/100 {quality['band'].lower()}"
+        )
+    elif quality_score < 40:
+        cautions.append(f"weak Momentum Quality {quality_score:.0f}/100")
 
     if abs(_num(record, "pct_change")) <= 4 and accel >= 1.2:
         points += 6
@@ -972,8 +1122,19 @@ def apply_scanner_v2(
         phase_update = apply_market_phase(record, prior, scan_time)
         record.update(phase_update)
         surge = participation_surge_diagnostics(record, prior, scan_time)
+        quality = momentum_quality_diagnostics(record, prior, scan_time)
+        quality_adjustment = (quality["score"] - 50) * 0.18
         current_momentum = round(
-            min(100.0, score + max(0.0, surge["participation_score"] - 65) * 0.18), 1
+            max(
+                0.0,
+                min(
+                    100.0,
+                    score
+                    + max(0.0, surge["participation_score"] - 65) * 0.14
+                    + quality_adjustment,
+                ),
+            ),
+            1,
         )
         record.update(
             {
@@ -1007,6 +1168,10 @@ def apply_scanner_v2(
                 "participation_surge_detected": surge["detected"],
                 "participation_surge_alert": surge["alert"],
                 "participation_surge_diagnostics": surge,
+                "momentum_quality": quality["score"],
+                "momentum_quality_score": quality["score"],
+                "momentum_quality_band": quality["band"],
+                "momentum_quality_diagnostics": quality,
                 "alert_event": bool(entered_watch or advanced or surge["detected"]),
                 "reasons": reasons or record.get("reasons", []),
                 "cautions": list(

@@ -1360,3 +1360,86 @@ def test_participation_surge_does_not_reward_extended_established_trend():
     assert surge["detected"] is False
     assert surge["st_status"] == "established bullish"
     assert surge["vwap_state"] == "extended above VWAP"
+
+
+def test_momentum_quality_separates_orderly_expansion_from_chaotic_spike():
+    from datetime import datetime, timezone
+
+    from mide.scanner_v2 import apply_scanner_v2, momentum_quality_diagnostics
+
+    scan_time = datetime(2026, 7, 24, 15, 0, tzinfo=timezone.utc)
+    clean = {
+        **base(symbol="CLEAN", pct_change=22, higher_lows=True, near_hod=True).__dict__,
+        "timeframes": {
+            "1m": {"above_vwap": True, "supertrend": True},
+            "3m": {"above_vwap": True, "supertrend": True},
+            "5m": {"above_vwap": True, "supertrend": True},
+        },
+        "vwap_distance_pct": 0.45,
+        "volume_acceleration_1m": 2.6,
+        "volume_acceleration_3m": 2.4,
+        "volume_acceleration_5m": 2.2,
+        "dollar_flow_acceleration_1m": 2.8,
+        "dollar_flow_acceleration_3m": 2.5,
+        "dollar_flow_acceleration_5m": 2.3,
+        "expansion_quality": 90,
+        "opportunity_score": 70,
+        "status": "MONITOR",
+        "reasons": [],
+        "cautions": [],
+    }
+    chaotic = {
+        **base(
+            symbol="CHAOS",
+            pct_change=22,
+            higher_lows=False,
+            near_hod=False,
+            green_volume_ratio=0.8,
+        ).__dict__,
+        "timeframes": {
+            "1m": {"above_vwap": True, "supertrend": False},
+            "3m": {"above_vwap": False, "supertrend": True},
+            "5m": {"above_vwap": True, "supertrend": False},
+        },
+        "vwap_distance_pct": 5.8,
+        "volume_acceleration_1m": 5.8,
+        "volume_acceleration_3m": 1.3,
+        "volume_acceleration_5m": 1.1,
+        "dollar_flow_acceleration_1m": 5.9,
+        "dollar_flow_acceleration_3m": 1.2,
+        "dollar_flow_acceleration_5m": 1.0,
+        "expansion_quality": 24,
+        "opportunity_score": 70,
+        "status": "MONITOR",
+        "reasons": [],
+        "cautions": [],
+    }
+
+    clean_quality = momentum_quality_diagnostics(clean, {}, scan_time)
+    chaotic_quality = momentum_quality_diagnostics(chaotic, {}, scan_time)
+    ranked = apply_scanner_v2([chaotic, clean], {}, scan_time)
+
+    assert clean_quality["score"] >= 75
+    assert chaotic_quality["score"] < 45
+    assert (
+        clean_quality["factors"]["vwap_respect"]
+        > chaotic_quality["factors"]["vwap_respect"]
+    )
+    assert (
+        clean_quality["factors"]["st_integrity"]
+        > chaotic_quality["factors"]["st_integrity"]
+    )
+    assert (
+        clean_quality["factors"]["structure"] > chaotic_quality["factors"]["structure"]
+    )
+    assert (
+        clean_quality["factors"]["participation"]
+        > chaotic_quality["factors"]["participation"]
+    )
+    assert (
+        clean_quality["factors"]["efficiency"]
+        > chaotic_quality["factors"]["efficiency"]
+    )
+    assert ranked[0]["symbol"] == "CLEAN"
+    assert ranked[0]["current_momentum"] > ranked[1]["current_momentum"]
+    assert "momentum_quality_diagnostics" in ranked[0]
