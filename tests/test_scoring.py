@@ -1646,3 +1646,94 @@ def test_scanner_v2_hard_rejects_clean_structure_when_participation_fails():
         "Dollar flow not increasing"
         in ranked[0]["participation_gate"]["failed_reasons"]
     )
+
+
+def test_participation_gate_rejection_is_separated_from_actionable_collection():
+    from datetime import datetime, timezone
+
+    from mide.scanner_v2 import apply_scanner_v2
+    from mide.ui import actionable_candidate_records, rejected_candidate_records
+
+    rejected_source = {
+        **base(
+            symbol="FAILPG",
+            volume=1_000,
+            dollar_volume=500,
+            rvol_proxy=1.0,
+            volume_acceleration=0.7,
+            green_volume_ratio=0.7,
+        ).__dict__,
+        "volume_acceleration_1m": 0.7,
+        "volume_acceleration_3m": 0.7,
+        "dollar_flow_acceleration_1m": 0.7,
+        "dollar_flow_acceleration_3m": 0.7,
+        "dollar_flow_acceleration_5m": 0.7,
+        "opportunity_score": 45,
+        "status": "PASS",
+        "timeframes": {},
+        "reasons": [],
+        "cautions": [],
+    }
+
+    scanner_output = apply_scanner_v2(
+        [rejected_source], {}, datetime(2026, 7, 24, 14, 0, tzinfo=timezone.utc)
+    )
+
+    assert actionable_candidate_records(scanner_output) == []
+    assert [
+        record["symbol"] for record in rejected_candidate_records(scanner_output)
+    ] == ["FAILPG"]
+    rejected = rejected_candidate_records(scanner_output)[0]
+    assert rejected["candidate_status"] == "Rejected – No Participation"
+    assert rejected["participation_gate"]["failed_reasons"]
+    assert rejected["participation_gate"]["failed_criteria"]
+    assert {"condition", "measured", "threshold"} <= set(
+        rejected["participation_gate"]["failed_criteria"][0]
+    )
+
+
+def test_participation_passing_record_remains_actionable_and_mixed_inputs_are_split():
+    from datetime import datetime, timezone
+
+    from mide.scanner_v2 import apply_scanner_v2
+    from mide.ui import actionable_candidate_records, rejected_candidate_records
+
+    valid = {
+        **base(symbol="VALID").__dict__,
+        "opportunity_score": 80,
+        "status": "MONITOR",
+        "timeframes": {"1m": {"above_vwap": True, "supertrend": True}},
+        "reasons": [],
+        "cautions": [],
+    }
+    rejected = {
+        **base(
+            symbol="REJECT",
+            volume=1_000,
+            dollar_volume=500,
+            rvol_proxy=1.0,
+            volume_acceleration=0.7,
+            green_volume_ratio=0.7,
+        ).__dict__,
+        "volume_acceleration_1m": 0.7,
+        "volume_acceleration_3m": 0.7,
+        "dollar_flow_acceleration_1m": 0.7,
+        "dollar_flow_acceleration_3m": 0.7,
+        "dollar_flow_acceleration_5m": 0.7,
+        "opportunity_score": 45,
+        "status": "PASS",
+        "timeframes": {},
+        "reasons": [],
+        "cautions": [],
+    }
+
+    scanner_output = apply_scanner_v2(
+        [valid, rejected], {}, datetime(2026, 7, 24, 14, 0, tzinfo=timezone.utc)
+    )
+
+    assert [
+        record["symbol"] for record in actionable_candidate_records(scanner_output)
+    ] == ["VALID"]
+    assert [
+        record["symbol"] for record in rejected_candidate_records(scanner_output)
+    ] == ["REJECT"]
