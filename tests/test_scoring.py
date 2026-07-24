@@ -1603,6 +1603,63 @@ def test_trigger_diagnostics_yes_when_all_conditions_pass():
     assert "Expansion beginning" in diagnostics["reasons"]
 
 
+def test_participation_gate_logs_every_candidate_criterion(caplog):
+    from datetime import datetime, timezone
+    import logging
+
+    from mide.scanner_v2 import apply_scanner_v2
+
+    sndl = {
+        **base(
+            symbol="SNDL",
+            volume=125_000,
+            dollar_volume=35_000,
+            rvol_proxy=0.8,
+            volume_acceleration=0.7,
+            green_volume_ratio=0.8,
+        ).__dict__,
+        "calculated_vwap": 0.50,
+        "volume_acceleration_1m": 0.7,
+        "volume_acceleration_3m": 0.8,
+        "dollar_flow_acceleration_1m": 0.7,
+        "dollar_flow_acceleration_3m": 0.8,
+        "dollar_flow_acceleration_5m": 0.9,
+        "expansion_quality": 40,
+        "opportunity_score": 85,
+        "participation_score": 20,
+        "status": "WATCH NOW",
+        "timeframes": {"1m": {"above_vwap": True, "supertrend": True}},
+        "reasons": [],
+        "cautions": [],
+    }
+
+    with caplog.at_level(logging.INFO, logger="mide.scanner_v2"):
+        ranked = apply_scanner_v2(
+            [sndl], {}, datetime(2026, 7, 24, 14, 0, tzinfo=timezone.utc)
+        )
+
+    gate = ranked[0]["participation_gate"]
+    assert ranked[0]["symbol"] == "SNDL"
+    assert ranked[0]["candidate_status"] == "Rejected – No Participation"
+    assert ranked[0]["qualified_for_ranking"] is False
+    assert ranked[0]["scanner_v2_score"] == 0
+    assert ranked[0]["current_momentum"] == 0
+    assert gate["status"] == "FAIL"
+    assert all(
+        {"condition", "threshold", "measured_value", "passed", "failed_reason"}
+        <= set(check)
+        for check in gate["checks"]
+    )
+    messages = [record.getMessage() for record in caplog.records]
+    assert len(
+        [message for message in messages if "Participation Gate SNDL:" in message]
+    ) == len(gate["checks"])
+    assert any(
+        "threshold=" in message and "measured=" in message and "result=FAIL" in message
+        for message in messages
+    )
+
+
 def test_scanner_v2_hard_rejects_clean_structure_when_participation_fails():
     from datetime import datetime, timezone
 
