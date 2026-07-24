@@ -83,9 +83,11 @@ def trader_priority_sort_key(record: dict) -> tuple[float, float, str]:
                 record.get("attention_score", record.get("conviction_score", 0)),
             )
         )
+        surge = sortable_number(record.get("participation_surge_score", 0))
         return (
-            current,
+            current + surge * 0.18,
             historical,
+            surge,
             sortable_text(record.get("state_entered_at") or record.get("timestamp")),
         )
     return (

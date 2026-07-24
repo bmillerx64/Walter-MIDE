@@ -1272,3 +1272,91 @@ def test_sequential_trend_confirmation_penalizes_broken_order():
     assert ranked["BRK"]["trend_confirmation_sequence"]["conflict_count"] == 2
     assert "conflicting SuperTrend timeframe order" in ranked["BRK"]["cautions"]
     assert ranked["ORD"]["scanner_v2_score"] > ranked["BRK"]["scanner_v2_score"]
+
+
+def test_participation_surge_detects_quiet_to_institutional_transition_without_news():
+    from datetime import datetime, timezone
+
+    from mide.scanner_v2 import apply_scanner_v2
+
+    prior = {
+        "STAK": {
+            "candidate_status": "New",
+            "volume_acceleration": 1.05,
+            "rvol_proxy": 1.1,
+            "vwap_relation": "testing",
+            "vwap_distance_pct": -0.2,
+            "supertrend_bullish": False,
+            "scanner_v2_score": 20,
+        }
+    }
+    record = {
+        **base(
+            symbol="STAK",
+            pct_change=1.8,
+            headline="",
+            catalyst_score=0,
+            news_age_hours=None,
+            supertrend_bullish=True,
+            supertrend_flip=True,
+            vwap_relation="above",
+            vwap_distance_pct=0.15,
+            volume_acceleration=2.4,
+        ).__dict__,
+        "volume_acceleration_1m": 4.6,
+        "volume_acceleration_3m": 3.2,
+        "volume_acceleration_5m": 2.5,
+        "dollar_flow_acceleration_1m": 4.8,
+        "dollar_flow_acceleration_3m": 3.4,
+        "dollar_flow_acceleration_5m": 2.7,
+        "current_dollar_flow_1m": 120_000,
+        "current_dollar_flow_3m": 310_000,
+        "current_dollar_flow_5m": 470_000,
+        "baseline_dollar_flow_per_minute": 35_000,
+        "expansion_quality": 82,
+        "opportunity_score": 36,
+        "participation_score": 44,
+        "status": "PASS",
+        "headline": "",
+        "timeframes": {},
+        "reasons": [],
+        "cautions": [],
+    }
+
+    ranked = apply_scanner_v2(
+        [record], prior, datetime(2026, 7, 24, 14, 0, tzinfo=timezone.utc)
+    )
+    surge = ranked[0]["participation_surge_diagnostics"]
+
+    assert ranked[0]["participation_surge_detected"] is True
+    assert ranked[0]["participation_surge_alert"] == "Participation Surge Detected"
+    assert surge["participation_score"] >= 72
+    assert surge["current_phase"] == ranked[0]["market_phase"]
+    assert ranked[0]["alert_event"] is True
+    assert "Participation Surge" in " ".join(ranked[0]["reasons"])
+
+
+def test_participation_surge_does_not_reward_extended_established_trend():
+    from mide.scanner_v2 import participation_surge_diagnostics
+
+    record = {
+        "price": 1.0,
+        "calculated_vwap": 0.92,
+        "vwap_distance_pct": 8.7,
+        "supertrend_bullish": True,
+        "supertrend_flip": False,
+        "volume_acceleration_1m": 4.0,
+        "volume_acceleration_3m": 3.0,
+        "volume_acceleration_5m": 2.5,
+        "dollar_flow_acceleration_1m": 4.0,
+        "dollar_flow_acceleration_3m": 3.0,
+        "dollar_flow_acceleration_5m": 2.5,
+        "expansion_quality": 80,
+    }
+    prior = {"supertrend_bullish": True, "volume_acceleration": 2.0, "rvol_proxy": 3.0}
+
+    surge = participation_surge_diagnostics(record, prior)
+
+    assert surge["detected"] is False
+    assert surge["st_status"] == "established bullish"
+    assert surge["vwap_state"] == "extended above VWAP"
