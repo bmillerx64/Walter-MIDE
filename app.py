@@ -8,7 +8,11 @@ from mide.config import Settings
 from mide.alpaca import AlpacaClient, AlpacaError, credential_status
 from mide.news import index_news
 from mide.discovery import build_seed_symbols, prefilter_snapshots, analyze_candidates
-from mide.scanner_v2 import apply_scanner_v2, strengthening_diagnostics
+from mide.scanner_v2 import (
+    apply_scanner_v2,
+    participation_gate_rejection_diagnostics,
+    strengthening_diagnostics,
+)
 from mide.memory import MemoryStore
 from mide.demo import demo_records
 from mide.ui import (
@@ -453,6 +457,14 @@ def run_live(scanner_version: str = "Scanner V2 (adaptive momentum)"):
     records = store.enrich_velocity(records, previous=previous)
     if scanner_version.startswith("Scanner V2"):
         records = apply_scanner_v2(records, previous)
+        participation_rejections = participation_gate_rejection_diagnostics(records)
+        client.diagnostics["participation_gate_rejections"] = participation_rejections
+        for detail in participation_rejections["details"]:
+            log(
+                "Participation gate rejected "
+                f"{detail['symbol']}: "
+                f"{'; '.join(detail['failed_reasons'])}"
+            )
         client.diagnostics["strengthening"] = strengthening_diagnostics(records)
     else:
         for record in records:

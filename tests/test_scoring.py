@@ -836,6 +836,8 @@ def test_scanner_v2_transition_history_resets_after_symbol_reenters_scanner():
 
 
 def test_strengthening_diagnostics_records_first_rejection_rule():
+    from datetime import datetime, timezone
+
     from mide.scanner_v2 import apply_scanner_v2, strengthening_diagnostics
 
     accepted = {
@@ -863,7 +865,9 @@ def test_strengthening_diagnostics_records_first_rejection_rule():
         "cautions": [],
     }
 
-    ranked = apply_scanner_v2([accepted, rejected], {})
+    ranked = apply_scanner_v2(
+        [accepted, rejected], {}, datetime(2026, 7, 24, 14, 0, tzinfo=timezone.utc)
+    )
     diagnostics = strengthening_diagnostics(ranked)
     lowrvol = next(
         item for item in diagnostics["decisions"] if item["symbol"] == "LOWRVOL"
@@ -1651,7 +1655,10 @@ def test_scanner_v2_hard_rejects_clean_structure_when_participation_fails():
 def test_participation_gate_rejection_is_separated_from_actionable_collection():
     from datetime import datetime, timezone
 
-    from mide.scanner_v2 import apply_scanner_v2
+    from mide.scanner_v2 import (
+        apply_scanner_v2,
+        participation_gate_rejection_diagnostics,
+    )
     from mide.ui import actionable_candidate_records, rejected_candidate_records
 
     rejected_source = {
@@ -1690,6 +1697,12 @@ def test_participation_gate_rejection_is_separated_from_actionable_collection():
     assert {"condition", "measured", "threshold"} <= set(
         rejected["participation_gate"]["failed_criteria"][0]
     )
+
+    diagnostics = participation_gate_rejection_diagnostics(scanner_output)
+    assert diagnostics["candidates_rejected"] == 1
+    assert diagnostics["rejected_by_reason"]["Dollar flow not increasing"] == 1
+    assert diagnostics["details"][0]["symbol"] == "FAILPG"
+    assert diagnostics["details"][0]["failed_criteria"]
 
 
 def test_participation_passing_record_remains_actionable_and_mixed_inputs_are_split():
