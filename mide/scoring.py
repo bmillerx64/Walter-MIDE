@@ -38,6 +38,8 @@ class Decision:
     participation_score: float
     participation_tier: str
     attention_score: float
+    historical_strength: float
+    current_momentum: float
     reasons: list[str]
     cautions: list[str]
 
@@ -46,7 +48,9 @@ def _clamp(value: float, low: float = 0.0, high: float = 100.0) -> float:
     return max(low, min(high, value))
 
 
-def _scaled_log_points(value: float, floor: float, ceiling: float, points: float) -> float:
+def _scaled_log_points(
+    value: float, floor: float, ceiling: float, points: float
+) -> float:
     """Graduated score that does not saturate at modest volume levels."""
     if value <= floor:
         return 0.0
@@ -81,8 +85,19 @@ def score(e: Evidence) -> Decision:
     green_points = min(10, max(0, (e.green_volume_ratio - 1) * 5))
     mover_points = min(8, max(0, e.pct_change / 5))
 
+    historical_strength = _clamp(
+        share_points * 1.10
+        + dollar_points * 1.05
+        + rvol_points * 1.05
+        + mover_points * 1.70
+    )
     participation = _clamp(
-        share_points + dollar_points + rvol_points + acceleration_points + green_points + mover_points
+        share_points
+        + dollar_points
+        + rvol_points
+        + acceleration_points
+        + green_points
+        + mover_points
     )
     tier = _participation_tier(participation)
 
@@ -159,36 +174,48 @@ def score(e: Evidence) -> Decision:
         cautions.append("Thin dollar volume")
     elif e.dollar_volume < 500_000:
         risk -= 12
-    severe = {"offering", "registered direct", "public offering", "bankruptcy", "delisting"}
+    severe = {
+        "offering",
+        "registered direct",
+        "public offering",
+        "bankruptcy",
+        "delisting",
+    }
     if any(flag in severe for flag in e.risk_flags):
         risk -= 45
     risk = _clamp(risk)
 
-    opportunity = (
-        technical * 0.34
-        + participation * 0.37
-        + context * 0.16
-        + risk * 0.13
+    historical_strength = _clamp(historical_strength * 0.76 + context * 0.24)
+    current_momentum = _clamp(
+        technical * 0.48
+        + min(100.0, acceleration_points * 3.0 + green_points * 4.0) * 0.24
+        + min(100.0, rvol_points * 2.2) * 0.10
+        + context * 0.08
+        + risk * 0.10
     )
-    evidence_count = sum([
-        e.vwap_relation in {"above", "testing"},
-        e.supertrend_bullish,
-        e.ema65_relation == "above" or e.ema65_distance_pct <= 1.5,
-        e.volume_acceleration >= 1.4,
-        e.rvol_proxy >= 2,
-        e.higher_lows,
-        e.near_hod,
-        bool(e.headline),
-        e.timeframe_confirmations >= 3,
-        participation >= 68,
-    ])
+    # Keep opportunity_score as the compatibility field for thresholds and older UI paths.
+    opportunity = current_momentum
+    evidence_count = sum(
+        [
+            e.vwap_relation in {"above", "testing"},
+            e.supertrend_bullish,
+            e.ema65_relation == "above" or e.ema65_distance_pct <= 1.5,
+            e.volume_acceleration >= 1.4,
+            e.rvol_proxy >= 2,
+            e.higher_lows,
+            e.near_hod,
+            bool(e.headline),
+            e.timeframe_confirmations >= 3,
+            participation >= 68,
+        ]
+    )
     conviction = _clamp(30 + evidence_count * 6.5 + min(14, dollar_points * 0.8))
     if e.risk_flags:
         conviction -= min(25, len(e.risk_flags) * 8)
     conviction = _clamp(conviction)
 
     # Base attention score is augmented later with cohort dominance percentiles.
-    attention = _clamp(opportunity * 0.52 + participation * 0.48)
+    attention = _clamp(historical_strength * 0.70 + participation * 0.30)
 
     hard_pass = (
         e.price < 0.02
@@ -222,6 +249,8 @@ def score(e: Evidence) -> Decision:
         round(participation, 1),
         tier,
         round(attention, 1),
+        round(historical_strength, 1),
+        round(current_momentum, 1),
         reasons[:10],
         cautions[:6],
     )

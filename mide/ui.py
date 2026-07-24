@@ -148,12 +148,18 @@ def radar_table(records):
                 "% Chg": r["pct_change"],
                 "Feed Vol": int(r["volume"]),
                 "$ Vol": r["dollar_volume"],
-                "Attention": r.get("attention_score", r["opportunity_score"]),
+                "Attention": r.get(
+                    "historical_strength",
+                    r.get("attention_score", r["opportunity_score"]),
+                ),
                 "Dominance": r.get("market_dominance_score", 0),
                 "Participation": r["participation_score"],
                 "Tier": r.get("participation_tier", ""),
                 "Phase": r.get("market_phase", "Emerging"),
-                "Opp.": r["opportunity_score"],
+                "Opp.": r.get(
+                    "current_momentum",
+                    r.get("scanner_v2_score", r["opportunity_score"]),
+                ),
                 "Conv.": r["conviction_score"],
                 "Priority": trader_priority_label(r),
                 "Status": r["status"],
@@ -508,7 +514,22 @@ def opportunity_card(r):
     tier = r.get("participation_tier", "")
     market_phase = r.get("market_phase", "Emerging")
     dominance = r.get("market_dominance_score", 0)
-    attention = r.get("attention_score", r["opportunity_score"])
+    historical_strength = r.get(
+        "historical_strength", r.get("attention_score", r["opportunity_score"])
+    )
+    current_momentum = r.get(
+        "current_momentum", r.get("scanner_v2_score", r["opportunity_score"])
+    )
+    trend_health = r.get("trend_health", "Future")
+    score_boxes = "".join(
+        [
+            f"<div class='score-box'><div class='score-name'>Historical Strength</div><div class='score-value'>{historical_strength:.1f}</div></div>",
+            f"<div class='score-box'><div class='score-name'>Current Momentum</div><div class='score-value'>{current_momentum:.1f}</div></div>",
+            f"<div class='score-box'><div class='score-name'>Current Phase</div><div class='score-value'>{html.escape(str(market_phase))}</div></div>",
+            f"<div class='score-box'><div class='score-name'>Trend Health</div><div class='score-value'>{html.escape(str(trend_health))}</div></div>",
+            f"<div class='score-box'><div class='score-name'>Change</div><div class='score-value'>{arrow} {velocity:+.1f}</div></div>",
+        ]
+    )
     sections = _why_sections(r)
     evaluated = format_eastern_time(r.get("timestamp"), fallback="now")
     state_elapsed = (
@@ -543,6 +564,7 @@ def opportunity_card(r):
       {promo_badge}
       {summary_markup}
       <div class="why">{html.escape(reasons)}</div>
+      <div class="score-grid">{score_boxes}</div>
       {transition_history_markup(r)}
       <div class="small"><b>Evidence:</b> Feed volume {r['volume']/1_000_000:.2f}M · Dollar volume ${r['dollar_volume']/1_000_000:.2f}M · RVOL {r.get('rvol_proxy',0):.1f}×</div>
       <div class="freshness">{html.escape(freshness)} · evaluated {html.escape(evaluated)}</div>

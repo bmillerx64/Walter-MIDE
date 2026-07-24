@@ -648,8 +648,8 @@ with tabs[1]:
         direction = "strengthened" if record.get("velocity", 0) > 0 else "weakened"
         st.markdown(
             f"**{record['symbol']}** {direction}: "
-            f"{record.get('previous_score', record['opportunity_score']):.1f} → "
-            f"{record['opportunity_score']:.1f} ({record.get('velocity', 0):+.1f})"
+            f"{record.get('previous_score', record.get('current_momentum', record['opportunity_score'])):.1f} → "
+            f"{record.get('current_momentum', record['opportunity_score']):.1f} ({record.get('velocity', 0):+.1f})"
         )
 
 with tabs[2]:

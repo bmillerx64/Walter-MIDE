@@ -69,7 +69,25 @@ def trader_priority_label(record: dict) -> str:
 
 
 def trader_priority_sort_key(record: dict) -> tuple[float, float, str]:
-    """Sort by priority, conviction, then newest promotion timestamp."""
+    """Sort by current momentum first, then historical strength and recency."""
+    if "current_momentum" in record or "historical_strength" in record:
+        current = sortable_number(
+            record.get(
+                "current_momentum",
+                record.get("scanner_v2_score", record.get("opportunity_score", 0)),
+            )
+        )
+        historical = sortable_number(
+            record.get(
+                "historical_strength",
+                record.get("attention_score", record.get("conviction_score", 0)),
+            )
+        )
+        return (
+            current,
+            historical,
+            sortable_text(record.get("state_entered_at") or record.get("timestamp")),
+        )
     return (
         float(TRADER_PRIORITY_RANK[trader_priority_label(record)]),
         sortable_number(
