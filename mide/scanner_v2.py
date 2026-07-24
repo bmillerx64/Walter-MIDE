@@ -63,6 +63,7 @@ __all__ = [
     "strengthening_decision",
     "strengthening_diagnostics",
     "sequential_trend_confirmation",
+    "participation_surge_diagnostics",
 ]
 
 
@@ -557,6 +558,145 @@ def _entry_ready_requirements(record: dict, prior: dict | None = None) -> bool:
     )
 
 
+def _ratio_points(value: float, floor: float, ceiling: float, points: float) -> float:
+    if value <= floor:
+        return 0.0
+    if ceiling <= floor:
+        return points
+    return max(0.0, min(points, ((value - floor) / (ceiling - floor)) * points))
+
+
+def participation_surge_diagnostics(
+    record: dict, prior: dict | None = None, scan_time: datetime | None = None
+) -> dict:
+    """Score the inactive→institutional-participation transition independent of news/gap/rank."""
+    prior = prior or {}
+    if scan_time is None:
+        scan_time = datetime.now(timezone.utc)
+    if scan_time.tzinfo is None:
+        scan_time = scan_time.replace(tzinfo=timezone.utc)
+
+    volume_ratios = {
+        "1m": _num(
+            record, "volume_acceleration_1m", _num(record, "volume_acceleration", 1)
+        ),
+        "3m": _num(
+            record, "volume_acceleration_3m", _num(record, "volume_acceleration", 1)
+        ),
+        "5m": _num(
+            record, "volume_acceleration_5m", _num(record, "acceleration_ratio", 1)
+        ),
+    }
+    dollar_ratios = {
+        "1m": _num(record, "dollar_flow_acceleration_1m", volume_ratios["1m"]),
+        "3m": _num(record, "dollar_flow_acceleration_3m", volume_ratios["3m"]),
+        "5m": _num(record, "dollar_flow_acceleration_5m", volume_ratios["5m"]),
+    }
+    best_volume = max(volume_ratios.values())
+    sustained_volume = (volume_ratios["3m"] + volume_ratios["5m"]) / 2
+    best_dollar = max(dollar_ratios.values())
+    sustained_dollar = (dollar_ratios["3m"] + dollar_ratios["5m"]) / 2
+
+    volume_points = _ratio_points(best_volume, 1.15, 5.0, 18) + _ratio_points(
+        sustained_volume, 1.1, 3.5, 12
+    )
+    dollar_points = _ratio_points(best_dollar, 1.15, 5.0, 16) + _ratio_points(
+        sustained_dollar, 1.1, 3.5, 12
+    )
+
+    vwap = _current_vwap_diagnostics(record, prior)
+    distance = vwap["distance_pct"]
+    if vwap["fresh_reclaim"]:
+        vwap_points = 18
+        vwap_state = "reclaiming VWAP"
+    elif -0.35 <= distance <= 0.75:
+        vwap_points = 18
+        vwap_state = "at/near VWAP"
+    elif -1.0 <= distance < -0.35 or 0.75 < distance <= 2.0:
+        vwap_points = 11
+        vwap_state = "VWAP supportive"
+    elif distance > 2.0:
+        vwap_points = max(0.0, 7 - (distance - 2.0) * 2.0)
+        vwap_state = "extended above VWAP"
+    else:
+        vwap_points = 0.0
+        vwap_state = "below VWAP"
+
+    fresh_st = bool(record.get("supertrend_30s_flip", record.get("supertrend_flip")))
+    prior_bullish = bool(prior.get("supertrend_bullish"))
+    current_bullish = bool(record.get("supertrend_bullish"))
+    if fresh_st:
+        st_points = 16
+        st_status = "fresh bullish flip"
+    elif current_bullish and not prior_bullish:
+        st_points = 12
+        st_status = "new bullish support"
+    elif current_bullish:
+        st_points = 6
+        st_status = "established bullish"
+    else:
+        st_points = 0
+        st_status = "not bullish"
+
+    quality = _num(record, "expansion_quality", 50)
+    quality_points = max(0.0, min(16.0, quality / 100 * 16))
+
+    quiet_before = (
+        _num(prior, "volume_acceleration", 1) <= 1.25
+        and _num(prior, "rvol_proxy", 1) <= 1.75
+        and abs(_num(prior, "vwap_distance_pct")) <= 1.5
+    )
+    quiet_points = (
+        8 if quiet_before else 3 if abs(_num(record, "pct_change")) <= 4 else 0
+    )
+
+    score = round(
+        max(
+            0.0,
+            min(
+                100.0,
+                volume_points
+                + dollar_points
+                + vwap_points
+                + st_points
+                + quality_points
+                + quiet_points,
+            ),
+        ),
+        1,
+    )
+    major_conditions = {
+        "volume_acceleration": sustained_volume >= 1.6 or best_volume >= 2.2,
+        "dollar_flow_acceleration": sustained_dollar >= 1.6 or best_dollar >= 2.2,
+        "vwap_proximity": vwap_points >= 11,
+        "supertrend_transition": st_points >= 12,
+        "expansion_quality": quality >= 58,
+    }
+    detected = bool(score >= 72 and all(major_conditions.values()))
+    return {
+        "timestamp": _iso_timestamp(scan_time),
+        "vwap_distance_pct": round(distance, 4),
+        "vwap_state": vwap_state,
+        "st_status": st_status,
+        "volume_acceleration": {k: round(v, 2) for k, v in volume_ratios.items()},
+        "dollar_flow_acceleration": {k: round(v, 2) for k, v in dollar_ratios.items()},
+        "current_dollar_flow": {
+            "1m": round(_num(record, "current_dollar_flow_1m"), 2),
+            "3m": round(_num(record, "current_dollar_flow_3m"), 2),
+            "5m": round(_num(record, "current_dollar_flow_5m"), 2),
+        },
+        "baseline_dollar_flow_per_minute": round(
+            _num(record, "baseline_dollar_flow_per_minute"), 2
+        ),
+        "expansion_quality": round(quality, 1),
+        "participation_score": score,
+        "current_phase": record.get("market_phase", "Emerging"),
+        "major_conditions": major_conditions,
+        "detected": detected,
+        "alert": "Participation Surge Detected" if detected else "",
+    }
+
+
 def momentum_evidence(
     record: dict, prior: dict | None = None, scan_time: datetime | None = None
 ) -> tuple[float, list[str], list[str]]:
@@ -617,6 +757,14 @@ def momentum_evidence(
     if turnover >= 3:
         points += min(6, turnover * 0.75)
         reasons.append(f"float turnover {turnover:.1f}%")
+
+    surge = participation_surge_diagnostics(record, prior, scan_time)
+    if surge["participation_score"] >= 55:
+        points += min(22, (surge["participation_score"] - 45) * 0.55)
+        reasons.append(f"Participation Surge {surge['participation_score']:.0f}/100")
+    if surge["detected"]:
+        points += 10
+        reasons.append("Participation Surge Detected")
 
     if abs(_num(record, "pct_change")) <= 4 and accel >= 1.2:
         points += 6
@@ -822,7 +970,11 @@ def apply_scanner_v2(
             record, prior, scan_time, log_events=True
         )
         phase_update = apply_market_phase(record, prior, scan_time)
-        current_momentum = round(score, 1)
+        record.update(phase_update)
+        surge = participation_surge_diagnostics(record, prior, scan_time)
+        current_momentum = round(
+            min(100.0, score + max(0.0, surge["participation_score"] - 65) * 0.18), 1
+        )
         record.update(
             {
                 "scanner_version": "V2",
@@ -851,7 +1003,11 @@ def apply_scanner_v2(
                 "state_entered_at": state_entered_at,
                 "state_elapsed_seconds": state_elapsed,
                 "transition_history": transition_history,
-                **phase_update,
+                "participation_surge_score": surge["participation_score"],
+                "participation_surge_detected": surge["detected"],
+                "participation_surge_alert": surge["alert"],
+                "participation_surge_diagnostics": surge,
+                "alert_event": bool(entered_watch or advanced or surge["detected"]),
                 "reasons": reasons or record.get("reasons", []),
                 "cautions": list(
                     dict.fromkeys((record.get("cautions") or []) + cautions)

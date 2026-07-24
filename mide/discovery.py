@@ -14,6 +14,7 @@ from .indicators import (
     green_volume_ratio,
     higher_lows,
     proximity_pct,
+    intraday_participation_metrics,
 )
 from .volume_pace import volume_pace_metrics
 from .scoring import Evidence, score
@@ -318,6 +319,7 @@ def analyze_candidates(client, candidates, news_index, discovery_reasons):
         )
 
         vpi = volume_pace_metrics(symbol, frame)
+        surge_metrics = intraday_participation_metrics(session)
 
         evidence = Evidence(
             symbol=symbol,
@@ -363,6 +365,7 @@ def analyze_candidates(client, candidates, news_index, discovery_reasons):
                 "expected_five_minute_volume": round(vpi.expected_5m_volume),
                 "acceleration_ratio": round(vpi.acceleration_ratio, 2),
                 "volume_pace_passed": vpi.passed,
+                **surge_metrics,
             }
         )
     return apply_attention_ranking(output)
