@@ -5,6 +5,11 @@ from zoneinfo import ZoneInfo
 import logging
 from numbers import Real
 
+from mide.trader_priority import (
+    sortable_number as _sortable_number,
+    trader_priority_sort_key,
+)
+
 logger = logging.getLogger(__name__)
 
 STATE_RANK = {
@@ -59,31 +64,8 @@ __all__ = [
 ]
 
 
-def _sortable_text(value) -> str:
-    if value is None:
-        return ""
-    if isinstance(value, datetime):
-        return value.isoformat()
-    return str(value)
-
-
-def _sortable_number(value) -> float:
-    if value is None or value == "":
-        return 0.0
-    if isinstance(value, Real):
-        return float(value)
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return 0.0
-
-
-def _ranked_record_sort_key(record: dict) -> tuple[float, str, float]:
-    return (
-        _sortable_number(STATE_RANK.get(record.get("candidate_status"), 0)),
-        _sortable_text(record.get("state_entered_at")),
-        _sortable_number(record.get("scanner_v2_score", 0)),
-    )
+def _ranked_record_sort_key(record: dict) -> tuple[float, float, str]:
+    return trader_priority_sort_key(record)
 
 
 def _has_strengthening_news(record: dict) -> bool:
