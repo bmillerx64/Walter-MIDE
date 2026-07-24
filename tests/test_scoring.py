@@ -1443,3 +1443,78 @@ def test_momentum_quality_separates_orderly_expansion_from_chaotic_spike():
     assert ranked[0]["symbol"] == "CLEAN"
     assert ranked[0]["current_momentum"] > ranked[1]["current_momentum"]
     assert "momentum_quality_diagnostics" in ranked[0]
+
+
+def test_trend_stability_separates_healthy_from_fragile_equal_momentum():
+    from datetime import datetime, timezone
+    from mide.scanner_v2 import apply_scanner_v2, trend_stability_diagnostics
+
+    scan_time = datetime(2026, 7, 24, 14, 30, tzinfo=timezone.utc)
+    healthy = {
+        **base().__dict__,
+        "symbol": "STABLE",
+        "opportunity_score": 70,
+        "scanner_v2_score": 70,
+        "status": "MONITOR",
+        "vwap_distance_pct": 0.4,
+        "vwap_slope_pct": 0.35,
+        "vwap_violation_count": 0,
+        "vwap_cross_count": 0,
+        "supertrend_flip_count": 1,
+        "pullback_depth_pct": 0.6,
+        "retracement_pct": 0.8,
+        "fresh_higher_high": True,
+        "follow_through_pct": 8,
+        "new_high_rejection_count": 0,
+        "expansion_quality": 88,
+        "timeframes": {
+            "1m": {"above_vwap": True, "supertrend": True},
+            "3m": {"above_vwap": True, "supertrend": True},
+            "5m": {"above_vwap": True, "supertrend": True},
+        },
+        "reasons": [],
+        "cautions": [],
+    }
+    fragile = {
+        **healthy,
+        "symbol": "FRAGILE",
+        "vwap_relation": "below",
+        "vwap_distance_pct": -2.4,
+        "vwap_slope_pct": -0.55,
+        "vwap_violation_count": 3,
+        "vwap_cross_count": 4,
+        "supertrend_bullish": False,
+        "supertrend_flip": False,
+        "supertrend_flip_count": 5,
+        "higher_lows": False,
+        "lower_lows": True,
+        "panic_candle": True,
+        "pullback_depth_pct": 5.5,
+        "retracement_pct": 6.0,
+        "fresh_higher_high": False,
+        "near_hod": False,
+        "follow_through_pct": 0.5,
+        "new_high_rejection_count": 3,
+        "expansion_quality": 30,
+        "timeframes": {
+            "1m": {"above_vwap": False, "supertrend": False},
+            "3m": {"above_vwap": True, "supertrend": False},
+            "5m": {"above_vwap": False, "supertrend": True},
+        },
+    }
+
+    healthy_stability = trend_stability_diagnostics(healthy, {}, scan_time)
+    fragile_stability = trend_stability_diagnostics(fragile, {}, scan_time)
+    ranked = apply_scanner_v2([fragile, healthy], {}, scan_time)
+
+    assert healthy_stability["score"] >= 80
+    assert fragile_stability["score"] < 45
+    assert set(healthy_stability["factors"]) == {
+        "vwap_stability",
+        "st_stability",
+        "pullback_quality",
+        "continuation_strength",
+    }
+    assert ranked[0]["symbol"] == "STABLE"
+    assert ranked[0]["trend_stability_score"] > ranked[1]["trend_stability_score"]
+    assert ranked[0]["current_momentum"] > ranked[1]["current_momentum"]

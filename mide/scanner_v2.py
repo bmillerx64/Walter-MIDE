@@ -65,6 +65,7 @@ __all__ = [
     "sequential_trend_confirmation",
     "participation_surge_diagnostics",
     "momentum_quality_diagnostics",
+    "trend_stability_diagnostics",
 ]
 
 
@@ -837,6 +838,158 @@ def momentum_quality_diagnostics(
     }
 
 
+def trend_stability_diagnostics(
+    record: dict, prior: dict | None = None, scan_time: datetime | None = None
+) -> dict:
+    """Score whether an existing trend is strengthening, stable, or deteriorating.
+
+    Momentum Quality measures the cleanliness of the current move; Trend Stability
+    adds time-aware structure checks so equally strong momentum candidates can be
+    separated by VWAP durability, SuperTrend continuity, pullback control, and
+    follow-through after consolidations.
+    """
+    prior = prior or {}
+    if scan_time is None:
+        scan_time = datetime.now(timezone.utc)
+    if scan_time.tzinfo is None:
+        scan_time = scan_time.replace(tzinfo=timezone.utc)
+
+    current_vwap = _current_vwap_diagnostics(record, prior)
+    distance = current_vwap["distance_pct"]
+    prior_distance = _num(prior, "vwap_distance_pct", distance)
+    explicit_slope = record.get("vwap_slope_pct", record.get("vwap_slope"))
+    vwap_slope = (
+        _num(record, "vwap_slope_pct", _num(record, "vwap_slope"))
+        if explicit_slope is not None
+        else distance - prior_distance
+    )
+    vwap_violations = _num(
+        record, "vwap_violation_count", _num(record, "vwap_deep_violation_count")
+    )
+    vwap_crosses = _num(record, "vwap_cross_count")
+    vwap_stability = 68 + min(18.0, max(0.0, vwap_slope) * 16)
+    if record.get("vwap_relation") == "above" and distance >= -0.15:
+        vwap_stability += 14
+    elif record.get("vwap_relation") == "testing" or distance >= -0.65:
+        vwap_stability += 5
+    else:
+        vwap_stability -= min(34.0, abs(distance) * 8)
+    vwap_stability -= min(28.0, vwap_violations * 9 + vwap_crosses * 5)
+    if vwap_slope < -0.05:
+        vwap_stability -= min(18.0, abs(vwap_slope) * 20)
+    vwap_note = (
+        "positive VWAP slope / respect"
+        if vwap_stability >= 75
+        else (
+            "VWAP flattening or repeated tests"
+            if vwap_stability >= 50
+            else "VWAP failures / oscillation"
+        )
+    )
+
+    trend_sequence = sequential_trend_confirmation(record, prior, scan_time)
+    progression = trend_sequence["progression_count"]
+    conflicts = trend_sequence["conflict_count"]
+    st_flips = _num(record, "supertrend_flip_count", _num(record, "st_flip_count"))
+    prior_st = bool(prior.get("supertrend_bullish"))
+    current_st = bool(record.get("supertrend_bullish"))
+    st_stability = 34 + progression * 14
+    if current_st:
+        st_stability += 14
+    if current_st and prior_st:
+        st_stability += 8
+    if (
+        record.get("supertrend_30s_flip", record.get("supertrend_flip"))
+        and not prior_st
+    ):
+        st_stability += 4
+    st_stability -= conflicts * 16 + max(0.0, st_flips - 1) * 12
+    if prior_st and not current_st:
+        st_stability -= 28
+    st_note = (
+        "bullish SuperTrend support intact"
+        if st_stability >= 75
+        else (
+            "SuperTrend support is mixed"
+            if st_stability >= 50
+            else "SuperTrend structure deteriorating"
+        )
+    )
+
+    pullback_depth = abs(_num(record, "pullback_depth_pct", max(0.0, -distance)))
+    retracement = abs(_num(record, "retracement_pct", pullback_depth))
+    lower_lows = bool(record.get("lower_lows")) or (
+        prior.get("higher_lows") and not record.get("higher_lows")
+    )
+    panic = bool(record.get("panic_candle") or record.get("panic_candles"))
+    pullback_quality = 64 + (18 if record.get("higher_lows") else -8)
+    pullback_quality += 7 if record.get("vwap_relation") in {"above", "testing"} else -8
+    pullback_quality -= min(32.0, max(pullback_depth, retracement) * 7)
+    if lower_lows:
+        pullback_quality -= 18
+    if panic:
+        pullback_quality -= 22
+    pullback_note = (
+        "controlled higher-low pullbacks"
+        if pullback_quality >= 75
+        else (
+            "pullbacks need monitoring"
+            if pullback_quality >= 50
+            else "deep/lower-low pullbacks"
+        )
+    )
+
+    expansion_quality = _num(record, "expansion_quality", 50)
+    rejection_count = _num(
+        record, "new_high_rejection_count", _num(record, "rejection_count")
+    )
+    made_fresh_high = bool(record.get("fresh_higher_high", record.get("near_hod")))
+    follow_through = _num(
+        record, "follow_through_pct", max(0.0, _num(record, "pct_change"))
+    )
+    continuation_strength = 48 + expansion_quality * 0.34
+    continuation_strength += 13 if made_fresh_high else -7
+    continuation_strength += min(12.0, follow_through * 0.55)
+    continuation_strength -= min(30.0, rejection_count * 10)
+    if _num(record, "volume_acceleration", 1) < 0.85:
+        continuation_strength -= 10
+    continuation_note = (
+        "fresh highs followed by orderly rest"
+        if continuation_strength >= 75
+        else (
+            "limited follow-through"
+            if continuation_strength >= 50
+            else "new highs being rejected"
+        )
+    )
+
+    factors = {
+        "vwap_stability": round(max(0.0, min(100.0, vwap_stability)), 1),
+        "st_stability": round(max(0.0, min(100.0, st_stability)), 1),
+        "pullback_quality": round(max(0.0, min(100.0, pullback_quality)), 1),
+        "continuation_strength": round(max(0.0, min(100.0, continuation_strength)), 1),
+    }
+    score = round(
+        factors["vwap_stability"] * 0.28
+        + factors["st_stability"] * 0.26
+        + factors["pullback_quality"] * 0.23
+        + factors["continuation_strength"] * 0.23,
+        1,
+    )
+    return {
+        "timestamp": _iso_timestamp(scan_time),
+        "score": score,
+        "band": _quality_band(score),
+        "factors": factors,
+        "factor_notes": {
+            "vwap_stability": vwap_note,
+            "st_stability": st_note,
+            "pullback_quality": pullback_note,
+            "continuation_strength": continuation_note,
+        },
+    }
+
+
 def momentum_evidence(
     record: dict, prior: dict | None = None, scan_time: datetime | None = None
 ) -> tuple[float, list[str], list[str]]:
@@ -1123,7 +1276,9 @@ def apply_scanner_v2(
         record.update(phase_update)
         surge = participation_surge_diagnostics(record, prior, scan_time)
         quality = momentum_quality_diagnostics(record, prior, scan_time)
+        stability = trend_stability_diagnostics(record, prior, scan_time)
         quality_adjustment = (quality["score"] - 50) * 0.18
+        stability_adjustment = (stability["score"] - 50) * 0.10
         current_momentum = round(
             max(
                 0.0,
@@ -1131,7 +1286,8 @@ def apply_scanner_v2(
                     100.0,
                     score
                     + max(0.0, surge["participation_score"] - 65) * 0.14
-                    + quality_adjustment,
+                    + quality_adjustment
+                    + stability_adjustment,
                 ),
             ),
             1,
@@ -1172,6 +1328,10 @@ def apply_scanner_v2(
                 "momentum_quality_score": quality["score"],
                 "momentum_quality_band": quality["band"],
                 "momentum_quality_diagnostics": quality,
+                "trend_stability": stability["score"],
+                "trend_stability_score": stability["score"],
+                "trend_stability_band": stability["band"],
+                "trend_stability_diagnostics": stability,
                 "alert_event": bool(entered_watch or advanced or surge["detected"]),
                 "reasons": reasons or record.get("reasons", []),
                 "cautions": list(
