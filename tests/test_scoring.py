@@ -1181,3 +1181,94 @@ def test_scanner_v2_midday_and_power_hour_volume_expectations():
         power_hour["volume_session_diagnostics"]["expected_minimum_volume"] == 625_000
     )
     assert power_hour["volume_session_diagnostics"]["passed"] is False
+
+
+def test_sequential_trend_confirmation_rewards_ordered_expansion():
+    from datetime import datetime, timezone
+
+    from mide.scanner_v2 import apply_scanner_v2
+
+    scan_time = datetime(2026, 7, 23, 13, 31, tzinfo=timezone.utc)
+    record = {
+        **base(timeframe_confirmations=4).__dict__,
+        "opportunity_score": 70,
+        "status": "MONITOR",
+        "supertrend_30s_flip": True,
+        "timeframes": {
+            "1m": {"above_vwap": True, "supertrend": True},
+            "3m": {"above_vwap": True, "supertrend": True},
+            "5m": {"above_vwap": True, "supertrend": True},
+        },
+        "reasons": [],
+        "cautions": [],
+    }
+
+    ranked = apply_scanner_v2([record], {}, scan_time=scan_time)
+    sequence = ranked[0]["trend_confirmation_sequence"]
+
+    assert sequence["condition"] == "Stable"
+    assert sequence["progression_count"] == 4
+    assert sequence["conflict_count"] == 0
+    assert [step["state"] for step in sequence["ladder"]] == [
+        "confirmed",
+        "confirmed",
+        "confirmed",
+        "confirmed",
+    ]
+    assert [event["timeframe"] for event in ranked[0]["trend_confirmation_events"]] == [
+        "30s",
+        "1m",
+        "3m",
+        "5m",
+    ]
+    assert (
+        ranked[0]["trend_confirmation_events"][0]["confirmed_at"]
+        == "2026-07-23T13:31:00+00:00"
+    )
+
+
+def test_sequential_trend_confirmation_penalizes_broken_order():
+    from datetime import datetime, timezone
+
+    from mide.scanner_v2 import apply_scanner_v2
+
+    scan_time = datetime(2026, 7, 23, 13, 31, tzinfo=timezone.utc)
+    ordered = {
+        **base(symbol="ORD", timeframe_confirmations=3).__dict__,
+        "opportunity_score": 70,
+        "status": "MONITOR",
+        "supertrend_30s_flip": True,
+        "timeframes": {
+            "1m": {"above_vwap": True, "supertrend": True},
+            "3m": {"above_vwap": True, "supertrend": True},
+            "5m": {"above_vwap": False, "supertrend": False},
+        },
+        "reasons": [],
+        "cautions": [],
+    }
+    broken = {
+        **base(symbol="BRK", timeframe_confirmations=3).__dict__,
+        "opportunity_score": 70,
+        "status": "MONITOR",
+        "supertrend_30s_flip": True,
+        "timeframes": {
+            "1m": {"above_vwap": False, "supertrend": False},
+            "3m": {"above_vwap": True, "supertrend": True},
+            "5m": {"above_vwap": True, "supertrend": True},
+        },
+        "reasons": [],
+        "cautions": [],
+    }
+
+    ranked = {
+        r["symbol"]: r
+        for r in apply_scanner_v2([ordered, broken], {}, scan_time=scan_time)
+    }
+
+    assert ranked["ORD"]["trend_condition"] == "Stable"
+    assert ranked["ORD"]["trend_confirmation_sequence"]["progression_count"] == 3
+    assert ranked["BRK"]["trend_condition"] == "Weakening"
+    assert ranked["BRK"]["trend_confirmation_sequence"]["progression_count"] == 1
+    assert ranked["BRK"]["trend_confirmation_sequence"]["conflict_count"] == 2
+    assert "conflicting SuperTrend timeframe order" in ranked["BRK"]["cautions"]
+    assert ranked["ORD"]["scanner_v2_score"] > ranked["BRK"]["scanner_v2_score"]

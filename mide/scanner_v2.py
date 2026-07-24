@@ -62,6 +62,7 @@ __all__ = [
     "state_elapsed_seconds",
     "strengthening_decision",
     "strengthening_diagnostics",
+    "sequential_trend_confirmation",
 ]
 
 
@@ -214,6 +215,95 @@ def _tf_bull(record: dict, label: str) -> bool:
     tf = record.get("timeframes") or {}
     item = tf.get(label) or {}
     return bool(item.get("above_vwap") and item.get("supertrend"))
+
+
+TREND_CONFIRMATION_ORDER = ("30s", "1m", "3m", "5m")
+
+
+def _trend_confirmation_passed(record: dict, label: str) -> bool:
+    if label == "30s":
+        return bool(
+            record.get("supertrend_30s_flip", record.get("supertrend_flip"))
+            or record.get("supertrend_bullish")
+        )
+    return _tf_bull(record, label)
+
+
+def sequential_trend_confirmation(
+    record: dict,
+    prior: dict | None = None,
+    scan_time: datetime | None = None,
+    log_events: bool = False,
+) -> dict:
+    """Evaluate SuperTrend confirmations as an ordered 30s→1m→3m→5m ladder."""
+    prior = prior or {}
+    if scan_time is None:
+        scan_time = datetime.now(timezone.utc)
+    if scan_time.tzinfo is None:
+        scan_time = scan_time.replace(tzinfo=timezone.utc)
+    scan_time_iso = _iso_timestamp(scan_time)
+
+    prior_events = [
+        dict(event)
+        for event in (prior.get("trend_confirmation_events") or [])
+        if (
+            event.get("timeframe") in TREND_CONFIRMATION_ORDER
+            and event.get("confirmed_at")
+        )
+    ]
+    event_keys = {event.get("timeframe") for event in prior_events}
+    ladder = []
+    pending_started = False
+    progression_count = 0
+    conflicts = 0
+    events = prior_events
+
+    for label in TREND_CONFIRMATION_ORDER:
+        confirmed = _trend_confirmation_passed(record, label)
+        prior_confirmed = _trend_confirmation_passed(prior, label)
+        if confirmed and not prior_confirmed and label not in event_keys:
+            event = {
+                "timeframe": label,
+                "event": "confirmed",
+                "confirmed_at": scan_time_iso,
+            }
+            events.append(event)
+            event_keys.add(label)
+            if log_events:
+                logger.info(
+                    "Sequential SuperTrend confirmation %s %s confirmed at %s",
+                    record.get("symbol", ""),
+                    label,
+                    scan_time_iso,
+                )
+        if confirmed and not pending_started:
+            state = "confirmed"
+            progression_count += 1
+        elif confirmed:
+            state = "conflict"
+            conflicts += 1
+        else:
+            state = "pending" if not pending_started else "missing"
+            pending_started = True
+        ladder.append({"timeframe": label, "confirmed": confirmed, "state": state})
+
+    if conflicts:
+        condition = "Weakening"
+    elif progression_count >= 3:
+        condition = "Stable"
+    elif progression_count >= 1:
+        condition = "Building"
+    else:
+        condition = "Weakening"
+
+    return {
+        "order": list(TREND_CONFIRMATION_ORDER),
+        "ladder": ladder,
+        "progression_count": progression_count,
+        "conflict_count": conflicts,
+        "condition": condition,
+        "events": events[-16:],
+    }
 
 
 def _tf_detail(record: dict, label: str) -> dict:
@@ -567,14 +657,18 @@ def momentum_evidence(
         points += 8
         reasons.append("SuperTrend supportive")
 
-    for label, text, pts in [
-        ("1m", "1-minute confirmation", 12),
-        ("3m", "3-minute confirmation", 11),
-        ("5m", "5-minute confirmation", 3),
-    ]:
-        if _tf_bull(record, label):
-            points += pts
-            reasons.append(text)
+    trend_sequence = sequential_trend_confirmation(record, prior, scan_time)
+    progression_points = {2: 12, 3: 23, 4: 26}
+    if trend_sequence["progression_count"] >= 2:
+        points += progression_points.get(trend_sequence["progression_count"], 0)
+        reasons.append(
+            f"Sequential ST {trend_sequence['progression_count']}/4 {trend_sequence['condition'].lower()}"
+        )
+    elif trend_sequence["progression_count"] == 1:
+        reasons.append("30s ST candidate awaiting 1m confirmation")
+    if trend_sequence["conflict_count"]:
+        points -= min(24, trend_sequence["conflict_count"] * 12)
+        cautions.append("conflicting SuperTrend timeframe order")
 
     if record.get("higher_lows"):
         points += 5
@@ -724,6 +818,9 @@ def apply_scanner_v2(
         vwap_gate_diagnostics = _current_vwap_diagnostics(record, prior)
         volume_session_diagnostics = session_volume_diagnostics(record, scan_time)
         volume_pace = volume_pace_diagnostics(record)
+        trend_sequence = sequential_trend_confirmation(
+            record, prior, scan_time, log_events=True
+        )
         phase_update = apply_market_phase(record, prior, scan_time)
         current_momentum = round(score, 1)
         record.update(
@@ -745,6 +842,10 @@ def apply_scanner_v2(
                 "volume_session_diagnostics": volume_session_diagnostics,
                 "volume_pace_diagnostics": volume_pace,
                 "volume_pace_passed": volume_pace["passed"],
+                "trend_confirmation_sequence": trend_sequence,
+                "trend_ladder": trend_sequence["ladder"],
+                "trend_condition": trend_sequence["condition"],
+                "trend_confirmation_events": trend_sequence["events"],
                 "vwap_distance_pct": vwap_gate_diagnostics["distance_pct"],
                 "status": state,
                 "state_entered_at": state_entered_at,
