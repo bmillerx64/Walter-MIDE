@@ -54,6 +54,12 @@ def inject_css():
     .trend-bad {color:#fca5a5;border-color:#7f1d1d}
     .trend-pending {color:#fcd34d;border-color:#854d0e}
     .trend-condition {color:#aeb9c7;font-weight:800;margin-right:3px}
+    .trigger-diagnostic {margin:9px 0;padding:9px 11px;background:#101827;border:1px solid #334155;border-radius:9px}
+    .trigger-yes {border-color:#22c55e;background:#071b12}
+    .trigger-no {border-color:#ef4444;background:#210d12}
+    .trigger-title {font-size:.78rem;text-transform:uppercase;letter-spacing:.08em;font-weight:900;color:#e5e7eb;margin-bottom:5px}
+    .trigger-diagnostic ul {list-style:none;margin:0;padding:0;display:grid;gap:3px}
+    .trigger-diagnostic li {font-size:.92rem;font-weight:800;color:#eef4fb;line-height:1.35}
     </style>
     """,
         unsafe_allow_html=True,
@@ -562,6 +568,25 @@ def trend_ladder_markup(record: dict) -> str:
     )
 
 
+def trigger_diagnostic_markup(record: dict) -> str:
+    """Render Walter's YES/NO trigger decision and exact condition reasons."""
+    diagnostic = record.get("trigger_diagnostics") or {}
+    trigger = diagnostic.get("trigger") or record.get("trigger")
+    if not trigger:
+        return ""
+    reasons = diagnostic.get("reasons") or record.get("trigger_reasons") or []
+    klass = "trigger-yes" if trigger == "YES" else "trigger-no"
+    label = "Reason" if trigger == "YES" else "Failed conditions"
+    items = "".join(f"<li>• {html.escape(str(reason))}</li>" for reason in reasons)
+    if not items:
+        items = "<li>• No trigger diagnostics available</li>"
+    return (
+        f"<div class='trigger-diagnostic {klass}'>"
+        f"<div class='trigger-title'>Trigger = {html.escape(str(trigger))}</div>"
+        f"<div class='small'>{label}:</div><ul>{items}</ul></div>"
+    )
+
+
 def opportunity_card(r):
     klass = {
         "EXCEPTIONAL": "mide-exceptional",
@@ -577,6 +602,7 @@ def opportunity_card(r):
         f"<li>✓ {html.escape(reason)}</li>" for reason in headline_reasons
     )
     ladder_markup = trend_ladder_markup(r)
+    trigger_markup = trigger_diagnostic_markup(r)
     summary_markup = (
         f"<div class='why-summary'><div class='why-summary-title'>Top reasons now</div><ul>{summary_items}</ul>{ladder_markup}</div>"
         if summary_items
@@ -648,6 +674,7 @@ def opportunity_card(r):
       </div>
       {promo_badge}
       {summary_markup}
+      {trigger_markup}
       <div class="why">{html.escape(reasons)}</div>
       <div class="score-grid">{score_boxes}</div>
       {transition_history_markup(r)}
