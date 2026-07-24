@@ -1518,3 +1518,86 @@ def test_trend_stability_separates_healthy_from_fragile_equal_momentum():
     assert ranked[0]["symbol"] == "STABLE"
     assert ranked[0]["trend_stability_score"] > ranked[1]["trend_stability_score"]
     assert ranked[0]["current_momentum"] > ranked[1]["current_momentum"]
+
+
+def test_trigger_diagnostics_explain_failed_conditions():
+    from datetime import datetime, timezone
+
+    from mide.scanner_v2 import apply_scanner_v2
+
+    record = {
+        **base(
+            symbol="STAK", price=1.097, vwap_relation="above", vwap_distance_pct=9.7
+        ).__dict__,
+        "calculated_vwap": 1.0,
+        "supertrend_30s_flip": True,
+        "supertrend_30s_flip_age_seconds": 14 * 60,
+        "volume_acceleration_1m": 0.8,
+        "volume_acceleration_3m": 0.7,
+        "volume_acceleration_5m": 0.6,
+        "dollar_flow_acceleration_1m": 0.8,
+        "dollar_flow_acceleration_3m": 0.7,
+        "dollar_flow_acceleration_5m": 0.6,
+        "expansion_quality": 30,
+        "opportunity_score": 50,
+        "status": "MONITOR",
+        "reasons": [],
+        "cautions": [],
+        "timeframes": {},
+    }
+
+    ranked = apply_scanner_v2(
+        [record], {}, datetime(2026, 7, 24, 14, 0, tzinfo=timezone.utc)
+    )
+    diagnostics = ranked[0]["trigger_diagnostics"]
+
+    assert ranked[0]["trigger"] == "NO"
+    assert diagnostics["failed_conditions"] == [
+        "participation",
+        "supertrend_flip",
+        "vwap",
+        "not_extended",
+        "expansion_beginning",
+    ]
+    assert "Price 9.7% above VWAP" in diagnostics["reasons"]
+    assert "ST flip occurred 14 minutes ago" in diagnostics["reasons"]
+    assert "Participation declining" in diagnostics["reasons"]
+
+
+def test_trigger_diagnostics_yes_when_all_conditions_pass():
+    from datetime import datetime, timezone
+
+    from mide.scanner_v2 import apply_scanner_v2
+
+    record = {
+        **base(
+            symbol="STAK", price=1.006, vwap_relation="above", vwap_distance_pct=0.6
+        ).__dict__,
+        "calculated_vwap": 1.0,
+        "supertrend_30s_flip": True,
+        "supertrend_30s_flip_age_seconds": 90,
+        "volume_acceleration_1m": 4.6,
+        "volume_acceleration_3m": 3.2,
+        "volume_acceleration_5m": 2.5,
+        "dollar_flow_acceleration_1m": 4.8,
+        "dollar_flow_acceleration_3m": 3.4,
+        "dollar_flow_acceleration_5m": 2.7,
+        "expansion_quality": 82,
+        "opportunity_score": 50,
+        "status": "MONITOR",
+        "reasons": [],
+        "cautions": [],
+        "timeframes": {},
+    }
+
+    ranked = apply_scanner_v2(
+        [record], {}, datetime(2026, 7, 24, 14, 0, tzinfo=timezone.utc)
+    )
+    diagnostics = ranked[0]["trigger_diagnostics"]
+
+    assert ranked[0]["trigger"] == "YES"
+    assert diagnostics["failed_conditions"] == []
+    assert "ST flipped 90 seconds ago" in diagnostics["reasons"]
+    assert "0.6% above VWAP" in diagnostics["reasons"]
+    assert "Not extended" in diagnostics["reasons"]
+    assert "Expansion beginning" in diagnostics["reasons"]

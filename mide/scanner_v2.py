@@ -66,6 +66,7 @@ __all__ = [
     "participation_surge_diagnostics",
     "momentum_quality_diagnostics",
     "trend_stability_diagnostics",
+    "trigger_diagnostics",
 ]
 
 
@@ -85,6 +86,128 @@ def _has_strengthening_supertrend(record: dict) -> bool:
         or _tf_supportive(record, "1m")
         or _tf_supportive(record, "3m")
     )
+
+
+def _format_seconds(seconds: float) -> str:
+    seconds = max(0, int(seconds))
+    if seconds < 120:
+        return f"{seconds} seconds"
+    minutes = round(seconds / 60)
+    return f"{minutes} minutes"
+
+
+def _trigger_st_age_seconds(
+    record: dict, scan_time: datetime | None = None
+) -> int | None:
+    for key in ("supertrend_30s_flip_age_seconds", "supertrend_flip_age_seconds"):
+        if record.get(key) is not None:
+            return max(0, int(_num(record, key)))
+    events = record.get("trend_confirmation_events") or []
+    thirty_second_events = [
+        event
+        for event in events
+        if event.get("timeframe") == "30s" and event.get("confirmed_at")
+    ]
+    if not thirty_second_events or scan_time is None:
+        return None
+    try:
+        confirmed_at = datetime.fromisoformat(
+            str(thirty_second_events[-1]["confirmed_at"]).replace("Z", "+00:00")
+        )
+    except ValueError:
+        return None
+    if confirmed_at.tzinfo is None:
+        confirmed_at = confirmed_at.replace(tzinfo=timezone.utc)
+    if scan_time.tzinfo is None:
+        scan_time = scan_time.replace(tzinfo=timezone.utc)
+    return max(
+        0,
+        int(
+            (
+                scan_time.astimezone(timezone.utc)
+                - confirmed_at.astimezone(timezone.utc)
+            ).total_seconds()
+        ),
+    )
+
+
+def trigger_diagnostics(
+    record: dict, prior: dict | None = None, scan_time: datetime | None = None
+) -> dict:
+    """Evaluate Walter's single trigger rule set and explain pass/fail causes."""
+    prior = prior or {}
+    surge = record.get(
+        "participation_surge_diagnostics"
+    ) or participation_surge_diagnostics(record, prior, scan_time)
+    vwap = record.get("strengthening_vwap_gate") or _current_vwap_diagnostics(
+        record, prior
+    )
+    distance = float(vwap.get("distance_pct", _num(record, "vwap_distance_pct")) or 0)
+    st_age = _trigger_st_age_seconds(record, scan_time)
+    fresh_st = bool(record.get("supertrend_30s_flip", record.get("supertrend_flip")))
+    st_passed = fresh_st and (st_age is None or st_age <= 180)
+    surge_score = float(surge.get("participation_score", 0) or 0)
+    quality = _num(record, "expansion_quality", surge.get("expansion_quality", 50))
+    checks = [
+        {
+            "condition": "participation",
+            "passed": surge_score >= 72,
+            "passed_reason": f"Participation {surge_score / 13.333:.1f}×",
+            "failed_reason": (
+                "Participation declining"
+                if surge_score < 55
+                else f"Participation only {surge_score:.0f}/100"
+            ),
+        },
+        {
+            "condition": "supertrend_flip",
+            "passed": st_passed,
+            "passed_reason": (
+                f"ST flipped {_format_seconds(st_age)} ago"
+                if st_age is not None
+                else "Fresh ST flip"
+            ),
+            "failed_reason": (
+                f"ST flip occurred {_format_seconds(st_age)} ago"
+                if fresh_st and st_age is not None
+                else "No fresh ST flip"
+            ),
+        },
+        {
+            "condition": "vwap",
+            "passed": 0 <= distance <= 2.0,
+            "passed_reason": f"{abs(distance):.1f}% above VWAP",
+            "failed_reason": (
+                f"Price {abs(distance):.1f}% below VWAP"
+                if distance < 0
+                else f"Price {distance:.1f}% above VWAP"
+            ),
+        },
+        {
+            "condition": "not_extended",
+            "passed": distance <= 2.0,
+            "passed_reason": "Not extended",
+            "failed_reason": "Extended above VWAP",
+        },
+        {
+            "condition": "expansion_beginning",
+            "passed": quality >= 58,
+            "passed_reason": "Expansion beginning",
+            "failed_reason": f"Expansion quality only {quality:.0f}/100",
+        },
+    ]
+    failed = [check for check in checks if not check["passed"]]
+    return {
+        "trigger": "YES" if not failed else "NO",
+        "passed": not failed,
+        "checks": checks,
+        "reasons": (
+            [check["passed_reason"] for check in checks]
+            if not failed
+            else [check["failed_reason"] for check in failed]
+        ),
+        "failed_conditions": [check["condition"] for check in failed],
+    }
 
 
 def strengthening_decision(record: dict, scan_time: datetime | None = None) -> dict:
@@ -1339,6 +1462,9 @@ def apply_scanner_v2(
                 ),
             }
         )
+        record["trigger_diagnostics"] = trigger_diagnostics(record, prior, scan_time)
+        record["trigger"] = record["trigger_diagnostics"]["trigger"]
+        record["trigger_reasons"] = record["trigger_diagnostics"]["reasons"]
         record["strengthening_decision"] = strengthening_decision(record, scan_time)
         output.append(record)
     return sorted(output, key=_ranked_record_sort_key, reverse=True)
