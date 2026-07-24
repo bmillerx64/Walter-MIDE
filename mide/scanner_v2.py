@@ -858,60 +858,96 @@ def participation_gate_diagnostics(
     buying = _num(record, "green_volume_ratio", 1)
     if buying == 1 and pace["passed"]:
         buying = PARTICIPATION_MIN_BUYING_EXPANSION
-    checks = [
-        (
-            "1-minute volume increasing",
-            volume_1m >= PARTICIPATION_MIN_ACCELERATION_RATIO,
-            "1-minute volume not increasing",
-        ),
-        (
-            "3-minute volume increasing",
-            volume_3m >= PARTICIPATION_MIN_ACCELERATION_RATIO,
-            "3-minute volume not increasing",
-        ),
-        (
-            "Dollar volume increasing",
-            max(dollar_1m, dollar_3m, dollar_5m)
-            >= PARTICIPATION_MIN_ACCELERATION_RATIO,
-            "Dollar flow not increasing",
-        ),
-        (
-            "Participation acceleration above threshold",
-            max(volume_1m, volume_3m, dollar_1m, dollar_3m, dollar_5m)
-            >= PARTICIPATION_MIN_ACCELERATION_RATIO,
-            "No participation surge",
-        ),
-        (
-            "Recent buying activity expanding",
-            buying >= PARTICIPATION_MIN_BUYING_EXPANSION,
-            "No buying expansion",
-        ),
-    ]
-    failed = [failed for _label, passed, failed in checks if not passed]
     session = session_volume_diagnostics(record, scan_time)
-    if not (session["volume_passed"] or pace["passed"]):
-        failed.append("Volume below threshold")
-    if not (
-        session["dollar_volume_passed"]
-        or _num(record, "dollar_volume")
-        >= session["expected_minimum_dollar_volume"] * 0.5
-    ):
-        failed.append("Dollar volume below threshold")
-    if not (
-        session["rvol_passed"]
-        or pace["passed"]
-        or _num(record, "rvol_proxy", 1) >= BASE_MIN_RVOL
-    ):
-        failed.append("RVOL below threshold")
+    criteria = [
+        {
+            "condition": "1-minute volume increasing",
+            "threshold": PARTICIPATION_MIN_ACCELERATION_RATIO,
+            "measured_value": round(volume_1m, 2),
+            "passed": volume_1m >= PARTICIPATION_MIN_ACCELERATION_RATIO,
+            "failed_reason": "1-minute volume not increasing",
+        },
+        {
+            "condition": "3-minute volume increasing",
+            "threshold": PARTICIPATION_MIN_ACCELERATION_RATIO,
+            "measured_value": round(volume_3m, 2),
+            "passed": volume_3m >= PARTICIPATION_MIN_ACCELERATION_RATIO,
+            "failed_reason": "3-minute volume not increasing",
+        },
+        {
+            "condition": "Dollar volume increasing",
+            "threshold": PARTICIPATION_MIN_ACCELERATION_RATIO,
+            "measured_value": round(max(dollar_1m, dollar_3m, dollar_5m), 2),
+            "passed": max(dollar_1m, dollar_3m, dollar_5m)
+            >= PARTICIPATION_MIN_ACCELERATION_RATIO,
+            "failed_reason": "Dollar flow not increasing",
+        },
+        {
+            "condition": "Participation acceleration above threshold",
+            "threshold": PARTICIPATION_MIN_ACCELERATION_RATIO,
+            "measured_value": round(
+                max(volume_1m, volume_3m, dollar_1m, dollar_3m, dollar_5m), 2
+            ),
+            "passed": max(volume_1m, volume_3m, dollar_1m, dollar_3m, dollar_5m)
+            >= PARTICIPATION_MIN_ACCELERATION_RATIO,
+            "failed_reason": "No participation surge",
+        },
+        {
+            "condition": "Recent buying activity expanding",
+            "threshold": PARTICIPATION_MIN_BUYING_EXPANSION,
+            "measured_value": round(buying, 2),
+            "passed": buying >= PARTICIPATION_MIN_BUYING_EXPANSION,
+            "failed_reason": "No buying expansion",
+        },
+        {
+            "condition": "Session feed volume",
+            "threshold": session["expected_minimum_volume"],
+            "measured_value": session["actual_volume"],
+            "passed": bool(session["volume_passed"] or pace["passed"]),
+            "failed_reason": "Volume below threshold",
+        },
+        {
+            "condition": "Session dollar volume",
+            "threshold": round(session["expected_minimum_dollar_volume"] * 0.5),
+            "measured_value": session["actual_dollar_volume"],
+            "passed": bool(
+                session["dollar_volume_passed"]
+                or _num(record, "dollar_volume")
+                >= session["expected_minimum_dollar_volume"] * 0.5
+            ),
+            "failed_reason": "Dollar volume below threshold",
+        },
+        {
+            "condition": "Session RVOL",
+            "threshold": BASE_MIN_RVOL,
+            "measured_value": session["actual_rvol"],
+            "passed": bool(
+                session["rvol_passed"]
+                or pace["passed"]
+                or _num(record, "rvol_proxy", 1) >= BASE_MIN_RVOL
+            ),
+            "failed_reason": "RVOL below threshold",
+        },
+    ]
+    failed = [
+        criterion["failed_reason"] for criterion in criteria if not criterion["passed"]
+    ]
+    symbol = record.get("symbol", "")
+    for criterion in criteria:
+        logger.info(
+            "Participation Gate %s: %s threshold=%s measured=%s result=%s",
+            symbol,
+            criterion["condition"],
+            criterion["threshold"],
+            criterion["measured_value"],
+            "PASS" if criterion["passed"] else "FAIL",
+        )
     return {
         "passed": not failed,
         "status": "PASS" if not failed else "FAIL",
         "reason": "Participation Present" if not failed else "No Participation",
         "failed_reasons": list(dict.fromkeys(failed)),
-        "checks": [
-            {"condition": label, "passed": passed, "failed_reason": failed_reason}
-            for label, passed, failed_reason in checks
-        ],
+        "checks": criteria,
         "minimum_acceleration_ratio": PARTICIPATION_MIN_ACCELERATION_RATIO,
     }
 
@@ -1545,8 +1581,22 @@ def apply_scanner_v2(
                 strengthening_promotion_diagnostic["volume_acceleration"],
                 strengthening_promotion_diagnostic["final_weighted_score"],
             )
-        quality = momentum_quality_diagnostics(record, prior, scan_time)
-        stability = trend_stability_diagnostics(record, prior, scan_time)
+        if participation_gate["passed"]:
+            quality = momentum_quality_diagnostics(record, prior, scan_time)
+            stability = trend_stability_diagnostics(record, prior, scan_time)
+        else:
+            quality = {
+                "score": 0.0,
+                "band": "Rejected",
+                "factors": {},
+                "notes": ["Skipped because Participation Gate failed"],
+            }
+            stability = {
+                "score": 0.0,
+                "band": "Rejected",
+                "factors": {},
+                "notes": ["Skipped because Participation Gate failed"],
+            }
         quality_adjustment = (quality["score"] - 50) * 0.18
         stability_adjustment = (stability["score"] - 50) * 0.10
         current_momentum = round(
