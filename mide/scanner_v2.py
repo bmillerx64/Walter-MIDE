@@ -67,6 +67,7 @@ __all__ = [
     "sequential_trend_confirmation",
     "participation_surge_diagnostics",
     "participation_gate_diagnostics",
+    "participation_gate_rejection_diagnostics",
     "structure_gate_diagnostics",
     "momentum_quality_diagnostics",
     "trend_stability_diagnostics",
@@ -966,6 +967,37 @@ def participation_gate_diagnostics(
         ],
         "failed_criteria": failed_criteria,
         "minimum_acceleration_ratio": PARTICIPATION_MIN_ACCELERATION_RATIO,
+    }
+
+
+def participation_gate_rejection_diagnostics(records: list[dict]) -> dict:
+    """Summarize hard-gate participation rejections for scan-level diagnostics."""
+    rejected = [
+        record
+        for record in records
+        if record.get("qualified_for_ranking") is False
+        and (record.get("participation_gate") or {}).get("status") == "FAIL"
+    ]
+    by_reason: dict[str, int] = {}
+    details = []
+    for record in rejected:
+        gate = record.get("participation_gate") or {}
+        failed_reasons = gate.get("failed_reasons") or []
+        for reason in failed_reasons:
+            by_reason[reason] = by_reason.get(reason, 0) + 1
+        details.append(
+            {
+                "symbol": record.get("symbol", ""),
+                "candidate_status": record.get("candidate_status")
+                or record.get("status", ""),
+                "failed_reasons": failed_reasons,
+                "failed_criteria": gate.get("failed_criteria") or [],
+            }
+        )
+    return {
+        "candidates_rejected": len(rejected),
+        "rejected_by_reason": by_reason,
+        "details": details,
     }
 
 
