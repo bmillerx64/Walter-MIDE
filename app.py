@@ -19,6 +19,9 @@ from mide.ui import (
     play_alert,
     scanner_v2_display_sections,
     scanner_v2_dashboard_counts,
+    actionable_candidate_records,
+    rejected_candidate_records,
+    rejected_candidates_table,
     automatic_watching_sort_key,
     trader_priority_sort_key,
 )
@@ -164,9 +167,10 @@ def market_phase(now: datetime | None = None) -> str:
 
 def scan_alert_phrase(records: list[dict]) -> str:
     """Build the per-scan audible alert, prioritizing actionable Entry Ready symbols."""
+    actionable_records = actionable_candidate_records(records)
     entry_symbols = [
         r.get("symbol")
-        for r in records
+        for r in actionable_records
         if r.get("candidate_status") == "Entry Ready"
         or r.get("status") == "Entry Ready"
     ]
@@ -178,7 +182,7 @@ def scan_alert_phrase(records: list[dict]) -> str:
             symbol_text = f"{', '.join(entry_symbols[:-1])} and {entry_symbols[-1]}"
         return f"Entry Ready: {symbol_text}."
 
-    dashboard_counts = scanner_v2_dashboard_counts(records)
+    dashboard_counts = scanner_v2_dashboard_counts(actionable_records)
     if dashboard_counts["strengthening"]:
         return f"Watching {dashboard_counts['strengthening']}."
     return ""
@@ -544,10 +548,12 @@ st.info(
     f"{clock.banner_text}. Rankings describe evidence; they are not trade instructions."
 )
 
+actionable_records = actionable_candidate_records(records)
+rejected_records = rejected_candidate_records(records)
 display_records = (
-    records
+    actionable_records
     if show_pass
-    else [r for r in records if r.get("status") not in {"PASS", "Removed"}]
+    else [r for r in actionable_records if r.get("status") not in {"PASS", "Removed"}]
 )
 
 arm_auto_scan_timer(
@@ -614,8 +620,8 @@ with st.expander("Diagnostics", expanded=False):
     elif not inspect_symbol:
         st.caption("No diagnostics recorded for this scan yet.")
 
-metric_strip(records)
-alert_phrase = scan_alert_phrase(records)
+metric_strip(actionable_records)
+alert_phrase = scan_alert_phrase(actionable_records)
 if alerts and alert_phrase:
     play_alert("assets/alert.wav", alert_phrase, alert_voice_for_session())
 
@@ -639,6 +645,15 @@ with tabs[0]:
                     opportunity_card(record)
                 st.dataframe(
                     radar_table(sorted_records), width="stretch", hide_index=True
+                )
+        if rejected_records:
+            with st.expander(
+                f"REJECTED CANDIDATES ({len(rejected_records)})", expanded=False
+            ):
+                st.dataframe(
+                    rejected_candidates_table(rejected_records),
+                    width="stretch",
+                    hide_index=True,
                 )
 
 with tabs[1]:

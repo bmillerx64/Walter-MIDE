@@ -107,8 +107,51 @@ def play_alert(sound_path: str, phrase: str, voice_name: str = ""):
     )
 
 
+def is_actionable_candidate(record: dict) -> bool:
+    """Return whether a scanner record belongs in actionable trader UI collections."""
+    return record.get("qualified_for_ranking", True) is not False
+
+
+def actionable_candidate_records(records: list[dict]) -> list[dict]:
+    """Return only records qualified for ranking, alerting, and trader priority display."""
+    return [record for record in records if is_actionable_candidate(record)]
+
+
+def rejected_candidate_records(records: list[dict]) -> list[dict]:
+    """Return diagnostic-only records rejected by Walter's participation/structure gates."""
+    return [
+        record for record in records if record.get("qualified_for_ranking") is False
+    ]
+
+
+def rejected_candidates_table(records: list[dict]) -> pd.DataFrame:
+    """Build a diagnostic table for rejected candidates without affecting ranking."""
+    rows = []
+    for record in rejected_candidate_records(records):
+        gate = record.get("participation_gate") or {}
+        failed_criteria = gate.get("failed_criteria") or []
+        rows.append(
+            {
+                "Symbol": record.get("symbol", ""),
+                "Candidate Status": record.get("candidate_status")
+                or record.get("status", ""),
+                "Rejection Reason": record.get("rejection_reason")
+                or gate.get("reason", ""),
+                "Failed Participation Gate Reasons": "; ".join(
+                    gate.get("failed_reasons") or []
+                ),
+                "Failed Measurements": "; ".join(
+                    f"{item.get('condition')}: {item.get('measured')} < {item.get('threshold')}"
+                    for item in failed_criteria
+                ),
+            }
+        )
+    return pd.DataFrame(rows)
+
+
 def scanner_v2_dashboard_counts(records):
     """Return Scanner V2 dashboard counts used by visible metrics and alerts."""
+    records = actionable_candidate_records(records)
     statuses = [
         "EXCEPTIONAL",
         "ALERT",
@@ -448,7 +491,8 @@ SCANNER_V2_DISPLAY_ORDER = (
 
 
 def state_sections(records):
-    """Group Scanner V2 candidates by trading state for dashboard display."""
+    """Group qualified Scanner V2 candidates by trading state for dashboard display."""
+    records = actionable_candidate_records(records)
     sections = {
         "Entry Ready": [],
         "Strengthening": [],

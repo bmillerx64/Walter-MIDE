@@ -10,7 +10,13 @@ from app import (
     persisted_alert_voice,
     scan_alert_phrase,
 )
-from mide.ui import promoted_this_scan, scanner_v2_dashboard_counts, scanner_v2_display_sections, state_sections, transition_history_markup
+from mide.ui import (
+    promoted_this_scan,
+    scanner_v2_dashboard_counts,
+    scanner_v2_display_sections,
+    state_sections,
+    transition_history_markup,
+)
 
 
 def test_scanner_v2_display_sections_follow_trader_workflow_order():
@@ -32,7 +38,13 @@ def test_scanner_v2_display_sections_follow_trader_workflow_order():
         "Weak / Removed",
         "Candidates",
     ]
-    assert [expanded for _name, _records, expanded in display_sections] == [True, True, True, False, False]
+    assert [expanded for _name, _records, expanded in display_sections] == [
+        True,
+        True,
+        True,
+        False,
+        False,
+    ]
 
 
 def test_scanner_v2_display_sections_do_not_lose_or_duplicate_symbols():
@@ -99,8 +111,11 @@ def test_strengthening_metric_and_voice_alert_share_dashboard_count():
     for records in (zero_records, five_records):
         dashboard_strengthening = scanner_v2_dashboard_counts(records)["strengthening"]
         phrase = scan_alert_phrase(records)
-        announced_strengthening = int(phrase.removeprefix("Watching ").removesuffix(".")) if phrase else 0
+        announced_strengthening = (
+            int(phrase.removeprefix("Watching ").removesuffix(".")) if phrase else 0
+        )
         assert announced_strengthening == dashboard_strengthening
+
 
 def test_entry_ready_suppresses_watching_announcement():
     records = [
@@ -127,7 +142,10 @@ def test_voice_selection_persists_during_multiple_automatic_scan_cycles():
 
 def test_voice_selection_persists_after_page_refresh_from_query_state():
     refreshed_session = {}
-    assert persisted_alert_voice({"alert_voice": "samantha-id"}, refreshed_session) == "samantha-id"
+    assert (
+        persisted_alert_voice({"alert_voice": "samantha-id"}, refreshed_session)
+        == "samantha-id"
+    )
     assert refreshed_session[ALERT_VOICE_SESSION_KEY] == "samantha-id"
     assert alert_voice_for_session(refreshed_session) == "samantha-id"
 
@@ -151,14 +169,22 @@ def test_david_selection_persists_during_multiple_scan_cycles():
 
 def test_unsupported_query_voice_does_not_replace_existing_selection():
     session = {ALERT_VOICE_SESSION_KEY: "Samantha"}
-    assert persisted_alert_voice({"alert_voice": "Google US English"}, session) == "Google US English"
+    assert (
+        persisted_alert_voice({"alert_voice": "Google US English"}, session)
+        == "Google US English"
+    )
     assert session[ALERT_VOICE_SESSION_KEY] == "Google US English"
 
 
 def test_watching_promotions_are_visually_identified_only_for_current_scan():
     records = [
         {"symbol": "AAA", "candidate_status": "Watching", "entered_watchlist": True},
-        {"symbol": "BBB", "candidate_status": "Watching", "entered_watchlist": False, "advanced_state": False},
+        {
+            "symbol": "BBB",
+            "candidate_status": "Watching",
+            "entered_watchlist": False,
+            "advanced_state": False,
+        },
     ]
     sections = state_sections(records)
     assert [r["symbol"] for r in sections["Watching"]] == ["AAA", "BBB"]
@@ -167,21 +193,43 @@ def test_watching_promotions_are_visually_identified_only_for_current_scan():
 
 
 def test_entry_ready_promotions_are_visually_identified():
-    record = {"symbol": "INLF", "candidate_status": "Entry Ready", "advanced_state": True}
+    record = {
+        "symbol": "INLF",
+        "candidate_status": "Entry Ready",
+        "advanced_state": True,
+    }
     sections = state_sections([record])
     assert sections["Entry Ready"] == [record]
     assert promoted_this_scan(record) is True
 
 
 def test_promotion_delta_visuals_cover_watchlist_entry_and_state_advancement():
-    entered = {"symbol": "NEW", "candidate_status": "Watching", "entered_watchlist": True, "advanced_state": False}
-    advanced = {"symbol": "MOVE", "candidate_status": "Strengthening", "entered_watchlist": False, "advanced_state": True}
-    unchanged = {"symbol": "HOLD", "candidate_status": "Strengthening", "entered_watchlist": False, "advanced_state": False}
+    entered = {
+        "symbol": "NEW",
+        "candidate_status": "Watching",
+        "entered_watchlist": True,
+        "advanced_state": False,
+    }
+    advanced = {
+        "symbol": "MOVE",
+        "candidate_status": "Strengthening",
+        "entered_watchlist": False,
+        "advanced_state": True,
+    }
+    unchanged = {
+        "symbol": "HOLD",
+        "candidate_status": "Strengthening",
+        "entered_watchlist": False,
+        "advanced_state": False,
+    }
 
     sections = state_sections([entered, advanced, unchanged])
 
     assert [record["symbol"] for record in sections["Watching"]] == ["NEW"]
-    assert [record["symbol"] for record in sections["Strengthening"]] == ["MOVE", "HOLD"]
+    assert [record["symbol"] for record in sections["Strengthening"]] == [
+        "MOVE",
+        "HOLD",
+    ]
     assert promoted_this_scan(entered) is True
     assert promoted_this_scan(advanced) is True
     assert promoted_this_scan(unchanged) is False
@@ -212,8 +260,6 @@ def test_david_only_displays_when_available():
     assert "David" in voice_ids(stable_voice_options(david_available=True))
 
 
-
-
 def test_david_availability_comes_from_browser_probe():
     from app import DAVID_AVAILABLE_SESSION_KEY, david_available_from_query
 
@@ -224,10 +270,14 @@ def test_david_availability_comes_from_browser_probe():
     assert david_available_from_query({"walter_david_available": "1"}, session) is True
     assert session[DAVID_AVAILABLE_SESSION_KEY] is True
 
+
 def test_voice_preview_uses_selected_voice_identifier():
     from app import normalize_alert_voice
 
-    assert normalize_alert_voice("com.apple.voice.compact.en-US.Samantha") == "com.apple.voice.compact.en-US.Samantha"
+    assert (
+        normalize_alert_voice("com.apple.voice.compact.en-US.Samantha")
+        == "com.apple.voice.compact.en-US.Samantha"
+    )
 
 
 def test_unavailable_voice_keeps_preference_without_system_fallback():
@@ -240,7 +290,9 @@ def test_unavailable_voice_keeps_preference_without_system_fallback():
     )
 
     session = {ALERT_VOICE_SESSION_KEY: "missing-voice"}
-    active = active_voice_identifier("missing-voice", stable_voice_options(False), session)
+    active = active_voice_identifier(
+        "missing-voice", stable_voice_options(False), session
+    )
 
     assert active == "missing-voice"
     assert session[ALERT_VOICE_SESSION_KEY] == "missing-voice"
@@ -251,8 +303,16 @@ def test_unavailable_voice_keeps_preference_without_system_fallback():
 
 def test_state_sections_sort_timed_states_by_newest_promotion():
     records = [
-        {"symbol": "OLD", "candidate_status": "Entry Ready", "state_entered_at": "2026-07-23T14:20:00+00:00"},
-        {"symbol": "NEW", "candidate_status": "Entry Ready", "state_entered_at": "2026-07-23T14:29:00+00:00"},
+        {
+            "symbol": "OLD",
+            "candidate_status": "Entry Ready",
+            "state_entered_at": "2026-07-23T14:20:00+00:00",
+        },
+        {
+            "symbol": "NEW",
+            "candidate_status": "Entry Ready",
+            "state_entered_at": "2026-07-23T14:29:00+00:00",
+        },
     ]
 
     sections = state_sections(records)
@@ -262,10 +322,33 @@ def test_state_sections_sort_timed_states_by_newest_promotion():
 
 def test_watching_symbols_auto_sort_by_trader_priority_conviction_and_promotion_time():
     records = [
-        {"symbol": "ACTIVE_HIGH", "candidate_status": "Watching", "state_entered_at": "2026-07-23T14:31:00+00:00", "conviction_score": 99},
-        {"symbol": "STRONG_OLD", "status": "WATCH NOW", "candidate_status": "Watching", "state_entered_at": "2026-07-23T14:20:00+00:00", "conviction_score": 75},
-        {"symbol": "STRONG_NEW", "status": "WATCH NOW", "candidate_status": "Watching", "state_entered_at": "2026-07-23T14:30:00+00:00", "conviction_score": 75},
-        {"symbol": "ROCKET", "status": "ALERT", "candidate_status": "Watching", "state_entered_at": "2026-07-23T14:10:00+00:00", "conviction_score": 60},
+        {
+            "symbol": "ACTIVE_HIGH",
+            "candidate_status": "Watching",
+            "state_entered_at": "2026-07-23T14:31:00+00:00",
+            "conviction_score": 99,
+        },
+        {
+            "symbol": "STRONG_OLD",
+            "status": "WATCH NOW",
+            "candidate_status": "Watching",
+            "state_entered_at": "2026-07-23T14:20:00+00:00",
+            "conviction_score": 75,
+        },
+        {
+            "symbol": "STRONG_NEW",
+            "status": "WATCH NOW",
+            "candidate_status": "Watching",
+            "state_entered_at": "2026-07-23T14:30:00+00:00",
+            "conviction_score": 75,
+        },
+        {
+            "symbol": "ROCKET",
+            "status": "ALERT",
+            "candidate_status": "Watching",
+            "state_entered_at": "2026-07-23T14:10:00+00:00",
+            "conviction_score": 60,
+        },
     ]
 
     sections = state_sections(records)
@@ -280,13 +363,33 @@ def test_watching_symbols_auto_sort_by_trader_priority_conviction_and_promotion_
 
 def test_watching_auto_sort_is_stable_across_automatic_scans():
     records = [
-        {"symbol": "AAA", "candidate_status": "Watching", "state_entered_at": "2026-07-23T14:30:00+00:00", "scanner_v2_score": 70, "dollar_volume": 1_000_000},
-        {"symbol": "BBB", "candidate_status": "Watching", "state_entered_at": "2026-07-23T14:29:00+00:00", "scanner_v2_score": 90, "dollar_volume": 5_000_000},
-        {"symbol": "CCC", "candidate_status": "Watching", "state_entered_at": "2026-07-23T14:30:00+00:00", "scanner_v2_score": 65, "dollar_volume": 9_000_000},
+        {
+            "symbol": "AAA",
+            "candidate_status": "Watching",
+            "state_entered_at": "2026-07-23T14:30:00+00:00",
+            "scanner_v2_score": 70,
+            "dollar_volume": 1_000_000,
+        },
+        {
+            "symbol": "BBB",
+            "candidate_status": "Watching",
+            "state_entered_at": "2026-07-23T14:29:00+00:00",
+            "scanner_v2_score": 90,
+            "dollar_volume": 5_000_000,
+        },
+        {
+            "symbol": "CCC",
+            "candidate_status": "Watching",
+            "state_entered_at": "2026-07-23T14:30:00+00:00",
+            "scanner_v2_score": 65,
+            "dollar_volume": 9_000_000,
+        },
     ]
 
     first_scan = [record["symbol"] for record in state_sections(records)["Watching"]]
-    next_scan = [record["symbol"] for record in state_sections(list(records))["Watching"]]
+    next_scan = [
+        record["symbol"] for record in state_sections(list(records))["Watching"]
+    ]
 
     assert first_scan == ["BBB", "AAA", "CCC"]
     assert next_scan == first_scan
@@ -296,10 +399,34 @@ def test_watching_auto_sort_normalizes_mixed_key_types():
     from datetime import datetime, timezone
 
     records = [
-        {"symbol": "MISSING", "candidate_status": "Watching", "state_entered_at": None, "scanner_v2_score": None, "dollar_volume": ""},
-        {"symbol": "STRING", "candidate_status": "Watching", "state_entered_at": "2026-07-23T14:30:00+00:00", "scanner_v2_score": "80", "dollar_volume": "2000000"},
-        {"symbol": "DATETIME", "candidate_status": "Watching", "state_entered_at": datetime(2026, 7, 23, 14, 31, tzinfo=timezone.utc), "scanner_v2_score": 75.5, "dollar_volume": 1_000_000},
-        {"symbol": "BAD_NUMBERS", "candidate_status": "Watching", "timestamp": 12345, "scanner_v2_score": "n/a", "dollar_volume": object()},
+        {
+            "symbol": "MISSING",
+            "candidate_status": "Watching",
+            "state_entered_at": None,
+            "scanner_v2_score": None,
+            "dollar_volume": "",
+        },
+        {
+            "symbol": "STRING",
+            "candidate_status": "Watching",
+            "state_entered_at": "2026-07-23T14:30:00+00:00",
+            "scanner_v2_score": "80",
+            "dollar_volume": "2000000",
+        },
+        {
+            "symbol": "DATETIME",
+            "candidate_status": "Watching",
+            "state_entered_at": datetime(2026, 7, 23, 14, 31, tzinfo=timezone.utc),
+            "scanner_v2_score": 75.5,
+            "dollar_volume": 1_000_000,
+        },
+        {
+            "symbol": "BAD_NUMBERS",
+            "candidate_status": "Watching",
+            "timestamp": 12345,
+            "scanner_v2_score": "n/a",
+            "dollar_volume": object(),
+        },
     ]
 
     sections = state_sections(records)
@@ -322,16 +449,44 @@ def test_watching_sort_dropdown_no_longer_appears():
 
 
 def test_transition_history_markup_stays_compact_under_prioritized_reasons():
-    markup = transition_history_markup({
-        "transition_history": [
-            {"state": "Emerging", "entered_at": "2026-07-23T14:30:00+00:00"},
-            {"state": "Watching", "entered_at": "2026-07-23T14:31:42+00:00"},
-            {"state": "Strengthening", "entered_at": "2026-07-23T14:32:30+00:00"},
-        ]
-    })
+    markup = transition_history_markup(
+        {
+            "transition_history": [
+                {"state": "Emerging", "entered_at": "2026-07-23T14:30:00+00:00"},
+                {"state": "Watching", "entered_at": "2026-07-23T14:31:42+00:00"},
+                {"state": "Strengthening", "entered_at": "2026-07-23T14:32:30+00:00"},
+            ]
+        }
+    )
 
     assert "transition-history" in markup
     assert "Emerging" in markup
     assert "Watch List" in markup
     assert "↓ 1m 42s" in markup
     assert "↓ 48s" in markup
+
+
+def test_rejected_records_do_not_generate_alerts_or_display_sections():
+    from app import scan_alert_phrase
+    from mide.ui import scanner_v2_dashboard_counts, scanner_v2_display_sections
+
+    rejected = {
+        "symbol": "NOPE",
+        "candidate_status": "Entry Ready",
+        "qualified_for_ranking": False,
+    }
+    valid = {
+        "symbol": "YES",
+        "candidate_status": "Strengthening",
+        "qualified_for_ranking": True,
+    }
+
+    assert scan_alert_phrase([rejected]) == ""
+    assert scan_alert_phrase([rejected, valid]) == "Watching 1."
+    assert scanner_v2_dashboard_counts([rejected, valid])["candidates"] == 1
+    displayed = [
+        record["symbol"]
+        for _name, records, _expanded in scanner_v2_display_sections([rejected, valid])
+        for record in records
+    ]
+    assert displayed == ["YES"]

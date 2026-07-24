@@ -861,57 +861,110 @@ def participation_gate_diagnostics(
     checks = [
         (
             "1-minute volume increasing",
+            volume_1m,
+            PARTICIPATION_MIN_ACCELERATION_RATIO,
             volume_1m >= PARTICIPATION_MIN_ACCELERATION_RATIO,
             "1-minute volume not increasing",
         ),
         (
             "3-minute volume increasing",
+            volume_3m,
+            PARTICIPATION_MIN_ACCELERATION_RATIO,
             volume_3m >= PARTICIPATION_MIN_ACCELERATION_RATIO,
             "3-minute volume not increasing",
         ),
         (
             "Dollar volume increasing",
+            max(dollar_1m, dollar_3m, dollar_5m),
+            PARTICIPATION_MIN_ACCELERATION_RATIO,
             max(dollar_1m, dollar_3m, dollar_5m)
             >= PARTICIPATION_MIN_ACCELERATION_RATIO,
             "Dollar flow not increasing",
         ),
         (
             "Participation acceleration above threshold",
+            max(volume_1m, volume_3m, dollar_1m, dollar_3m, dollar_5m),
+            PARTICIPATION_MIN_ACCELERATION_RATIO,
             max(volume_1m, volume_3m, dollar_1m, dollar_3m, dollar_5m)
             >= PARTICIPATION_MIN_ACCELERATION_RATIO,
             "No participation surge",
         ),
         (
             "Recent buying activity expanding",
+            buying,
+            PARTICIPATION_MIN_BUYING_EXPANSION,
             buying >= PARTICIPATION_MIN_BUYING_EXPANSION,
             "No buying expansion",
         ),
     ]
-    failed = [failed for _label, passed, failed in checks if not passed]
+    failed = [
+        failed for _label, _measured, _threshold, passed, failed in checks if not passed
+    ]
+    failed_criteria = [
+        {
+            "condition": label,
+            "failed_reason": failed_reason,
+            "measured": round(measured, 4),
+            "threshold": round(threshold, 4),
+        }
+        for label, measured, threshold, passed, failed_reason in checks
+        if not passed
+    ]
     session = session_volume_diagnostics(record, scan_time)
     if not (session["volume_passed"] or pace["passed"]):
         failed.append("Volume below threshold")
+        failed_criteria.append(
+            {
+                "condition": "Session volume",
+                "failed_reason": "Volume below threshold",
+                "measured": session["actual_volume"],
+                "threshold": session["expected_minimum_volume"],
+            }
+        )
     if not (
         session["dollar_volume_passed"]
         or _num(record, "dollar_volume")
         >= session["expected_minimum_dollar_volume"] * 0.5
     ):
         failed.append("Dollar volume below threshold")
+        failed_criteria.append(
+            {
+                "condition": "Session dollar volume",
+                "failed_reason": "Dollar volume below threshold",
+                "measured": session["actual_dollar_volume"],
+                "threshold": round(session["expected_minimum_dollar_volume"] * 0.5),
+            }
+        )
     if not (
         session["rvol_passed"]
         or pace["passed"]
         or _num(record, "rvol_proxy", 1) >= BASE_MIN_RVOL
     ):
         failed.append("RVOL below threshold")
+        failed_criteria.append(
+            {
+                "condition": "RVOL",
+                "failed_reason": "RVOL below threshold",
+                "measured": round(_num(record, "rvol_proxy", 1), 4),
+                "threshold": BASE_MIN_RVOL,
+            }
+        )
     return {
         "passed": not failed,
         "status": "PASS" if not failed else "FAIL",
         "reason": "Participation Present" if not failed else "No Participation",
         "failed_reasons": list(dict.fromkeys(failed)),
         "checks": [
-            {"condition": label, "passed": passed, "failed_reason": failed_reason}
-            for label, passed, failed_reason in checks
+            {
+                "condition": label,
+                "passed": passed,
+                "failed_reason": failed_reason,
+                "measured": round(measured, 4),
+                "threshold": round(threshold, 4),
+            }
+            for label, measured, threshold, passed, failed_reason in checks
         ],
+        "failed_criteria": failed_criteria,
         "minimum_acceleration_ratio": PARTICIPATION_MIN_ACCELERATION_RATIO,
     }
 
