@@ -35,6 +35,8 @@ BASE_MIN_DOLLAR_VOLUME = 250_000
 BASE_MIN_RVOL = 1.5
 VPI_MIN_PACE_RATIO = 1.2
 VPI_MIN_ACCELERATION_RATIO = 1.2
+PARTICIPATION_MIN_ACCELERATION_RATIO = 1.2
+PARTICIPATION_MIN_BUYING_EXPANSION = 1.1
 SESSION_VOLUME_PROFILES = {
     "Pre-Market": 0.45,
     "Open": 1.6,
@@ -64,6 +66,8 @@ __all__ = [
     "strengthening_diagnostics",
     "sequential_trend_confirmation",
     "participation_surge_diagnostics",
+    "participation_gate_diagnostics",
+    "structure_gate_diagnostics",
     "momentum_quality_diagnostics",
     "trend_stability_diagnostics",
     "trigger_diagnostics",
@@ -822,6 +826,137 @@ def participation_surge_diagnostics(
     }
 
 
+def participation_gate_diagnostics(
+    record: dict,
+    prior: dict | None = None,
+    scan_time: datetime | None = None,
+    surge: dict | None = None,
+) -> dict:
+    """Hard prerequisite: buyers must be measurably entering before ranking."""
+    prior = prior or {}
+    surge = surge or participation_surge_diagnostics(record, prior, scan_time)
+    pace = volume_pace_diagnostics(record)
+    pace_acceleration = _num(record, "acceleration_ratio", 1)
+    volume_1m = _num(
+        record,
+        "volume_acceleration_1m",
+        _num(record, "volume_acceleration", pace_acceleration),
+    )
+    volume_3m = _num(
+        record,
+        "volume_acceleration_3m",
+        _num(record, "volume_acceleration", pace_acceleration),
+    )
+    if pace["passed"]:
+        volume_1m = max(volume_1m, pace_acceleration)
+        volume_3m = max(volume_3m, pace_acceleration)
+    dollar_1m = _num(record, "dollar_flow_acceleration_1m", volume_1m)
+    dollar_3m = _num(record, "dollar_flow_acceleration_3m", volume_3m)
+    dollar_5m = _num(
+        record, "dollar_flow_acceleration_5m", _num(record, "acceleration_ratio", 1)
+    )
+    buying = _num(record, "green_volume_ratio", 1)
+    if buying == 1 and pace["passed"]:
+        buying = PARTICIPATION_MIN_BUYING_EXPANSION
+    checks = [
+        (
+            "1-minute volume increasing",
+            volume_1m >= PARTICIPATION_MIN_ACCELERATION_RATIO,
+            "1-minute volume not increasing",
+        ),
+        (
+            "3-minute volume increasing",
+            volume_3m >= PARTICIPATION_MIN_ACCELERATION_RATIO,
+            "3-minute volume not increasing",
+        ),
+        (
+            "Dollar volume increasing",
+            max(dollar_1m, dollar_3m, dollar_5m)
+            >= PARTICIPATION_MIN_ACCELERATION_RATIO,
+            "Dollar flow not increasing",
+        ),
+        (
+            "Participation acceleration above threshold",
+            max(volume_1m, volume_3m, dollar_1m, dollar_3m, dollar_5m)
+            >= PARTICIPATION_MIN_ACCELERATION_RATIO,
+            "No participation surge",
+        ),
+        (
+            "Recent buying activity expanding",
+            buying >= PARTICIPATION_MIN_BUYING_EXPANSION,
+            "No buying expansion",
+        ),
+    ]
+    failed = [failed for _label, passed, failed in checks if not passed]
+    session = session_volume_diagnostics(record, scan_time)
+    if not (session["volume_passed"] or pace["passed"]):
+        failed.append("Volume below threshold")
+    if not (
+        session["dollar_volume_passed"]
+        or _num(record, "dollar_volume")
+        >= session["expected_minimum_dollar_volume"] * 0.5
+    ):
+        failed.append("Dollar volume below threshold")
+    if not (
+        session["rvol_passed"]
+        or pace["passed"]
+        or _num(record, "rvol_proxy", 1) >= BASE_MIN_RVOL
+    ):
+        failed.append("RVOL below threshold")
+    return {
+        "passed": not failed,
+        "status": "PASS" if not failed else "FAIL",
+        "reason": "Participation Present" if not failed else "No Participation",
+        "failed_reasons": list(dict.fromkeys(failed)),
+        "checks": [
+            {"condition": label, "passed": passed, "failed_reason": failed_reason}
+            for label, passed, failed_reason in checks
+        ],
+        "minimum_acceleration_ratio": PARTICIPATION_MIN_ACCELERATION_RATIO,
+    }
+
+
+def structure_gate_diagnostics(record: dict, prior: dict | None = None) -> dict:
+    """Require technical structure only after participation is present."""
+    vwap = _current_vwap_diagnostics(record, prior)
+    distance = vwap["distance_pct"]
+    trend = sequential_trend_confirmation(record, prior)
+    checks = [
+        ("Near VWAP", -1.0 <= distance <= 2.5, "Not near VWAP"),
+        (
+            "Fresh or sequential SuperTrend confirmation",
+            bool(
+                record.get("supertrend_flip")
+                or record.get("supertrend_30s_flip")
+                or trend["progression_count"] >= 2
+                or record.get("supertrend_bullish")
+            ),
+            "SuperTrend not confirmed",
+        ),
+        ("Not materially extended", distance <= 2.5, "Materially extended"),
+        (
+            "Healthy price structure",
+            bool(
+                record.get("higher_lows")
+                or record.get("near_hod")
+                or _num(record, "expansion_quality", 50) >= 55
+            ),
+            "Price structure not healthy",
+        ),
+    ]
+    failed = [failed for _label, passed, failed in checks if not passed]
+    return {
+        "passed": not failed,
+        "status": "PASS" if not failed else "FAIL",
+        "reason": "Structure Ready" if not failed else "Structure Not Ready",
+        "failed_reasons": failed,
+        "checks": [
+            {"condition": label, "passed": passed, "failed_reason": failed_reason}
+            for label, passed, failed_reason in checks
+        ],
+    }
+
+
 def _quality_band(score: float) -> str:
     if score >= 90:
         return "Exceptional"
@@ -1346,9 +1481,30 @@ def apply_scanner_v2(
     for source in records:
         record = dict(source)
         prior = previous_by_symbol.get(record.get("symbol"), {})
-        score, reasons, cautions = momentum_evidence(record, prior, scan_time)
-        state = classify_state(record, prior, scan_time)
         previous_state = prior.get("candidate_status") or prior.get("status")
+        vwap_gate_diagnostics = _current_vwap_diagnostics(record, prior)
+        volume_session_diagnostics = session_volume_diagnostics(record, scan_time)
+        volume_pace = volume_pace_diagnostics(record)
+        trend_sequence = sequential_trend_confirmation(
+            record, prior, scan_time, log_events=True
+        )
+        phase_update = apply_market_phase(record, prior, scan_time)
+        record.update(phase_update)
+        surge = participation_surge_diagnostics(record, prior, scan_time)
+        participation_gate = participation_gate_diagnostics(
+            record, prior, scan_time, surge
+        )
+        structure_gate = structure_gate_diagnostics(record, prior)
+        gates_passed = participation_gate["passed"]
+        qualified_for_ranking = (
+            participation_gate["passed"] and structure_gate["passed"]
+        )
+        if not participation_gate["passed"]:
+            score, reasons, cautions = 0.0, [], participation_gate["failed_reasons"]
+            state = "Rejected – No Participation"
+        else:
+            score, reasons, cautions = momentum_evidence(record, prior, scan_time)
+            state = classify_state(record, prior, scan_time)
         advanced = STATE_RANK.get(state, 0) > STATE_RANK.get(previous_state, 0)
         entered_watch = state in WATCH_STATES and previous_state not in WATCH_STATES
         prior_entered_at = prior.get("state_entered_at")
@@ -1389,15 +1545,6 @@ def apply_scanner_v2(
                 strengthening_promotion_diagnostic["volume_acceleration"],
                 strengthening_promotion_diagnostic["final_weighted_score"],
             )
-        vwap_gate_diagnostics = _current_vwap_diagnostics(record, prior)
-        volume_session_diagnostics = session_volume_diagnostics(record, scan_time)
-        volume_pace = volume_pace_diagnostics(record)
-        trend_sequence = sequential_trend_confirmation(
-            record, prior, scan_time, log_events=True
-        )
-        phase_update = apply_market_phase(record, prior, scan_time)
-        record.update(phase_update)
-        surge = participation_surge_diagnostics(record, prior, scan_time)
         quality = momentum_quality_diagnostics(record, prior, scan_time)
         stability = trend_stability_diagnostics(record, prior, scan_time)
         quality_adjustment = (quality["score"] - 50) * 0.18
@@ -1407,10 +1554,16 @@ def apply_scanner_v2(
                 0.0,
                 min(
                     100.0,
-                    score
-                    + max(0.0, surge["participation_score"] - 65) * 0.14
-                    + quality_adjustment
-                    + stability_adjustment,
+                    (
+                        (
+                            score
+                            + max(0.0, surge["participation_score"] - 65) * 0.14
+                            + quality_adjustment
+                            + stability_adjustment
+                        )
+                        if gates_passed
+                        else 0.0
+                    ),
                 ),
             ),
             1,
@@ -1421,6 +1574,24 @@ def apply_scanner_v2(
                 "scanner_v2_score": current_momentum,
                 "current_momentum": current_momentum,
                 "candidate_status": state,
+                "decision_status": state,
+                "qualified_for_ranking": qualified_for_ranking,
+                "participation_gate": participation_gate,
+                "structure_gate": structure_gate,
+                "rejection_reason": (
+                    None
+                    if participation_gate["passed"]
+                    else participation_gate["reason"]
+                ),
+                "action": (
+                    "Evaluate for entry"
+                    if qualified_for_ranking
+                    else (
+                        "Ignore"
+                        if not participation_gate["passed"]
+                        else "Waiting for structure"
+                    )
+                ),
                 "previous_candidate_status": previous_state or "None",
                 "advanced_state": advanced,
                 "entered_watchlist": entered_watch,

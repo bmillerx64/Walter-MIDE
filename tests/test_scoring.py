@@ -476,9 +476,9 @@ def test_entry_ready_state_uses_chart_preparation_requirements_only():
     }
 
     ranked = apply_scanner_v2([record], prior)
-    assert ranked[0]["candidate_status"] == "Entry Ready"
-    assert ranked[0]["promotion_trigger"] in {"VWAP reclaim", "30s ST flip"}
-    assert "30s ST flip" in ranked[0]["promotion_condition_changes"]
+    assert ranked[0]["candidate_status"] == "Rejected – No Participation"
+    assert ranked[0]["qualified_for_ranking"] is False
+    assert ranked[0]["rejection_reason"] == "No Participation"
 
 
 def test_scanner_v2_timer_starts_when_entering_timed_state():
@@ -1601,3 +1601,48 @@ def test_trigger_diagnostics_yes_when_all_conditions_pass():
     assert "0.6% above VWAP" in diagnostics["reasons"]
     assert "Not extended" in diagnostics["reasons"]
     assert "Expansion beginning" in diagnostics["reasons"]
+
+
+def test_scanner_v2_hard_rejects_clean_structure_when_participation_fails():
+    from datetime import datetime, timezone
+
+    from mide.scanner_v2 import apply_scanner_v2
+
+    record = {
+        **base(
+            symbol="SMRT",
+            volume=120_000,
+            dollar_volume=60_000,
+            rvol_proxy=0.7,
+            volume_acceleration=0.9,
+            green_volume_ratio=0.95,
+        ).__dict__,
+        "calculated_vwap": 0.50,
+        "volume_acceleration_1m": 0.9,
+        "volume_acceleration_3m": 0.85,
+        "dollar_flow_acceleration_1m": 0.8,
+        "dollar_flow_acceleration_3m": 0.8,
+        "dollar_flow_acceleration_5m": 0.8,
+        "expansion_quality": 45,
+        "opportunity_score": 80,
+        "participation_score": 20,
+        "status": "WATCH NOW",
+        "timeframes": {},
+        "reasons": [],
+        "cautions": [],
+    }
+
+    ranked = apply_scanner_v2(
+        [record], {}, datetime(2026, 7, 24, 14, 0, tzinfo=timezone.utc)
+    )
+
+    assert ranked[0]["candidate_status"] == "Rejected – No Participation"
+    assert ranked[0]["qualified_for_ranking"] is False
+    assert ranked[0]["scanner_v2_score"] == 0
+    assert ranked[0]["participation_gate"]["status"] == "FAIL"
+    assert ranked[0]["structure_gate"]["status"] == "PASS"
+    assert ranked[0]["rejection_reason"] == "No Participation"
+    assert (
+        "Dollar flow not increasing"
+        in ranked[0]["participation_gate"]["failed_reasons"]
+    )
