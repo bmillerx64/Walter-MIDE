@@ -5,6 +5,7 @@ from zoneinfo import ZoneInfo
 import logging
 from numbers import Real
 
+from mide.market_phase import apply_market_phase
 from mide.trader_priority import (
     sortable_number as _sortable_number,
     trader_priority_sort_key,
@@ -723,6 +724,7 @@ def apply_scanner_v2(
         vwap_gate_diagnostics = _current_vwap_diagnostics(record, prior)
         volume_session_diagnostics = session_volume_diagnostics(record, scan_time)
         volume_pace = volume_pace_diagnostics(record)
+        phase_update = apply_market_phase(record, prior, scan_time)
         record.update(
             {
                 "scanner_version": "V2",
@@ -746,6 +748,7 @@ def apply_scanner_v2(
                 "state_entered_at": state_entered_at,
                 "state_elapsed_seconds": state_elapsed,
                 "transition_history": transition_history,
+                **phase_update,
                 "reasons": reasons or record.get("reasons", []),
                 "cautions": list(
                     dict.fromkeys((record.get("cautions") or []) + cautions)

@@ -46,6 +46,7 @@ def test_radar_table_alignment_preserves_other_metric_columns():
         "Dominance",
         "Participation",
         "Tier",
+        "Phase",
         "Opp.",
         "Conv.",
         "Priority",
@@ -56,6 +57,7 @@ def test_radar_table_alignment_preserves_other_metric_columns():
         "Vol accel",
         "Spread %",
     ]
+    assert table.iloc[0]["Phase"] == "Emerging"
     assert table.iloc[0]["Conv."] == 70.0
     assert table.iloc[0]["Priority"] == "STRONG"
     assert table.iloc[0]["Status"] == "WATCH NOW"
