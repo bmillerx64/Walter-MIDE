@@ -39,8 +39,13 @@ def test_run_live_enrichment_path_passes_previous_state(monkeypatch, tmp_path):
     monkeypatch.setattr("app.AlpacaClient", lambda *args, **kwargs: DummyClient())
     monkeypatch.setattr("app.st.status", lambda *args, **kwargs: DummyStatus())
     monkeypatch.setattr("app.st.progress", lambda *args, **kwargs: DummyProgress())
-    monkeypatch.setattr("app.build_seed_symbols", lambda client, settings, news: (["TEST"], {"TEST": ["seed"]}))
-    monkeypatch.setattr("app.prefilter_snapshots", lambda snapshots, settings: [{"symbol": "TEST"}])
+    monkeypatch.setattr(
+        "app.build_seed_symbols",
+        lambda client, settings, news: (["TEST"], {"TEST": ["seed"]}),
+    )
+    monkeypatch.setattr(
+        "app.prefilter_snapshots", lambda snapshots, settings: [{"symbol": "TEST"}]
+    )
     monkeypatch.setattr(
         "app.analyze_candidates",
         lambda client, candidates, news_index, reasons: [
@@ -77,7 +82,9 @@ def test_run_live_enrichment_path_passes_previous_state(monkeypatch, tmp_path):
     store = MemoryStore(history_path)
     monkeypatch.setattr("app.get_store", lambda: store)
 
-    records, seed_count, candidate_count, warnings, diagnostics = run_live("Scanner V2 (adaptive momentum)")
+    records, seed_count, candidate_count, warnings, diagnostics = run_live(
+        "Scanner V2 (adaptive momentum)"
+    )
 
     assert seed_count == 1
     assert candidate_count == 1
@@ -85,21 +92,29 @@ def test_run_live_enrichment_path_passes_previous_state(monkeypatch, tmp_path):
     assert records[0]["velocity"] == 13
     assert records[0]["status_changed"] is True
     assert records[0]["scanner_version"] == "V2"
-    assert records[0]["candidate_status"] in {"Watching", "Emerging", "Strengthening", "Entry Ready"}
+    assert records[0]["candidate_status"] == "Rejected – No Participation"
+    assert records[0]["rejection_reason"] == "No Participation"
     assert records[0]["previous_candidate_status"] == "Watching"
     persisted = [json.loads(line) for line in history_path.read_text().splitlines()]
     assert persisted[-1]["symbol"] == records[0]["symbol"]
     assert persisted[-1]["velocity"] == records[0]["velocity"]
 
 
-def test_run_live_scanner_v1_enrichment_path_accepts_previous_state(monkeypatch, tmp_path):
+def test_run_live_scanner_v1_enrichment_path_accepts_previous_state(
+    monkeypatch, tmp_path
+):
     monkeypatch.setattr("app.get_secret", lambda name, default="": "secret")
     monkeypatch.setattr("app.credential_status", lambda client: "paper")
     monkeypatch.setattr("app.AlpacaClient", lambda *args, **kwargs: DummyClient())
     monkeypatch.setattr("app.st.status", lambda *args, **kwargs: DummyStatus())
     monkeypatch.setattr("app.st.progress", lambda *args, **kwargs: DummyProgress())
-    monkeypatch.setattr("app.build_seed_symbols", lambda client, settings, news: (["VONE"], {"VONE": ["seed"]}))
-    monkeypatch.setattr("app.prefilter_snapshots", lambda snapshots, settings: [{"symbol": "VONE"}])
+    monkeypatch.setattr(
+        "app.build_seed_symbols",
+        lambda client, settings, news: (["VONE"], {"VONE": ["seed"]}),
+    )
+    monkeypatch.setattr(
+        "app.prefilter_snapshots", lambda snapshots, settings: [{"symbol": "VONE"}]
+    )
     monkeypatch.setattr(
         "app.analyze_candidates",
         lambda client, candidates, news_index, reasons: [
@@ -135,7 +150,9 @@ def test_run_live_scanner_v1_enrichment_path_accepts_previous_state(monkeypatch,
     store = MemoryStore(history_path)
     monkeypatch.setattr("app.get_store", lambda: store)
 
-    records, seed_count, candidate_count, warnings, diagnostics = run_live("Scanner V1 (classic screener)")
+    records, seed_count, candidate_count, warnings, diagnostics = run_live(
+        "Scanner V1 (classic screener)"
+    )
 
     assert seed_count == 1
     assert candidate_count == 1
