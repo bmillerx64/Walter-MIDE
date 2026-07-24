@@ -725,10 +725,12 @@ def apply_scanner_v2(
         volume_session_diagnostics = session_volume_diagnostics(record, scan_time)
         volume_pace = volume_pace_diagnostics(record)
         phase_update = apply_market_phase(record, prior, scan_time)
+        current_momentum = round(score, 1)
         record.update(
             {
                 "scanner_version": "V2",
-                "scanner_v2_score": round(score, 1),
+                "scanner_v2_score": current_momentum,
+                "current_momentum": current_momentum,
                 "candidate_status": state,
                 "previous_candidate_status": previous_state or "None",
                 "advanced_state": advanced,

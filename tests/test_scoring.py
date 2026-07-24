@@ -61,6 +61,81 @@ def test_major_volume_scores_higher_than_modest_volume():
     assert major.participation_tier in {"EXCEPTIONAL", "DOMINANT"}
 
 
+def test_historical_strength_and_current_momentum_are_independent():
+    faded_leader = score(
+        base(
+            volume=80_000_000,
+            dollar_volume=120_000_000,
+            pct_change=250,
+            rvol_proxy=12,
+            volume_acceleration=0.8,
+            green_volume_ratio=0.8,
+            vwap_relation="below",
+            vwap_distance_pct=-4,
+            supertrend_bullish=False,
+            supertrend_flip=False,
+            ema65_relation="below",
+            higher_lows=False,
+            near_hod=False,
+            timeframe_confirmations=0,
+        )
+    )
+    fresh_breakout = score(
+        base(
+            volume=900_000,
+            dollar_volume=900_000,
+            pct_change=8,
+            rvol_proxy=2.2,
+            volume_acceleration=2.5,
+            green_volume_ratio=2.0,
+            supertrend_flip=True,
+            timeframe_confirmations=4,
+        )
+    )
+
+    assert faded_leader.historical_strength > fresh_breakout.historical_strength
+    assert fresh_breakout.current_momentum > faded_leader.current_momentum
+
+
+def test_attention_ranking_uses_current_momentum_before_historical_strength():
+    from mide.discovery import apply_attention_ranking
+
+    records = [
+        {
+            "symbol": "HIST",
+            "volume": 80_000_000,
+            "dollar_volume": 120_000_000,
+            "pct_change": 250,
+            "rvol_proxy": 12,
+            "opportunity_score": 35,
+            "current_momentum": 35,
+            "historical_strength": 96,
+            "participation_score": 96,
+            "status": "ALERT",
+            "reasons": [],
+        },
+        {
+            "symbol": "NOW",
+            "volume": 900_000,
+            "dollar_volume": 900_000,
+            "pct_change": 8,
+            "rvol_proxy": 2.2,
+            "opportunity_score": 91,
+            "current_momentum": 91,
+            "historical_strength": 35,
+            "participation_score": 35,
+            "status": "MONITOR",
+            "reasons": [],
+        },
+    ]
+
+    ranked = apply_attention_ranking(records)
+
+    assert ranked[0]["symbol"] == "NOW"
+    assert ranked[0]["current_momentum"] > ranked[1]["current_momentum"]
+    assert ranked[1]["historical_strength"] > ranked[0]["historical_strength"]
+
+
 def test_dominance_is_nonzero_and_ranks_leader():
     from mide.discovery import apply_attention_ranking
 

@@ -3,6 +3,7 @@ from pathlib import Path
 import json
 from datetime import datetime, timezone
 
+
 class MemoryStore:
     def __init__(self, path="data/candidate_history.jsonl"):
         self.path = Path(path)
@@ -40,10 +41,19 @@ class MemoryStore:
         output = []
         for item in records:
             prior = previous.get(item["symbol"], {})
-            old = float(prior.get("opportunity_score", item["opportunity_score"]))
+            score_key = (
+                "current_momentum"
+                if "current_momentum" in item
+                else "opportunity_score"
+            )
+            old = float(
+                prior.get(score_key, prior.get("opportunity_score", item[score_key]))
+            )
             item = dict(item)
             item["previous_score"] = round(old, 1)
-            item["velocity"] = round(item["opportunity_score"] - old, 1)
-            item["status_changed"] = bool(prior and prior.get("status") != item["status"])
+            item["velocity"] = round(item[score_key] - old, 1)
+            item["status_changed"] = bool(
+                prior and prior.get("status") != item["status"]
+            )
             output.append(item)
         return output

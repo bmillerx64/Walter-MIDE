@@ -211,13 +211,15 @@ def apply_attention_ranking(records):
             volume_abs * 0.34 + dollar_abs * 0.28 + change_abs * 0.22 + rvol_abs * 0.16
         )
         dominance = cohort * 0.55 + absolute * 0.45
-        attention = (
-            float(r.get("opportunity_score", 0)) * 0.42
-            + float(r.get("participation_score", 0)) * 0.34
+        historical = (
+            float(r.get("historical_strength", r.get("attention_score", 0))) * 0.54
+            + float(r.get("participation_score", 0)) * 0.22
             + dominance * 0.24
         )
         r["market_dominance_score"] = round(dominance, 1)
-        r["attention_score"] = round(min(100.0, attention), 1)
+        r["historical_strength"] = round(min(100.0, historical), 1)
+        r["attention_score"] = r["historical_strength"]
+        r.setdefault("current_momentum", r.get("opportunity_score", 0))
 
         if r["status"] != "PASS":
             if (
@@ -238,9 +240,9 @@ def apply_attention_ranking(records):
     return sorted(
         records,
         key=lambda x: (
-            x.get("attention_score", 0),
+            x.get("current_momentum", x.get("opportunity_score", 0)),
+            x.get("historical_strength", x.get("attention_score", 0)),
             x.get("market_dominance_score", 0),
-            x.get("participation_score", 0),
         ),
         reverse=True,
     )
