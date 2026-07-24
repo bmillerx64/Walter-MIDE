@@ -260,21 +260,21 @@ def test_state_sections_sort_timed_states_by_newest_promotion():
     assert [record["symbol"] for record in sections["Entry Ready"]] == ["NEW", "OLD"]
 
 
-def test_watching_symbols_auto_sort_by_promotion_score_and_dollar_volume():
+def test_watching_symbols_auto_sort_by_trader_priority_conviction_and_promotion_time():
     records = [
-        {"symbol": "OLDER", "candidate_status": "Watching", "state_entered_at": "2026-07-23T14:20:00+00:00", "scanner_v2_score": 99, "dollar_volume": 9_000_000},
-        {"symbol": "LOWER_DOLLAR", "candidate_status": "Watching", "state_entered_at": "2026-07-23T14:30:00+00:00", "scanner_v2_score": 75, "dollar_volume": 1_000_000},
-        {"symbol": "HIGHER_DOLLAR", "candidate_status": "Watching", "state_entered_at": "2026-07-23T14:30:00+00:00", "scanner_v2_score": 75, "dollar_volume": 2_000_000},
-        {"symbol": "HIGHER_SCORE", "candidate_status": "Watching", "state_entered_at": "2026-07-23T14:30:00+00:00", "scanner_v2_score": 80, "dollar_volume": 500_000},
+        {"symbol": "ACTIVE_HIGH", "candidate_status": "Watching", "state_entered_at": "2026-07-23T14:31:00+00:00", "conviction_score": 99},
+        {"symbol": "STRONG_OLD", "status": "WATCH NOW", "candidate_status": "Watching", "state_entered_at": "2026-07-23T14:20:00+00:00", "conviction_score": 75},
+        {"symbol": "STRONG_NEW", "status": "WATCH NOW", "candidate_status": "Watching", "state_entered_at": "2026-07-23T14:30:00+00:00", "conviction_score": 75},
+        {"symbol": "ROCKET", "status": "ALERT", "candidate_status": "Watching", "state_entered_at": "2026-07-23T14:10:00+00:00", "conviction_score": 60},
     ]
 
     sections = state_sections(records)
 
     assert [record["symbol"] for record in sections["Watching"]] == [
-        "HIGHER_SCORE",
-        "HIGHER_DOLLAR",
-        "LOWER_DOLLAR",
-        "OLDER",
+        "ROCKET",
+        "STRONG_NEW",
+        "STRONG_OLD",
+        "ACTIVE_HIGH",
     ]
 
 
@@ -288,7 +288,7 @@ def test_watching_auto_sort_is_stable_across_automatic_scans():
     first_scan = [record["symbol"] for record in state_sections(records)["Watching"]]
     next_scan = [record["symbol"] for record in state_sections(list(records))["Watching"]]
 
-    assert first_scan == ["AAA", "CCC", "BBB"]
+    assert first_scan == ["BBB", "AAA", "CCC"]
     assert next_scan == first_scan
 
 
@@ -305,8 +305,8 @@ def test_watching_auto_sort_normalizes_mixed_key_types():
     sections = state_sections(records)
 
     assert [record["symbol"] for record in sections["Watching"]] == [
-        "DATETIME",
         "STRING",
+        "DATETIME",
         "BAD_NUMBERS",
         "MISSING",
     ]
@@ -317,8 +317,8 @@ def test_watching_sort_dropdown_no_longer_appears():
 
     app_source = Path("app.py").read_text()
 
-    assert 'f"Sort {section_name}"' in app_source
-    assert 'section_name == "Watch List"' in app_source
+    assert 'f"Sort {section_name}"' not in app_source
+    assert "key=trader_priority_sort_key" in app_source
 
 
 def test_transition_history_markup_stays_compact_under_prioritized_reasons():

@@ -48,6 +48,7 @@ def test_radar_table_alignment_preserves_other_metric_columns():
         "Tier",
         "Opp.",
         "Conv.",
+        "Priority",
         "Status",
         "VWAP",
         "ST",
@@ -56,6 +57,7 @@ def test_radar_table_alignment_preserves_other_metric_columns():
         "Spread %",
     ]
     assert table.iloc[0]["Conv."] == 70.0
+    assert table.iloc[0]["Priority"] == "STRONG"
     assert table.iloc[0]["Status"] == "WATCH NOW"
     assert table.iloc[0]["VWAP"] == "above"
 
@@ -97,3 +99,14 @@ def test_summary_reasons_prioritize_watch_list_state_over_list_order():
     )
 
     assert reasons == ["RVOL 2.8× and increasing", "Flat base maintained", "Near VWAP"]
+
+
+def test_radar_table_preserves_priority_sorted_input_order():
+    table = radar_table([
+        sample_record(symbol="ROCKET", status="ALERT", conviction_score=60),
+        sample_record(symbol="ENTRY", status="Entry Ready", conviction_score=99),
+        sample_record(symbol="STRONG", status="WATCH NOW", conviction_score=95),
+    ])
+
+    assert table["Symbol"].tolist() == ["ROCKET", "ENTRY", "STRONG"]
+    assert table["Priority"].tolist() == ["ROCKET", "ENTRY READY", "STRONG"]

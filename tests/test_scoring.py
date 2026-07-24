@@ -222,7 +222,7 @@ def test_strengthening_promotion_records_changed_conditions():
         **base(
             vwap_relation="above", supertrend_flip=True, timeframe_confirmations=2
         ).__dict__,
-        "volume": 700_000,
+        "volume": 900_000,
         "dollar_volume": 300_000,
         "rvol_proxy": 1.8,
         "opportunity_score": 72,
@@ -235,7 +235,11 @@ def test_strengthening_promotion_records_changed_conditions():
         "cautions": [],
     }
 
-    ranked = apply_scanner_v2([record], prior)
+    from datetime import datetime, timezone
+
+    ranked = apply_scanner_v2(
+        [record], prior, scan_time=datetime(2026, 7, 23, 13, 45, tzinfo=timezone.utc)
+    )
 
     assert ranked[0]["candidate_status"] in {"Strengthening", "Entry Ready"}
     assert ranked[0]["advanced_state"] is True
