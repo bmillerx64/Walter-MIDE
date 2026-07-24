@@ -35,6 +35,7 @@ def inject_css():
     .why-summary ul {list-style:none;margin:0;padding:0;display:grid;gap:3px}
     .why-summary li {font-size:.96rem;font-weight:800;color:#eefbf3;line-height:1.35}
     .tier {font-size:.78rem;letter-spacing:.06em;font-weight:800;color:#d9e3ef}
+    .market-phase {display:inline-block;margin-left:8px;background:#172033;border:1px solid #314157;border-radius:999px;padding:2px 8px;font-size:.78rem;font-weight:900;color:#eef4fb}
     .why-grid {display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:8px;margin-top:10px}
     .why-box {background:#0c121a;border:1px solid #202c3c;border-radius:8px;padding:9px 10px}
     .why-label {font-size:.72rem;text-transform:uppercase;letter-spacing:.08em;color:#8190a2;font-weight:800}
@@ -151,6 +152,7 @@ def radar_table(records):
                 "Dominance": r.get("market_dominance_score", 0),
                 "Participation": r["participation_score"],
                 "Tier": r.get("participation_tier", ""),
+                "Phase": r.get("market_phase", "Emerging"),
                 "Opp.": r["opportunity_score"],
                 "Conv.": r["conviction_score"],
                 "Priority": trader_priority_label(r),
@@ -504,6 +506,7 @@ def opportunity_card(r):
         else "↑" if velocity > 2 else "↓" if velocity < -2 else "→"
     )
     tier = r.get("participation_tier", "")
+    market_phase = r.get("market_phase", "Emerging")
     dominance = r.get("market_dominance_score", 0)
     attention = r.get("attention_score", r["opportunity_score"])
     sections = _why_sections(r)
@@ -534,7 +537,7 @@ def opportunity_card(r):
       <div style="display:flex;justify-content:space-between;gap:12px">
         <div><span style="font-size:1.55rem;font-weight:800">{html.escape(str(r['symbol']))}</span>{state_elapsed_markup}
         <span class="small"> ${r['price']:.4f} · {r['pct_change']:+.1f}%</span>
-        <span class="tier"> · {html.escape(str(tier))}</span></div>
+        <span class="tier"> · {html.escape(str(tier))}</span><span class="market-phase">Phase: {html.escape(str(market_phase))}</span></div>
         <div style="font-size:1.15rem;font-weight:800">{html.escape(str(r['status']))}</div>
       </div>
       {promo_badge}
