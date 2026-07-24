@@ -230,6 +230,20 @@ def _why_sections(r):
 
     headline = r.get("headline") or "No confirmed corporate-news catalyst"
     risk = "; ".join(r.get("cautions", [])[:3]) or "No major model caution"
+    stability = r.get("trend_stability_diagnostics") or {}
+    stability_factors = stability.get("factors") or {}
+    stability_text = (
+        " · ".join(
+            [
+                f"VWAP Stability {float(stability_factors.get('vwap_stability', 0) or 0):.0f}",
+                f"ST Stability {float(stability_factors.get('st_stability', 0) or 0):.0f}",
+                f"Pullback Quality {float(stability_factors.get('pullback_quality', 0) or 0):.0f}",
+                f"Continuation Strength {float(stability_factors.get('continuation_strength', 0) or 0):.0f}",
+            ]
+        )
+        if stability_factors
+        else "Trend stability unavailable"
+    )
     quality = r.get("momentum_quality_diagnostics") or {}
     factors = quality.get("factors") or {}
     quality_text = (
@@ -249,6 +263,7 @@ def _why_sections(r):
         "Participation": " · ".join(participation),
         "Structure": " · ".join(structure),
         "Momentum Quality": quality_text,
+        "Trend Stability": stability_text,
         "Catalyst": headline,
         "Risk / patience": risk,
     }
@@ -594,6 +609,7 @@ def opportunity_card(r):
             f"<div class='score-box'><div class='score-name'>Current Momentum</div><div class='score-value'>{current_momentum:.1f}</div></div>",
             f"<div class='score-box'><div class='score-name'>Participation Surge</div><div class='score-value'>{float(r.get('participation_surge_score', 0) or 0):.1f}</div></div>",
             f"<div class='score-box'><div class='score-name'>Momentum Quality</div><div class='score-value'>{float(r.get('momentum_quality_score', 0) or 0):.1f}</div></div>",
+            f"<div class='score-box'><div class='score-name'>Trend Stability</div><div class='score-value'>{float(r.get('trend_stability_score', r.get('trend_stability', 0)) or 0):.1f}</div></div>",
             f"<div class='score-box'><div class='score-name'>Current Phase</div><div class='score-value'>{html.escape(str(market_phase))}</div></div>",
             f"<div class='score-box'><div class='score-name'>Trend Health</div><div class='score-value'>{html.escape(str(trend_health))}</div></div>",
             f"<div class='score-box'><div class='score-name'>Change</div><div class='score-value'>{arrow} {velocity:+.1f}</div></div>",
