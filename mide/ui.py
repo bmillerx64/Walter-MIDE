@@ -48,6 +48,12 @@ def inject_css():
     .transition-history {display:flex;align-items:center;flex-wrap:wrap;gap:5px;margin-top:7px;font-size:.78rem;color:#d9e3ef}
     .transition-node {background:#0c121a;border:1px solid #202c3c;border-radius:999px;padding:2px 7px;font-weight:700}
     .transition-arrow {color:#8fa0b3}
+    .trend-ladder {display:flex;gap:5px;flex-wrap:wrap;margin-top:7px;font-size:.78rem}
+    .trend-step {background:#0c121a;border:1px solid #202c3c;border-radius:999px;padding:2px 7px;font-weight:900}
+    .trend-ok {color:#86efac;border-color:#1f7a50}
+    .trend-bad {color:#fca5a5;border-color:#7f1d1d}
+    .trend-pending {color:#fcd34d;border-color:#854d0e}
+    .trend-condition {color:#aeb9c7;font-weight:800;margin-right:3px}
     </style>
     """,
         unsafe_allow_html=True,
@@ -207,7 +213,14 @@ def _why_sections(r):
     )
     if r.get("higher_lows"):
         structure.append("higher lows")
-    structure.append(f"{r.get('timeframe_confirmations', 0)}/4 timeframe confirmations")
+    trend = r.get("trend_confirmation_sequence") or {}
+    if trend:
+        structure.append(
+            f"ST sequence {trend.get('progression_count', 0)}/4 "
+            f"{trend.get('condition', '').lower()}"
+        )
+    else:
+        structure.append(f"{r.get('timeframe_confirmations', 0)}/4 timeframe confirmations")
 
     headline = r.get("headline") or "No confirmed corporate-news catalyst"
     risk = "; ".join(r.get("cautions", [])[:3]) or "No major model caution"
@@ -481,6 +494,37 @@ def transition_history_markup(record: dict) -> str:
     return f"<div class='transition-history'>{''.join(pieces)}</div>"
 
 
+
+def trend_ladder_markup(record: dict) -> str:
+    """Render a compact 30s→1m→3m→5m SuperTrend confirmation ladder."""
+    ladder = record.get("trend_ladder") or (
+        (record.get("trend_confirmation_sequence") or {}).get("ladder")
+    )
+    if not ladder:
+        return ""
+    condition = html.escape(
+        str(
+            record.get("trend_condition")
+            or (record.get("trend_confirmation_sequence") or {}).get("condition")
+            or ""
+        )
+    )
+    pieces = []
+    for step in ladder:
+        label = html.escape(str(step.get("timeframe", "")))
+        state = step.get("state")
+        if state == "confirmed":
+            glyph, klass = "✔", "trend-ok"
+        elif state == "pending":
+            glyph, klass = "…", "trend-pending"
+        else:
+            glyph, klass = "✖", "trend-bad"
+        pieces.append(f"<span class='trend-step {klass}'>{label} {glyph}</span>")
+    return (
+        f"<div class='trend-ladder'><span class='trend-condition'>{condition}</span>"
+        f"{''.join(pieces)}</div>"
+    )
+
 def opportunity_card(r):
     klass = {
         "EXCEPTIONAL": "mide-exceptional",
@@ -495,10 +539,11 @@ def opportunity_card(r):
     summary_items = "".join(
         f"<li>✓ {html.escape(reason)}</li>" for reason in headline_reasons
     )
+    ladder_markup = trend_ladder_markup(r)
     summary_markup = (
-        f"<div class='why-summary'><div class='why-summary-title'>Top reasons now</div><ul>{summary_items}</ul></div>"
+        f"<div class='why-summary'><div class='why-summary-title'>Top reasons now</div><ul>{summary_items}</ul>{ladder_markup}</div>"
         if summary_items
-        else "<div class='why-summary'><div class='why-summary-title'>Top reasons now</div>No qualifying evidence</div>"
+        else f"<div class='why-summary'><div class='why-summary-title'>Top reasons now</div>No qualifying evidence{ladder_markup}</div>"
     )
     promo_badge = (
         "<div class='promo-badge'>Promoted this scan</div>"
