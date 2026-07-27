@@ -517,7 +517,7 @@ with st.sidebar:
 def arm_live_clock_engine(
     enabled: bool, refresh_seconds: int, last_updated: datetime | None
 ) -> None:
-    """Keep dashboard clocks live and start scans without a Streamlit rerun per tick."""
+    """Keep dashboard clocks live and trigger scheduled scans without showing a timer."""
     updated_ms = int(last_updated.timestamp() * 1000) if last_updated else 0
     refresh_ms = max(1, int(refresh_seconds)) * 1000
     st.components.v1.html(
@@ -527,10 +527,9 @@ def arm_live_clock_engine(
           const enabled = {str(enabled).lower()};
           const updatedAt = {updated_ms};
           const refreshMs = {refresh_ms};
-          // Keep the in-flight marker in this browser tab so the old page can
-          // continue painting SCANNING while Streamlit performs its blocking
-          // rerun.  Store the scan's baseline as well: comparing server and
-          // browser timestamps directly is unreliable when their clocks skew.
+          // Keep an in-flight marker in this browser tab to prevent repeated
+          // reloads while Streamlit performs its blocking scan rerun. Store the
+          // scan baseline as well because server and browser clocks can skew.
           const scanKey = 'walterScanState';
           if (root.__walterLiveClockInterval) root.clearInterval(root.__walterLiveClockInterval);
 
@@ -561,11 +560,7 @@ def arm_live_clock_engine(
             const market = marketNow(now);
             setText('walter-market-time', market.text);
             setText('walter-market-phase', market.phase);
-            const next = node('walter-next-scan');
-            if (!next) return;
-            next.classList.remove('control-scanning', 'control-overdue');
             if (!enabled) {{
-              next.textContent = 'MANUAL';
               root.sessionStorage.removeItem(scanKey);
               return;
             }}
@@ -580,24 +575,11 @@ def arm_live_clock_engine(
               scanState = null;
             }}
             const deadline = updatedAt ? updatedAt + refreshMs : now;
-            if (!scanState && now < deadline) {{
-              const remaining = Math.max(0, Math.floor((deadline - now) / 1000));
-              next.textContent = `${{String(Math.floor(remaining / 60)).padStart(2, '0')}}:${{String(remaining % 60).padStart(2, '0')}}`;
-              return;
-            }}
+            if (!scanState && now < deadline) return;
             if (!scanState) {{
               scanState = {{startedAt: now, baselineUpdatedAt: updatedAt}};
               root.sessionStorage.setItem(scanKey, JSON.stringify(scanState));
               root.setTimeout(() => root.location.reload(), 80);
-            }}
-            const scanSeconds = Math.max(0, Math.floor((now - scanState.startedAt) / 1000));
-            const intervalSeconds = Math.max(1, Math.floor(refreshMs / 1000));
-            if (scanSeconds <= intervalSeconds) {{
-              next.classList.add('control-scanning');
-              next.innerHTML = '<span class="scan-spinner" aria-hidden="true"></span>SCANNING...';
-            }} else {{
-              next.classList.add('control-overdue');
-              next.textContent = `OVERDUE +${{String(scanSeconds - intervalSeconds).padStart(2, '0')}}s`;
             }}
           }};
           tick();
@@ -818,14 +800,10 @@ escalation_count = sum(
     escalation_snapshot(record)["state"] in {"Watch Closely", "Entry Window Open"}
     for record in actionable_records
 )
-seconds_to_scan = 0
-if mode == "Live Alpaca" and auto_refresh and updated:
-    elapsed = (datetime.now().astimezone() - updated).total_seconds()
-    seconds_to_scan = max(0, int(settings.refresh_seconds - elapsed))
-next_scan = (
-    f"{seconds_to_scan // 60:02d}:{seconds_to_scan % 60:02d}"
+auto_scan = (
+    f"Every {settings.refresh_seconds} sec"
     if mode == "Live Alpaca" and auto_refresh
-    else "MANUAL"
+    else "Disabled"
 )
 with mission_header_slot:
     st.markdown(
@@ -838,7 +816,7 @@ with mission_header_slot:
             candidate_count=len(actionable_records),
             focus_count=focus_count,
             escalation_count=escalation_count,
-            next_scan=next_scan,
+            auto_scan=auto_scan,
         ),
         unsafe_allow_html=True,
     )
