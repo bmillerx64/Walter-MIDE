@@ -1582,9 +1582,12 @@ def test_trigger_diagnostics_explain_failed_conditions():
         "not_extended",
         "expansion_beginning",
     ]
-    assert "Price 9.7% above VWAP" in diagnostics["reasons"]
-    assert "ST flip occurred 14 minutes ago" in diagnostics["reasons"]
-    assert "Participation declining" in diagnostics["reasons"]
+    assert "Price 9.7% above VWAP (Maximum entry range = 2%)" in diagnostics["reasons"]
+    assert "ST Flip 14 minutes ago (Fail; max 180 sec)" in diagnostics["reasons"]
+    assert (
+        "Participation Surge 29/100 (Below trigger threshold)" in diagnostics["reasons"]
+    )
+    assert "Extended above VWAP" not in diagnostics["reasons"]
 
 
 def test_trigger_diagnostics_yes_when_all_conditions_pass():
@@ -1620,10 +1623,10 @@ def test_trigger_diagnostics_yes_when_all_conditions_pass():
 
     assert ranked[0]["trigger"] == "YES"
     assert diagnostics["failed_conditions"] == []
-    assert "ST flipped 90 seconds ago" in diagnostics["reasons"]
-    assert "0.6% above VWAP" in diagnostics["reasons"]
-    assert "Not extended" in diagnostics["reasons"]
-    assert "Expansion beginning" in diagnostics["reasons"]
+    assert "ST Flip 90 seconds ago (Pass <180 sec)" in diagnostics["reasons"]
+    assert "VWAP Distance +0.6% (Pass 0–2%)" in diagnostics["reasons"]
+    assert "Participation Surge 100/100 (Pass ≥72)" in diagnostics["reasons"]
+    assert "Expansion Quality 82/100 (Pass ≥58)" in diagnostics["reasons"]
 
 
 def test_scanner_v2_hard_rejects_clean_structure_when_participation_fails():

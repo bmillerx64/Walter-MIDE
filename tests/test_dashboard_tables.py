@@ -159,11 +159,12 @@ def test_opportunity_card_makes_current_trend_history_and_action_context_explici
     )
 
     card = rendered[-1]
-    assert "Now · Current conviction" in card
-    assert "Trend · Conviction ▼ 12.0 vs previous scan (lower)" in card
-    assert "Participation cooling vs previous scan" in card
-    assert "Primary trend weaker than previous scan" in card
-    assert "History · Previous scan scores" in card
-    assert "Action · Tradeability recommendation" in card
+    assert "NOW — current scan" in card
+    assert "TREND — compared with previous scan" in card
+    assert "Conviction -12.0" in card
+    assert "ACTION — Walter's recommendation" in card
+    assert "Current Evidence" in card
+    assert "Participation Surge" in card
+    assert "FAIL (Requires 72)" in card
     assert "Participation faded" not in card
-    assert ">▼ Falling<" not in card
+    assert "Why this scan promoted it" not in card

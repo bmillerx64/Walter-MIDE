@@ -728,6 +728,30 @@ with tabs[0]:
                 )
 
 with tabs[1]:
+    st.subheader("Current trigger diagnostics")
+    for record in display_records:
+        diagnostic = record.get("trigger_diagnostics") or {}
+        checks = diagnostic.get("checks") or []
+        if not checks:
+            continue
+        with st.expander(
+            f"{record.get('symbol', '')} — trigger {diagnostic.get('trigger', 'N/A')}",
+            expanded=False,
+        ):
+            st.dataframe(
+                [
+                    {
+                        "Condition": check.get("condition", ""),
+                        "Result": "PASS" if check.get("passed") else "FAIL",
+                        "Explanation": check.get("passed_reason")
+                        if check.get("passed")
+                        else check.get("failed_reason") or "Covered by VWAP Distance",
+                    }
+                    for check in checks
+                ],
+                width="stretch",
+                hide_index=True,
+            )
     st.subheader("Walter Flight Recorder")
     latest_flight_scan = get_flight_recorder().latest_scan()
     if not latest_flight_scan:
