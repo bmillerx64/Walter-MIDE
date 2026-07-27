@@ -1,3 +1,4 @@
+from mide import ui
 from mide.ui import radar_table, state_sections, summary_reasons
 
 
@@ -134,3 +135,35 @@ def test_workflow_section_ranks_by_additive_opportunity_score():
         "HIGH",
         "LOW",
     ]
+
+
+def test_opportunity_card_makes_current_trend_history_and_action_context_explicit(
+    monkeypatch,
+):
+    rendered = []
+    monkeypatch.setattr(ui.st, "markdown", lambda body, **kwargs: rendered.append(body))
+
+    ui.opportunity_card(
+        sample_record(
+            conviction_v2_score=58,
+            conviction_delta=-12,
+            conviction_trend="Falling",
+            conviction_history=[70, 58],
+            conviction_change_reasons=[
+                "Participation faded",
+                "Trend confirmation weakened",
+            ],
+            tradeability="Wait",
+            candidate_status="Strengthening",
+        )
+    )
+
+    card = rendered[-1]
+    assert "Now · Current conviction" in card
+    assert "Trend · Conviction ▼ 12.0 vs previous scan (lower)" in card
+    assert "Participation cooling vs previous scan" in card
+    assert "Primary trend weaker than previous scan" in card
+    assert "History · Previous scan scores" in card
+    assert "Action · Tradeability recommendation" in card
+    assert "Participation faded" not in card
+    assert ">▼ Falling<" not in card
