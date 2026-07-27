@@ -117,14 +117,17 @@ def inject_css():
     .mission-role {font-size:.68rem;letter-spacing:.13em;text-transform:uppercase;color:#aab7c7;font-weight:950}
     .mission-symbol {font-size:2rem;line-height:1.15;color:#fff;font-weight:950;margin:3px 0}
     .mission-band {color:var(--mission-color);font-size:.76rem;font-weight:950;text-transform:uppercase;letter-spacing:.08em}
+    .mission-window-status{color:var(--mission-color);font-size:1.05rem;font-weight:950;margin-top:4px;letter-spacing:.04em}
     .mission-status {font-size:1.05rem;font-weight:850;color:#e2e8f0;margin:8px 0}
     .mission-meta {font-size:.84rem;color:#aeb9c7;margin-top:4px}.mission-meta b{color:#f8fafc}
     .opportunity-meter {margin:10px 0 12px}.opportunity-meter-top{display:flex;align-items:baseline;justify-content:space-between;gap:10px;margin-bottom:6px}
     .opportunity-meter-label{font-size:.68rem;letter-spacing:.12em;text-transform:uppercase;color:#aab7c7;font-weight:950}.opportunity-meter-value{font-size:1.55rem;color:#f8fafc;font-weight:950;font-variant-numeric:tabular-nums}
+    .opportunity-meter-value small{font-size:.78rem;margin-left:5px}.meter-delta-up{color:#4ade80}.meter-delta-down{color:#f87171}
     .opportunity-meter-track{height:15px;overflow:hidden;background:#202a36;border:1px solid #3b4a5c;border-radius:999px;box-shadow:inset 0 2px 4px rgba(0,0,0,.35)}
     .opportunity-meter-fill{height:100%;width:var(--opportunity);background:linear-gradient(90deg,#ca8a04,#facc15);border-radius:999px;transition:width .55s ease}
     .mission-remaining-title{font-size:.72rem;letter-spacing:.12em;text-transform:uppercase;color:#fde047;font-weight:950;margin-top:8px}
     .mission-needs{margin-top:7px;display:grid;gap:7px}.mission-next-label{display:block;color:#fde047;font-size:.65rem;letter-spacing:.12em;font-weight:950}.mission-next-value{display:block;color:#f8fafc;font-size:1rem;font-weight:900;line-height:1.2;margin-top:1px}
+    .mission-check{color:#f8fafc;font-size:.95rem;font-weight:850;line-height:1.45}.mission-then{margin-top:9px}
     .mission-condition-met{display:inline-block;color:#86efac;font-size:.84rem;font-weight:900;margin-top:8px;animation:condition-flash 1.35s ease-out 1}
     .entry-window-open{margin:10px 0 5px;padding:11px 12px;text-align:center;border:1px solid #4ade80;border-radius:8px;background:#064e3b;color:#dcfce7;font-size:1.15rem;font-weight:950;letter-spacing:.11em}
     .entry-window-pulse{animation:entry-window-pulse 2s ease-out 1}
@@ -890,10 +893,10 @@ def render_walter_hot_list(records: list[dict]) -> None:
 
 
 MISSION_BANDS = {
-    "trade_soon": ("🟢 Trade Soon", "#4ade80"),
-    "watch_closely": ("🟡 Watch Closely", "#facc15"),
-    "background": ("⚪ Background Monitor", "#cbd5e1"),
-    "ignore": ("🔴 Ignore", "#f87171"),
+    "trade_soon": ("🟢 OPEN NOW", "#4ade80"),
+    "watch_closely": ("🟡 OPENING", "#facc15"),
+    "background": ("🔵 MONITOR", "#60a5fa"),
+    "ignore": ("🔴 CLOSED", "#f87171"),
 }
 
 
@@ -909,8 +912,8 @@ def _mission_conditions(record: dict) -> list[dict]:
         record.get("participation_surge_score", record.get("participation_score", 0))
     )
     return [
-        {"label": "VWAP reclaim", "passed": vwap_passed},
-        {"label": "SuperTrend flip", "passed": trend_passed},
+        {"label": "VWAP", "passed": vwap_passed},
+        {"label": "SuperTrend Flip", "passed": trend_passed},
         {"label": "Participation > 90", "passed": participation > 90},
     ]
 
@@ -933,7 +936,9 @@ def _mission_status(record: dict, band: str, conditions: list[dict]) -> str:
         if float(record.get("vwap_distance_pct", 0) or 0) > 5:
             return "Too extended"
         participation = _bounded_score(
-            record.get("participation_surge_score", record.get("participation_score", 0))
+            record.get(
+                "participation_surge_score", record.get("participation_score", 0)
+            )
         )
         if participation < 50:
             return "Low participation"
@@ -944,9 +949,9 @@ def _mission_status(record: dict, band: str, conditions: list[dict]) -> str:
     remaining = [item["label"] for item in conditions if not item["passed"]]
     if not remaining:
         return "Setup conditions aligned — review the chart"
-    if remaining[0] == "VWAP reclaim":
+    if remaining[0] == "VWAP":
         return "Wait for VWAP reclaim"
-    if remaining[0] == "SuperTrend flip":
+    if remaining[0] == "SuperTrend Flip":
         return "Ready if candle confirms SuperTrend"
     return "Wait for participation above 90"
 
@@ -988,50 +993,48 @@ def walter_mission_control(records: list[dict]) -> dict:
 
 
 def _mission_target_markup(item: dict, role: str) -> str:
-    label, color = MISSION_BANDS[item["band"]]
     remaining = sum(not condition["passed"] for condition in item["conditions"])
+    presentation_band = (
+        "ignore"
+        if item["band"] == "ignore"
+        else (
+            "trade_soon"
+            if remaining == 0
+            else ("watch_closely" if remaining <= 2 else "background")
+        )
+    )
+    label, color = MISSION_BANDS[presentation_band]
     window = (
-        "Now–1 minute"
+        "Now"
         if remaining == 0
-        else ("1–5 minutes" if remaining == 1 else "5–15 minutes")
+        else ("2–5 minutes" if remaining == 1 else "5–15 minutes")
     )
-    remaining_conditions = [condition for condition in item["conditions"] if not condition["passed"]]
-    previous_conditions = {
-        condition["label"]: condition["passed"]
-        for condition in item.get("previous_conditions", [])
-    }
-    newly_met = [
-        condition["label"]
-        for condition in item["conditions"]
-        if condition["passed"] and previous_conditions.get(condition["label"]) is False
-    ]
-    remaining_title = f"🟡 {item['confidence']}%"
-    step_labels = ("NEXT:", "AFTER THAT:")
-    needs = "".join(
-        f"<div><span class='mission-next-label'>{step_labels[index] if index < len(step_labels) else 'THEN:'}</span>"
-        f"<span class='mission-next-value'>{html.escape(condition['label'])}</span></div>"
-        for index, condition in enumerate(remaining_conditions)
+    checklist = "".join(
+        f"<div class='mission-check'>{'✓' if condition['passed'] else '□'} {html.escape(condition['label'])}</div>"
+        for condition in item["conditions"][:2]
     )
-    changed = "".join(
-        f"<div class='mission-condition-met'>{html.escape(label)} achieved ✓</div>"
-        for label in newly_met
-    )
+    then = item["conditions"][2]
     previous = item.get("previous_record") or {}
-    just_opened = item["band"] == "trade_soon" and bool(previous) and _mission_band(
-        previous, _mission_conditions(previous)
-    ) != "trade_soon"
-    state_markup = (
-        f"<div class='entry-window-open{' entry-window-pulse' if just_opened else ''}'>ENTRY WINDOW OPEN</div>"
-        if item["band"] == "trade_soon"
-        else f"<div class='mission-remaining-title'>{remaining_title}</div><div class='mission-needs'>{needs}</div>"
+    previous_confidence = (
+        hot_list_priority_score(previous) if previous else item["confidence"]
+    )
+    delta = item["confidence"] - previous_confidence
+    direction = "▲" if delta >= 0 else "▼"
+    delta_class = "meter-delta-up" if delta >= 0 else "meter-delta-down"
+    just_opened = (
+        item["band"] == "trade_soon"
+        and bool(previous)
+        and _mission_band(previous, _mission_conditions(previous)) != "trade_soon"
     )
     return (
         f"<div class='mission-target{' entry-window-pulse' if just_opened else ''}' style='--mission-color:{color}'>"
         f"<div class='mission-role'>{role}</div><div class='mission-symbol'>{html.escape(item['symbol'])}</div>"
-        f"<div class='mission-band'>{label}</div>"
-        f"<div class='opportunity-meter'><div class='opportunity-meter-top'><span class='opportunity-meter-label'>Opportunity Meter</span><span class='opportunity-meter-value'>{item['confidence']}%</span></div>"
+        f"<div class='mission-band'>ENTRY WINDOW</div><div class='mission-window-status'>{label}</div>"
+        f"<div class='opportunity-meter'><div class='opportunity-meter-top'><span class='opportunity-meter-label'>Opportunity Meter</span><span class='opportunity-meter-value'>{item['confidence']}% <small class='{delta_class}'>{direction} {delta:+d}</small></span></div>"
         f"<div class='opportunity-meter-track' role='progressbar' aria-label='Opportunity meter' aria-valuemin='0' aria-valuemax='100' aria-valuenow='{item['confidence']}'><div class='opportunity-meter-fill' style='--opportunity:{item['confidence']}%'></div></div></div>"
-        f"{state_markup}{changed}<div class='mission-meta'>Estimated setup window: <b>{window}</b></div></div>"
+        f"<div class='mission-next-label'>NEXT</div>{checklist}"
+        f"<div class='mission-next-label mission-then'>THEN</div><div class='mission-check'>{'✓' if then['passed'] else '□'} {html.escape(then['label'])}</div>"
+        f"<div class='mission-meta'>Estimated:<br><b>{window}</b></div></div>"
     )
 
 

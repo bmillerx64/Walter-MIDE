@@ -221,9 +221,15 @@ def test_hot_list_excludes_rejected_and_weak_symbols_without_placeholders():
 
 def test_mission_control_commits_to_one_primary_and_secondary_by_urgency():
     records = [
-        sample_record(symbol="MON", candidate_status="Watching", participation_score=95),
-        sample_record(symbol="READY", candidate_status="Entry Ready", participation_score=96),
-        sample_record(symbol="NEXT", candidate_status="Strengthening", participation_score=92),
+        sample_record(
+            symbol="MON", candidate_status="Watching", participation_score=95
+        ),
+        sample_record(
+            symbol="READY", candidate_status="Entry Ready", participation_score=96
+        ),
+        sample_record(
+            symbol="NEXT", candidate_status="Strengthening", participation_score=92
+        ),
     ]
 
     mission = walter_mission_control(records)
@@ -252,7 +258,7 @@ def test_mission_control_explains_exact_remaining_setup_conditions():
     primary = mission["primary"]
     assert primary["status"] == "Ready if candle confirms SuperTrend"
     assert [item["label"] for item in primary["conditions"] if not item["passed"]] == [
-        "SuperTrend flip"
+        "SuperTrend Flip"
     ]
 
 
@@ -260,7 +266,9 @@ def test_mission_control_separates_extended_symbols_into_ignore():
     mission = walter_mission_control(
         [
             sample_record(symbol="FOCUS", candidate_status="Watching"),
-            sample_record(symbol="CHASE", candidate_status="Strengthening", vwap_distance_pct=6.2),
+            sample_record(
+                symbol="CHASE", candidate_status="Strengthening", vwap_distance_pct=6.2
+            ),
         ]
     )
 
@@ -305,13 +313,17 @@ def test_mission_control_header_contains_compact_operational_status():
 
 def test_ignore_today_explains_non_actionable_quality():
     mission = walter_mission_control(
-        [sample_record(symbol="THIN", candidate_status="Weakening", participation_score=30)]
+        [
+            sample_record(
+                symbol="THIN", candidate_status="Weakening", participation_score=30
+            )
+        ]
     )
 
     assert mission["ignored"][0]["status"] == "Low participation"
 
 
-def test_opportunity_meter_shows_only_remaining_condition_and_change_flash():
+def test_entry_window_shows_checklist_estimate_and_direction():
     previous = sample_record(
         candidate_status="Strengthening",
         vwap_relation="below",
@@ -334,10 +346,15 @@ def test_opportunity_meter_shows_only_remaining_condition_and_change_flash():
 
     assert "Opportunity Meter" in markup
     assert "aria-valuenow='" in markup
-    assert "NEXT:" in markup
-    assert "SuperTrend flip" in markup
-    assert "VWAP reclaim achieved ✓" in markup
-    assert "mission-condition-met" in markup
+    assert "ENTRY WINDOW" in markup
+    assert "🟡 OPENING" in markup
+    assert ">NEXT<" in markup
+    assert "✓ VWAP" in markup
+    assert "□ SuperTrend Flip" in markup
+    assert ">THEN<" in markup
+    assert "✓ Participation &gt; 90" in markup
+    assert "Estimated:<br><b>2–5 minutes</b>" in markup
+    assert "▼ -2" in markup
     assert "Ready checklist" not in markup
 
 
@@ -359,9 +376,10 @@ def test_opportunity_meter_pulses_when_entry_window_first_opens():
         walter_mission_control([current])["primary"], "Primary target"
     )
 
-    assert "ENTRY WINDOW OPEN" in markup
+    assert "ENTRY WINDOW" in markup
+    assert "🟢 OPEN NOW" in markup
     assert "entry-window-pulse" in markup
-    assert "NEXT:" not in markup
+    assert "✓ SuperTrend Flip" in markup
 
 
 def test_hot_list_renders_priority_score_as_confidence_meter(monkeypatch):
