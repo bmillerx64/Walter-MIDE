@@ -8,6 +8,7 @@ import pandas as pd
 
 from mide.scanner_v2 import state_elapsed_seconds
 from mide.opportunity import COMPONENT_WEIGHTS as COMPONENT_MAX
+from mide.conviction import CONVICTION_WEIGHTS
 from mide.trader_priority import (
     sortable_text as _sortable_text,
     trader_priority_label,
@@ -68,6 +69,11 @@ def inject_css():
     .trigger-title {font-size:.78rem;text-transform:uppercase;letter-spacing:.08em;font-weight:900;color:#e5e7eb;margin-bottom:5px}
     .trigger-diagnostic ul {list-style:none;margin:0;padding:0;display:grid;gap:3px}
     .trigger-diagnostic li {font-size:.92rem;font-weight:800;color:#eef4fb;line-height:1.35}
+    .conviction-row {display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin:10px 0}
+    .conviction-score {font-size:2rem;font-weight:950;color:#f8fafc}
+    .conviction-rising {color:#4ade80}.conviction-falling {color:#f87171}.conviction-steady {color:#facc15}
+    .conviction-history {display:flex;gap:6px;color:#cbd5e1;font-weight:800}
+    .watch-list {list-style:none;margin:5px 0 0;padding:0;display:grid;gap:4px}
     </style>
     """,
         unsafe_allow_html=True,
@@ -225,7 +231,7 @@ def radar_table(records):
                     "current_momentum",
                     r.get("scanner_v2_score", r["opportunity_score"]),
                 ),
-                "Conv.": r["conviction_score"],
+                "Conv.": r.get("conviction_v2_score", r["conviction_score"]),
                 "Priority": trader_priority_label(r),
                 "Status": r["status"],
                 "VWAP": r["vwap_relation"],
@@ -717,6 +723,36 @@ def opportunity_card(r):
     trade_glyph = {"Buyable": "🟢", "Wait": "🟡", "Don't Chase": "🔴"}.get(
         tradeability, "🟡"
     )
+    conviction = float(r.get("conviction_v2_score", r.get("conviction_score", 0)) or 0)
+    conviction_delta = float(r.get("conviction_delta", 0) or 0)
+    conviction_trend = str(r.get("conviction_trend", "Steady"))
+    conviction_arrow = {"Rising": "▲", "Falling": "▼", "Steady": "■"}.get(conviction_trend, "■")
+    conviction_class = "conviction-" + conviction_trend.lower()
+    conviction_history = "".join(
+        f"<span>{float(value):.0f}</span>" for value in r.get("conviction_history", [conviction])
+    )
+    change_reasons = r.get("conviction_change_reasons") or []
+    conviction_change_markup = (
+        "<div class='why-summary'><div class='why-summary-title'>"
+        f"Conviction {conviction_delta:+.1f} · Reason</div>"
+        + "".join(f"<div>• {html.escape(str(reason))}</div>" for reason in change_reasons)
+        + "</div>"
+        if change_reasons else ""
+    )
+    watching_items = "".join(
+        f"<li>{'☑' if item.get('complete') else '☐'} {html.escape(str(item.get('label', '')))}</li>"
+        for item in r.get("walter_watching", [])
+    )
+    watching_markup = (
+        f"<div class='coach-box'><div class='coach-title'>What Walter Is Watching</div><ul class='watch-list'>{watching_items}</ul></div>"
+        if watching_items else ""
+    )
+    conviction_components = r.get("conviction_components") or {}
+    conviction_diagnostics = "".join(
+        f"<div class='score-box'><div class='score-name'>{html.escape(name.replace('_', ' ').title())}</div>"
+        f"<div class='score-value'>{float(value):.1f} / {CONVICTION_WEIGHTS[name]:.0f}</div></div>"
+        for name, value in conviction_components.items()
+    )
     decision_markup = f"""
       <div class='decision-row'>
         <div class='decision-pill'><b>Workflow · Today's Decision</b>{html.escape(str(workflow))}</div>
@@ -726,7 +762,7 @@ def opportunity_card(r):
       <div class='why-summary'><div class='why-summary-title'>Why Walter Promoted This</div><ul>{reason_items}</ul></div>
       {blocker_markup}
       <div class='coach-box'><div class='coach-title'>Walter's Take</div>{html.escape(str(r.get('walter_take', 'Monitoring the setup for confirmation.')))}</div>
-      <div class='coach-box'><div class='coach-title'>Next Event</div>{html.escape(str(r.get('next_event_explanation', 'Walter will reassess on the next scan.')))}</div>
+      {watching_markup}
     """
     opportunity_explanation = (
         "<div class='why-summary'><div class='why-summary-title'>Opportunity "
@@ -789,12 +825,16 @@ def opportunity_card(r):
       </div>
       {promo_badge}
       {decision_markup}
+      <div class="conviction-row"><div><div class="why-label">Conviction</div><div class="conviction-score">{conviction:.0f}</div></div><div class="{conviction_class}"><b>{conviction_arrow} {html.escape(conviction_trend)}</b><div class="small">Previous scans</div><div class="conviction-history">{conviction_history}</div></div></div>
+      {conviction_change_markup}
       {opportunity_explanation}
       {summary_markup}
       {trigger_markup}
       <div class="why">{html.escape(reasons)}</div>
       <div class="score-grid">{score_boxes}</div>
       <div class="score-grid">{opportunity_diagnostics}</div>
+      <div class="why-label">Conviction diagnostics · participation and flow lead price</div>
+      <div class="score-grid">{conviction_diagnostics}</div>
       {transition_history_markup(r)}
       <div class="small"><b>Evidence:</b> Feed volume {r['volume']/1_000_000:.2f}M · Dollar volume ${r['dollar_volume']/1_000_000:.2f}M · RVOL {r.get('rvol_proxy',0):.1f}×</div>
       <div class="freshness">{html.escape(freshness)} · evaluated {html.escape(evaluated)}</div>
