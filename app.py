@@ -39,7 +39,7 @@ from mide.ui import (
     rejected_candidates_table,
     automatic_watching_sort_key,
     trader_priority_sort_key,
-    render_walter_hot_list,
+    render_walter_mission_control,
 )
 from mide.time_service import format_eastern_time, market_clock, market_phase_at
 
@@ -804,6 +804,7 @@ with st.expander("Legacy candidate diagnostics", expanded=False):
     elif not inspect_symbol:
         st.caption("No diagnostics recorded for this scan yet.")
 
+render_walter_mission_control(actionable_records)
 metric_strip(actionable_records)
 alert_phrase = scan_alert_phrase(actionable_records)
 if alerts and alert_phrase:
@@ -823,7 +824,6 @@ with tabs[0]:
     if not display_records:
         st.success("No stock currently deserves elevated attention.")
     else:
-        render_walter_hot_list(display_records)
         for section_name, section_records, expanded in scanner_v2_display_sections(
             display_records
         ):
