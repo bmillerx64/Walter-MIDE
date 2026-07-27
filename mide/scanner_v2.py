@@ -162,48 +162,51 @@ def trigger_diagnostics(
         {
             "condition": "participation",
             "passed": surge_score >= 72,
-            "passed_reason": f"Participation {surge_score / 13.333:.1f}×",
+            "passed_reason": f"Participation Surge {surge_score:.0f}/100 (Pass ≥72)",
             "failed_reason": (
-                "Participation declining"
+                f"Participation Surge {surge_score:.0f}/100 (Below trigger threshold)"
                 if surge_score < 55
-                else f"Participation only {surge_score:.0f}/100"
+                else f"Participation Surge {surge_score:.0f}/100 (Requires 72)"
             ),
         },
         {
             "condition": "supertrend_flip",
             "passed": st_passed,
             "passed_reason": (
-                f"ST flipped {_format_seconds(st_age)} ago"
+                f"ST Flip {_format_seconds(st_age)} ago (Pass <180 sec)"
                 if st_age is not None
-                else "Fresh ST flip"
+                else "ST Flip detected (Age unavailable)"
             ),
             "failed_reason": (
-                f"ST flip occurred {_format_seconds(st_age)} ago"
+                f"ST Flip {_format_seconds(st_age)} ago (Fail; max 180 sec)"
                 if fresh_st and st_age is not None
-                else "No fresh ST flip"
+                else "ST Flip not detected (Requires flip <180 sec)"
             ),
         },
         {
             "condition": "vwap",
             "passed": 0 <= distance <= 2.0,
-            "passed_reason": f"{abs(distance):.1f}% above VWAP",
+            "passed_reason": f"VWAP Distance {distance:+.1f}% (Pass 0–2%)",
             "failed_reason": (
-                f"Price {abs(distance):.1f}% below VWAP"
+                f"Price {abs(distance):.1f}% below VWAP (Entry range = 0–2%)"
                 if distance < 0
-                else f"Price {distance:.1f}% above VWAP"
+                else f"Price {distance:.1f}% above VWAP (Maximum entry range = 2%)"
             ),
         },
         {
             "condition": "not_extended",
             "passed": distance <= 2.0,
-            "passed_reason": "Not extended",
-            "failed_reason": "Extended above VWAP",
+            # This calculation remains a separate trigger condition, but it has no
+            # trader-facing reason: the VWAP check immediately above already
+            # explains the same price extension.
+            "passed_reason": None,
+            "failed_reason": None,
         },
         {
             "condition": "expansion_beginning",
             "passed": quality >= 58,
-            "passed_reason": "Expansion beginning",
-            "failed_reason": f"Expansion quality only {quality:.0f}/100",
+            "passed_reason": f"Expansion Quality {quality:.0f}/100 (Pass ≥58)",
+            "failed_reason": f"Expansion Quality {quality:.0f}/100 (Below trigger threshold)",
         },
     ]
     failed = [check for check in checks if not check["passed"]]
@@ -212,9 +215,9 @@ def trigger_diagnostics(
         "passed": not failed,
         "checks": checks,
         "reasons": (
-            [check["passed_reason"] for check in checks]
+            [check["passed_reason"] for check in checks if check["passed_reason"]]
             if not failed
-            else [check["failed_reason"] for check in failed]
+            else [check["failed_reason"] for check in failed if check["failed_reason"]]
         ),
         "failed_conditions": [check["condition"] for check in failed],
     }

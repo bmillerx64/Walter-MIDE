@@ -7,8 +7,6 @@ import streamlit as st
 import pandas as pd
 
 from mide.scanner_v2 import state_elapsed_seconds
-from mide.opportunity import COMPONENT_WEIGHTS as COMPONENT_MAX
-from mide.conviction import CONVICTION_WEIGHTS
 from mide.trader_priority import (
     sortable_text as _sortable_text,
     trader_priority_label,
@@ -74,6 +72,13 @@ def inject_css():
     .conviction-rising {color:#4ade80}.conviction-falling {color:#f87171}.conviction-steady {color:#facc15}
     .conviction-history {display:flex;gap:6px;color:#cbd5e1;font-weight:800}
     .watch-list {list-style:none;margin:5px 0 0;padding:0;display:grid;gap:4px}
+    .current-grid {display:grid;grid-template-columns:repeat(4,minmax(125px,1fr));gap:8px;margin:8px 0 12px}
+    .current-item {background:#0c121a;border:1px solid #202c3c;border-radius:8px;padding:9px 10px}
+    .current-value {font-size:1.15rem;font-weight:900;color:#f8fafc;margin-top:2px}
+    .threshold-pass {color:#86efac;font-size:.75rem;font-weight:900}.threshold-fail {color:#fca5a5;font-size:.75rem;font-weight:900}
+    .action-box {border:1px solid #60a5fa;background:#0c1728;border-radius:9px;padding:10px 12px;margin:8px 0;font-size:1.25rem;font-weight:950}
+    .context-heading {font-size:.70rem;text-transform:uppercase;letter-spacing:.1em;color:#93a4b8;font-weight:950;margin-top:10px}
+    .evidence-list {list-style:none;margin:5px 0 0;padding:0;display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:3px}
     </style>
     """,
         unsafe_allow_html=True,
@@ -670,206 +675,150 @@ def _trend_reason_label(reason: str) -> str:
 
 
 def opportunity_card(r):
+    """Render the five-second trader card; engineering detail lives in Diagnostics."""
+    status = r.get("status", "")
     klass = {
         "EXCEPTIONAL": "mide-exceptional",
         "ALERT": "mide-alert",
         "WATCH NOW": "mide-watch",
         "MONITOR": "mide-monitor",
-    }.get(r["status"], "")
+    }.get(status, "")
     if promoted_this_scan(r):
         klass = f"{klass} mide-promoted".strip()
-    reasons = " · ".join(r.get("reasons", [])[:6]) or "No qualifying evidence"
-    headline_reasons = summary_reasons(r)
-    summary_items = "".join(
-        f"<li>✓ {html.escape(reason)}</li>" for reason in headline_reasons
-    )
-    ladder_markup = trend_ladder_markup(r)
-    trigger_markup = trigger_diagnostic_markup(r)
-    summary_markup = (
-        f"<div class='why-summary'><div class='why-summary-title'>Now · Current-scan evidence</div><ul>{summary_items}</ul>{ladder_markup}</div>"
-        if summary_items
-        else f"<div class='why-summary'><div class='why-summary-title'>Now · Current-scan evidence</div>No qualifying evidence{ladder_markup}</div>"
-    )
-    promo_badge = (
-        "<div class='promo-badge'>Now · Promoted this scan</div>"
-        if promoted_this_scan(r)
-        else ""
-    )
-    velocity = r.get("velocity", 0)
-    arrow = (
-        "↑↑"
-        if velocity >= 12
-        else "↑"
-        if velocity > 2
-        else "↓"
-        if velocity < -2
-        else "→"
-    )
-    tier = r.get("participation_tier", "")
-    market_phase = r.get("market_phase", "Emerging")
-    historical_strength = r.get(
-        "historical_strength", r.get("attention_score", r["opportunity_score"])
-    )
-    current_momentum = r.get(
-        "current_momentum", r.get("scanner_v2_score", r["opportunity_score"])
-    )
-    opportunity = float(r.get("opportunity_score_v2", current_momentum) or 0)
-    opportunity_label = r.get("opportunity_status", "")
-    strengths = r.get("opportunity_strengths") or []
-    blockers = r.get("opportunity_blockers") or []
-    workflow = r.get("workflow_label") or r.get("candidate_status") or r.get("status")
-    lifecycle = r.get("lifecycle_label") or market_phase
-    promotion_reasons = (r.get("promotion_reasons") or headline_reasons)[:5]
-    explained_blockers = (r.get("entry_blockers_explained") or blockers)[:3]
-    reason_items = "".join(
-        f"<li>✓ {html.escape(str(item))}</li>" for item in promotion_reasons
-    )
-    blocker_items = "".join(
-        f"<li>• {html.escape(str(item))}</li>" for item in explained_blockers
-    )
-    blocker_markup = (
-        ""
-        if workflow == "Entry Ready"
-        else (
-            "<div class='trigger-diagnostic trigger-no'><div class='trigger-title'>Action · Not entry ready · Wait for</div>"
-            f"<ul>{blocker_items}</ul></div>"
+
+    surge = float(
+        r.get(
+            "participation_surge_score",
+            (r.get("participation_surge_diagnostics") or {}).get(
+                "participation_score", 0
+            ),
         )
+        or 0
     )
+    expansion = float(
+        r.get(
+            "expansion_quality",
+            (r.get("participation_surge_diagnostics") or {}).get(
+                "expansion_quality", 0
+            ),
+        )
+        or 0
+    )
+    distance = float(
+        r.get(
+            "vwap_distance_pct",
+            (r.get("strengthening_vwap_gate") or {}).get("distance_pct", 0),
+        )
+        or 0
+    )
+    st_bullish = bool(r.get("supertrend_bullish"))
+    current_items = [
+        (
+            "Participation Surge",
+            f"{surge:.0f} /100",
+            surge >= 72,
+            "PASS (≥72)" if surge >= 72 else "FAIL (Requires 72)",
+        ),
+        (
+            "Expansion Quality",
+            f"{expansion:.0f} /100",
+            expansion >= 58,
+            "PASS (≥58)" if expansion >= 58 else "FAIL (Requires 58)",
+        ),
+        (
+            "VWAP Distance",
+            f"{distance:+.1f}%",
+            0 <= distance <= 2,
+            "PASS (0–2%)"
+            if 0 <= distance <= 2
+            else ("FAIL (Max 2%)" if distance > 2 else "FAIL (Must be above VWAP)"),
+        ),
+        (
+            "SuperTrend",
+            "Bullish" if st_bullish else "Not bullish",
+            st_bullish,
+            "CURRENT STATE",
+        ),
+    ]
+    current_markup = "".join(
+        f"<div class='current-item'><div class='score-name'>{html.escape(name)}</div><div class='current-value'>{html.escape(value)}</div><div class='{'threshold-pass' if passed else 'threshold-fail'}'>{html.escape(threshold)}</div></div>"
+        for name, value, passed, threshold in current_items
+    )
+
     tradeability = str(r.get("tradeability") or "Wait")
-    trade_class = "trade-" + tradeability.lower().replace("'", "").replace(" ", "-")
-    trade_glyph = {"Buyable": "🟢", "Wait": "🟡", "Don't Chase": "🔴"}.get(
-        tradeability, "🟡"
+    workflow = str(r.get("workflow_label") or r.get("candidate_status") or status)
+    action = (
+        "BUY SETUP"
+        if tradeability == "Buyable" or workflow == "Entry Ready"
+        else "WAIT FOR PULLBACK"
+        if tradeability == "Don't Chase" or distance > 2
+        else "NOT TRADEABLE"
+        if workflow in {"Removed", "Weakening"}
+        else "WAIT"
     )
-    conviction = float(r.get("conviction_v2_score", r.get("conviction_score", 0)) or 0)
-    conviction_delta = float(r.get("conviction_delta", 0) or 0)
-    conviction_trend = str(r.get("conviction_trend", "Steady"))
-    conviction_arrow = {"Rising": "▲", "Falling": "▼", "Steady": "■"}.get(
-        conviction_trend, "■"
-    )
-    conviction_class = "conviction-" + conviction_trend.lower()
-    conviction_direction = {
-        "Rising": "higher",
-        "Falling": "lower",
-        "Steady": "unchanged",
-    }.get(conviction_trend, "unchanged")
-    conviction_comparison = f"Conviction {conviction_arrow} {abs(conviction_delta):.1f} vs previous scan ({conviction_direction})"
-    conviction_history = "".join(
-        f"<span>{float(value):.0f}</span>"
-        for value in r.get("conviction_history", [conviction])
-    )
-    change_reasons = r.get("conviction_change_reasons") or []
-    conviction_change_markup = (
-        "<div class='why-summary'><div class='why-summary-title'>"
-        f"Trend · Conviction {conviction_delta:+.1f} vs previous scan · Drivers</div>"
-        + "".join(
-            f"<div>• {html.escape(_trend_reason_label(str(reason)))}</div>"
-            for reason in change_reasons
+    if action == "WAIT FOR PULLBACK":
+        why = f"Price is {distance:.1f}% above VWAP, beyond Walter's 2% maximum entry range. Wait for a pullback instead of chasing."
+    elif action == "BUY SETUP":
+        why = "The displayed entry conditions pass their thresholds. Walter considers this a buy setup under the current rules."
+    elif surge < 72:
+        why = f"Participation Surge is {surge:.0f}/100 and requires 72. Walter recommends waiting for confirmation."
+    else:
+        why = "The current evidence is not yet an entry signal. Walter recommends waiting for the remaining confirmation."
+
+    evidence = []
+    if r.get("headline"):
+        evidence.append("News catalyst")
+    if float(r.get("volume_acceleration", 0) or 0) > 1:
+        evidence.append(
+            f"Volume acceleration {float(r['volume_acceleration']):.1f}× (above 1×)"
         )
-        + "</div>"
-        if change_reasons
-        else ""
-    )
-    watching_items = "".join(
-        f"<li>{'☑' if item.get('complete') else '☐'} {html.escape(str(item.get('label', '')))}</li>"
-        for item in r.get("walter_watching", [])
-    )
-    watching_markup = (
-        f"<div class='coach-box'><div class='coach-title'>Action · Confirmation checklist</div><ul class='watch-list'>{watching_items}</ul></div>"
-        if watching_items
-        else ""
-    )
-    conviction_components = r.get("conviction_components") or {}
-    conviction_diagnostics = "".join(
-        f"<div class='score-box'><div class='score-name'>Now · {html.escape(name.replace('_', ' ').title())}</div>"
-        f"<div class='score-value'>{float(value):.1f} / {CONVICTION_WEIGHTS[name]:.0f}</div></div>"
-        for name, value in conviction_components.items()
-    )
-    decision_markup = f"""
-      <div class='decision-row'>
-        <div class='decision-pill'><b>Action · Workflow recommendation</b>{html.escape(str(workflow))}</div>
-        <div class='decision-pill'><b>Now · Current chart condition</b>{html.escape(str(lifecycle))}</div>
-        <div class='decision-pill'><b>Action · Tradeability recommendation</b><span class='tradeability {trade_class}'>{trade_glyph} {html.escape(tradeability.upper())}</span><div class='small'>{html.escape(str(r.get("tradeability_reason", "")))}</div></div>
-      </div>
-      <div class='why-summary'><div class='why-summary-title'>Now · Why this scan promoted it</div><ul>{reason_items}</ul></div>
-      {blocker_markup}
-      <div class='coach-box'><div class='coach-title'>Action · Walter's recommendation</div>{html.escape(str(r.get("walter_take", "Monitoring the setup for confirmation.")))}</div>
-      {watching_markup}
-    """
-    opportunity_explanation = (
-        "<div class='why-summary'><div class='why-summary-title'>Action · Opportunity "
-        f"{opportunity:.1f} · {html.escape(str(opportunity_label))}</div>"
-        + "".join(f"<div>✓ {html.escape(str(item))}</div>" for item in strengths)
-        + (
-            f"<div style='color:#fca5a5'>• {html.escape(str(blockers[0]))}</div>"
-            if blockers
-            else ""
+    if (
+        max(
+            float(r.get("dollar_flow_acceleration_1m", 0) or 0),
+            float(r.get("dollar_flow_acceleration_3m", 0) or 0),
+            float(r.get("dollar_flow_acceleration_5m", 0) or 0),
         )
-        + "</div>"
+        > 1
+    ):
+        evidence.append("Dollar flow increasing")
+    evidence.append(
+        "Above VWAP"
+        if r.get("vwap_relation") == "above"
+        else "Below VWAP"
+        if r.get("vwap_relation") == "below"
+        else "Testing VWAP"
     )
-    breakdown = r.get("opportunity_breakdown") or {}
-    opportunity_diagnostics = "".join(
-        f"<div class='score-box'><div class='score-name'>Now · {html.escape(name.title())}</div><div class='score-value'>{float(value):.1f} / {COMPONENT_MAX[name]:.0f}</div></div>"
-        for name, value in breakdown.items()
-    )
-    trend_health = r.get("trend_health", "Future")
-    score_boxes = "".join(
+    evidence.extend(
         [
-            f"<div class='score-box'><div class='score-name'>History · Baseline strength</div><div class='score-value'>{historical_strength:.1f}</div></div>",
-            f"<div class='score-box'><div class='score-name'>Now · Current momentum</div><div class='score-value'>{current_momentum:.1f}</div></div>",
-            f"<div class='score-box'><div class='score-name'>Now · Participation surge</div><div class='score-value'>{float(r.get('participation_surge_score', 0) or 0):.1f}</div></div>",
-            f"<div class='score-box'><div class='score-name'>Now · Momentum quality</div><div class='score-value'>{float(r.get('momentum_quality_score', 0) or 0):.1f}</div></div>",
-            f"<div class='score-box'><div class='score-name'>Now · Trend stability</div><div class='score-value'>{float(r.get('trend_stability_score', r.get('trend_stability', 0)) or 0):.1f}</div></div>",
-            f"<div class='score-box'><div class='score-name'>Now · Lifecycle</div><div class='score-value'>{html.escape(str(lifecycle))}</div></div>",
-            f"<div class='score-box'><div class='score-name'>Now · Trend health</div><div class='score-value'>{html.escape(str(trend_health))}</div></div>",
-            f"<div class='score-box'><div class='score-name'>Trend · Score vs previous scan</div><div class='score-value'>{arrow} {velocity:+.1f}</div></div>",
+            "SuperTrend bullish" if st_bullish else "SuperTrend not bullish",
+            f"Participation Surge {surge:.0f}/100 ({'PASS ≥72' if surge >= 72 else 'FAIL; requires 72'})",
+            f"Expansion Quality {expansion:.0f}/100 ({'PASS ≥58' if expansion >= 58 else 'FAIL; requires 58'})",
         ]
     )
-    sections = _why_sections(r)
+    evidence_markup = "".join(f"<li>✔ {html.escape(item)}</li>" for item in evidence)
+
+    trend_markup = ""
+    if "conviction_delta" in r:
+        delta = float(r.get("conviction_delta", 0) or 0)
+        trend_markup = f"<div class='context-heading'>TREND — compared with previous scan</div><div class='small'>Conviction {delta:+.1f}</div>"
     evaluated = format_eastern_time(r.get("timestamp"), fallback="now")
-    state_elapsed = (
-        format_state_elapsed(r)
-        if r.get("candidate_status") in {"Emerging", "Strengthening", "Entry Ready"}
-        else ""
-    )
-    state_elapsed_markup = (
-        f'<span class="small"> · {html.escape(state_elapsed)}</span>'
-        if state_elapsed
-        else ""
-    )
-    bar_age = float(r.get("bar_age_seconds", 0) or 0)
-    freshness = (
-        f"Latest bar {bar_age:.0f}s old" if bar_age else "Latest-bar age unavailable"
-    )
-    boxes = "".join(
-        f"<div class='why-box'><div class='why-label'>Now · {html.escape(label)}</div>"
-        f"<div class='why-text'>{html.escape(text)}</div></div>"
-        for label, text in sections.items()
-    )
     st.markdown(
         f"""
     <div class="mide-card {klass}">
       <div style="display:flex;justify-content:space-between;gap:12px">
-        <div><span style="font-size:1.55rem;font-weight:800">{html.escape(str(r["symbol"]))}</span>{state_elapsed_markup}
+        <div><span style="font-size:1.55rem;font-weight:800">{html.escape(str(r["symbol"]))}</span>
         <span class="small"> ${r["price"]:.4f} · {r["pct_change"]:+.1f}%</span>
-        <span class="tier"> · {html.escape(str(tier))}</span></div>
+        </div>
         <div style="font-size:1.15rem;font-weight:800">{html.escape(str(workflow))}</div>
       </div>
-      {promo_badge}
-      {decision_markup}
-      <div class="conviction-row"><div><div class="why-label">Now · Current conviction</div><div class="conviction-score">{conviction:.0f}</div></div><div class="{conviction_class}"><b>Trend · {html.escape(conviction_comparison)}</b><div class="small">History · Previous scan scores</div><div class="conviction-history">{conviction_history}</div></div></div>
-      {conviction_change_markup}
-      {opportunity_explanation}
-      {summary_markup}
-      {trigger_markup}
-      <div class="why">{html.escape(reasons)}</div>
-      <div class="score-grid">{score_boxes}</div>
-      <div class="score-grid">{opportunity_diagnostics}</div>
-      <div class="why-label">Now · Current conviction diagnostics · participation and flow lead price</div>
-      <div class="score-grid">{conviction_diagnostics}</div>
-      {transition_history_markup(r)}
-      <div class="small"><b>Now · Current-scan evidence:</b> Feed volume {r["volume"] / 1_000_000:.2f}M · Dollar volume ${r["dollar_volume"] / 1_000_000:.2f}M · RVOL {r.get("rvol_proxy", 0):.1f}×</div>
-      <div class="freshness">Now · {html.escape(freshness)} · evaluated {html.escape(evaluated)}</div>
-      <div class="why-grid">{boxes}</div>
+      <div class="context-heading">NOW — current scan</div>
+      <div class="current-grid">{current_markup}</div>
+      <div class="context-heading">ACTION — Walter's recommendation</div>
+      <div class="action-box">{html.escape(action)}</div>
+      <div class="context-heading">WHY</div><div class="why">{html.escape(why)}</div>
+      <div class="why-summary"><div class="why-summary-title">Current Evidence</div><ul class="evidence-list">{evidence_markup}</ul></div>
+      {trend_markup}
+      <div class="freshness">NOW — evaluated {html.escape(evaluated)}</div>
     </div>
     """,
         unsafe_allow_html=True,
