@@ -288,6 +288,9 @@ def test_mission_control_header_contains_compact_operational_status():
     assert "Market Intelligence Decision Engine" in markup
     for value in ("🟢 LIVE", "Live Market", "674", "88", "10", "2", "1", "00:18"):
         assert value in markup
+    assert "id='walter-market-time'" in markup
+    assert "id='walter-market-phase'" in markup
+    assert "id='walter-next-scan'" in markup
 
 
 def test_ignore_today_explains_non_actionable_quality():

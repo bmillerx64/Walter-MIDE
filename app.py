@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone, timedelta
+import html
 import json
 import platform
 import streamlit as st
@@ -513,30 +514,85 @@ with st.sidebar:
         st.warning("IEX feed selected. Set ALPACA_FEED='sip' for consolidated data.")
 
 
-def arm_auto_scan_timer(enabled: bool, refresh_seconds: int) -> None:
-    """Install one browser timer that survives Streamlit reruns by rearming itself."""
-    if not enabled:
-        st.components.v1.html(
-            """<script>
-            if (window.parent.__walterAutoScanTimer) {
-              window.parent.clearTimeout(window.parent.__walterAutoScanTimer);
-              window.parent.__walterAutoScanTimer = null;
-            }
-            </script>""",
-            height=0,
-        )
-        return
-
-    delay_ms = max(1, int(refresh_seconds)) * 1000
+def arm_live_clock_engine(
+    enabled: bool, refresh_seconds: int, last_updated: datetime | None
+) -> None:
+    """Keep dashboard clocks live and start scans without a Streamlit rerun per tick."""
+    updated_ms = int(last_updated.timestamp() * 1000) if last_updated else 0
+    refresh_ms = max(1, int(refresh_seconds)) * 1000
     st.components.v1.html(
         f"""<script>
-        if (window.parent.__walterAutoScanTimer) {{
-          window.parent.clearTimeout(window.parent.__walterAutoScanTimer);
-        }}
-        window.parent.__walterAutoScanTimer = window.parent.setTimeout(() => {{
-          window.parent.__walterAutoScanTimer = null;
-          window.parent.location.reload();
-        }}, {delay_ms});
+        (() => {{
+          const root = window.parent;
+          const enabled = {str(enabled).lower()};
+          const updatedAt = {updated_ms};
+          const refreshMs = {refresh_ms};
+          const scanKey = 'walterScanStartedAt';
+          if (root.__walterLiveClockInterval) root.clearInterval(root.__walterLiveClockInterval);
+
+          const node = id => root.document.getElementById(id);
+          const setText = (id, value) => {{ const el = node(id); if (el) el.textContent = value; }};
+          const marketNow = now => {{
+            const parts = new Intl.DateTimeFormat('en-US', {{
+              timeZone: 'America/New_York', hour: 'numeric', minute: '2-digit',
+              second: '2-digit', hour12: true, timeZoneName: 'short'
+            }}).formatToParts(now);
+            const value = type => parts.find(part => part.type === type)?.value || '';
+            const hour = Number(value('hour')) % 12;
+            const minute = Number(value('minute'));
+            const isPm = value('dayPeriod') === 'PM';
+            const hour24 = hour + (isPm ? 12 : 0);
+            let phase = 'Market Closed';
+            const clockMinutes = hour24 * 60 + minute;
+            if (clockMinutes >= 240 && clockMinutes < 570) phase = 'Pre-Market';
+            else if (clockMinutes >= 570 && clockMinutes < 960) phase = 'Live Market';
+            else if (clockMinutes >= 960 && clockMinutes < 1200) phase = 'After-Hours';
+            return {{
+              text: `${{value('hour')}}:${{value('minute')}}:${{value('second')}} ${{value('dayPeriod')}} ${{value('timeZoneName')}}`,
+              phase
+            }};
+          }};
+          const tick = () => {{
+            const now = Date.now();
+            const market = marketNow(now);
+            setText('walter-market-time', market.text);
+            setText('walter-market-phase', market.phase);
+            const next = node('walter-next-scan');
+            if (!next) return;
+            next.classList.remove('control-scanning', 'control-overdue');
+            if (!enabled) {{
+              next.textContent = 'MANUAL';
+              root.localStorage.removeItem(scanKey);
+              return;
+            }}
+            let scanStarted = Number(root.localStorage.getItem(scanKey) || 0);
+            if (scanStarted && updatedAt >= scanStarted) {{
+              root.localStorage.removeItem(scanKey);
+              scanStarted = 0;
+            }}
+            const deadline = updatedAt ? updatedAt + refreshMs : now;
+            if (!scanStarted && now < deadline) {{
+              const remaining = Math.max(0, Math.floor((deadline - now) / 1000));
+              next.textContent = `${{String(Math.floor(remaining / 60)).padStart(2, '0')}}:${{String(remaining % 60).padStart(2, '0')}}`;
+              return;
+            }}
+            if (!scanStarted) {{
+              scanStarted = now;
+              root.localStorage.setItem(scanKey, String(scanStarted));
+              root.setTimeout(() => root.location.reload(), 80);
+            }}
+            const scanSeconds = Math.floor((now - scanStarted) / 1000);
+            if (scanSeconds <= 60) {{
+              next.classList.add('control-scanning');
+              next.innerHTML = '<span class="scan-spinner" aria-hidden="true"></span>SCANNING...';
+            }} else {{
+              next.classList.add('control-overdue');
+              next.textContent = `OVERDUE +${{String(scanSeconds - 60).padStart(2, '0')}}s`;
+            }}
+          }};
+          tick();
+          root.__walterLiveClockInterval = root.setInterval(tick, 1000);
+        }})();
         </script>""",
         height=0,
     )
@@ -710,7 +766,11 @@ api_warnings = st.session_state.api_warnings
 scan_diagnostics = st.session_state.scan_diagnostics
 updated = st.session_state.last_updated
 updated_text = format_eastern_time(updated)
-st.caption(f"{st.session_state.source_label} · Last Scan {updated_text}")
+st.markdown(
+    f"<div class='stCaption'>{html.escape(st.session_state.source_label)} · Last Scan "
+    f"<span id='walter-last-scan'>{html.escape(updated_text)}</span></div>",
+    unsafe_allow_html=True,
+)
 
 if not records:
     if updated:
@@ -724,10 +784,6 @@ if not records:
         st.info(
             "Dashboard loaded successfully. Walter will scan automatically in live mode, or press **Run live scan** to begin now."
         )
-    arm_auto_scan_timer(
-        mode == "Live Alpaca" and auto_refresh and live_possible,
-        settings.refresh_seconds,
-    )
     # Continue rendering the Diagnostics tab: a zero-result scan can still
     # contain the most useful flight-recorder failure paths.
 
@@ -759,7 +815,7 @@ if mode == "Live Alpaca" and auto_refresh and updated:
 next_scan = (
     f"{seconds_to_scan // 60:02d}:{seconds_to_scan % 60:02d}"
     if mode == "Live Alpaca" and auto_refresh
-    else "Manual"
+    else "MANUAL"
 )
 with mission_header_slot:
     st.markdown(
@@ -779,8 +835,10 @@ with mission_header_slot:
 with mission_plan_slot:
     render_walter_mission_control(actionable_records)
 
-arm_auto_scan_timer(
-    mode == "Live Alpaca" and auto_refresh and live_possible, settings.refresh_seconds
+arm_live_clock_engine(
+    mode == "Live Alpaca" and auto_refresh and live_possible,
+    settings.refresh_seconds,
+    updated,
 )
 
 with st.expander("Legacy candidate diagnostics", expanded=False):

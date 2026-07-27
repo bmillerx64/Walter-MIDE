@@ -127,7 +127,7 @@ def inject_css():
     .entry-window-pulse{animation:entry-window-pulse 2s ease-out 1}
     @keyframes condition-flash{0%{background:#f8fafc;color:#064e3b;box-shadow:0 0 22px #4ade80}100%{background:transparent;color:#86efac;box-shadow:none}}
     @keyframes entry-window-pulse{0%,100%{box-shadow:0 0 0 rgba(74,222,128,0)}25%,70%{box-shadow:0 0 30px rgba(74,222,128,.75);border-color:#86efac}}
-    @media(prefers-reduced-motion:reduce){.mission-condition-met,.entry-window-pulse{animation:none}}
+    @media(prefers-reduced-motion:reduce){.mission-condition-met,.entry-window-pulse,.control-scanning,.scan-spinner{animation:none}}
     .mission-ignore {margin-top:11px;padding-top:10px;border-top:1px solid #273548;color:#94a3b8;font-size:.82rem}
     .control-header {background:linear-gradient(145deg,#0b1722,#0a1018);border:1px solid #334155;border-top:4px solid #38bdf8;border-radius:14px;padding:15px 18px;margin:2px 0 10px;box-shadow:0 12px 30px rgba(0,0,0,.22)}
     .control-heading {display:flex;align-items:flex-end;justify-content:space-between;gap:14px;flex-wrap:wrap}
@@ -138,6 +138,11 @@ def inject_css():
     .control-stat-label {font-size:.62rem;letter-spacing:.08em;text-transform:uppercase;color:#8291a5;font-weight:900;white-space:nowrap}
     .control-stat-value {font-size:.96rem;color:#f8fafc;font-weight:950;margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-variant-numeric:tabular-nums}
     .control-live{color:#4ade80}.control-demo{color:#facc15}
+    .control-scanning{color:#7dd3fc!important;overflow:visible;animation:scan-pulse 1s ease-in-out infinite}
+    .control-overdue{color:#fbbf24!important;overflow:visible}
+    .scan-spinner{display:inline-block;width:.68rem;height:.68rem;margin-right:6px;border:2px solid rgba(125,211,252,.35);border-top-color:#7dd3fc;border-radius:50%;vertical-align:-.06rem;animation:scan-spin .75s linear infinite}
+    @keyframes scan-spin{to{transform:rotate(360deg)}}
+    @keyframes scan-pulse{50%{opacity:.55}}
     .escalation-card {background:#0b131d;border:1px solid #334155;border-left:6px solid var(--escalation-color);border-radius:11px;padding:13px 15px;margin:8px 0}
     .escalation-top {display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap}
     .escalation-symbol {font-size:1.35rem;font-weight:950;color:#f8fafc}.escalation-state {font-weight:950;color:var(--escalation-color)}
@@ -297,20 +302,20 @@ def mission_control_header_markup(
     status = "🟢 LIVE" if live else "🟡 DEMO"
     status_class = "control-live" if live else "control-demo"
     stats = (
-        ("Status", status, status_class),
-        ("Market phase", market_phase, ""),
-        ("Market time", market_time, ""),
-        ("Symbols", str(symbols_sampled), ""),
-        ("Prefiltered", str(prefilter_count), ""),
-        ("Candidates", str(candidate_count), ""),
-        ("Focus", str(focus_count), ""),
-        ("Escalating", str(escalation_count), ""),
-        ("Next scan", next_scan, ""),
+        ("Status", status, status_class, "walter-status"),
+        ("Market phase", market_phase, "", "walter-market-phase"),
+        ("Market time", market_time, "", "walter-market-time"),
+        ("Symbols", str(symbols_sampled), "", "walter-symbols"),
+        ("Prefiltered", str(prefilter_count), "", "walter-prefiltered"),
+        ("Candidates", str(candidate_count), "", "walter-candidates"),
+        ("Focus", str(focus_count), "", "walter-focus"),
+        ("Escalating", str(escalation_count), "", "walter-escalating"),
+        ("Next scan", next_scan, "", "walter-next-scan"),
     )
     strip = "".join(
         f"<div class='control-stat'><div class='control-stat-label'>{html.escape(label)}</div>"
-        f"<div class='control-stat-value {css_class}'>{html.escape(value)}</div></div>"
-        for label, value, css_class in stats
+        f"<div id='{element_id}' class='control-stat-value {css_class}'>{html.escape(value)}</div></div>"
+        for label, value, css_class, element_id in stats
     )
     return (
         "<div class='control-header'><div class='control-heading'><div>"
