@@ -211,6 +211,53 @@ def test_hot_list_excludes_rejected_and_weak_symbols_without_placeholders():
     assert [item["symbol"] for item in walter_hot_list(records)] == ["ONLY"]
 
 
+def test_hot_list_renders_priority_score_as_confidence_meter(monkeypatch):
+    rendered = []
+
+    class Column:
+        def markdown(self, body, **kwargs):
+            rendered.append(body)
+
+    monkeypatch.setattr(ui.st, "subheader", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(ui.st, "columns", lambda count: [Column() for _ in range(count)])
+    monkeypatch.setattr(
+        ui,
+        "walter_hot_list",
+        lambda _records: [
+            {
+                "symbol": "ENTX",
+                "state": "Strengthening",
+                "priority_score": 82,
+                "reasons": ["Fresh news catalyst", "Near VWAP (+0.2%)"],
+                "limiting_factor": "VWAP pullback",
+            }
+        ],
+    )
+
+    ui.render_walter_hot_list([{}])
+
+    card = rendered[0]
+    assert "Priority Score" not in card
+    assert "Confidence" in card
+    assert "aria-valuenow='82'" in card
+    assert "--confidence:82%" in card
+    assert "82%" in card
+    assert ">HIGH<" in card
+    assert "hot-confidence-green" in card
+
+
+def test_confidence_levels_match_display_thresholds():
+    assert ui._confidence_presentation(100) == ("ELITE", "green")
+    assert ui._confidence_presentation(90) == ("ELITE", "green")
+    assert ui._confidence_presentation(89) == ("HIGH", "green")
+    assert ui._confidence_presentation(80) == ("HIGH", "green")
+    assert ui._confidence_presentation(79) == ("GOOD", "yellow")
+    assert ui._confidence_presentation(70) == ("GOOD", "yellow")
+    assert ui._confidence_presentation(69) == ("DEVELOPING", "yellow")
+    assert ui._confidence_presentation(60) == ("DEVELOPING", "yellow")
+    assert ui._confidence_presentation(59) == ("EARLY", "red")
+
+
 def test_opportunity_card_makes_current_trend_history_and_action_context_explicit(
     monkeypatch,
 ):

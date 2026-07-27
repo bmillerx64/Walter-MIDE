@@ -82,7 +82,19 @@ def inject_css():
     .hot-card {background:linear-gradient(145deg,#17130c,#111821);border:1px solid #76551c;border-top:3px solid #f59e0b;border-radius:12px;padding:14px 16px;min-height:245px;margin-bottom:14px}
     .hot-rank {color:#fbbf24;font-size:.70rem;font-weight:950;letter-spacing:.10em;text-transform:uppercase}
     .hot-symbol {font-size:1.5rem;font-weight:950;color:#fff7dd;margin:2px 0 8px}
-    .hot-score {font-size:1.15rem;font-weight:900;color:#fbbf24}
+    .hot-confidence {margin:2px 0 10px}
+    .hot-confidence-title {font-size:.72rem;text-transform:uppercase;letter-spacing:.12em;color:#d7dee8;font-weight:950;margin-bottom:6px}
+    .hot-confidence-track {height:18px;width:100%;overflow:hidden;background:#252c35;border:1px solid #3b4654;border-radius:999px;box-shadow:inset 0 2px 5px rgba(0,0,0,.4)}
+    .hot-confidence-fill {height:100%;width:var(--confidence);border-radius:999px;transition:width .55s ease;box-shadow:0 0 12px currentColor}
+    .hot-confidence-green {color:#4ade80;background:linear-gradient(90deg,#15803d,#4ade80)}
+    .hot-confidence-yellow {color:#facc15;background:linear-gradient(90deg,#a16207,#facc15)}
+    .hot-confidence-red {color:#f87171;background:linear-gradient(90deg,#b91c1c,#f87171)}
+    .hot-confidence-result {display:flex;align-items:baseline;gap:9px;margin-top:5px}
+    .hot-confidence-percent {font-size:2rem;line-height:1;font-weight:950;color:#f8fafc;font-variant-numeric:tabular-nums}
+    .hot-confidence-label {font-size:.82rem;letter-spacing:.12em;font-weight:950}
+    .hot-confidence-label.hot-confidence-green {color:#4ade80;background:none}
+    .hot-confidence-label.hot-confidence-yellow {color:#facc15;background:none}
+    .hot-confidence-label.hot-confidence-red {color:#f87171;background:none}
     .hot-state {display:inline-block;background:#172033;border:1px solid #4b5f78;border-radius:999px;padding:3px 9px;margin:7px 0;color:#f8fafc;font-size:.82rem;font-weight:900}
     .hot-heading {font-size:.68rem;text-transform:uppercase;letter-spacing:.09em;color:#aeb9c7;font-weight:900;margin-top:8px}
     .hot-reason {color:#dcfce7;font-size:.90rem;font-weight:750;line-height:1.45}
@@ -678,6 +690,19 @@ def walter_hot_list(records: list[dict]) -> list[dict]:
     return ranked[:3]
 
 
+def _confidence_presentation(score: int) -> tuple[str, str]:
+    """Return the display-only confidence label and color for a Priority Score."""
+    if score >= 90:
+        return "ELITE", "green"
+    if score >= 80:
+        return "HIGH", "green"
+    if score >= 70:
+        return "GOOD", "yellow"
+    if score >= 60:
+        return "DEVELOPING", "yellow"
+    return "EARLY", "red"
+
+
 def render_walter_hot_list(records: list[dict]) -> None:
     """Render the concise three-symbol focus list above the detailed Radar cards."""
     hot = walter_hot_list(records)
@@ -686,6 +711,9 @@ def render_walter_hot_list(records: list[dict]) -> None:
     st.subheader("🔥 Walter's Hot List")
     columns = st.columns(len(hot))
     for rank, (column, item) in enumerate(zip(columns, hot), start=1):
+        score = item["priority_score"]
+        confidence_label, confidence_color = _confidence_presentation(score)
+        confidence_class = f"hot-confidence-{confidence_color}"
         reasons = "".join(
             f"<div class='hot-reason'>✓ {html.escape(reason)}</div>"
             for reason in item["reasons"]
@@ -699,7 +727,12 @@ def render_walter_hot_list(records: list[dict]) -> None:
         column.markdown(
             f"<div class='hot-card'><div class='hot-rank'>#{rank} Hot List</div>"
             f"<div class='hot-symbol'>{html.escape(item['symbol'])}</div>"
-            f"<div class='hot-score'>Priority Score: {item['priority_score']}</div>"
+            f"<div class='hot-confidence'><div class='hot-confidence-title'>Confidence</div>"
+            f"<div class='hot-confidence-track' role='progressbar' aria-label='Confidence' "
+            f"aria-valuemin='0' aria-valuemax='100' aria-valuenow='{score}'>"
+            f"<div class='hot-confidence-fill {confidence_class}' style='--confidence:{score}%'></div></div>"
+            f"<div class='hot-confidence-result'><span class='hot-confidence-percent'>{score}%</span>"
+            f"<span class='hot-confidence-label {confidence_class}'>{confidence_label}</span></div></div>"
             f"<div class='hot-state'>{html.escape(item['state'])}</div>"
             f"<div class='hot-heading'>Why Walter likes it</div>{reasons}{needs}</div>",
             unsafe_allow_html=True,
