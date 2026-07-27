@@ -8,6 +8,7 @@ from mide.escalation import (
     escalation_state,
     meaningful_evidence_deltas,
     ready_checklist,
+    trade_recommendation,
 )
 
 
@@ -104,3 +105,39 @@ def test_engine_does_not_mutate_scanner_record():
     ready_checklist(source)
     meaningful_evidence_deltas(source)
     assert repr(source) == before
+
+
+def test_recommendation_is_green_when_every_requirement_aligns():
+    result = trade_recommendation(
+        record(qualified_for_entry=True, trigger_diagnostics={"passed": True})
+    )
+    assert result["label"] == "GREEN LIGHT"
+    assert result["remaining"] == 0
+    assert "next candle" in result["message"]
+
+
+def test_recommendation_gets_ready_only_when_one_condition_remains():
+    result = trade_recommendation(
+        record(qualified_for_entry=False, trigger_diagnostics={"passed": False})
+    )
+    assert result == {
+        "label": "GET READY",
+        "emoji": "🟡",
+        "message": "One condition remains: Entry trigger.",
+        "remaining": 1,
+    }
+
+
+def test_recommendation_rejects_multiple_blockers_or_extended_price():
+    blocked = trade_recommendation(
+        record(vwap_relation="below", supertrend_bullish=False)
+    )
+    extended = trade_recommendation(
+        record(
+            qualified_for_entry=True,
+            trigger_diagnostics={"passed": True},
+            vwap_distance_pct=5.1,
+        )
+    )
+    assert blocked["label"] == "NO TRADE"
+    assert extended["label"] == "NO TRADE"

@@ -51,7 +51,7 @@ from mide.ui import (
 )
 from mide.time_service import format_eastern_time, market_clock, market_phase_at
 
-VERSION = "3.0 Beta"
+VERSION = "2.12 — Green Light"
 
 SYSTEM_DEFAULT_VOICE_ID = "__system_default__"
 DEFAULT_VOICE = "System Default"

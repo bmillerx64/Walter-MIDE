@@ -284,7 +284,7 @@ def test_mission_control_header_contains_compact_operational_status():
     )
 
     assert "Walter • MIDE Radar" in markup
-    assert "v3.0 Beta — Mission Control" in markup
+    assert "v2.12 — Green Light" in markup
     assert "Market Intelligence Decision Engine" in markup
     for value in (
         "🟢 LIVE",
@@ -501,6 +501,7 @@ def test_opportunity_card_makes_current_trend_history_and_action_context_explici
     assert "TREND — compared with previous scan" in card
     assert "Conviction -12.0" in card
     assert "ACTION — Walter's recommendation" in card
+    assert "🟡 GET READY" in card
     assert "Current Evidence" in card
     assert "Participation Surge" in card
     assert "FAIL (Requires 72)" in card

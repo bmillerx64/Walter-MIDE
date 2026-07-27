@@ -1,4 +1,4 @@
-"""Walter 2.9 display-only escalation intelligence.
+"""Walter 2.12 display-only recommendation intelligence.
 
 The engine intentionally consumes completed scanner records and never mutates
 them.  Scanner qualification, ranking, thresholds, and scores remain the source
@@ -13,6 +13,10 @@ ENTRY_WINDOW_OPEN = "Entry Window Open"
 WATCH_CLOSELY = "Watch Closely"
 MONITOR = "Monitor"
 TOO_EXTENDED = "Too Extended"
+
+GREEN_LIGHT = "GREEN LIGHT"
+GET_READY = "GET READY"
+NO_TRADE = "NO TRADE"
 
 
 def _number(record: dict, *keys: str) -> float | None:
@@ -61,6 +65,40 @@ def ready_checklist(record: dict) -> list[dict]:
             is True,
         },
     ]
+
+
+def trade_recommendation(record: dict) -> dict:
+    """Give one unambiguous preparation recommendation from existing evidence."""
+    checklist = ready_checklist(record)
+    remaining = [item for item in checklist if not item["ready"]]
+    distance = _number(record, "vwap_distance_pct")
+    if distance is not None and distance > 5.0:
+        return {
+            "label": NO_TRADE,
+            "emoji": "🔴",
+            "message": "This setup is too extended. Do not prepare an entry.",
+            "remaining": len(remaining),
+        }
+    if not remaining:
+        return {
+            "label": GREEN_LIGHT,
+            "emoji": "🟢",
+            "message": "Everything Walter requires has aligned. Watch the next candle for entry.",
+            "remaining": 0,
+        }
+    if len(remaining) == 1:
+        return {
+            "label": GET_READY,
+            "emoji": "🟡",
+            "message": f"One condition remains: {remaining[0]['label']}.",
+            "remaining": 1,
+        }
+    return {
+        "label": NO_TRADE,
+        "emoji": "🔴",
+        "message": f"{len(remaining)} required conditions are not aligned.",
+        "remaining": len(remaining),
+    }
 
 
 def escalation_state(record: dict) -> str:
@@ -160,6 +198,7 @@ def escalation_snapshot(record: dict) -> dict:
         "state": escalation_state(record),
         "confidence_trend": confidence_trend(record),
         "checklist": ready_checklist(record),
+        "recommendation": trade_recommendation(record),
         "deltas": meaningful_evidence_deltas(record),
     }
 
