@@ -7,6 +7,7 @@ from numbers import Real
 
 from mide.market_phase import apply_market_phase
 from mide.opportunity import enrich_opportunity
+from mide.conviction import enrich_conviction
 from mide.trader_priority import (
     sortable_number as _sortable_number,
     trader_priority_sort_key,
@@ -1842,5 +1843,6 @@ def apply_scanner_v2(
         # Additive presentation/ranking metadata only; all workflow and alert
         # predicates above have already completed using their existing inputs.
         enrich_opportunity(record)
+        enrich_conviction(record, prior)
         output.append(record)
     return sorted(output, key=_ranked_record_sort_key, reverse=True)
