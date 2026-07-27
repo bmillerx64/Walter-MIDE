@@ -26,6 +26,7 @@ from mide.runtime_evidence import (
 )
 from mide.session_replay import build_session_replay
 from mide.demo import demo_records
+from mide.escalation import escalation_alert_phrase, escalation_state_changes
 from mide.ui import (
     inject_css,
     metric_strip,
@@ -37,9 +38,9 @@ from mide.ui import (
     actionable_candidate_records,
     rejected_candidate_records,
     rejected_candidates_table,
-    automatic_watching_sort_key,
     trader_priority_sort_key,
     render_walter_mission_control,
+    render_escalation_engine,
 )
 from mide.time_service import format_eastern_time, market_clock, market_phase_at
 
@@ -360,6 +361,7 @@ session_defaults = {
     "last_updated": None,
     "scan_diagnostics": {},
     "scan_in_progress": False,
+    "last_escalation_alert": "",
     ALERT_VOICE_SESSION_KEY: SYSTEM_DEFAULT_VOICE_ID,
     DAVID_AVAILABLE_SESSION_KEY: False,
     ACTIVE_VOICE_SESSION_KEY: SYSTEM_DEFAULT_VOICE_ID,
@@ -805,10 +807,25 @@ with st.expander("Legacy candidate diagnostics", expanded=False):
         st.caption("No diagnostics recorded for this scan yet.")
 
 render_walter_mission_control(actionable_records)
+render_escalation_engine(actionable_records)
 metric_strip(actionable_records)
-alert_phrase = scan_alert_phrase(actionable_records)
+state_changes = escalation_state_changes(actionable_records)
+state_change_signature = "|".join(
+    f"{item['symbol']}:{item['from']}->{item['to']}" for item in state_changes
+)
+alert_phrase = escalation_alert_phrase(actionable_records) or scan_alert_phrase(
+    actionable_records
+)
 if alerts and alert_phrase:
-    play_alert("assets/alert.wav", alert_phrase, alert_voice_for_session())
+    # Escalation transitions are audible once per distinct scan transition, rather
+    # than replaying whenever Streamlit reruns for an unrelated widget change.
+    if (
+        not state_change_signature
+        or state_change_signature != st.session_state.last_escalation_alert
+    ):
+        play_alert("assets/alert.wav", alert_phrase, alert_voice_for_session())
+        if state_change_signature:
+            st.session_state.last_escalation_alert = state_change_signature
 
 tabs = st.tabs(
     [

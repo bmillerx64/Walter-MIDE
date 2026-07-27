@@ -6,6 +6,7 @@ from pathlib import Path
 import streamlit as st
 import pandas as pd
 
+from mide.escalation import escalation_snapshot
 from mide.scanner_v2 import state_elapsed_seconds
 from mide.trader_priority import (
     sortable_text as _sortable_text,
@@ -118,7 +119,13 @@ def inject_css():
     .mission-checks {display:grid;grid-template-columns:repeat(auto-fit,minmax(155px,1fr));gap:4px;margin-top:10px}
     .mission-check {font-size:.84rem;font-weight:750}.mission-pass{color:#86efac}.mission-wait{color:#fca5a5}
     .mission-ignore {margin-top:11px;padding-top:10px;border-top:1px solid #273548;color:#94a3b8;font-size:.82rem}
+    .escalation-card {background:#0b131d;border:1px solid #334155;border-left:6px solid var(--escalation-color);border-radius:11px;padding:13px 15px;margin:8px 0}
+    .escalation-top {display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap}
+    .escalation-symbol {font-size:1.35rem;font-weight:950;color:#f8fafc}.escalation-state {font-weight:950;color:var(--escalation-color)}
+    .escalation-trend {font-size:.82rem;color:#cbd5e1;font-weight:800}.escalation-details {display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:9px}
+    .escalation-list {list-style:none;padding:0;margin:5px 0 0;display:grid;gap:3px;font-size:.83rem}.delta-up{color:#86efac}.delta-down{color:#fca5a5}
     @media(max-width:760px){.mission-grid{grid-template-columns:1fr}}
+    @media(max-width:760px){.escalation-details{grid-template-columns:1fr}}
     </style>
     """,
         unsafe_allow_html=True,
@@ -832,7 +839,9 @@ def _mission_conditions(record: dict) -> list[dict]:
     relation = str(record.get("vwap_relation") or "").lower()
     distance = float(record.get("vwap_distance_pct", 0) or 0)
     vwap_passed = relation == "above" and distance <= 2
-    trend_passed = bool(record.get("supertrend_bullish") or record.get("supertrend_flip"))
+    trend_passed = bool(
+        record.get("supertrend_bullish") or record.get("supertrend_flip")
+    )
     participation = _bounded_score(
         record.get("participation_surge_score", record.get("participation_score", 0))
     )
@@ -858,7 +867,11 @@ def _mission_band(record: dict, conditions: list[dict]) -> str:
 
 def _mission_status(record: dict, band: str, conditions: list[dict]) -> str:
     if band == "ignore":
-        return "Too extended" if float(record.get("vwap_distance_pct", 0) or 0) > 5 else "No actionable setup"
+        return (
+            "Too extended"
+            if float(record.get("vwap_distance_pct", 0) or 0) > 5
+            else "No actionable setup"
+        )
     remaining = [item["label"] for item in conditions if not item["passed"]]
     if not remaining:
         return "Setup conditions aligned — review the chart"
@@ -903,15 +916,24 @@ def walter_mission_control(records: list[dict]) -> dict:
 def _mission_target_markup(item: dict, role: str) -> str:
     label, color = MISSION_BANDS[item["band"]]
     remaining = sum(not condition["passed"] for condition in item["conditions"])
-    window = "Now–1 minute" if remaining == 0 else ("1–5 minutes" if remaining == 1 else "5–15 minutes")
+    window = (
+        "Now–1 minute"
+        if remaining == 0
+        else ("1–5 minutes" if remaining == 1 else "5–15 minutes")
+    )
     checks = "".join(
         f"<div class='mission-check {'mission-pass' if condition['passed'] else 'mission-wait'}'>"
         f"{'✓' if condition['passed'] else '✕'} {html.escape(condition['label'])}</div>"
         for condition in item["conditions"]
     )
-    remaining_labels = ", ".join(
-        condition["label"] for condition in item["conditions"] if not condition["passed"]
-    ) or "None — all setup conditions are present"
+    remaining_labels = (
+        ", ".join(
+            condition["label"]
+            for condition in item["conditions"]
+            if not condition["passed"]
+        )
+        or "None — all setup conditions are present"
+    )
     return (
         f"<div class='mission-target' style='--mission-color:{color}'>"
         f"<div class='mission-role'>{role}</div><div class='mission-symbol'>{html.escape(item['symbol'])}</div>"
@@ -925,7 +947,10 @@ def render_walter_mission_control(records: list[dict]) -> None:
     """Render Walter's single committed attention plan ahead of dashboard detail."""
     mission = walter_mission_control(records)
     if not mission["primary"]:
-        st.markdown("<div class='mission-shell'><div class='mission-title'>🎯 Walter's Focus</div>No stock deserves elevated attention right now.</div>", unsafe_allow_html=True)
+        st.markdown(
+            "<div class='mission-shell'><div class='mission-title'>🎯 Walter's Focus</div>No stock deserves elevated attention right now.</div>",
+            unsafe_allow_html=True,
+        )
         return
     targets = _mission_target_markup(mission["primary"], "Primary target")
     if mission["secondary"]:
@@ -933,12 +958,59 @@ def render_walter_mission_control(records: list[dict]) -> None:
     ignored = mission["ignored"]
     ignore_markup = ""
     if ignored:
-        names = " · ".join(f"{html.escape(item['symbol'])} — {html.escape(item['status'])}" for item in ignored[:3])
-        ignore_markup = f"<div class='mission-ignore'><b>IGNORE FOR NOW</b> · {names}</div>"
+        names = " · ".join(
+            f"{html.escape(item['symbol'])} — {html.escape(item['status'])}"
+            for item in ignored[:3]
+        )
+        ignore_markup = (
+            f"<div class='mission-ignore'><b>IGNORE FOR NOW</b> · {names}</div>"
+        )
     st.markdown(
         f"<div class='mission-shell'><div class='mission-title'>🎯 Walter's Focus</div><div class='mission-grid'>{targets}</div>{ignore_markup}</div>",
         unsafe_allow_html=True,
     )
+
+
+ESCALATION_COLORS = {
+    "Entry Window Open": "#4ade80",
+    "Watch Closely": "#facc15",
+    "Monitor": "#60a5fa",
+    "Too Extended": "#f87171",
+}
+
+
+def render_escalation_engine(records: list[dict]) -> None:
+    """Render Walter 2.9 urgency without changing scanner decisions or order."""
+    snapshots = [
+        escalation_snapshot(record) for record in actionable_candidate_records(records)
+    ]
+    if not snapshots:
+        return
+    st.subheader("🚨 Escalation Engine")
+    st.caption("Display-only urgency based on Walter's existing scanner evidence.")
+    for item in snapshots[:5]:
+        trend = item["confidence_trend"]
+        trend_arrow = {"Rising": "↗", "Falling": "↘", "Steady": "→"}[trend["direction"]]
+        checklist = "".join(
+            f"<li class='{'delta-up' if check['ready'] else 'delta-down'}'>{'✓' if check['ready'] else '○'} {html.escape(check['label'])}</li>"
+            for check in item["checklist"]
+        )
+        deltas = (
+            "".join(
+                f"<li class='{'delta-up' if delta['direction'] == 'improved' else 'delta-down'}'>{html.escape(delta['label'])}: {html.escape(delta['display'])}</li>"
+                for delta in item["deltas"]
+            )
+            or "<li class='small'>No meaningful evidence change since the prior scan.</li>"
+        )
+        color = ESCALATION_COLORS[item["state"]]
+        st.markdown(
+            f"<div class='escalation-card' style='--escalation-color:{color}'><div class='escalation-top'>"
+            f"<span class='escalation-symbol'>{html.escape(item['symbol'])}</span><span class='escalation-state'>{html.escape(item['state'])}</span>"
+            f"<span class='escalation-trend'>Confidence {trend_arrow} {trend['direction']} ({trend['delta']:+.1f})</span></div>"
+            f"<div class='escalation-details'><div><div class='why-label'>Ready checklist</div><ul class='escalation-list'>{checklist}</ul></div>"
+            f"<div><div class='why-label'>Since last scan</div><ul class='escalation-list'>{deltas}</ul></div></div></div>",
+            unsafe_allow_html=True,
+        )
 
 
 SCANNER_V2_DISPLAY_ORDER = (
