@@ -15,6 +15,14 @@ from mide.scanner_v2 import (
 )
 from mide.memory import MemoryStore
 from mide.flight_recorder import FlightRecorder
+from mide.runtime_evidence import (
+    current_scan_export,
+    json_bytes,
+    read_scans,
+    runtime_file,
+    symbol_history,
+    symbol_summary,
+)
 from mide.demo import demo_records
 from mide.ui import (
     inject_css,
@@ -728,6 +736,74 @@ with tabs[0]:
                 )
 
 with tabs[1]:
+    with st.expander("Runtime Evidence", expanded=False):
+        st.caption(
+            "Read-only exports retain all scans recorded during the trading day/session; "
+            "they do not alter scanner decisions."
+        )
+        runtime_recorder = get_flight_recorder()
+        runtime_scans = read_scans(runtime_recorder.path)
+        current_export = current_scan_export(
+            runtime_scans[-1] if runtime_scans else None
+        )
+        st.download_button(
+            "Download Current Scan JSON",
+            data=json_bytes(current_export),
+            file_name="walter_current_scan.json",
+            mime="application/json",
+            disabled=not runtime_scans,
+        )
+
+        history_symbol = (
+            st.text_input(
+                "Symbol",
+                value=inspect_symbol,
+                placeholder="DFNS",
+                key="runtime_evidence_symbol",
+            )
+            .strip()
+            .upper()
+        )
+        history = (
+            symbol_history(runtime_scans, history_symbol) if history_symbol else []
+        )
+        summary = symbol_summary(history, history_symbol) if history_symbol else None
+        if history_symbol:
+            if summary:
+                st.write(summary)
+            else:
+                st.info(f"No retained runtime records found for {history_symbol}.")
+        st.download_button(
+            "Export Symbol History",
+            data=json_bytes(history),
+            file_name=f"walter_{history_symbol.lower() or 'symbol'}_history.json",
+            mime="application/json",
+            disabled=not history,
+        )
+
+        for label, path, filename in (
+            (
+                "Download Flight Recorder JSONL",
+                runtime_recorder.path,
+                "flight_recorder.jsonl",
+            ),
+            (
+                "Download Candidate History JSONL",
+                get_store().path,
+                "candidate_history.jsonl",
+            ),
+        ):
+            contents, absent_message = runtime_file(path)
+            if contents is None:
+                st.info(absent_message)
+            else:
+                st.download_button(
+                    label,
+                    data=contents,
+                    file_name=filename,
+                    mime="application/x-ndjson",
+                )
+
     st.subheader("Current trigger diagnostics")
     for record in display_records:
         diagnostic = record.get("trigger_diagnostics") or {}
@@ -743,9 +819,12 @@ with tabs[1]:
                     {
                         "Condition": check.get("condition", ""),
                         "Result": "PASS" if check.get("passed") else "FAIL",
-                        "Explanation": check.get("passed_reason")
-                        if check.get("passed")
-                        else check.get("failed_reason") or "Covered by VWAP Distance",
+                        "Explanation": (
+                            check.get("passed_reason")
+                            if check.get("passed")
+                            else check.get("failed_reason")
+                            or "Covered by VWAP Distance"
+                        ),
                     }
                     for check in checks
                 ],
