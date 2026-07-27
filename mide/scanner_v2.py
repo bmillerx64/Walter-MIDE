@@ -622,7 +622,9 @@ def volume_pace_diagnostics(record: dict) -> dict:
         "acceleration_ratio",
         five_minute_volume / expected_five_minute if expected_five_minute > 0 else 1,
     )
-    passed = bool(
+    status = record.get("volume_pace_status") or "available"
+    reason = record.get("volume_pace_reason")
+    passed = status == "available" and bool(
         record.get(
             "volume_pace_passed",
             vpr >= VPI_MIN_PACE_RATIO and acceleration >= VPI_MIN_ACCELERATION_RATIO,
@@ -636,6 +638,8 @@ def volume_pace_diagnostics(record: dict) -> dict:
         "expected_five_minute_volume": round(expected_five_minute),
         "acceleration_ratio": round(acceleration, 2),
         "passed": passed,
+        "status": status,
+        "reason": reason,
         "minimum_volume_pace_ratio": VPI_MIN_PACE_RATIO,
         "minimum_acceleration_ratio": VPI_MIN_ACCELERATION_RATIO,
     }
@@ -670,7 +674,8 @@ def _current_vwap_diagnostics(record: dict, prior: dict | None = None) -> dict:
         "bar_timeframe_source": record.get("vwap_bar_timeframe_source")
         or record.get("bar_timeframe_source")
         or "current intraday bars used for SuperTrend",
-        "gate_passed": passed,
+        "label": "Strengthening VWAP floor",
+        "strengthening_vwap_floor_passed": passed,
         "fresh_reclaim": fresh_reclaim,
         "max_below_tolerance_pct": STRENGTHENING_VWAP_MAX_BELOW_PCT,
     }
@@ -678,7 +683,11 @@ def _current_vwap_diagnostics(record: dict, prior: dict | None = None) -> dict:
 
 def _strengthening_vwap_qualified(record: dict, prior: dict | None = None) -> bool:
     """Return whether current VWAP structure allows Strengthening."""
-    return bool(_current_vwap_diagnostics(record, prior).get("gate_passed"))
+    return bool(
+        _current_vwap_diagnostics(record, prior).get(
+            "strengthening_vwap_floor_passed"
+        )
+    )
 
 
 def _entry_ready_requirements(record: dict, prior: dict | None = None) -> bool:
@@ -1023,11 +1032,11 @@ def structure_gate_diagnostics(record: dict, prior: dict | None = None) -> dict:
     trend = sequential_trend_confirmation(record, prior)
     checks = [
         (
-            "Near VWAP",
+            "Structure proximity to VWAP",
             distance,
             "-1.0 to 2.5%",
             -1.0 <= distance <= 2.5,
-            "Not near VWAP",
+            "Structure proximity to VWAP failed",
         ),
         (
             "Fresh or sequential SuperTrend confirmation",
@@ -1047,11 +1056,11 @@ def structure_gate_diagnostics(record: dict, prior: dict | None = None) -> dict:
             "SuperTrend not confirmed",
         ),
         (
-            "Not materially extended",
+            "Structure extension limit",
             distance,
             "<= 2.5%",
             distance <= 2.5,
-            "Materially extended",
+            "Structure extension limit failed",
         ),
         (
             "Healthy price structure",
