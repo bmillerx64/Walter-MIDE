@@ -187,7 +187,9 @@ def test_scanner_v2_rewards_developing_momentum_without_completed_setup():
         "cautions": [],
     }
     ranked = apply_scanner_v2([record], {})
-    assert ranked[0]["candidate_status"] in {"Watching", "Emerging", "Strengthening"}
+    assert ranked[0]["candidate_status"] == "Waiting for Structure"
+    assert ranked[0]["raw_candidate_state"] == "Strengthening"
+    assert ranked[0]["qualified_for_ranking"] is False
     assert "accelerating volume" in " ".join(ranked[0]["reasons"])
 
 
@@ -378,6 +380,7 @@ def test_scanner_v2_no_promotion_delta_when_state_is_unchanged():
         **base(
             vwap_relation="below", supertrend_bullish=False, supertrend_flip=False
         ).__dict__,
+        "supertrend_30s_flip": True,
         "opportunity_score": 72,
         "status": "MONITOR",
         "timeframes": {},
@@ -491,6 +494,7 @@ def test_scanner_v2_timer_starts_when_entering_timed_state():
         **base(
             vwap_relation="below", supertrend_bullish=False, supertrend_flip=False
         ).__dict__,
+        "supertrend_30s_flip": True,
         "opportunity_score": 55,
         "status": "PASS",
         "timeframes": {},
@@ -568,6 +572,7 @@ def test_scanner_v2_timer_continues_across_automatic_scans():
         **base(
             vwap_relation="below", supertrend_bullish=False, supertrend_flip=False
         ).__dict__,
+        "supertrend_30s_flip": True,
         "opportunity_score": 55,
         "status": "PASS",
         "timeframes": {},
@@ -598,6 +603,7 @@ def test_scanner_v2_sorts_newest_promotions_within_state():
             supertrend_bullish=False,
             supertrend_flip=False,
         ).__dict__,
+        "supertrend_30s_flip": True,
         "opportunity_score": 55,
         "status": "PASS",
         "timeframes": {},
@@ -611,6 +617,7 @@ def test_scanner_v2_sorts_newest_promotions_within_state():
             supertrend_bullish=False,
             supertrend_flip=False,
         ).__dict__,
+        "supertrend_30s_flip": True,
         "opportunity_score": 55,
         "status": "PASS",
         "timeframes": {},
@@ -659,6 +666,7 @@ def test_scanner_v2_sort_normalizes_mixed_prior_state_entered_values():
             supertrend_bullish=False,
             supertrend_flip=False,
         ).__dict__,
+        "supertrend_30s_flip": True,
         "opportunity_score": 55,
         "status": "PASS",
         "timeframes": {},
@@ -672,6 +680,7 @@ def test_scanner_v2_sort_normalizes_mixed_prior_state_entered_values():
             supertrend_bullish=False,
             supertrend_flip=False,
         ).__dict__,
+        "supertrend_30s_flip": True,
         "opportunity_score": 55,
         "status": "PASS",
         "timeframes": {},
@@ -775,6 +784,7 @@ def test_scanner_v2_transition_history_updates_when_state_does_not_change():
         **base(
             vwap_relation="below", supertrend_bullish=False, supertrend_flip=False
         ).__dict__,
+        "supertrend_30s_flip": True,
         "opportunity_score": 55,
         "status": "PASS",
         "timeframes": {},
@@ -818,6 +828,7 @@ def test_scanner_v2_transition_history_resets_after_symbol_reenters_scanner():
         **base(
             vwap_relation="below", supertrend_bullish=False, supertrend_flip=False
         ).__dict__,
+        "supertrend_30s_flip": True,
         "opportunity_score": 55,
         "status": "PASS",
         "timeframes": {},
@@ -1750,3 +1761,90 @@ def test_participation_passing_record_remains_actionable_and_mixed_inputs_are_sp
     assert [
         record["symbol"] for record in rejected_candidate_records(scanner_output)
     ] == ["REJECT"]
+
+
+def test_structure_failure_keeps_raw_strengthening_but_is_not_actionable():
+    from datetime import datetime, timezone
+
+    from app import scan_alert_phrase
+    from mide.scanner_v2 import apply_scanner_v2, strengthening_decision
+    from mide.ui import actionable_candidate_records, scanner_v2_dashboard_counts
+
+    record = {
+        **base(symbol="WAIT", higher_lows=False, near_hod=False).__dict__,
+        "expansion_quality": 40,
+        "opportunity_score": 90,
+        "participation_score": 95,
+        "status": "ALERT",
+        "timeframes": {"1m": {"above_vwap": True, "supertrend": True}},
+        "reasons": [],
+        "cautions": [],
+    }
+
+    result = apply_scanner_v2(
+        [record], {}, datetime(2026, 7, 24, 14, 0, tzinfo=timezone.utc)
+    )[0]
+
+    assert result["participation_gate"]["passed"] is True
+    assert result["structure_gate"]["passed"] is False
+    assert result["qualified_for_ranking"] is False
+    assert result["candidate_status"] == "Waiting for Structure"
+    assert result["raw_candidate_state"] == "Strengthening"
+    assert actionable_candidate_records([result]) == []
+    assert scanner_v2_dashboard_counts([result])["strengthening"] == 0
+    assert scan_alert_phrase([result]) == ""
+
+    diagnostic = strengthening_decision(result)
+    assert diagnostic["accepted"] is False
+    assert diagnostic["status"] == (
+        "Rejected from Strengthening — Waiting for Structure"
+    )
+    assert diagnostic["failed_structure_gate_reasons"] == [
+        "Price structure not healthy"
+    ]
+
+
+def test_structure_pass_allows_actionable_strengthening_and_legacy_acceptance():
+    from datetime import datetime, timezone
+
+    from mide.scanner_v2 import apply_scanner_v2, strengthening_decision
+
+    record = {
+        **base(symbol="READY").__dict__,
+        "opportunity_score": 90,
+        "participation_score": 95,
+        "status": "ALERT",
+        "timeframes": {"1m": {"above_vwap": True, "supertrend": True}},
+        "reasons": [],
+        "cautions": [],
+    }
+
+    result = apply_scanner_v2(
+        [record], {}, datetime(2026, 7, 24, 14, 0, tzinfo=timezone.utc)
+    )[0]
+
+    assert result["participation_gate"]["passed"] is True
+    assert result["structure_gate"]["passed"] is True
+    assert result["qualified_for_ranking"] is True
+    assert result["candidate_status"] == "Strengthening"
+    assert result["raw_candidate_state"] == "Strengthening"
+    assert strengthening_decision(result)["status"] == "Accepted for Strengthening"
+
+
+def test_legacy_diagnostic_never_accepts_unqualified_actionable_label():
+    from mide.scanner_v2 import strengthening_decision
+
+    diagnostic = strengthening_decision(
+        {
+            "symbol": "STALE",
+            "candidate_status": "Strengthening",
+            "qualified_for_ranking": False,
+            "structure_gate": {
+                "passed": False,
+                "failed_reasons": ["SuperTrend not confirmed"],
+            },
+        }
+    )
+
+    assert diagnostic["accepted"] is False
+    assert diagnostic["status"] != "Accepted for Strengthening"
