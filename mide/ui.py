@@ -129,12 +129,22 @@ def inject_css():
     @keyframes entry-window-pulse{0%,100%{box-shadow:0 0 0 rgba(74,222,128,0)}25%,70%{box-shadow:0 0 30px rgba(74,222,128,.75);border-color:#86efac}}
     @media(prefers-reduced-motion:reduce){.mission-condition-met,.entry-window-pulse{animation:none}}
     .mission-ignore {margin-top:11px;padding-top:10px;border-top:1px solid #273548;color:#94a3b8;font-size:.82rem}
+    .control-header {background:linear-gradient(145deg,#0b1722,#0a1018);border:1px solid #334155;border-top:4px solid #38bdf8;border-radius:14px;padding:15px 18px;margin:2px 0 10px;box-shadow:0 12px 30px rgba(0,0,0,.22)}
+    .control-heading {display:flex;align-items:flex-end;justify-content:space-between;gap:14px;flex-wrap:wrap}
+    .control-title {font-size:1.55rem;line-height:1.15;font-weight:950;color:#f8fafc}.control-version{font-size:.84rem;color:#7dd3fc;font-weight:900;margin-top:3px}
+    .control-engine {font-size:.78rem;letter-spacing:.08em;text-transform:uppercase;color:#94a3b8;font-weight:850}
+    .control-strip {display:grid;grid-template-columns:repeat(9,minmax(84px,1fr));gap:7px;margin-top:13px}
+    .control-stat {background:#0c121a;border:1px solid #253244;border-radius:8px;padding:8px 9px;min-width:0}
+    .control-stat-label {font-size:.62rem;letter-spacing:.08em;text-transform:uppercase;color:#8291a5;font-weight:900;white-space:nowrap}
+    .control-stat-value {font-size:.96rem;color:#f8fafc;font-weight:950;margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-variant-numeric:tabular-nums}
+    .control-live{color:#4ade80}.control-demo{color:#facc15}
     .escalation-card {background:#0b131d;border:1px solid #334155;border-left:6px solid var(--escalation-color);border-radius:11px;padding:13px 15px;margin:8px 0}
     .escalation-top {display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap}
     .escalation-symbol {font-size:1.35rem;font-weight:950;color:#f8fafc}.escalation-state {font-weight:950;color:var(--escalation-color)}
     .escalation-trend {font-size:.82rem;color:#cbd5e1;font-weight:800}.escalation-details {display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:9px}
     .escalation-list {list-style:none;padding:0;margin:5px 0 0;display:grid;gap:3px;font-size:.83rem}.delta-up{color:#86efac}.delta-down{color:#fca5a5}
-    @media(max-width:760px){.mission-grid{grid-template-columns:1fr}}
+    @media(max-width:1050px){.control-strip{grid-template-columns:repeat(3,1fr)}}
+    @media(max-width:760px){.mission-grid{grid-template-columns:1fr}.control-strip{grid-template-columns:repeat(2,1fr)}}
     @media(max-width:760px){.escalation-details{grid-template-columns:1fr}}
     </style>
     """,
@@ -269,6 +279,46 @@ def metric_strip(records):
     cols[2].metric("Watch list", metrics["watch_list"])
     cols[3].metric("Strengthening", metrics["strengthening"])
     cols[4].metric("Entry ready", metrics["entry_ready"])
+
+
+def mission_control_header_markup(
+    *,
+    live: bool,
+    market_phase: str,
+    market_time: str,
+    symbols_sampled: int,
+    prefilter_count: int,
+    candidate_count: int,
+    focus_count: int,
+    escalation_count: int,
+    next_scan: str,
+) -> str:
+    """Build the compact, presentation-only Mission Control header."""
+    status = "🟢 LIVE" if live else "🟡 DEMO"
+    status_class = "control-live" if live else "control-demo"
+    stats = (
+        ("Status", status, status_class),
+        ("Market phase", market_phase, ""),
+        ("Market time", market_time, ""),
+        ("Symbols", str(symbols_sampled), ""),
+        ("Prefiltered", str(prefilter_count), ""),
+        ("Candidates", str(candidate_count), ""),
+        ("Focus", str(focus_count), ""),
+        ("Escalating", str(escalation_count), ""),
+        ("Next scan", next_scan, ""),
+    )
+    strip = "".join(
+        f"<div class='control-stat'><div class='control-stat-label'>{html.escape(label)}</div>"
+        f"<div class='control-stat-value {css_class}'>{html.escape(value)}</div></div>"
+        for label, value, css_class in stats
+    )
+    return (
+        "<div class='control-header'><div class='control-heading'><div>"
+        "<div class='control-title'>🛰 Walter • MIDE Radar</div>"
+        "<div class='control-version'>v3.0 Beta — Mission Control</div></div>"
+        "<div class='control-engine'>Market Intelligence Decision Engine</div></div>"
+        f"<div class='control-strip'>{strip}</div></div>"
+    )
 
 
 def radar_table(records):
@@ -877,11 +927,17 @@ def _mission_band(record: dict, conditions: list[dict]) -> str:
 
 def _mission_status(record: dict, band: str, conditions: list[dict]) -> str:
     if band == "ignore":
-        return (
-            "Too extended"
-            if float(record.get("vwap_distance_pct", 0) or 0) > 5
-            else "No actionable setup"
+        if float(record.get("vwap_distance_pct", 0) or 0) > 5:
+            return "Too extended"
+        participation = _bounded_score(
+            record.get("participation_surge_score", record.get("participation_score", 0))
         )
+        if participation < 50:
+            return "Low participation"
+        expansion = _bounded_score(record.get("expansion_quality", 0))
+        if expansion < 50:
+            return "Weak expansion"
+        return "No actionable setup"
     remaining = [item["label"] for item in conditions if not item["passed"]]
     if not remaining:
         return "Setup conditions aligned — review the chart"
@@ -980,7 +1036,7 @@ def render_walter_mission_control(records: list[dict]) -> None:
     mission = walter_mission_control(records)
     if not mission["primary"]:
         st.markdown(
-            "<div class='mission-shell'><div class='mission-title'>🎯 Walter's Focus</div>No stock deserves elevated attention right now.</div>",
+            "<div class='mission-shell'><div class='mission-title'>🎯 TODAY'S MISSION</div>No stock deserves elevated attention right now.</div>",
             unsafe_allow_html=True,
         )
         return
@@ -995,10 +1051,10 @@ def render_walter_mission_control(records: list[dict]) -> None:
             for item in ignored[:3]
         )
         ignore_markup = (
-            f"<div class='mission-ignore'><b>IGNORE FOR NOW</b> · {names}</div>"
+            f"<div class='mission-ignore'><b>IGNORE TODAY</b> · {names}</div>"
         )
     st.markdown(
-        f"<div class='mission-shell'><div class='mission-title'>🎯 Walter's Focus</div><div class='mission-grid'>{targets}</div>{ignore_markup}</div>",
+        f"<div class='mission-shell'><div class='mission-title'>🎯 TODAY'S MISSION</div><div class='mission-grid'>{targets}</div>{ignore_markup}</div>",
         unsafe_allow_html=True,
     )
 

@@ -1,5 +1,6 @@
 from mide import ui
 from mide.ui import (
+    mission_control_header_markup,
     opportunity_pulse,
     radar_table,
     state_sections,
@@ -267,6 +268,34 @@ def test_mission_control_separates_extended_symbols_into_ignore():
     assert [(item["symbol"], item["status"]) for item in mission["ignored"]] == [
         ("CHASE", "Too extended")
     ]
+
+
+def test_mission_control_header_contains_compact_operational_status():
+    markup = mission_control_header_markup(
+        live=True,
+        market_phase="Live Market",
+        market_time="9:31:18 AM EDT",
+        symbols_sampled=674,
+        prefilter_count=88,
+        candidate_count=10,
+        focus_count=2,
+        escalation_count=1,
+        next_scan="00:18",
+    )
+
+    assert "Walter • MIDE Radar" in markup
+    assert "v3.0 Beta — Mission Control" in markup
+    assert "Market Intelligence Decision Engine" in markup
+    for value in ("🟢 LIVE", "Live Market", "674", "88", "10", "2", "1", "00:18"):
+        assert value in markup
+
+
+def test_ignore_today_explains_non_actionable_quality():
+    mission = walter_mission_control(
+        [sample_record(symbol="THIN", candidate_status="Weakening", participation_score=30)]
+    )
+
+    assert mission["ignored"][0]["status"] == "Low participation"
 
 
 def test_opportunity_meter_shows_only_remaining_condition_and_change_flash():
