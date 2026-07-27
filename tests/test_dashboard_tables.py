@@ -324,8 +324,8 @@ def test_opportunity_meter_shows_only_remaining_condition_and_change_flash():
 
     assert "Opportunity Meter" in markup
     assert "aria-valuenow='" in markup
-    assert "One Thing Left" in markup
-    assert "Waiting for SuperTrend flip" in markup
+    assert "NEXT:" in markup
+    assert "SuperTrend flip" in markup
     assert "VWAP reclaim achieved ✓" in markup
     assert "mission-condition-met" in markup
     assert "Ready checklist" not in markup
@@ -351,7 +351,7 @@ def test_opportunity_meter_pulses_when_entry_window_first_opens():
 
     assert "ENTRY WINDOW OPEN" in markup
     assert "entry-window-pulse" in markup
-    assert "Thing Left" not in markup
+    assert "NEXT:" not in markup
 
 
 def test_hot_list_renders_priority_score_as_confidence_meter(monkeypatch):

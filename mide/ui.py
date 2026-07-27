@@ -120,8 +120,8 @@ def inject_css():
     .opportunity-meter-label{font-size:.68rem;letter-spacing:.12em;text-transform:uppercase;color:#aab7c7;font-weight:950}.opportunity-meter-value{font-size:1.55rem;color:#f8fafc;font-weight:950;font-variant-numeric:tabular-nums}
     .opportunity-meter-track{height:15px;overflow:hidden;background:#202a36;border:1px solid #3b4a5c;border-radius:999px;box-shadow:inset 0 2px 4px rgba(0,0,0,.35)}
     .opportunity-meter-fill{height:100%;width:var(--opportunity);background:linear-gradient(90deg,#ca8a04,#facc15);border-radius:999px;transition:width .55s ease}
-    .mission-remaining-title{font-size:1.03rem;letter-spacing:.08em;text-transform:uppercase;color:#fde047;font-weight:950;margin-top:8px}
-    .mission-needs{list-style:none;margin:6px 0 0;padding:0;display:grid;gap:4px}.mission-needs li{color:#f8fafc;font-size:.91rem;font-weight:800}
+    .mission-remaining-title{font-size:.72rem;letter-spacing:.12em;text-transform:uppercase;color:#fde047;font-weight:950;margin-top:8px}
+    .mission-needs{margin-top:7px;display:grid;gap:7px}.mission-next-label{display:block;color:#fde047;font-size:.65rem;letter-spacing:.12em;font-weight:950}.mission-next-value{display:block;color:#f8fafc;font-size:1rem;font-weight:900;line-height:1.2;margin-top:1px}
     .mission-condition-met{display:inline-block;color:#86efac;font-size:.84rem;font-weight:900;margin-top:8px;animation:condition-flash 1.35s ease-out 1}
     .entry-window-open{margin:10px 0 5px;padding:11px 12px;text-align:center;border:1px solid #4ade80;border-radius:8px;background:#064e3b;color:#dcfce7;font-size:1.15rem;font-weight:950;letter-spacing:.11em}
     .entry-window-pulse{animation:entry-window-pulse 2s ease-out 1}
@@ -1007,11 +1007,12 @@ def _mission_target_markup(item: dict, role: str) -> str:
         for condition in item["conditions"]
         if condition["passed"] and previous_conditions.get(condition["label"]) is False
     ]
-    count_words = {1: "One", 2: "Two"}
-    remaining_title = f"{count_words.get(remaining, str(remaining))} Thing{'s' if remaining != 1 else ''} Left"
+    remaining_title = f"🟡 {item['confidence']}%"
+    step_labels = ("NEXT:", "AFTER THAT:")
     needs = "".join(
-        f"<li>• Waiting for {html.escape(condition['label'])}</li>"
-        for condition in remaining_conditions
+        f"<div><span class='mission-next-label'>{step_labels[index] if index < len(step_labels) else 'THEN:'}</span>"
+        f"<span class='mission-next-value'>{html.escape(condition['label'])}</span></div>"
+        for index, condition in enumerate(remaining_conditions)
     )
     changed = "".join(
         f"<div class='mission-condition-met'>{html.escape(label)} achieved ✓</div>"
@@ -1024,7 +1025,7 @@ def _mission_target_markup(item: dict, role: str) -> str:
     state_markup = (
         f"<div class='entry-window-open{' entry-window-pulse' if just_opened else ''}'>ENTRY WINDOW OPEN</div>"
         if item["band"] == "trade_soon"
-        else f"<div class='mission-remaining-title'>{remaining_title}</div><ul class='mission-needs'>{needs}</ul>"
+        else f"<div class='mission-remaining-title'>{remaining_title}</div><div class='mission-needs'>{needs}</div>"
     )
     return (
         f"<div class='mission-target{' entry-window-pulse' if just_opened else ''}' style='--mission-color:{color}'>"
