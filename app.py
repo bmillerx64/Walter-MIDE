@@ -15,6 +15,7 @@ from mide.scanner_v2 import (
 )
 from mide.memory import MemoryStore
 from mide.flight_recorder import FlightRecorder
+from mide.runtime_history import read_runtime_history
 from mide.demo import demo_records
 from mide.ui import (
     inject_css,
@@ -728,6 +729,29 @@ with tabs[0]:
                 )
 
 with tabs[1]:
+    st.subheader("Runtime History")
+    candidate_history = read_runtime_history(get_store().path)
+    flight_recorder_history = read_runtime_history(get_flight_recorder().path)
+    history_columns = st.columns(2)
+    history_columns[0].download_button(
+        "Download Candidate History JSONL",
+        data=candidate_history or b"",
+        file_name="candidate_history.jsonl",
+        mime="application/x-ndjson",
+        disabled=candidate_history is None,
+        use_container_width=True,
+    )
+    history_columns[1].download_button(
+        "Download Flight Recorder JSONL",
+        data=flight_recorder_history or b"",
+        file_name="flight_recorder.jsonl",
+        mime="application/x-ndjson",
+        disabled=flight_recorder_history is None,
+        use_container_width=True,
+    )
+    if candidate_history is None or flight_recorder_history is None:
+        st.info("Runtime history not available.")
+
     st.subheader("Current trigger diagnostics")
     for record in display_records:
         diagnostic = record.get("trigger_diagnostics") or {}
