@@ -34,7 +34,6 @@ from mide.escalation import (
 )
 from mide.ui import (
     inject_css,
-    metric_strip,
     radar_table,
     opportunity_card,
     play_alert,
@@ -357,6 +356,9 @@ settings = Settings.from_mapping(secrets_mapping())
 
 mission_header_slot = st.empty()
 mission_plan_slot = st.empty()
+escalation_engine_slot = st.empty()
+system_status_panel = st.expander("System Status", expanded=False)
+scan_runtime_slot = system_status_panel.container()
 
 session_defaults = {
     "records": [],
@@ -597,14 +599,16 @@ def run_live(scanner_version: str = "Scanner V2 (adaptive momentum)"):
         raise AlpacaError("Alpaca credentials are not configured in Streamlit Secrets.")
 
     client = AlpacaClient(api_key, secret, feed=settings.feed, timeout=12)
-    status = st.status("Walter is scanning…", expanded=True)
+    with scan_runtime_slot:
+        status = st.status("Walter is scanning…", expanded=True)
     try:
         environment = credential_status(client)
         status.write(f"Alpaca credentials accepted ({environment} environment)")
         log(f"Credentials accepted by Alpaca {environment} environment")
     except Exception as exc:
         raise AlpacaError(str(exc)) from exc
-    progress = st.progress(0, text="Starting")
+    with scan_runtime_slot:
+        progress = st.progress(0, text="Starting")
 
     log("Stage 1/5: fetching news")
     status.write("1/5 Fetching recent news")
@@ -758,31 +762,7 @@ api_warnings = st.session_state.api_warnings
 scan_diagnostics = st.session_state.scan_diagnostics
 updated = st.session_state.last_updated
 updated_text = format_eastern_time(updated)
-st.markdown(
-    f"<div class='stCaption'>{html.escape(st.session_state.source_label)} · Last Scan "
-    f"<span id='walter-last-scan'>{html.escape(updated_text)}</span></div>",
-    unsafe_allow_html=True,
-)
-
-if not records:
-    if updated:
-        st.warning("The scan completed but produced no ranked records.")
-        if scan_diagnostics:
-            st.subheader("Scan diagnostics")
-            st.json(scan_diagnostics)
-        for warning in api_warnings:
-            st.warning(warning)
-    else:
-        st.info(
-            "Dashboard loaded successfully. Walter will scan automatically in live mode, or press **Run live scan** to begin now."
-        )
-    # Continue rendering the Diagnostics tab: a zero-result scan can still
-    # contain the most useful flight-recorder failure paths.
-
 clock = market_clock()
-st.info(
-    f"{clock.banner_text}. Rankings describe evidence; they are not trade instructions."
-)
 
 actionable_records = actionable_candidate_records(records)
 rejected_records = rejected_candidate_records(records)
@@ -829,7 +809,39 @@ arm_live_clock_engine(
     updated,
 )
 
-with st.expander("Legacy candidate diagnostics", expanded=False):
+with escalation_engine_slot:
+    render_escalation_engine(actionable_records)
+
+with system_status_panel:
+    st.markdown(
+        f"**Last Scan:** <span id='walter-last-scan'>{html.escape(updated_text)}</span>",
+        unsafe_allow_html=True,
+    )
+    status_columns = st.columns(3)
+    status_columns[0].metric("Symbols Sampled", st.session_state.symbols_sampled)
+    status_columns[1].metric("Prefiltered", st.session_state.prefilter_count)
+    status_columns[2].metric("Ranked", len(records))
+    st.caption(st.session_state.source_label)
+    if updated:
+        st.success(f"Scan Complete · {len(records)} ranked records")
+        st.progress(1.0, text="Progress: complete")
+    else:
+        st.progress(0.0, text="Progress: waiting for first scan")
+
+    if not records:
+        if updated:
+            st.warning("The scan completed but produced no ranked records.")
+            if scan_diagnostics:
+                st.subheader("Scan diagnostics")
+                st.json(scan_diagnostics)
+            for warning in api_warnings:
+                st.warning(warning)
+        else:
+            st.info(
+                "Dashboard loaded successfully. Walter will scan automatically in live mode, or press **Run live scan** to begin now."
+            )
+
+    st.markdown("#### Legacy Candidate Diagnostics")
     if inspect_symbol:
         st.subheader(f"Symbol lookup: {inspect_symbol}")
         match = next((r for r in records if r.get("symbol") == inspect_symbol), None)
@@ -895,9 +907,8 @@ with st.expander("Legacy candidate diagnostics", expanded=False):
                     st.json(decision.get("vwap_gate"))
     elif not inspect_symbol:
         st.caption("No diagnostics recorded for this scan yet.")
+    st.caption(f"{clock.phase} — Rankings describe evidence only.")
 
-render_escalation_engine(actionable_records)
-metric_strip(actionable_records)
 state_changes = escalation_state_changes(actionable_records)
 state_change_signature = "|".join(
     f"{item['symbol']}:{item['from']}->{item['to']}" for item in state_changes
