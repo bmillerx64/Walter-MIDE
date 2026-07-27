@@ -630,6 +630,11 @@ def run_live(scanner_version: str = "Scanner V2 (adaptive momentum)"):
         "funnel": flight_scan["funnel"],
     }
     store.append(records)
+    # Preserve the immediately previous evidence only for the display layer. This
+    # is attached after persistence so it cannot affect Scanner V2 or compound in
+    # candidate history across refreshes.
+    for record in records:
+        record["opportunity_pulse_previous"] = previous.get(record["symbol"], {})
     progress.progress(1.0, text="Scan complete")
     status.update(
         label=f"Scan complete: {len(records)} ranked records",

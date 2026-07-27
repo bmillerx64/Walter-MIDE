@@ -95,7 +95,14 @@ def inject_css():
     .hot-confidence-label.hot-confidence-green {color:#4ade80;background:none}
     .hot-confidence-label.hot-confidence-yellow {color:#facc15;background:none}
     .hot-confidence-label.hot-confidence-red {color:#f87171;background:none}
-    .hot-state {display:inline-block;background:#172033;border:1px solid #4b5f78;border-radius:999px;padding:3px 9px;margin:7px 0;color:#f8fafc;font-size:.82rem;font-weight:900}
+    .opportunity-pulse {display:inline-flex;align-items:center;gap:7px;border-radius:999px;padding:5px 10px;margin:7px 0;font-size:.78rem;font-weight:950;letter-spacing:.07em}
+    .pulse-green {color:#86efac;background:#073b2a;border:1px solid #22c55e;animation:opportunity-pulse-fade 1.15s ease-out 1}
+    .pulse-yellow {color:#fde047;background:#3b3008;border:1px solid #ca8a04}
+    .pulse-red {color:#fca5a5;background:#450a0a;border:1px solid #ef4444;animation:opportunity-pulse-fade 1.15s ease-out 1}
+    .pulse-dot {font-size:.82rem;line-height:1}
+    .pulse-delta {font-variant-numeric:tabular-nums;color:#f8fafc}
+    @keyframes opportunity-pulse-fade {0%{box-shadow:0 0 0 0 currentColor;filter:brightness(1.45)}55%{box-shadow:0 0 18px 2px currentColor}100%{box-shadow:0 0 0 0 transparent;filter:brightness(1)}}
+    @media (prefers-reduced-motion:reduce){.pulse-green,.pulse-red{animation:none}}
     .hot-heading {font-size:.68rem;text-transform:uppercase;letter-spacing:.09em;color:#aeb9c7;font-weight:900;margin-top:8px}
     .hot-reason {color:#dcfce7;font-size:.90rem;font-weight:750;line-height:1.45}
     .hot-need {color:#fecaca;font-size:.90rem;font-weight:750;line-height:1.4}
@@ -663,6 +670,58 @@ def _hot_limiter(record: dict) -> str | None:
     return None
 
 
+def _pulse_metric(record: dict, *keys: str) -> float | None:
+    for key in keys:
+        value = record.get(key)
+        if value is not None:
+            return float(value)
+    return None
+
+
+def opportunity_pulse(record: dict) -> dict:
+    """Compare display evidence with the prior scan; never change qualification."""
+    previous = record.get("opportunity_pulse_previous") or {}
+    if not previous:
+        return {"label": "STABLE", "color": "yellow", "delta": 0}
+
+    pairs = (
+        (
+            (_pulse_metric(record, "participation_surge_score", "participation_score")),
+            _pulse_metric(previous, "participation_surge_score", "participation_score"),
+        ),
+        (
+            (_pulse_metric(record, "expansion_quality")),
+            _pulse_metric(previous, "expansion_quality"),
+        ),
+        (
+            (float(hot_list_priority_score(record))),
+            float(hot_list_priority_score(previous)),
+        ),
+        (
+            (_pulse_metric(record, "conviction_v2_score", "conviction_score")),
+            _pulse_metric(previous, "conviction_v2_score", "conviction_score"),
+        ),
+    )
+    deltas = [
+        current - prior
+        for current, prior in pairs
+        if current is not None and prior is not None
+    ]
+    if not deltas:
+        return {"label": "STABLE", "color": "yellow", "delta": 0}
+
+    improving = sum(delta > 3 for delta in deltas)
+    deteriorating = sum(delta < -3 for delta in deltas)
+    major_deterioration = any(delta <= -7 for delta in deltas)
+    conviction_delta = pairs[-1][0] - pairs[-1][1] if None not in pairs[-1] else 0
+    trend_delta = round(sum(deltas) / len(deltas))
+    if deteriorating >= 2 or conviction_delta < -3:
+        return {"label": "LOSING MOMENTUM", "color": "red", "delta": trend_delta}
+    if improving >= 2 and not major_deterioration:
+        return {"label": "ACCELERATING", "color": "green", "delta": trend_delta}
+    return {"label": "STABLE", "color": "yellow", "delta": trend_delta}
+
+
 def walter_hot_list(records: list[dict]) -> list[dict]:
     """Return at most three already-qualified symbols, ordered by state then score."""
     ranked = []
@@ -675,6 +734,7 @@ def walter_hot_list(records: list[dict]) -> list[dict]:
                 "symbol": str(record.get("symbol") or "").upper(),
                 "state": state,
                 "priority_score": hot_list_priority_score(record),
+                "pulse": opportunity_pulse(record),
                 "reasons": _hot_reasons(record),
                 "limiting_factor": _hot_limiter(record),
             }
@@ -719,6 +779,13 @@ def render_walter_hot_list(records: list[dict]) -> None:
             for reason in item["reasons"]
         )
         limiter = item["limiting_factor"]
+        pulse = item.get("pulse") or {"label": "STABLE", "color": "yellow", "delta": 0}
+        delta = int(pulse["delta"])
+        pulse_markup = (
+            f"<div class='opportunity-pulse pulse-{pulse['color']}' aria-label='Opportunity pulse: {html.escape(pulse['label'])}, trend {delta:+d}'>"
+            f"<span class='pulse-dot' aria-hidden='true'>●</span><span>{html.escape(pulse['label'])}</span>"
+            f"<span class='pulse-delta'>{delta:+d}</span></div>"
+        )
         needs = (
             f"<div class='hot-heading'>Needs</div><div class='hot-need'>{html.escape(limiter)}</div>"
             if limiter
@@ -733,7 +800,7 @@ def render_walter_hot_list(records: list[dict]) -> None:
             f"<div class='hot-confidence-fill {confidence_class}' style='--confidence:{score}%'></div></div>"
             f"<div class='hot-confidence-result'><span class='hot-confidence-percent'>{score}%</span>"
             f"<span class='hot-confidence-label {confidence_class}'>{confidence_label}</span></div></div>"
-            f"<div class='hot-state'>{html.escape(item['state'])}</div>"
+            f"{pulse_markup}"
             f"<div class='hot-heading'>Why Walter likes it</div>{reasons}{needs}</div>",
             unsafe_allow_html=True,
         )
