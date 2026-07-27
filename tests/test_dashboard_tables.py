@@ -1,5 +1,5 @@
 from mide import ui
-from mide.ui import radar_table, state_sections, summary_reasons
+from mide.ui import radar_table, state_sections, summary_reasons, walter_hot_list
 
 
 def sample_record(**overrides):
@@ -135,6 +135,80 @@ def test_workflow_section_ranks_by_additive_opportunity_score():
         "HIGH",
         "LOW",
     ]
+
+
+def test_hot_list_ranks_by_state_before_dynamic_priority_score():
+    records = [
+        sample_record(
+            symbol="CAND",
+            candidate_status="Emerging",
+            participation_surge_score=99,
+            expansion_quality=99,
+        ),
+        sample_record(
+            symbol="READY",
+            candidate_status="Entry Ready",
+            participation_surge_score=50,
+            expansion_quality=50,
+        ),
+        sample_record(
+            symbol="STR",
+            candidate_status="Strengthening",
+            participation_surge_score=95,
+            expansion_quality=95,
+        ),
+        sample_record(
+            symbol="WATCH",
+            candidate_status="Watching",
+            participation_surge_score=98,
+            expansion_quality=98,
+        ),
+    ]
+
+    hot = walter_hot_list(records)
+
+    assert [item["symbol"] for item in hot] == ["READY", "STR", "WATCH"]
+    assert all(0 <= item["priority_score"] <= 100 for item in hot)
+
+
+def test_hot_list_fresh_catalyst_can_outweigh_stronger_raw_metrics():
+    no_news = sample_record(
+        symbol="RAW",
+        candidate_status="Strengthening",
+        participation_surge_score=95,
+        expansion_quality=88,
+        vwap_distance_pct=0.2,
+        headline="",
+        market_dominance_score=0,
+    )
+    catalyst = sample_record(
+        symbol="NEWS",
+        candidate_status="Strengthening",
+        participation_surge_score=82,
+        expansion_quality=79,
+        vwap_distance_pct=0.8,
+        headline="FDA clearance",
+        catalyst_score=10,
+        news_age_hours=1,
+        market_dominance_score=0,
+    )
+
+    hot = walter_hot_list([no_news, catalyst])
+
+    assert [item["symbol"] for item in hot] == ["NEWS", "RAW"]
+    assert hot[0]["reasons"][0] == "Fresh news catalyst"
+
+
+def test_hot_list_excludes_rejected_and_weak_symbols_without_placeholders():
+    records = [
+        sample_record(symbol="ONLY", candidate_status="Watching"),
+        sample_record(
+            symbol="REJECT", candidate_status="Emerging", qualified_for_watch=False
+        ),
+        sample_record(symbol="WEAK", candidate_status="Weakening"),
+    ]
+
+    assert [item["symbol"] for item in walter_hot_list(records)] == ["ONLY"]
 
 
 def test_opportunity_card_makes_current_trend_history_and_action_context_explicit(
