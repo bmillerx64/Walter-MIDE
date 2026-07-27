@@ -21,6 +21,11 @@ from .scoring import Evidence, score
 from .flight_recorder import prefilter_decision
 
 
+# Fourteen calendar days reliably covers at least five completed U.S. trading
+# sessions across weekends and ordinary exchange holidays.
+VOLUME_PROFILE_LOOKBACK_DAYS = 14
+
+
 def _value(obj, *path, default=None):
     cur = obj
     for key in path:
@@ -249,7 +254,7 @@ def apply_attention_ranking(records):
 def analyze_candidates(client, candidates, news_index, discovery_reasons):
     if not candidates:
         return []
-    start = datetime.now(timezone.utc) - timedelta(days=2)
+    start = datetime.now(timezone.utc) - timedelta(days=VOLUME_PROFILE_LOOKBACK_DAYS)
     symbols = [
         x["symbol"] for x in candidates[:80] if is_valid_us_symbol(x.get("symbol"))
     ]
@@ -362,6 +367,8 @@ def analyze_candidates(client, candidates, news_index, discovery_reasons):
                 "expected_five_minute_volume": round(vpi.expected_5m_volume),
                 "acceleration_ratio": round(vpi.acceleration_ratio, 2),
                 "volume_pace_passed": vpi.passed,
+                "volume_pace_status": vpi.status,
+                "volume_pace_reason": vpi.reason,
                 **surge_metrics,
             }
         )

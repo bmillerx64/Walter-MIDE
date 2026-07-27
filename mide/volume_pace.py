@@ -21,6 +21,8 @@ class VolumePaceMetrics:
     expected_5m_volume: float
     acceleration_ratio: float
     passed: bool
+    status: str
+    reason: str | None
 
 
 def _minute_of_day(index: pd.DatetimeIndex) -> pd.Index:
@@ -93,29 +95,52 @@ def historical_volume_profile(
 
 
 def volume_pace_metrics(symbol: str, frame: pd.DataFrame) -> VolumePaceMetrics:
+    def unavailable(reason: str) -> VolumePaceMetrics:
+        return VolumePaceMetrics(0, 0, 0, 0, 0, 0, False, "unavailable", reason)
+
     if frame.empty or "volume" not in frame:
-        return VolumePaceMetrics(0, 0, 1, 0, 0, 1, False)
+        return unavailable("missing_historical_profile")
+
+    latest = frame.index[-1]
+    latest_local = (
+        latest.tz_convert("America/New_York")
+        if latest.tzinfo is not None
+        else latest.tz_localize("America/New_York")
+    )
+    if not (MARKET_OPEN <= latest_local.time() < MARKET_CLOSE):
+        return unavailable("outside_regular_session")
+
     regular = _regular_session(frame).copy()
     if regular.empty:
-        return VolumePaceMetrics(0, 0, 1, 0, 0, 1, False)
-    current_date = regular.index[-1].date()
+        return unavailable("outside_regular_session")
+    current_date = latest_local.date()
     session = regular[regular.index.date == current_date].copy()
     if session.empty:
-        return VolumePaceMetrics(0, 0, 1, 0, 0, 1, False)
+        return unavailable("outside_regular_session")
     profile = historical_volume_profile(symbol, regular, current_date)
+    if not profile:
+        return unavailable("missing_historical_profile")
     minute = int(_minute_of_day(pd.DatetimeIndex([session.index[-1]]))[0])
-    expected = profile.get(minute, {})
+    expected = profile.get(minute)
+    if not expected:
+        return unavailable("minute_not_in_profile")
     current_volume = float(session["volume"].sum())
     recent_5m = float(session["volume"].tail(5).sum())
     expected_volume = float(expected.get("expected_volume") or 0)
     expected_5m = float(expected.get("expected_5m_volume") or 0)
-    vpr = (
-        current_volume / expected_volume
-        if expected_volume >= MIN_EXPECTED_VOLUME
-        else 1.0
-    )
-    accel = recent_5m / expected_5m if expected_5m >= MIN_EXPECTED_VOLUME else 1.0
+    if expected_volume < MIN_EXPECTED_VOLUME or expected_5m < MIN_EXPECTED_VOLUME:
+        return unavailable("minute_not_in_profile")
+    vpr = current_volume / expected_volume
+    accel = recent_5m / expected_5m
     passed = bool(vpr >= 1.2 and accel >= 1.2)
     return VolumePaceMetrics(
-        current_volume, expected_volume, vpr, recent_5m, expected_5m, accel, passed
+        current_volume,
+        expected_volume,
+        vpr,
+        recent_5m,
+        expected_5m,
+        accel,
+        passed,
+        "available",
+        None,
     )

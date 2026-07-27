@@ -1105,15 +1105,23 @@ def test_strengthening_vwap_gate_uses_current_intraday_vwap_values():
 
     assert by_symbol["DEEP"]["candidate_status"] != "Strengthening"
     assert decisions["DEEP"]["vwap_gate"]["distance_pct"] == -3.0
-    assert decisions["DEEP"]["vwap_gate"]["gate_passed"] is False
+    assert decisions["DEEP"]["vwap_gate"]["strengthening_vwap_floor_passed"] is False
 
     assert by_symbol["NEAR"]["candidate_status"] == "Strengthening"
     assert decisions["NEAR"]["vwap_gate"]["distance_pct"] == -0.5
-    assert decisions["NEAR"]["vwap_gate"]["gate_passed"] is True
+    assert decisions["NEAR"]["vwap_gate"]["strengthening_vwap_floor_passed"] is True
 
     assert by_symbol["ABOVE"]["candidate_status"] in {"Strengthening", "Entry Ready"}
     assert decisions["ABOVE"]["vwap_gate"]["distance_pct"] == 1.0
-    assert decisions["ABOVE"]["vwap_gate"]["gate_passed"] is True
+    assert decisions["ABOVE"]["vwap_gate"]["strengthening_vwap_floor_passed"] is True
+
+    assert decisions["ABOVE"]["vwap_gate"]["label"] == "Strengthening VWAP floor"
+    structure_checks = {
+        check["condition"]: check
+        for check in by_symbol["ABOVE"]["structure_gate"]["checks"]
+    }
+    assert structure_checks["Structure proximity to VWAP"]["passed"] is True
+    assert structure_checks["Structure extension limit"]["passed"] is True
 
     for symbol, record in by_symbol.items():
         assert (
