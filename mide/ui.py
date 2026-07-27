@@ -247,9 +247,9 @@ def radar_table(records):
 def _why_sections(r):
     participation = []
     if r.get("volume", 0) >= 20_000_000:
-        participation.append(f"{r['volume']/1_000_000:.1f}M shares")
+        participation.append(f"{r['volume'] / 1_000_000:.1f}M shares")
     elif r.get("volume", 0) >= 1_000_000:
-        participation.append(f"{r['volume']/1_000_000:.1f}M shares")
+        participation.append(f"{r['volume'] / 1_000_000:.1f}M shares")
     participation.append(f"RVOL {r.get('rvol_proxy', 0):.1f}×")
     if r.get("volume_pace_ratio"):
         participation.append(f"VPI {r.get('volume_pace_ratio', 0):.1f}× pace")
@@ -603,7 +603,7 @@ def transition_history_markup(record: dict) -> str:
                 "<span class='transition-node trend-pending'>Entry Ready · Pending</span>",
             ]
         )
-    return f"<div class='why-label'>History</div><div class='transition-history'>{''.join(pieces)}</div>"
+    return f"<div class='why-label'>History · State progression</div><div class='transition-history'>{''.join(pieces)}</div>"
 
 
 def trend_ladder_markup(record: dict) -> str:
@@ -632,7 +632,7 @@ def trend_ladder_markup(record: dict) -> str:
             glyph, klass = "✖", "trend-bad"
         pieces.append(f"<span class='trend-step {klass}'>{label} {glyph}</span>")
     return (
-        f"<div class='trend-ladder'><span class='trend-condition'>{condition}</span>"
+        f"<div class='trend-ladder'><span class='trend-condition'>Now · Trend sequence: {condition}</span>"
         f"{''.join(pieces)}</div>"
     )
 
@@ -651,9 +651,22 @@ def trigger_diagnostic_markup(record: dict) -> str:
         items = "<li>• No trigger diagnostics available</li>"
     return (
         f"<div class='trigger-diagnostic {klass}'>"
-        f"<div class='trigger-title'>Trigger = {html.escape(str(trigger))}</div>"
+        f"<div class='trigger-title'>Action · Trigger recommendation = {html.escape(str(trigger))}</div>"
         f"<div class='small'>{label}:</div><ul>{items}</ul></div>"
     )
+
+
+def _trend_reason_label(reason: str) -> str:
+    """Make comparison-based conviction drivers explicit at display time."""
+    labels = {
+        "Participation faded": "Participation cooling vs previous scan",
+        "Participation accelerated": "Participation stronger than previous scan",
+        "Dollar flow decreased": "Dollar flow lower than previous scan",
+        "Dollar flow increased": "Dollar flow higher than previous scan",
+        "Trend confirmation weakened": "Primary trend weaker than previous scan",
+        "SuperTrend confirmed": "Primary trend stronger than previous scan",
+    }
+    return labels.get(reason, f"{reason} vs previous scan")
 
 
 def opportunity_card(r):
@@ -673,12 +686,12 @@ def opportunity_card(r):
     ladder_markup = trend_ladder_markup(r)
     trigger_markup = trigger_diagnostic_markup(r)
     summary_markup = (
-        f"<div class='why-summary'><div class='why-summary-title'>Top reasons now</div><ul>{summary_items}</ul>{ladder_markup}</div>"
+        f"<div class='why-summary'><div class='why-summary-title'>Now · Current-scan evidence</div><ul>{summary_items}</ul>{ladder_markup}</div>"
         if summary_items
-        else f"<div class='why-summary'><div class='why-summary-title'>Top reasons now</div>No qualifying evidence{ladder_markup}</div>"
+        else f"<div class='why-summary'><div class='why-summary-title'>Now · Current-scan evidence</div>No qualifying evidence{ladder_markup}</div>"
     )
     promo_badge = (
-        "<div class='promo-badge'>Promoted this scan</div>"
+        "<div class='promo-badge'>Now · Promoted this scan</div>"
         if promoted_this_scan(r)
         else ""
     )
@@ -686,7 +699,11 @@ def opportunity_card(r):
     arrow = (
         "↑↑"
         if velocity >= 12
-        else "↑" if velocity > 2 else "↓" if velocity < -2 else "→"
+        else "↑"
+        if velocity > 2
+        else "↓"
+        if velocity < -2
+        else "→"
     )
     tier = r.get("participation_tier", "")
     market_phase = r.get("market_phase", "Emerging")
@@ -714,7 +731,7 @@ def opportunity_card(r):
         ""
         if workflow == "Entry Ready"
         else (
-            "<div class='trigger-diagnostic trigger-no'><div class='trigger-title'>Not Entry Ready · Waiting For</div>"
+            "<div class='trigger-diagnostic trigger-no'><div class='trigger-title'>Action · Not entry ready · Wait for</div>"
             f"<ul>{blocker_items}</ul></div>"
         )
     )
@@ -726,46 +743,60 @@ def opportunity_card(r):
     conviction = float(r.get("conviction_v2_score", r.get("conviction_score", 0)) or 0)
     conviction_delta = float(r.get("conviction_delta", 0) or 0)
     conviction_trend = str(r.get("conviction_trend", "Steady"))
-    conviction_arrow = {"Rising": "▲", "Falling": "▼", "Steady": "■"}.get(conviction_trend, "■")
+    conviction_arrow = {"Rising": "▲", "Falling": "▼", "Steady": "■"}.get(
+        conviction_trend, "■"
+    )
     conviction_class = "conviction-" + conviction_trend.lower()
+    conviction_direction = {
+        "Rising": "higher",
+        "Falling": "lower",
+        "Steady": "unchanged",
+    }.get(conviction_trend, "unchanged")
+    conviction_comparison = f"Conviction {conviction_arrow} {abs(conviction_delta):.1f} vs previous scan ({conviction_direction})"
     conviction_history = "".join(
-        f"<span>{float(value):.0f}</span>" for value in r.get("conviction_history", [conviction])
+        f"<span>{float(value):.0f}</span>"
+        for value in r.get("conviction_history", [conviction])
     )
     change_reasons = r.get("conviction_change_reasons") or []
     conviction_change_markup = (
         "<div class='why-summary'><div class='why-summary-title'>"
-        f"Conviction {conviction_delta:+.1f} · Reason</div>"
-        + "".join(f"<div>• {html.escape(str(reason))}</div>" for reason in change_reasons)
+        f"Trend · Conviction {conviction_delta:+.1f} vs previous scan · Drivers</div>"
+        + "".join(
+            f"<div>• {html.escape(_trend_reason_label(str(reason)))}</div>"
+            for reason in change_reasons
+        )
         + "</div>"
-        if change_reasons else ""
+        if change_reasons
+        else ""
     )
     watching_items = "".join(
         f"<li>{'☑' if item.get('complete') else '☐'} {html.escape(str(item.get('label', '')))}</li>"
         for item in r.get("walter_watching", [])
     )
     watching_markup = (
-        f"<div class='coach-box'><div class='coach-title'>What Walter Is Watching</div><ul class='watch-list'>{watching_items}</ul></div>"
-        if watching_items else ""
+        f"<div class='coach-box'><div class='coach-title'>Action · Confirmation checklist</div><ul class='watch-list'>{watching_items}</ul></div>"
+        if watching_items
+        else ""
     )
     conviction_components = r.get("conviction_components") or {}
     conviction_diagnostics = "".join(
-        f"<div class='score-box'><div class='score-name'>{html.escape(name.replace('_', ' ').title())}</div>"
+        f"<div class='score-box'><div class='score-name'>Now · {html.escape(name.replace('_', ' ').title())}</div>"
         f"<div class='score-value'>{float(value):.1f} / {CONVICTION_WEIGHTS[name]:.0f}</div></div>"
         for name, value in conviction_components.items()
     )
     decision_markup = f"""
       <div class='decision-row'>
-        <div class='decision-pill'><b>Workflow · Today's Decision</b>{html.escape(str(workflow))}</div>
-        <div class='decision-pill'><b>Lifecycle · Chart Condition</b>{html.escape(str(lifecycle))}</div>
-        <div class='decision-pill'><b>Tradeability</b><span class='tradeability {trade_class}'>{trade_glyph} {html.escape(tradeability.upper())}</span><div class='small'>{html.escape(str(r.get('tradeability_reason', '')))}</div></div>
+        <div class='decision-pill'><b>Action · Workflow recommendation</b>{html.escape(str(workflow))}</div>
+        <div class='decision-pill'><b>Now · Current chart condition</b>{html.escape(str(lifecycle))}</div>
+        <div class='decision-pill'><b>Action · Tradeability recommendation</b><span class='tradeability {trade_class}'>{trade_glyph} {html.escape(tradeability.upper())}</span><div class='small'>{html.escape(str(r.get("tradeability_reason", "")))}</div></div>
       </div>
-      <div class='why-summary'><div class='why-summary-title'>Why Walter Promoted This</div><ul>{reason_items}</ul></div>
+      <div class='why-summary'><div class='why-summary-title'>Now · Why this scan promoted it</div><ul>{reason_items}</ul></div>
       {blocker_markup}
-      <div class='coach-box'><div class='coach-title'>Walter's Take</div>{html.escape(str(r.get('walter_take', 'Monitoring the setup for confirmation.')))}</div>
+      <div class='coach-box'><div class='coach-title'>Action · Walter's recommendation</div>{html.escape(str(r.get("walter_take", "Monitoring the setup for confirmation.")))}</div>
       {watching_markup}
     """
     opportunity_explanation = (
-        "<div class='why-summary'><div class='why-summary-title'>Opportunity "
+        "<div class='why-summary'><div class='why-summary-title'>Action · Opportunity "
         f"{opportunity:.1f} · {html.escape(str(opportunity_label))}</div>"
         + "".join(f"<div>✓ {html.escape(str(item))}</div>" for item in strengths)
         + (
@@ -777,20 +808,20 @@ def opportunity_card(r):
     )
     breakdown = r.get("opportunity_breakdown") or {}
     opportunity_diagnostics = "".join(
-        f"<div class='score-box'><div class='score-name'>{html.escape(name.title())}</div><div class='score-value'>{float(value):.1f} / {COMPONENT_MAX[name]:.0f}</div></div>"
+        f"<div class='score-box'><div class='score-name'>Now · {html.escape(name.title())}</div><div class='score-value'>{float(value):.1f} / {COMPONENT_MAX[name]:.0f}</div></div>"
         for name, value in breakdown.items()
     )
     trend_health = r.get("trend_health", "Future")
     score_boxes = "".join(
         [
-            f"<div class='score-box'><div class='score-name'>Historical Strength</div><div class='score-value'>{historical_strength:.1f}</div></div>",
-            f"<div class='score-box'><div class='score-name'>Current Momentum</div><div class='score-value'>{current_momentum:.1f}</div></div>",
-            f"<div class='score-box'><div class='score-name'>Participation Surge</div><div class='score-value'>{float(r.get('participation_surge_score', 0) or 0):.1f}</div></div>",
-            f"<div class='score-box'><div class='score-name'>Momentum Quality</div><div class='score-value'>{float(r.get('momentum_quality_score', 0) or 0):.1f}</div></div>",
-            f"<div class='score-box'><div class='score-name'>Trend Stability</div><div class='score-value'>{float(r.get('trend_stability_score', r.get('trend_stability', 0)) or 0):.1f}</div></div>",
-            f"<div class='score-box'><div class='score-name'>Lifecycle</div><div class='score-value'>{html.escape(str(lifecycle))}</div></div>",
-            f"<div class='score-box'><div class='score-name'>Trend Health</div><div class='score-value'>{html.escape(str(trend_health))}</div></div>",
-            f"<div class='score-box'><div class='score-name'>Change</div><div class='score-value'>{arrow} {velocity:+.1f}</div></div>",
+            f"<div class='score-box'><div class='score-name'>History · Baseline strength</div><div class='score-value'>{historical_strength:.1f}</div></div>",
+            f"<div class='score-box'><div class='score-name'>Now · Current momentum</div><div class='score-value'>{current_momentum:.1f}</div></div>",
+            f"<div class='score-box'><div class='score-name'>Now · Participation surge</div><div class='score-value'>{float(r.get('participation_surge_score', 0) or 0):.1f}</div></div>",
+            f"<div class='score-box'><div class='score-name'>Now · Momentum quality</div><div class='score-value'>{float(r.get('momentum_quality_score', 0) or 0):.1f}</div></div>",
+            f"<div class='score-box'><div class='score-name'>Now · Trend stability</div><div class='score-value'>{float(r.get('trend_stability_score', r.get('trend_stability', 0)) or 0):.1f}</div></div>",
+            f"<div class='score-box'><div class='score-name'>Now · Lifecycle</div><div class='score-value'>{html.escape(str(lifecycle))}</div></div>",
+            f"<div class='score-box'><div class='score-name'>Now · Trend health</div><div class='score-value'>{html.escape(str(trend_health))}</div></div>",
+            f"<div class='score-box'><div class='score-name'>Trend · Score vs previous scan</div><div class='score-value'>{arrow} {velocity:+.1f}</div></div>",
         ]
     )
     sections = _why_sections(r)
@@ -810,7 +841,7 @@ def opportunity_card(r):
         f"Latest bar {bar_age:.0f}s old" if bar_age else "Latest-bar age unavailable"
     )
     boxes = "".join(
-        f"<div class='why-box'><div class='why-label'>{html.escape(label)}</div>"
+        f"<div class='why-box'><div class='why-label'>Now · {html.escape(label)}</div>"
         f"<div class='why-text'>{html.escape(text)}</div></div>"
         for label, text in sections.items()
     )
@@ -818,14 +849,14 @@ def opportunity_card(r):
         f"""
     <div class="mide-card {klass}">
       <div style="display:flex;justify-content:space-between;gap:12px">
-        <div><span style="font-size:1.55rem;font-weight:800">{html.escape(str(r['symbol']))}</span>{state_elapsed_markup}
-        <span class="small"> ${r['price']:.4f} · {r['pct_change']:+.1f}%</span>
+        <div><span style="font-size:1.55rem;font-weight:800">{html.escape(str(r["symbol"]))}</span>{state_elapsed_markup}
+        <span class="small"> ${r["price"]:.4f} · {r["pct_change"]:+.1f}%</span>
         <span class="tier"> · {html.escape(str(tier))}</span></div>
         <div style="font-size:1.15rem;font-weight:800">{html.escape(str(workflow))}</div>
       </div>
       {promo_badge}
       {decision_markup}
-      <div class="conviction-row"><div><div class="why-label">Conviction</div><div class="conviction-score">{conviction:.0f}</div></div><div class="{conviction_class}"><b>{conviction_arrow} {html.escape(conviction_trend)}</b><div class="small">Previous scans</div><div class="conviction-history">{conviction_history}</div></div></div>
+      <div class="conviction-row"><div><div class="why-label">Now · Current conviction</div><div class="conviction-score">{conviction:.0f}</div></div><div class="{conviction_class}"><b>Trend · {html.escape(conviction_comparison)}</b><div class="small">History · Previous scan scores</div><div class="conviction-history">{conviction_history}</div></div></div>
       {conviction_change_markup}
       {opportunity_explanation}
       {summary_markup}
@@ -833,11 +864,11 @@ def opportunity_card(r):
       <div class="why">{html.escape(reasons)}</div>
       <div class="score-grid">{score_boxes}</div>
       <div class="score-grid">{opportunity_diagnostics}</div>
-      <div class="why-label">Conviction diagnostics · participation and flow lead price</div>
+      <div class="why-label">Now · Current conviction diagnostics · participation and flow lead price</div>
       <div class="score-grid">{conviction_diagnostics}</div>
       {transition_history_markup(r)}
-      <div class="small"><b>Evidence:</b> Feed volume {r['volume']/1_000_000:.2f}M · Dollar volume ${r['dollar_volume']/1_000_000:.2f}M · RVOL {r.get('rvol_proxy',0):.1f}×</div>
-      <div class="freshness">{html.escape(freshness)} · evaluated {html.escape(evaluated)}</div>
+      <div class="small"><b>Now · Current-scan evidence:</b> Feed volume {r["volume"] / 1_000_000:.2f}M · Dollar volume ${r["dollar_volume"] / 1_000_000:.2f}M · RVOL {r.get("rvol_proxy", 0):.1f}×</div>
+      <div class="freshness">Now · {html.escape(freshness)} · evaluated {html.escape(evaluated)}</div>
       <div class="why-grid">{boxes}</div>
     </div>
     """,
