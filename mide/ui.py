@@ -79,6 +79,14 @@ def inject_css():
     .action-box {border:1px solid #60a5fa;background:#0c1728;border-radius:9px;padding:10px 12px;margin:8px 0;font-size:1.25rem;font-weight:950}
     .context-heading {font-size:.70rem;text-transform:uppercase;letter-spacing:.1em;color:#93a4b8;font-weight:950;margin-top:10px}
     .evidence-list {list-style:none;margin:5px 0 0;padding:0;display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:3px}
+    .hot-card {background:linear-gradient(145deg,#17130c,#111821);border:1px solid #76551c;border-top:3px solid #f59e0b;border-radius:12px;padding:14px 16px;min-height:245px;margin-bottom:14px}
+    .hot-rank {color:#fbbf24;font-size:.70rem;font-weight:950;letter-spacing:.10em;text-transform:uppercase}
+    .hot-symbol {font-size:1.5rem;font-weight:950;color:#fff7dd;margin:2px 0 8px}
+    .hot-score {font-size:1.15rem;font-weight:900;color:#fbbf24}
+    .hot-state {display:inline-block;background:#172033;border:1px solid #4b5f78;border-radius:999px;padding:3px 9px;margin:7px 0;color:#f8fafc;font-size:.82rem;font-weight:900}
+    .hot-heading {font-size:.68rem;text-transform:uppercase;letter-spacing:.09em;color:#aeb9c7;font-weight:900;margin-top:8px}
+    .hot-reason {color:#dcfce7;font-size:.90rem;font-weight:750;line-height:1.45}
+    .hot-need {color:#fecaca;font-size:.90rem;font-weight:750;line-height:1.4}
     </style>
     """,
         unsafe_allow_html=True,
@@ -504,6 +512,200 @@ def automatic_watching_sort_key(record):
     ) + trader_priority_sort_key(record)
 
 
+_HOT_STATE_RANK = {
+    "Entry Ready": 4,
+    "Strengthening": 3,
+    "Watch List": 2,
+    "Candidate": 1,
+}
+
+
+def _hot_state(record: dict) -> str | None:
+    """Normalize display states for ranking without changing scanner qualification."""
+    state = record.get("candidate_status") or record.get("status")
+    if state in {"Entry Ready", "EXCEPTIONAL"}:
+        return "Entry Ready"
+    if state in {"Strengthening", "ALERT", "WATCH NOW"}:
+        return "Strengthening"
+    if state in {"Watching", "MONITOR"}:
+        return "Watch List"
+    if state in {"Emerging", "New"}:
+        return "Candidate"
+    return None
+
+
+def _bounded_score(value) -> float:
+    return max(0.0, min(100.0, float(value or 0)))
+
+
+def hot_list_priority_score(record: dict) -> int:
+    """Score relative urgency from existing evidence; never qualify a symbol."""
+    diagnostics = record.get("participation_surge_diagnostics") or {}
+    participation = _bounded_score(
+        record.get(
+            "participation_surge_score",
+            diagnostics.get(
+                "participation_score", record.get("participation_score", 0)
+            ),
+        )
+    )
+    expansion = _bounded_score(
+        record.get("expansion_quality", diagnostics.get("expansion_quality", 0))
+    )
+    distance = float(
+        record.get(
+            "vwap_distance_pct",
+            (record.get("strengthening_vwap_gate") or {}).get("distance_pct", 0),
+        )
+        or 0
+    )
+    # VWAP evidence is strongest close to VWAP and degrades smoothly with distance.
+    vwap_quality = max(0.0, 100.0 - abs(distance) * 20.0)
+    flow = _bounded_score(
+        record.get(
+            "dollar_flow_score",
+            record.get("market_dominance_score", record.get("attention_score", 0)),
+        )
+    )
+    headline = str(record.get("headline") or "").strip()
+    catalyst = float(record.get("catalyst_score", 0) or 0)
+    news_age = record.get("news_age_hours")
+    fresh_news = bool(headline) and (news_age is None or float(news_age) <= 24)
+
+    # A fresh catalyst is deliberately nonlinear: it can separate two otherwise
+    # similar setups, while evidence quality still supplies most of the score.
+    catalyst_bonus = (
+        15.0 if fresh_news and catalyst >= 0 else (8.0 if headline else 0.0)
+    )
+    score = participation * 0.35 + expansion * 0.25 + vwap_quality * 0.20
+    score += flow * 0.10 + catalyst_bonus
+    if distance > 2:
+        score -= min(12.0, (distance - 2.0) * 3.0)
+    if str(record.get("conviction_trend") or "").lower() in {"falling", "weakening"}:
+        score -= 8.0
+    if float(record.get("conviction_delta", 0) or 0) < 0:
+        score -= min(8.0, abs(float(record.get("conviction_delta", 0))) * 0.4)
+    return round(max(0.0, min(100.0, score)))
+
+
+def _hot_reasons(record: dict) -> list[str]:
+    diagnostics = record.get("participation_surge_diagnostics") or {}
+    participation = _bounded_score(
+        record.get(
+            "participation_surge_score",
+            diagnostics.get(
+                "participation_score", record.get("participation_score", 0)
+            ),
+        )
+    )
+    expansion = _bounded_score(
+        record.get("expansion_quality", diagnostics.get("expansion_quality", 0))
+    )
+    distance = float(record.get("vwap_distance_pct", 0) or 0)
+    candidates = []
+    if participation:
+        candidates.append(
+            (
+                participation,
+                f"Participation {'accelerating' if float(record.get('volume_acceleration', 0) or 0) > 1 else 'strong'} ({participation:.0f})",
+            )
+        )
+    if expansion:
+        candidates.append((expansion, f"Expansion Quality {expansion:.0f}"))
+    if record.get("headline"):
+        candidates.append(
+            (
+                105.0,
+                (
+                    "Fresh news catalyst"
+                    if record.get("news_age_hours") is None
+                    or float(record.get("news_age_hours")) <= 24
+                    else "News catalyst"
+                ),
+            )
+        )
+    if abs(distance) <= 2:
+        candidates.append((90.0 - abs(distance) * 10, f"Near VWAP ({distance:+.1f}%)"))
+    if (
+        max(
+            float(record.get("dollar_flow_acceleration_1m", 0) or 0),
+            float(record.get("dollar_flow_acceleration_3m", 0) or 0),
+            float(record.get("dollar_flow_acceleration_5m", 0) or 0),
+        )
+        > 1
+    ):
+        candidates.append((85.0, "Dollar flow increasing"))
+    return [label for _, label in sorted(candidates, reverse=True)[:3]]
+
+
+def _hot_limiter(record: dict) -> str | None:
+    distance = float(record.get("vwap_distance_pct", 0) or 0)
+    if distance > 2:
+        return "VWAP pullback"
+    if distance < 0:
+        return "VWAP reclaim"
+    if float(record.get("conviction_delta", 0) or 0) < 0:
+        return "Conviction is cooling"
+    if str(record.get("conviction_trend") or "").lower() in {"falling", "weakening"}:
+        return "Trend is weakening"
+    return None
+
+
+def walter_hot_list(records: list[dict]) -> list[dict]:
+    """Return at most three already-qualified symbols, ordered by state then score."""
+    ranked = []
+    for record in actionable_candidate_records(records):
+        state = _hot_state(record)
+        if state is None:
+            continue
+        ranked.append(
+            {
+                "symbol": str(record.get("symbol") or "").upper(),
+                "state": state,
+                "priority_score": hot_list_priority_score(record),
+                "reasons": _hot_reasons(record),
+                "limiting_factor": _hot_limiter(record),
+            }
+        )
+    ranked.sort(
+        key=lambda item: (
+            _HOT_STATE_RANK[item["state"]],
+            item["priority_score"],
+            item["symbol"],
+        ),
+        reverse=True,
+    )
+    return ranked[:3]
+
+
+def render_walter_hot_list(records: list[dict]) -> None:
+    """Render the concise three-symbol focus list above the detailed Radar cards."""
+    hot = walter_hot_list(records)
+    if not hot:
+        return
+    st.subheader("🔥 Walter's Hot List")
+    columns = st.columns(len(hot))
+    for rank, (column, item) in enumerate(zip(columns, hot), start=1):
+        reasons = "".join(
+            f"<div class='hot-reason'>✓ {html.escape(reason)}</div>"
+            for reason in item["reasons"]
+        )
+        limiter = item["limiting_factor"]
+        needs = (
+            f"<div class='hot-heading'>Needs</div><div class='hot-need'>{html.escape(limiter)}</div>"
+            if limiter
+            else ""
+        )
+        column.markdown(
+            f"<div class='hot-card'><div class='hot-rank'>#{rank} Hot List</div>"
+            f"<div class='hot-symbol'>{html.escape(item['symbol'])}</div>"
+            f"<div class='hot-score'>Priority Score: {item['priority_score']}</div>"
+            f"<div class='hot-state'>{html.escape(item['state'])}</div>"
+            f"<div class='hot-heading'>Why Walter likes it</div>{reasons}{needs}</div>",
+            unsafe_allow_html=True,
+        )
+
+
 SCANNER_V2_DISPLAY_ORDER = (
     "Entry Ready",
     "Strengthening",
@@ -729,9 +931,11 @@ def opportunity_card(r):
             "VWAP Distance",
             f"{distance:+.1f}%",
             0 <= distance <= 2,
-            "PASS (0–2%)"
-            if 0 <= distance <= 2
-            else ("FAIL (Max 2%)" if distance > 2 else "FAIL (Must be above VWAP)"),
+            (
+                "PASS (0–2%)"
+                if 0 <= distance <= 2
+                else ("FAIL (Max 2%)" if distance > 2 else "FAIL (Must be above VWAP)")
+            ),
         ),
         (
             "SuperTrend",
@@ -750,11 +954,11 @@ def opportunity_card(r):
     action = (
         "BUY SETUP"
         if tradeability == "Buyable" or workflow == "Entry Ready"
-        else "WAIT FOR PULLBACK"
-        if tradeability == "Don't Chase" or distance > 2
-        else "NOT TRADEABLE"
-        if workflow in {"Removed", "Weakening"}
-        else "WAIT"
+        else (
+            "WAIT FOR PULLBACK"
+            if tradeability == "Don't Chase" or distance > 2
+            else "NOT TRADEABLE" if workflow in {"Removed", "Weakening"} else "WAIT"
+        )
     )
     if action == "WAIT FOR PULLBACK":
         why = f"Price is {distance:.1f}% above VWAP, beyond Walter's 2% maximum entry range. Wait for a pullback instead of chasing."
@@ -784,9 +988,7 @@ def opportunity_card(r):
     evidence.append(
         "Above VWAP"
         if r.get("vwap_relation") == "above"
-        else "Below VWAP"
-        if r.get("vwap_relation") == "below"
-        else "Testing VWAP"
+        else "Below VWAP" if r.get("vwap_relation") == "below" else "Testing VWAP"
     )
     evidence.extend(
         [

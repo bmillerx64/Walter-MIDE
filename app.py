@@ -39,6 +39,7 @@ from mide.ui import (
     rejected_candidates_table,
     automatic_watching_sort_key,
     trader_priority_sort_key,
+    render_walter_hot_list,
 )
 from mide.time_service import format_eastern_time, market_clock, market_phase_at
 
@@ -817,6 +818,7 @@ with tabs[0]:
     if not display_records:
         st.success("No stock currently deserves elevated attention.")
     else:
+        render_walter_hot_list(display_records)
         for section_name, section_records, expanded in scanner_v2_display_sections(
             display_records
         ):
@@ -1044,7 +1046,9 @@ with tabs[2]:
             for scan in replay["scans"]:
                 time_range = scan["timestamp"]
                 if scan["scan_count"] > 1:
-                    time_range += f" → {scan['end_timestamp']} ({scan['scan_count']} scans)"
+                    time_range += (
+                        f" → {scan['end_timestamp']} ({scan['scan_count']} scans)"
+                    )
                 with st.expander(
                     f"{time_range} · {scan['state']} · {scan['recommendation']}",
                     expanded=False,
