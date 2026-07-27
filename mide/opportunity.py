@@ -15,6 +15,23 @@ COMPONENT_WEIGHTS = {
     "catalyst": 10.0,
 }
 
+WORKFLOW_LABELS = {
+    "New": "Watching",
+    "Emerging": "Developing",
+    "Watching": "Watching",
+    "Strengthening": "Strengthening",
+    "Entry Ready": "Entry Ready",
+    "Weakening": "Watching",
+    "Removed": "Watching",
+}
+
+LIFECYCLE_LABELS = {
+    "Emerging": "Building Base",
+    "Momentum": "Trending",
+    "Distribution": "Exhausting",
+    "Broken": "Breaking Down",
+}
+
 
 def _number(record: dict, key: str, default: float = 0.0) -> float:
     try:
@@ -37,6 +54,110 @@ def opportunity_status(score: float) -> str:
     if score >= 40:
         return "Developing"
     return "Watching"
+
+
+def workflow_label(record: dict) -> str:
+    """Return presentation wording for today's scanner decision."""
+    state = str(record.get("candidate_status") or record.get("status") or "Watching")
+    return WORKFLOW_LABELS.get(state, state)
+
+
+def lifecycle_label(record: dict) -> str:
+    """Translate the persistent chart phase without exposing contradictory jargon."""
+    phase = str(record.get("market_phase") or "Emerging")
+    if phase == "Broken" and (
+        record.get("vwap_relation") in {"above", "testing"}
+        or record.get("supertrend_bullish")
+        or _number(record, "volume_acceleration", 1) >= 1.0
+    ):
+        return "Recovering"
+    if phase == "Momentum" and _number(record, "volume_acceleration", 1) >= 1.5:
+        return "Accelerating"
+    return LIFECYCLE_LABELS.get(phase, "Building Base")
+
+
+def _decision_support(record: dict, strengths: list[str], blockers: list[str]) -> dict:
+    """Build additive coaching copy; never participates in scanner decisions."""
+    state = workflow_label(record)
+    reasons = list(
+        dict.fromkeys(
+            [str(item) for item in record.get("promotion_condition_changes") or []]
+            + strengths
+            + [str(item) for item in record.get("reasons") or []]
+        )
+    )[:5]
+    if not reasons:
+        reasons = ["Qualified participation and price structure"]
+
+    if state == "Entry Ready":
+        blockers = []
+    elif not blockers:
+        trigger_reasons = (record.get("trigger_diagnostics") or {}).get("reasons") or []
+        blockers = (
+            [str(trigger_reasons[0])]
+            if trigger_reasons
+            else ["Waiting for entry confirmation"]
+        )
+    blockers = list(dict.fromkeys(blockers))[:3]
+
+    extension = _number(record, "vwap_distance_pct")
+    participation_strong = (
+        max(
+            _number(record, "participation_score"),
+            _number(record, "participation_surge_score"),
+        )
+        >= 60
+    )
+    if state == "Entry Ready":
+        tradeability = "Buyable"
+        tradeability_reason = "Entry conditions are confirmed"
+        next_event = "If price structure or participation weakens, Walter will demote this setup."
+    elif extension > 2 and record.get("vwap_relation") == "above":
+        tradeability = "Don't Chase"
+        tradeability_reason = f"{extension:.1f}% above VWAP"
+        next_event = "If price pulls back toward VWAP while participation remains strong, Walter can promote this to Entry Ready."
+    else:
+        tradeability = "Wait"
+        tradeability_reason = blockers[0]
+        next_event = (
+            f"If {blockers[0].lower()} resolves while participation remains strong, Walter can promote this further."
+            if blockers
+            else "If entry conditions confirm, Walter can promote this to Entry Ready."
+        )
+    if not participation_strong and state != "Entry Ready":
+        next_event += " If participation weakens further, Walter will demote it."
+
+    take_parts = [
+        (
+            "Participation is strong."
+            if participation_strong
+            else "Participation still needs confirmation."
+        ),
+        (
+            "The trend is healthy."
+            if record.get("supertrend_bullish")
+            else "Trend confirmation is incomplete."
+        ),
+        (
+            "Do not chase; wait for a pullback toward VWAP."
+            if tradeability == "Don't Chase"
+            else (
+                "The setup is buyable under Walter's current rules."
+                if tradeability == "Buyable"
+                else f"Wait: {tradeability_reason}."
+            )
+        ),
+    ]
+    return {
+        "workflow_label": state,
+        "lifecycle_label": lifecycle_label(record),
+        "promotion_reasons": reasons,
+        "entry_blockers_explained": blockers,
+        "next_event_explanation": next_event,
+        "tradeability": tradeability,
+        "tradeability_reason": tradeability_reason,
+        "walter_take": " ".join(take_parts),
+    }
 
 
 def calculate_opportunity(record: dict) -> dict:
@@ -165,13 +286,21 @@ def calculate_opportunity(record: dict) -> dict:
 
     strengths.sort(key=lambda item: (-item[0], item[1]))
     blockers.sort(key=lambda item: (-item[0], item[1]))
-    return {
+    result = {
         "opportunity_score_v2": score,
         "opportunity_status": opportunity_status(score),
         "opportunity_breakdown": breakdown,
         "opportunity_strengths": [text for _, text in strengths[:3]],
         "opportunity_blockers": [text for _, text in blockers[:3]],
     }
+    result.update(
+        _decision_support(
+            record,
+            result["opportunity_strengths"],
+            result["opportunity_blockers"],
+        )
+    )
+    return result
 
 
 def enrich_opportunity(record: dict) -> dict:

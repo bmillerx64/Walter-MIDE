@@ -37,6 +37,13 @@ def inject_css():
     .why-summary li {font-size:.96rem;font-weight:800;color:#eefbf3;line-height:1.35}
     .tier {font-size:.78rem;letter-spacing:.06em;font-weight:800;color:#d9e3ef}
     .market-phase {display:inline-block;margin-left:8px;background:#172033;border:1px solid #314157;border-radius:999px;padding:2px 8px;font-size:.78rem;font-weight:900;color:#eef4fb}
+    .decision-row {display:flex;gap:8px;flex-wrap:wrap;margin:8px 0}
+    .decision-pill {background:#172033;border:1px solid #314157;border-radius:8px;padding:6px 9px}
+    .decision-pill b {display:block;font-size:.67rem;letter-spacing:.08em;text-transform:uppercase;color:#8fa0b3}
+    .tradeability {font-size:1.05rem;font-weight:900}
+    .trade-buyable {color:#4ade80}.trade-wait {color:#facc15}.trade-dont-chase {color:#f87171}
+    .coach-box {background:#101827;border:1px solid #334155;border-radius:9px;padding:10px 12px;margin:8px 0}
+    .coach-title {font-size:.72rem;text-transform:uppercase;letter-spacing:.08em;color:#93c5fd;font-weight:900;margin-bottom:5px}
     .why-grid {display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:8px;margin-top:10px}
     .why-box {background:#0c121a;border:1px solid #202c3c;border-radius:8px;padding:9px 10px}
     .why-label {font-size:.72rem;text-transform:uppercase;letter-spacing:.08em;color:#8190a2;font-weight:800}
@@ -565,7 +572,7 @@ def _parse_transition_time(value: object) -> datetime | None:
 def transition_history_markup(record: dict) -> str:
     """Render a compact current-session state progression for a symbol card."""
     history = record.get("transition_history") or []
-    if len(history) < 2:
+    if not history:
         return ""
     pieces = []
     for index, item in enumerate(history):
@@ -583,7 +590,14 @@ def transition_history_markup(record: dict) -> str:
             pieces.append(
                 f"<span class='transition-arrow'>↓ {html.escape(_format_transition_duration(seconds))}</span>"
             )
-    return f"<div class='transition-history'>{''.join(pieces)}</div>"
+    if (record.get("candidate_status") or record.get("status")) != "Entry Ready":
+        pieces.extend(
+            [
+                "<span class='transition-arrow'>↓</span>",
+                "<span class='transition-node trend-pending'>Entry Ready · Pending</span>",
+            ]
+        )
+    return f"<div class='why-label'>History</div><div class='transition-history'>{''.join(pieces)}</div>"
 
 
 def trend_ladder_markup(record: dict) -> str:
@@ -670,7 +684,6 @@ def opportunity_card(r):
     )
     tier = r.get("participation_tier", "")
     market_phase = r.get("market_phase", "Emerging")
-    dominance = r.get("market_dominance_score", 0)
     historical_strength = r.get(
         "historical_strength", r.get("attention_score", r["opportunity_score"])
     )
@@ -681,6 +694,40 @@ def opportunity_card(r):
     opportunity_label = r.get("opportunity_status", "")
     strengths = r.get("opportunity_strengths") or []
     blockers = r.get("opportunity_blockers") or []
+    workflow = r.get("workflow_label") or r.get("candidate_status") or r.get("status")
+    lifecycle = r.get("lifecycle_label") or market_phase
+    promotion_reasons = (r.get("promotion_reasons") or headline_reasons)[:5]
+    explained_blockers = (r.get("entry_blockers_explained") or blockers)[:3]
+    reason_items = "".join(
+        f"<li>✓ {html.escape(str(item))}</li>" for item in promotion_reasons
+    )
+    blocker_items = "".join(
+        f"<li>• {html.escape(str(item))}</li>" for item in explained_blockers
+    )
+    blocker_markup = (
+        ""
+        if workflow == "Entry Ready"
+        else (
+            "<div class='trigger-diagnostic trigger-no'><div class='trigger-title'>Not Entry Ready · Waiting For</div>"
+            f"<ul>{blocker_items}</ul></div>"
+        )
+    )
+    tradeability = str(r.get("tradeability") or "Wait")
+    trade_class = "trade-" + tradeability.lower().replace("'", "").replace(" ", "-")
+    trade_glyph = {"Buyable": "🟢", "Wait": "🟡", "Don't Chase": "🔴"}.get(
+        tradeability, "🟡"
+    )
+    decision_markup = f"""
+      <div class='decision-row'>
+        <div class='decision-pill'><b>Workflow · Today's Decision</b>{html.escape(str(workflow))}</div>
+        <div class='decision-pill'><b>Lifecycle · Chart Condition</b>{html.escape(str(lifecycle))}</div>
+        <div class='decision-pill'><b>Tradeability</b><span class='tradeability {trade_class}'>{trade_glyph} {html.escape(tradeability.upper())}</span><div class='small'>{html.escape(str(r.get('tradeability_reason', '')))}</div></div>
+      </div>
+      <div class='why-summary'><div class='why-summary-title'>Why Walter Promoted This</div><ul>{reason_items}</ul></div>
+      {blocker_markup}
+      <div class='coach-box'><div class='coach-title'>Walter's Take</div>{html.escape(str(r.get('walter_take', 'Monitoring the setup for confirmation.')))}</div>
+      <div class='coach-box'><div class='coach-title'>Next Event</div>{html.escape(str(r.get('next_event_explanation', 'Walter will reassess on the next scan.')))}</div>
+    """
     opportunity_explanation = (
         "<div class='why-summary'><div class='why-summary-title'>Opportunity "
         f"{opportunity:.1f} · {html.escape(str(opportunity_label))}</div>"
@@ -705,7 +752,7 @@ def opportunity_card(r):
             f"<div class='score-box'><div class='score-name'>Participation Surge</div><div class='score-value'>{float(r.get('participation_surge_score', 0) or 0):.1f}</div></div>",
             f"<div class='score-box'><div class='score-name'>Momentum Quality</div><div class='score-value'>{float(r.get('momentum_quality_score', 0) or 0):.1f}</div></div>",
             f"<div class='score-box'><div class='score-name'>Trend Stability</div><div class='score-value'>{float(r.get('trend_stability_score', r.get('trend_stability', 0)) or 0):.1f}</div></div>",
-            f"<div class='score-box'><div class='score-name'>Current Phase</div><div class='score-value'>{html.escape(str(market_phase))}</div></div>",
+            f"<div class='score-box'><div class='score-name'>Lifecycle</div><div class='score-value'>{html.escape(str(lifecycle))}</div></div>",
             f"<div class='score-box'><div class='score-name'>Trend Health</div><div class='score-value'>{html.escape(str(trend_health))}</div></div>",
             f"<div class='score-box'><div class='score-name'>Change</div><div class='score-value'>{arrow} {velocity:+.1f}</div></div>",
         ]
@@ -722,7 +769,6 @@ def opportunity_card(r):
         if state_elapsed
         else ""
     )
-    last_bar = str(r.get("last_bar_timestamp", ""))
     bar_age = float(r.get("bar_age_seconds", 0) or 0)
     freshness = (
         f"Latest bar {bar_age:.0f}s old" if bar_age else "Latest-bar age unavailable"
@@ -738,10 +784,11 @@ def opportunity_card(r):
       <div style="display:flex;justify-content:space-between;gap:12px">
         <div><span style="font-size:1.55rem;font-weight:800">{html.escape(str(r['symbol']))}</span>{state_elapsed_markup}
         <span class="small"> ${r['price']:.4f} · {r['pct_change']:+.1f}%</span>
-        <span class="tier"> · {html.escape(str(tier))}</span><span class="market-phase">Phase: {html.escape(str(market_phase))}</span></div>
-        <div style="font-size:1.15rem;font-weight:800">{html.escape(str(r['status']))}</div>
+        <span class="tier"> · {html.escape(str(tier))}</span></div>
+        <div style="font-size:1.15rem;font-weight:800">{html.escape(str(workflow))}</div>
       </div>
       {promo_badge}
+      {decision_markup}
       {opportunity_explanation}
       {summary_markup}
       {trigger_markup}
