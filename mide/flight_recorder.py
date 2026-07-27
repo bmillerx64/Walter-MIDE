@@ -354,6 +354,46 @@ class FlightRecorder:
                 continue
         return None
 
+    def export_bytes(self) -> bytes:
+        """Return the untouched recorder file for a browser download."""
+        return self.path.read_bytes() if self.path.exists() else b""
+
+    def scans(self) -> list[dict]:
+        """Read every valid scan, preserving its on-disk order."""
+        if not self.path.exists():
+            return []
+        scans = []
+        for line in self.path.read_text(errors="ignore").splitlines():
+            try:
+                scans.append(json.loads(line))
+            except (ValueError, TypeError):
+                continue
+        return scans
+
+    def history_for_symbol(self, symbol: str) -> list[dict]:
+        """Return this symbol's trace from every scan where it was discovered."""
+        symbol = symbol.strip().upper()
+        history = []
+        for scan in self.scans():
+            path = next(
+                (
+                    item
+                    for item in scan.get("symbols", [])
+                    if str(item.get("symbol", "")).upper() == symbol
+                ),
+                None,
+            )
+            if path:
+                history.append(
+                    {
+                        "scan_id": scan.get("scan_id"),
+                        "timestamp": scan.get("timestamp"),
+                        "scanner_version": scan.get("scanner_version"),
+                        **path,
+                    }
+                )
+        return history
+
     def latest_for_symbol(self, symbol: str) -> dict | None:
         scan = self.latest_scan()
         symbol = symbol.strip().upper()

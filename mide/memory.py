@@ -22,6 +22,25 @@ class MemoryStore:
                 continue
         return latest
 
+    def export_bytes(self) -> bytes:
+        """Return the untouched history file for a browser download."""
+        return self.path.read_bytes() if self.path.exists() else b""
+
+    def history_for_symbol(self, symbol: str) -> list[dict]:
+        """Return every valid persisted candidate record for ``symbol``."""
+        symbol = symbol.strip().upper()
+        if not symbol or not self.path.exists():
+            return []
+        matches = []
+        for line in self.path.read_text(errors="ignore").splitlines():
+            try:
+                item = json.loads(line)
+            except (ValueError, TypeError):
+                continue
+            if str(item.get("symbol", "")).upper() == symbol:
+                matches.append(item)
+        return matches
+
     def append(self, records):
         if not records:
             return
