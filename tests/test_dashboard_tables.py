@@ -292,7 +292,7 @@ def test_mission_control_header_contains_compact_operational_status():
     )
 
     assert "Walter • MIDE Radar" in markup
-    assert "v2.13 — Conviction Engine" in markup
+    assert "v2.14 — Trade Readiness Gauge" in markup
     assert "Market Intelligence Decision Engine" in markup
     for value in (
         "🟢 LIVE",
@@ -382,6 +382,70 @@ def test_opportunity_meter_pulses_when_entry_window_first_opens():
     assert "Conviction Meter" in markup
     assert "entry-window-pulse" in markup
     assert "2. ✓ SuperTrend Flip" in markup
+
+
+def test_trade_readiness_gauge_highlights_entry_window_in_green():
+    item = walter_mission_control(
+        [
+            sample_record(
+                symbol="OPEN",
+                candidate_status="Entry Ready",
+                supertrend_bullish=True,
+                participation_score=96,
+            )
+        ]
+    )["primary"]
+
+    readiness = ui.trade_readiness(item)
+    markup = ui._trade_readiness_markup(item)
+
+    assert readiness == {
+        "index": 4,
+        "state": "ENTRY WINDOW",
+        "sentence": "Entry conditions aligned.",
+    }
+    assert "is-entry-window" in markup
+    assert "--readiness-color:#4ade80" in markup
+    assert "aria-valuenow='4'" in markup
+    assert markup.count("trade-readiness-label is-current") == 1
+
+
+def test_trade_readiness_displays_only_highest_priority_remaining_rule():
+    item = walter_mission_control(
+        [
+            sample_record(
+                candidate_status="Strengthening",
+                vwap_relation="below",
+                supertrend_bullish=False,
+                participation_score=60,
+            )
+        ]
+    )["primary"]
+
+    readiness = ui.trade_readiness(item)
+
+    assert readiness["sentence"] == "Waiting for VWAP reclaim."
+    assert "trend" not in readiness["sentence"].lower()
+    assert "participation" not in readiness["sentence"].lower()
+
+
+def test_trade_readiness_moves_back_to_watch_when_extended():
+    item = walter_mission_control(
+        [
+            sample_record(
+                candidate_status="Entry Ready",
+                vwap_distance_pct=3.0,
+                supertrend_bullish=True,
+                participation_score=96,
+            )
+        ]
+    )["primary"]
+
+    assert ui.trade_readiness(item) == {
+        "index": 1,
+        "state": "WATCH",
+        "sentence": "Extended. Wait for pullback.",
+    }
 
 
 def test_secondary_target_has_one_line_reason_it_is_not_primary():

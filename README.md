@@ -3,7 +3,7 @@ Clean Streamlit foundation preserving the v0.9.3 live SIP discovery, scoring and
 
 Deploy `app.py` from the repository root. Add `ALPACA_API_KEY`, `ALPACA_SECRET_KEY`, and `ALPACA_FEED = "sip"` to Streamlit Secrets.
 
-## Walter 2.13 — Conviction Engine
+## Walter 2.14 — Trade Readiness Gauge
 
 The dashboard now answers **“Can I start preparing to buy?”** with one immediate,
 color-coded recommendation for every displayed setup: **🟢 GREEN LIGHT** when all

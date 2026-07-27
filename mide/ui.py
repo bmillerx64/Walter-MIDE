@@ -118,6 +118,18 @@ def inject_css():
     .mission-symbol {font-size:2rem;line-height:1.15;color:#fff;font-weight:950;margin:3px 0}
     .mission-band {color:var(--mission-color);font-size:.76rem;font-weight:950;text-transform:uppercase;letter-spacing:.08em}
     .mission-window-status{color:var(--mission-color);font-size:1.05rem;font-weight:950;margin-top:4px;letter-spacing:.04em}
+    .trade-readiness{margin:12px 0 13px;padding:10px 11px;background:#091018;border:1px solid #273548;border-radius:9px}
+    .trade-readiness-title{font-size:.68rem;letter-spacing:.12em;text-transform:uppercase;color:#aab7c7;font-weight:950;margin-bottom:7px}
+    .trade-readiness-track{display:grid;grid-template-columns:repeat(5,1fr);gap:4px}
+    .trade-readiness-step{height:13px;background:#263241;border:1px solid #39485a;border-radius:3px}
+    .trade-readiness-step.is-reached{background:var(--readiness-color);border-color:var(--readiness-color);box-shadow:0 0 8px color-mix(in srgb,var(--readiness-color) 55%,transparent)}
+    .trade-readiness-labels{display:grid;grid-template-columns:repeat(5,1fr);gap:4px;margin-top:5px}
+    .trade-readiness-label{color:#6f8094;font-size:.56rem;font-weight:900;text-align:center;white-space:nowrap}
+    .trade-readiness-label.is-current{color:var(--readiness-color)}
+    .trade-readiness-state{color:var(--readiness-color);font-size:1.05rem;font-weight:950;letter-spacing:.08em;margin-top:8px}
+    .trade-readiness-sentence{color:#e2e8f0;font-size:.88rem;font-weight:800;margin-top:3px}
+    .trade-readiness.is-entry-window .trade-readiness-step.is-reached{animation:readiness-open 1.6s ease-out 1}
+    @keyframes readiness-open{0%,100%{filter:brightness(1);box-shadow:0 0 8px rgba(74,222,128,.4)}45%{filter:brightness(1.5);box-shadow:0 0 20px rgba(74,222,128,.9)}}
     .mission-status {font-size:1.05rem;font-weight:850;color:#e2e8f0;margin:8px 0}
     .mission-meta {font-size:.84rem;color:#aeb9c7;margin-top:4px}.mission-meta b{color:#f8fafc}
     .opportunity-meter {margin:10px 0 12px}.opportunity-meter-top{display:flex;align-items:baseline;justify-content:space-between;gap:10px;margin-bottom:6px}
@@ -135,7 +147,7 @@ def inject_css():
     .entry-window-pulse{animation:entry-window-pulse 2s ease-out 1}
     @keyframes condition-flash{0%{background:#f8fafc;color:#064e3b;box-shadow:0 0 22px #4ade80}100%{background:transparent;color:#86efac;box-shadow:none}}
     @keyframes entry-window-pulse{0%,100%{box-shadow:0 0 0 rgba(74,222,128,0)}25%,70%{box-shadow:0 0 30px rgba(74,222,128,.75);border-color:#86efac}}
-    @media(prefers-reduced-motion:reduce){.mission-condition-met,.entry-window-pulse{animation:none}}
+    @media(prefers-reduced-motion:reduce){.mission-condition-met,.entry-window-pulse,.trade-readiness.is-entry-window .trade-readiness-step.is-reached{animation:none}}
     .mission-ignore {margin-top:11px;padding-top:10px;border-top:1px solid #273548;color:#94a3b8;font-size:.82rem}
     .control-header {background:linear-gradient(145deg,#0b1722,#0a1018);border:1px solid #334155;border-top:4px solid #38bdf8;border-radius:14px;padding:15px 18px;margin:2px 0 10px;box-shadow:0 12px 30px rgba(0,0,0,.22)}
     .control-heading {display:flex;align-items:flex-end;justify-content:space-between;gap:14px;flex-wrap:wrap}
@@ -323,7 +335,7 @@ def mission_control_header_markup(
     return (
         "<div class='control-header'><div class='control-heading'><div>"
         "<div class='control-title'>🛰 Walter • MIDE Radar</div>"
-        "<div class='control-version'>v2.13 — Conviction Engine</div></div>"
+        "<div class='control-version'>v2.14 — Trade Readiness Gauge</div></div>"
         "<div class='control-engine'>Market Intelligence Decision Engine</div></div>"
         f"<div class='control-strip'>{strip}</div></div>"
     )
@@ -901,6 +913,87 @@ MISSION_BANDS = {
     "ignore": ("🔴 CLOSED", "#f87171"),
 }
 
+TRADE_READINESS_STATES = (
+    "NOT READY",
+    "WATCH",
+    "BUILDING",
+    "READY",
+    "ENTRY WINDOW",
+)
+
+
+def trade_readiness(item: dict) -> dict:
+    """Derive a display-only readiness stage from existing state and confidence."""
+    record = item["record"]
+    state = _hot_state(record) or str(
+        record.get("candidate_status") or record.get("status") or ""
+    ).strip()
+    confidence = int(item["confidence"])
+    distance = float(record.get("vwap_distance_pct", 0) or 0)
+    extended = distance > 2
+
+    if extended:
+        index = 1
+    elif state == "Entry Ready":
+        index = 4
+    elif state == "Strengthening":
+        index = 3 if confidence >= 75 else 2
+    elif state == "Watch List":
+        index = 2 if confidence >= 75 else 1
+    elif state == "Candidate":
+        index = 1 if confidence >= 60 else 0
+    else:
+        index = 0
+
+    remaining = [
+        condition["label"]
+        for condition in item["conditions"]
+        if not condition["passed"]
+    ]
+    if extended:
+        sentence = "Extended. Wait for pullback."
+    elif remaining and remaining[0] == "VWAP":
+        sentence = "Waiting for VWAP reclaim."
+    elif remaining and remaining[0] == "SuperTrend Flip":
+        sentence = "Waiting for trend confirmation."
+    elif remaining:
+        sentence = "Momentum confirmed. Entry window approaching."
+    elif state == "Entry Ready":
+        sentence = "Entry conditions aligned."
+    else:
+        sentence = "Momentum confirmed. Entry window approaching."
+
+    return {
+        "index": index,
+        "state": TRADE_READINESS_STATES[index],
+        "sentence": sentence,
+    }
+
+
+def _trade_readiness_markup(item: dict) -> str:
+    readiness = trade_readiness(item)
+    colors = ("#64748b", "#60a5fa", "#facc15", "#f59e0b", "#4ade80")
+    color = colors[readiness["index"]]
+    segments = "".join(
+        f"<span class='trade-readiness-step{' is-reached' if index <= readiness['index'] else ''}'></span>"
+        for index in range(len(TRADE_READINESS_STATES))
+    )
+    labels = "".join(
+        f"<span class='trade-readiness-label{' is-current' if index == readiness['index'] else ''}'>{label}</span>"
+        for index, label in enumerate(TRADE_READINESS_STATES)
+    )
+    entry_class = " is-entry-window" if readiness["state"] == "ENTRY WINDOW" else ""
+    return (
+        f"<div class='trade-readiness{entry_class}' style='--readiness-color:{color}' "
+        f"role='meter' aria-label='Trade readiness: {readiness['state']}' aria-valuemin='0' "
+        f"aria-valuemax='4' aria-valuenow='{readiness['index']}'>"
+        f"<div class='trade-readiness-title'>Trade Readiness</div>"
+        f"<div class='trade-readiness-track' aria-hidden='true'>{segments}</div>"
+        f"<div class='trade-readiness-labels' aria-hidden='true'>{labels}</div>"
+        f"<div class='trade-readiness-state'>{readiness['state']}</div>"
+        f"<div class='trade-readiness-sentence'>{html.escape(readiness['sentence'])}</div></div>"
+    )
+
 
 def _mission_conditions(record: dict) -> list[dict]:
     """Translate current scanner evidence into Walter's visible setup checklist."""
@@ -1097,6 +1190,7 @@ def _mission_target_markup(item: dict, role: str, primary: dict | None = None) -
         f"<div class='mission-band' style='color:{band_color}'>CONVICTION</div><div class='mission-window-status'>{conviction_label}</div>"
         f"<div class='opportunity-meter'><div class='opportunity-meter-top'><span class='opportunity-meter-label'>Conviction Meter</span><span class='opportunity-meter-value'>{item['confidence']}% <small class='{delta_class}'>{direction} {delta:+d}</small></span></div>"
         f"<div class='opportunity-meter-track' role='progressbar' aria-label='Conviction meter' aria-valuemin='0' aria-valuemax='100' aria-valuenow='{item['confidence']}'><div class='opportunity-meter-fill' style='--opportunity:{item['confidence']}%'></div></div></div>"
+        + _trade_readiness_markup(item)
         + (
             f"<div class='mission-section-title'>WHY #1 TODAY</div><div class='mission-reasons'>{reasons}</div>"
             if primary is None
