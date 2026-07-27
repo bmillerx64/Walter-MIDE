@@ -1,5 +1,11 @@
 from mide import ui
-from mide.ui import radar_table, state_sections, summary_reasons, walter_hot_list
+from mide.ui import (
+    opportunity_pulse,
+    radar_table,
+    state_sections,
+    summary_reasons,
+    walter_hot_list,
+)
 
 
 def sample_record(**overrides):
@@ -219,7 +225,9 @@ def test_hot_list_renders_priority_score_as_confidence_meter(monkeypatch):
             rendered.append(body)
 
     monkeypatch.setattr(ui.st, "subheader", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr(ui.st, "columns", lambda count: [Column() for _ in range(count)])
+    monkeypatch.setattr(
+        ui.st, "columns", lambda count: [Column() for _ in range(count)]
+    )
     monkeypatch.setattr(
         ui,
         "walter_hot_list",
@@ -230,6 +238,7 @@ def test_hot_list_renders_priority_score_as_confidence_meter(monkeypatch):
                 "priority_score": 82,
                 "reasons": ["Fresh news catalyst", "Near VWAP (+0.2%)"],
                 "limiting_factor": "VWAP pullback",
+                "pulse": {"label": "ACCELERATING", "color": "green", "delta": 8},
             }
         ],
     )
@@ -244,6 +253,67 @@ def test_hot_list_renders_priority_score_as_confidence_meter(monkeypatch):
     assert "82%" in card
     assert ">HIGH<" in card
     assert "hot-confidence-green" in card
+    assert "ACCELERATING" in card
+    assert "+8" in card
+    assert "pulse-green" in card
+    assert ">Strengthening<" not in card
+
+
+def test_opportunity_pulse_compares_evidence_without_changing_priority():
+    previous = sample_record(
+        participation_surge_score=60,
+        expansion_quality=55,
+        conviction_v2_score=65,
+    )
+    current = sample_record(
+        participation_surge_score=68,
+        expansion_quality=62,
+        conviction_v2_score=67,
+        opportunity_pulse_previous=previous,
+    )
+
+    status_before = current["status"]
+
+    assert opportunity_pulse(current)["label"] == "ACCELERATING"
+    assert current["status"] == status_before
+
+
+def test_opportunity_pulse_flags_broad_deterioration_and_conviction_loss():
+    previous = sample_record(
+        participation_surge_score=75,
+        expansion_quality=70,
+        conviction_v2_score=80,
+    )
+    fading = sample_record(
+        participation_surge_score=67,
+        expansion_quality=64,
+        conviction_v2_score=79,
+        opportunity_pulse_previous=previous,
+    )
+    conviction_loss = sample_record(
+        participation_surge_score=76,
+        expansion_quality=71,
+        conviction_v2_score=74,
+        opportunity_pulse_previous=previous,
+    )
+
+    assert opportunity_pulse(fading)["label"] == "LOSING MOMENTUM"
+    assert opportunity_pulse(conviction_loss)["label"] == "LOSING MOMENTUM"
+
+
+def test_opportunity_pulse_is_stable_without_prior_scan_or_meaningful_change():
+    assert opportunity_pulse(sample_record()) == {
+        "label": "STABLE",
+        "color": "yellow",
+        "delta": 0,
+    }
+    previous = sample_record(participation_surge_score=60, expansion_quality=55)
+    current = sample_record(
+        participation_surge_score=62,
+        expansion_quality=54,
+        opportunity_pulse_previous=previous,
+    )
+    assert opportunity_pulse(current)["label"] == "STABLE"
 
 
 def test_confidence_levels_match_display_thresholds():
