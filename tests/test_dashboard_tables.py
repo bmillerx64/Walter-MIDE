@@ -280,17 +280,27 @@ def test_mission_control_header_contains_compact_operational_status():
         candidate_count=10,
         focus_count=2,
         escalation_count=1,
-        next_scan="00:18",
+        auto_scan="Every 60 sec",
     )
 
     assert "Walter • MIDE Radar" in markup
     assert "v3.0 Beta — Mission Control" in markup
     assert "Market Intelligence Decision Engine" in markup
-    for value in ("🟢 LIVE", "Live Market", "674", "88", "10", "2", "1", "00:18"):
+    for value in (
+        "🟢 LIVE",
+        "Live Market",
+        "674",
+        "88",
+        "10",
+        "2",
+        "1",
+        "Every 60 sec",
+    ):
         assert value in markup
     assert "id='walter-market-time'" in markup
     assert "id='walter-market-phase'" in markup
-    assert "id='walter-next-scan'" in markup
+    assert "id='walter-auto-scan'" in markup
+    assert "Next scan" not in markup
 
 
 def test_ignore_today_explains_non_actionable_quality():
