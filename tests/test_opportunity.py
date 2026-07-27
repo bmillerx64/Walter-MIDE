@@ -109,3 +109,48 @@ def test_opportunity_enrichment_does_not_change_entry_or_alert_behavior(monkeypa
     assert baseline["qualified_for_entry"] == without_engine["qualified_for_entry"]
     assert baseline["qualified_for_alert"] == without_engine["qualified_for_alert"]
     assert baseline["alert_event"] == without_engine["alert_event"]
+
+
+def test_decision_support_is_complete_and_score_breakdown_sums_exactly():
+    result = calculate_opportunity(
+        record(candidate_status="Strengthening", vwap_distance_pct=3.4)
+    )
+
+    assert result["workflow_label"] == "Strengthening"
+    assert result["promotion_reasons"]
+    assert result["entry_blockers_explained"]
+    assert result["next_event_explanation"]
+    assert result["tradeability"] == "Don't Chase"
+    assert (
+        sum(result["opportunity_breakdown"].values()) == result["opportunity_score_v2"]
+    )
+    assert len([part for part in result["walter_take"].split(".") if part.strip()]) <= 3
+
+
+def test_broken_internal_phase_displays_recovering_when_structure_is_supportive():
+    recovering = calculate_opportunity(
+        record(candidate_status="Strengthening", market_phase="Broken")
+    )
+    failing = calculate_opportunity(
+        record(
+            candidate_status="Strengthening",
+            market_phase="Broken",
+            vwap_relation="below",
+            supertrend_bullish=False,
+            volume_acceleration=0.7,
+        )
+    )
+
+    assert recovering["lifecycle_label"] == "Recovering"
+    assert failing["lifecycle_label"] == "Breaking Down"
+
+
+def test_entry_ready_has_reasons_next_event_and_buyable_tradeability():
+    result = calculate_opportunity(
+        record(candidate_status="Entry Ready", trigger="YES")
+    )
+
+    assert result["promotion_reasons"]
+    assert result["entry_blockers_explained"] == []
+    assert result["next_event_explanation"]
+    assert result["tradeability"] == "Buyable"

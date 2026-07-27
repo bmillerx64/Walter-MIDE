@@ -173,6 +173,28 @@ def market_phase(now: datetime | None = None) -> str:
 def scan_alert_phrase(records: list[dict]) -> str:
     """Build the per-scan audible alert, prioritizing actionable Entry Ready symbols."""
     actionable_records = actionable_candidate_records(records)
+    promoted = [
+        record
+        for record in actionable_records
+        if record.get("advanced_state") or record.get("entered_watchlist")
+    ]
+    if promoted:
+        record = promoted[0]
+        symbol = str(record.get("symbol") or "Symbol").upper()
+        workflow = str(
+            record.get("workflow_label")
+            or record.get("candidate_status")
+            or record.get("status")
+        )
+        reasons = record.get("promotion_reasons") or record.get("reasons") or []
+        blockers = record.get("entry_blockers_explained") or []
+        detail = "; ".join(str(item) for item in reasons[:3])
+        phrase = f"{symbol} promoted to {workflow}."
+        if detail:
+            phrase += f" Reason: {detail}."
+        if workflow != "Entry Ready" and blockers:
+            phrase += f" Not yet Entry Ready: {blockers[0]}."
+        return phrase
     entry_symbols = [
         r.get("symbol")
         for r in actionable_records

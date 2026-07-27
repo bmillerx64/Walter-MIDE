@@ -1800,7 +1800,9 @@ def test_structure_failure_keeps_raw_strengthening_but_is_not_actionable():
     assert result["raw_candidate_state"] == "Strengthening"
     assert actionable_candidate_records([result]) == [result]
     assert scanner_v2_dashboard_counts([result])["strengthening"] == 1
-    assert scan_alert_phrase([result]) == "Watching 1."
+    alert = scan_alert_phrase([result])
+    assert alert.startswith("WAIT promoted to Strengthening. Reason:")
+    assert "Not yet Entry Ready:" in alert
 
     diagnostic = strengthening_decision(result)
     assert diagnostic["accepted"] is True
