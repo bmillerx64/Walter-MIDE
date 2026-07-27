@@ -106,6 +106,19 @@ def inject_css():
     .hot-heading {font-size:.68rem;text-transform:uppercase;letter-spacing:.09em;color:#aeb9c7;font-weight:900;margin-top:8px}
     .hot-reason {color:#dcfce7;font-size:.90rem;font-weight:750;line-height:1.45}
     .hot-need {color:#fecaca;font-size:.90rem;font-weight:750;line-height:1.4}
+    .mission-shell {background:linear-gradient(145deg,#101a27,#0b1119);border:1px solid #334155;border-top:4px solid #60a5fa;border-radius:14px;padding:18px 20px;margin:4px 0 16px;box-shadow:0 12px 30px rgba(0,0,0,.22)}
+    .mission-title {font-size:1.25rem;font-weight:950;color:#f8fafc;margin-bottom:13px}
+    .mission-grid {display:grid;grid-template-columns:minmax(280px,1.35fr) minmax(240px,1fr);gap:12px}
+    .mission-target {background:#0c121a;border:1px solid #273548;border-left:6px solid var(--mission-color);border-radius:10px;padding:13px 15px}
+    .mission-role {font-size:.68rem;letter-spacing:.13em;text-transform:uppercase;color:#aab7c7;font-weight:950}
+    .mission-symbol {font-size:2rem;line-height:1.15;color:#fff;font-weight:950;margin:3px 0}
+    .mission-band {color:var(--mission-color);font-size:.76rem;font-weight:950;text-transform:uppercase;letter-spacing:.08em}
+    .mission-status {font-size:1.05rem;font-weight:850;color:#e2e8f0;margin:8px 0}
+    .mission-meta {font-size:.84rem;color:#aeb9c7;margin-top:4px}.mission-meta b{color:#f8fafc}
+    .mission-checks {display:grid;grid-template-columns:repeat(auto-fit,minmax(155px,1fr));gap:4px;margin-top:10px}
+    .mission-check {font-size:.84rem;font-weight:750}.mission-pass{color:#86efac}.mission-wait{color:#fca5a5}
+    .mission-ignore {margin-top:11px;padding-top:10px;border-top:1px solid #273548;color:#94a3b8;font-size:.82rem}
+    @media(max-width:760px){.mission-grid{grid-template-columns:1fr}}
     </style>
     """,
         unsafe_allow_html=True,
@@ -804,6 +817,128 @@ def render_walter_hot_list(records: list[dict]) -> None:
             f"<div class='hot-heading'>Why Walter likes it</div>{reasons}{needs}</div>",
             unsafe_allow_html=True,
         )
+
+
+MISSION_BANDS = {
+    "trade_soon": ("🟢 Trade Soon", "#4ade80"),
+    "watch_closely": ("🟡 Watch Closely", "#facc15"),
+    "background": ("⚪ Background Monitor", "#cbd5e1"),
+    "ignore": ("🔴 Ignore", "#f87171"),
+}
+
+
+def _mission_conditions(record: dict) -> list[dict]:
+    """Translate current scanner evidence into Walter's visible setup checklist."""
+    relation = str(record.get("vwap_relation") or "").lower()
+    distance = float(record.get("vwap_distance_pct", 0) or 0)
+    vwap_passed = relation == "above" and distance <= 2
+    trend_passed = bool(record.get("supertrend_bullish") or record.get("supertrend_flip"))
+    participation = _bounded_score(
+        record.get("participation_surge_score", record.get("participation_score", 0))
+    )
+    return [
+        {"label": "VWAP reclaim", "passed": vwap_passed},
+        {"label": "SuperTrend flip", "passed": trend_passed},
+        {"label": "Participation > 90", "passed": participation > 90},
+    ]
+
+
+def _mission_band(record: dict, conditions: list[dict]) -> str:
+    state = _hot_state(record)
+    distance = float(record.get("vwap_distance_pct", 0) or 0)
+    if state is None or distance > 5:
+        return "ignore"
+    remaining = sum(not condition["passed"] for condition in conditions)
+    if state == "Entry Ready" and remaining <= 1:
+        return "trade_soon"
+    if state in {"Entry Ready", "Strengthening"}:
+        return "watch_closely"
+    return "background"
+
+
+def _mission_status(record: dict, band: str, conditions: list[dict]) -> str:
+    if band == "ignore":
+        return "Too extended" if float(record.get("vwap_distance_pct", 0) or 0) > 5 else "No actionable setup"
+    remaining = [item["label"] for item in conditions if not item["passed"]]
+    if not remaining:
+        return "Setup conditions aligned — review the chart"
+    if remaining[0] == "VWAP reclaim":
+        return "Wait for VWAP reclaim"
+    if remaining[0] == "SuperTrend flip":
+        return "Ready if candle confirms SuperTrend"
+    return "Wait for participation above 90"
+
+
+def walter_mission_control(records: list[dict]) -> dict:
+    """Commit attention to one primary and one secondary without issuing trades."""
+    candidates = []
+    ignored = []
+    for record in actionable_candidate_records(records):
+        conditions = _mission_conditions(record)
+        band = _mission_band(record, conditions)
+        item = {
+            "symbol": str(record.get("symbol") or "").upper(),
+            "confidence": hot_list_priority_score(record),
+            "band": band,
+            "status": _mission_status(record, band, conditions),
+            "conditions": conditions,
+        }
+        if band == "ignore":
+            ignored.append(item)
+        else:
+            candidates.append(item)
+    band_rank = {"trade_soon": 3, "watch_closely": 2, "background": 1}
+    candidates.sort(
+        key=lambda item: (band_rank[item["band"]], item["confidence"], item["symbol"]),
+        reverse=True,
+    )
+    ignored.sort(key=lambda item: (item["confidence"], item["symbol"]), reverse=True)
+    return {
+        "primary": candidates[0] if candidates else None,
+        "secondary": candidates[1] if len(candidates) > 1 else None,
+        "ignored": ignored,
+    }
+
+
+def _mission_target_markup(item: dict, role: str) -> str:
+    label, color = MISSION_BANDS[item["band"]]
+    remaining = sum(not condition["passed"] for condition in item["conditions"])
+    window = "Now–1 minute" if remaining == 0 else ("1–5 minutes" if remaining == 1 else "5–15 minutes")
+    checks = "".join(
+        f"<div class='mission-check {'mission-pass' if condition['passed'] else 'mission-wait'}'>"
+        f"{'✓' if condition['passed'] else '✕'} {html.escape(condition['label'])}</div>"
+        for condition in item["conditions"]
+    )
+    remaining_labels = ", ".join(
+        condition["label"] for condition in item["conditions"] if not condition["passed"]
+    ) or "None — all setup conditions are present"
+    return (
+        f"<div class='mission-target' style='--mission-color:{color}'>"
+        f"<div class='mission-role'>{role}</div><div class='mission-symbol'>{html.escape(item['symbol'])}</div>"
+        f"<div class='mission-band'>{label}</div><div class='mission-status'>{html.escape(item['status'])}</div>"
+        f"<div class='mission-meta'>Confidence: <b>{item['confidence']}%</b> · Estimated setup window: <b>{window}</b></div>"
+        f"<div class='mission-checks'>{checks}</div><div class='mission-meta'>Remaining: <b>{html.escape(remaining_labels)}</b></div></div>"
+    )
+
+
+def render_walter_mission_control(records: list[dict]) -> None:
+    """Render Walter's single committed attention plan ahead of dashboard detail."""
+    mission = walter_mission_control(records)
+    if not mission["primary"]:
+        st.markdown("<div class='mission-shell'><div class='mission-title'>🎯 Walter's Focus</div>No stock deserves elevated attention right now.</div>", unsafe_allow_html=True)
+        return
+    targets = _mission_target_markup(mission["primary"], "Primary target")
+    if mission["secondary"]:
+        targets += _mission_target_markup(mission["secondary"], "Secondary")
+    ignored = mission["ignored"]
+    ignore_markup = ""
+    if ignored:
+        names = " · ".join(f"{html.escape(item['symbol'])} — {html.escape(item['status'])}" for item in ignored[:3])
+        ignore_markup = f"<div class='mission-ignore'><b>IGNORE FOR NOW</b> · {names}</div>"
+    st.markdown(
+        f"<div class='mission-shell'><div class='mission-title'>🎯 Walter's Focus</div><div class='mission-grid'>{targets}</div>{ignore_markup}</div>",
+        unsafe_allow_html=True,
+    )
 
 
 SCANNER_V2_DISPLAY_ORDER = (

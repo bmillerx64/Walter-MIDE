@@ -4,6 +4,7 @@ from mide.ui import (
     radar_table,
     state_sections,
     summary_reasons,
+    walter_mission_control,
     walter_hot_list,
 )
 
@@ -215,6 +216,57 @@ def test_hot_list_excludes_rejected_and_weak_symbols_without_placeholders():
     ]
 
     assert [item["symbol"] for item in walter_hot_list(records)] == ["ONLY"]
+
+
+def test_mission_control_commits_to_one_primary_and_secondary_by_urgency():
+    records = [
+        sample_record(symbol="MON", candidate_status="Watching", participation_score=95),
+        sample_record(symbol="READY", candidate_status="Entry Ready", participation_score=96),
+        sample_record(symbol="NEXT", candidate_status="Strengthening", participation_score=92),
+    ]
+
+    mission = walter_mission_control(records)
+
+    assert mission["primary"]["symbol"] == "READY"
+    assert mission["primary"]["band"] == "trade_soon"
+    assert mission["secondary"]["symbol"] == "NEXT"
+    assert mission["secondary"]["band"] == "watch_closely"
+
+
+def test_mission_control_explains_exact_remaining_setup_conditions():
+    mission = walter_mission_control(
+        [
+            sample_record(
+                symbol="WAIT",
+                candidate_status="Strengthening",
+                vwap_relation="above",
+                vwap_distance_pct=0.4,
+                supertrend_bullish=False,
+                supertrend_flip=False,
+                participation_score=94,
+            )
+        ]
+    )
+
+    primary = mission["primary"]
+    assert primary["status"] == "Ready if candle confirms SuperTrend"
+    assert [item["label"] for item in primary["conditions"] if not item["passed"]] == [
+        "SuperTrend flip"
+    ]
+
+
+def test_mission_control_separates_extended_symbols_into_ignore():
+    mission = walter_mission_control(
+        [
+            sample_record(symbol="FOCUS", candidate_status="Watching"),
+            sample_record(symbol="CHASE", candidate_status="Strengthening", vwap_distance_pct=6.2),
+        ]
+    )
+
+    assert mission["primary"]["symbol"] == "FOCUS"
+    assert [(item["symbol"], item["status"]) for item in mission["ignored"]] == [
+        ("CHASE", "Too extended")
+    ]
 
 
 def test_hot_list_renders_priority_score_as_confidence_meter(monkeypatch):
