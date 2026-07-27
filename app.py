@@ -24,6 +24,7 @@ from mide.runtime_evidence import (
     symbol_history,
     symbol_summary,
 )
+from mide.session_replay import build_session_replay
 from mide.demo import demo_records
 from mide.ui import (
     inject_css,
@@ -802,7 +803,16 @@ alert_phrase = scan_alert_phrase(actionable_records)
 if alerts and alert_phrase:
     play_alert("assets/alert.wav", alert_phrase, alert_voice_for_session())
 
-tabs = st.tabs(["Radar", "Diagnostics", "What changed", "Data validation", "Method"])
+tabs = st.tabs(
+    [
+        "Radar",
+        "Diagnostics",
+        "Session Replay",
+        "What changed",
+        "Data validation",
+        "Method",
+    ]
+)
 with tabs[0]:
     if not display_records:
         st.success("No stock currently deserves elevated attention.")
@@ -999,6 +1009,98 @@ with tabs[1]:
                         st.json(decision.get("thresholds", {}))
 
 with tabs[2]:
+    st.subheader("Runtime Session Replay")
+    st.caption(
+        "A read-only reconstruction from Candidate History and Flight Recorder files. "
+        "Replay never changes scanner behavior, qualification, or scoring."
+    )
+    replay_symbol = (
+        st.text_input(
+            "Ticker to replay",
+            value=inspect_symbol,
+            placeholder="DFNS",
+            key="replay_symbol",
+        )
+        .strip()
+        .upper()
+    )
+    if replay_symbol:
+        replay = build_session_replay(
+            symbol_export(replay_symbol, get_store(), get_flight_recorder())
+        )
+        if not replay["scans"]:
+            st.info(f"No runtime history was retained for {replay_symbol}.")
+        else:
+            st.markdown("#### Lifecycle milestones")
+            milestone_columns = st.columns(3)
+            for index, (label, timestamp) in enumerate(replay["milestones"].items()):
+                milestone_columns[index % 3].metric(label, timestamp or "Not reached")
+
+            st.markdown("#### Scan-by-scan replay")
+            for scan in replay["scans"]:
+                with st.expander(
+                    f"{scan['timestamp']} · {scan['state']} · {scan['recommendation']}",
+                    expanded=False,
+                ):
+                    left, middle, right = st.columns(3)
+                    left.metric(
+                        "Participation Surge",
+                        (
+                            scan.get("participation_surge")
+                            if scan.get("participation_surge") is not None
+                            else "N/A"
+                        ),
+                    )
+                    left.metric(
+                        "Expansion Quality",
+                        (
+                            scan.get("expansion_quality")
+                            if scan.get("expansion_quality") is not None
+                            else "N/A"
+                        ),
+                    )
+                    middle.metric(
+                        "VWAP Distance",
+                        (
+                            scan.get("vwap_distance")
+                            if scan.get("vwap_distance") is not None
+                            else "N/A"
+                        ),
+                    )
+                    middle.metric("SuperTrend", scan.get("supertrend_state") or "N/A")
+                    right.metric(
+                        "VPI", scan.get("vpi") if scan.get("vpi") is not None else "N/A"
+                    )
+                    right.metric(
+                        "Volume Acceleration",
+                        (
+                            scan.get("volume_acceleration")
+                            if scan.get("volume_acceleration") is not None
+                            else "N/A"
+                        ),
+                    )
+                    st.write(f"**Recommendation:** {scan['recommendation']}")
+                    st.write("**Trigger diagnostics**")
+                    st.json(
+                        scan.get("trigger_diagnostics")
+                        or {
+                            "result": scan.get("trigger_result"),
+                            "details": "Not retained",
+                        }
+                    )
+
+            st.markdown("#### Automatic summary")
+            st.write(
+                f"**Why Walter promoted this stock:** {replay['summary']['why_promoted']}"
+            )
+            st.write(
+                f"**Why Walter did not recommend entry:** {replay['summary']['why_no_entry']}"
+            )
+            st.write(
+                f"**Single most limiting rule:** {replay['summary']['most_limiting_rule']}"
+            )
+
+with tabs[3]:
     for record in sorted(
         records, key=lambda r: abs(r.get("velocity", 0)), reverse=True
     )[:15]:
@@ -1009,7 +1111,7 @@ with tabs[2]:
             f"{record.get('current_momentum', record['opportunity_score']):.1f} ({record.get('velocity', 0):+.1f})"
         )
 
-with tabs[3]:
+with tabs[4]:
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("Configured feed", settings.feed.upper())
     c2.metric("Ranked records", len(records))
@@ -1021,7 +1123,7 @@ with tabs[3]:
     for warning in api_warnings:
         st.warning(warning)
 
-with tabs[4]:
+with tabs[5]:
     st.markdown("""
 Scanner V1 is preserved as the classic technical screener. Scanner V2 is an adaptive momentum assistant: Walter rewards fresh catalysts, flat bases beginning to expand, increasing feed and dollar volume, RVOL, float turnover, acceleration and improvements versus the previous scan. VWAP, EMA65 and SuperTrend improve ranking and state progression, but they no longer eliminate promising discovery-stage candidates.
 
