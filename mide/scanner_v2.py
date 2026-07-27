@@ -1007,7 +1007,13 @@ def structure_gate_diagnostics(record: dict, prior: dict | None = None) -> dict:
     distance = vwap["distance_pct"]
     trend = sequential_trend_confirmation(record, prior)
     checks = [
-        ("Near VWAP", -1.0 <= distance <= 2.5, "Not near VWAP"),
+        (
+            "Near VWAP",
+            distance,
+            "-1.0 to 2.5%",
+            -1.0 <= distance <= 2.5,
+            "Not near VWAP",
+        ),
         (
             "Fresh or sequential SuperTrend confirmation",
             bool(
@@ -1016,11 +1022,30 @@ def structure_gate_diagnostics(record: dict, prior: dict | None = None) -> dict:
                 or trend["progression_count"] >= 2
                 or record.get("supertrend_bullish")
             ),
+            "true",
+            bool(
+                record.get("supertrend_flip")
+                or record.get("supertrend_30s_flip")
+                or trend["progression_count"] >= 2
+                or record.get("supertrend_bullish")
+            ),
             "SuperTrend not confirmed",
         ),
-        ("Not materially extended", distance <= 2.5, "Materially extended"),
+        (
+            "Not materially extended",
+            distance,
+            "<= 2.5%",
+            distance <= 2.5,
+            "Materially extended",
+        ),
         (
             "Healthy price structure",
+            bool(
+                record.get("higher_lows")
+                or record.get("near_hod")
+                or _num(record, "expansion_quality", 50) >= 55
+            ),
+            "true",
             bool(
                 record.get("higher_lows")
                 or record.get("near_hod")
@@ -1029,15 +1054,23 @@ def structure_gate_diagnostics(record: dict, prior: dict | None = None) -> dict:
             "Price structure not healthy",
         ),
     ]
-    failed = [failed for _label, passed, failed in checks if not passed]
+    failed = [
+        failed for _label, _measured, _threshold, passed, failed in checks if not passed
+    ]
     return {
         "passed": not failed,
         "status": "PASS" if not failed else "FAIL",
         "reason": "Structure Ready" if not failed else "Structure Not Ready",
         "failed_reasons": failed,
         "checks": [
-            {"condition": label, "passed": passed, "failed_reason": failed_reason}
-            for label, passed, failed_reason in checks
+            {
+                "condition": label,
+                "passed": passed,
+                "failed_reason": failed_reason,
+                "measured": measured,
+                "threshold": threshold,
+            }
+            for label, measured, threshold, passed, failed_reason in checks
         ],
     }
 
