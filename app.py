@@ -1036,10 +1036,17 @@ with tabs[2]:
             for index, (label, timestamp) in enumerate(replay["milestones"].items()):
                 milestone_columns[index % 3].metric(label, timestamp or "Not reached")
 
-            st.markdown("#### Scan-by-scan replay")
+            st.markdown("#### Replay events")
+            st.caption(
+                f"{replay['summary']['total_scans']} scans compressed into "
+                f"{replay['summary']['summarized_events']} events."
+            )
             for scan in replay["scans"]:
+                time_range = scan["timestamp"]
+                if scan["scan_count"] > 1:
+                    time_range += f" → {scan['end_timestamp']} ({scan['scan_count']} scans)"
                 with st.expander(
-                    f"{scan['timestamp']} · {scan['state']} · {scan['recommendation']}",
+                    f"{time_range} · {scan['state']} · {scan['recommendation']}",
                     expanded=False,
                 ):
                     left, middle, right = st.columns(3)
@@ -1080,6 +1087,20 @@ with tabs[2]:
                         ),
                     )
                     st.write(f"**Recommendation:** {scan['recommendation']}")
+                    st.write("**Promotion blockers recorded for this event**")
+                    if scan["promotion_blockers"]:
+                        for blocker in scan["promotion_blockers"]:
+                            evidence = ""
+                            if "measured" in blocker or "threshold" in blocker:
+                                evidence = (
+                                    f" — measured: {blocker.get('measured', 'N/A')}; "
+                                    f"required: {blocker.get('threshold', 'N/A')}"
+                                )
+                            st.markdown(
+                                f"- **{blocker['category']}** — {blocker['reason']}{evidence}"
+                            )
+                    else:
+                        st.success("No promotion blocker was retained for this event.")
                     st.write("**Trigger diagnostics**")
                     st.json(
                         scan.get("trigger_diagnostics")
@@ -1097,7 +1118,8 @@ with tabs[2]:
                 f"**Why Walter did not recommend entry:** {replay['summary']['why_no_entry']}"
             )
             st.write(
-                f"**Single most limiting rule:** {replay['summary']['most_limiting_rule']}"
+                f"**Single most common blocker:** {replay['summary']['most_limiting_rule']} "
+                f"({replay['summary']['most_limiting_rule_count']} scans)"
             )
 
 with tabs[3]:
