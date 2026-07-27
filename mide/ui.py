@@ -108,20 +108,22 @@ def play_alert(sound_path: str, phrase: str, voice_name: str = ""):
 
 
 def is_actionable_candidate(record: dict) -> bool:
-    """Return whether a scanner record belongs in actionable trader UI collections."""
+    """Return whether a scanner record belongs in the visible workflow."""
+    if "qualified_for_watch" in record:
+        return record["qualified_for_watch"] is not False
+    # TODO Walter 2.0 Phase 2: remove the legacy ranking fallback once stored
+    # Scanner V1/V2 records have been migrated.
     return record.get("qualified_for_ranking", True) is not False
 
 
 def actionable_candidate_records(records: list[dict]) -> list[dict]:
-    """Return only records qualified for ranking, alerting, and trader priority display."""
+    """Return records qualified for watch-workflow display."""
     return [record for record in records if is_actionable_candidate(record)]
 
 
 def rejected_candidate_records(records: list[dict]) -> list[dict]:
-    """Return diagnostic-only records rejected by Walter's participation/structure gates."""
-    return [
-        record for record in records if record.get("qualified_for_ranking") is False
-    ]
+    """Return diagnostic-only records rejected before the Watching workflow."""
+    return [record for record in records if not is_actionable_candidate(record)]
 
 
 def rejected_candidates_table(records: list[dict]) -> pd.DataFrame:

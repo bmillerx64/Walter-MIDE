@@ -187,7 +187,7 @@ def test_scanner_v2_rewards_developing_momentum_without_completed_setup():
         "cautions": [],
     }
     ranked = apply_scanner_v2([record], {})
-    assert ranked[0]["candidate_status"] == "Waiting for Structure"
+    assert ranked[0]["candidate_status"] == "Strengthening"
     assert ranked[0]["raw_candidate_state"] == "Strengthening"
     assert ranked[0]["qualified_for_ranking"] is False
     assert "accelerating volume" in " ".join(ranked[0]["reasons"])
@@ -436,9 +436,9 @@ def test_entry_ready_allows_supportive_timeframes_without_all_green():
     }
 
     ranked = apply_scanner_v2([record], prior)
-    assert ranked[0]["candidate_status"] == "Entry Ready"
-    assert ranked[0]["promotion_trigger"] in {"VWAP reclaim", "30s ST flip"}
-    assert "30s ST flip" in ranked[0]["promotion_condition_changes"]
+    assert ranked[0]["candidate_status"] == "Strengthening"
+    assert ranked[0]["qualified_for_entry"] is False
+    assert ranked[0]["trigger"] == "NO"
 
 
 def test_entry_ready_state_uses_chart_preparation_requirements_only():
@@ -922,9 +922,9 @@ def test_scanner_v2_blocks_strengthening_when_well_below_vwap():
     ranked = apply_scanner_v2([record], {})
     decision = strengthening_diagnostics(ranked)["decisions"][0]
 
-    assert ranked[0]["candidate_status"] == "Emerging"
-    assert decision["first_rejection_rule"] == "VWAP"
-    assert decision["first_rejection_bucket"] == "Below VWAP"
+    assert ranked[0]["candidate_status"] == "Strengthening"
+    assert decision["accepted"] is True
+    assert decision["vwap_gate"]["strengthening_vwap_floor_passed"] is False
 
 
 def test_scanner_v2_allows_strengthening_near_vwap():
@@ -1103,7 +1103,7 @@ def test_strengthening_vwap_gate_uses_current_intraday_vwap_values():
         item["symbol"]: item for item in strengthening_diagnostics(ranked)["decisions"]
     }
 
-    assert by_symbol["DEEP"]["candidate_status"] != "Strengthening"
+    assert by_symbol["DEEP"]["candidate_status"] == "Strengthening"
     assert decisions["DEEP"]["vwap_gate"]["distance_pct"] == -3.0
     assert decisions["DEEP"]["vwap_gate"]["strengthening_vwap_floor_passed"] is False
 
@@ -1796,17 +1796,15 @@ def test_structure_failure_keeps_raw_strengthening_but_is_not_actionable():
     assert result["participation_gate"]["passed"] is True
     assert result["structure_gate"]["passed"] is False
     assert result["qualified_for_ranking"] is False
-    assert result["candidate_status"] == "Waiting for Structure"
+    assert result["candidate_status"] == "Strengthening"
     assert result["raw_candidate_state"] == "Strengthening"
-    assert actionable_candidate_records([result]) == []
-    assert scanner_v2_dashboard_counts([result])["strengthening"] == 0
-    assert scan_alert_phrase([result]) == ""
+    assert actionable_candidate_records([result]) == [result]
+    assert scanner_v2_dashboard_counts([result])["strengthening"] == 1
+    assert scan_alert_phrase([result]) == "Watching 1."
 
     diagnostic = strengthening_decision(result)
-    assert diagnostic["accepted"] is False
-    assert diagnostic["status"] == (
-        "Rejected from Strengthening — Waiting for Structure"
-    )
+    assert diagnostic["accepted"] is True
+    assert diagnostic["status"] == "Accepted for Strengthening"
     assert diagnostic["failed_structure_gate_reasons"] == [
         "Price structure not healthy"
     ]
@@ -1833,7 +1831,8 @@ def test_structure_pass_allows_actionable_strengthening_and_legacy_acceptance():
 
     assert result["participation_gate"]["passed"] is True
     assert result["structure_gate"]["passed"] is True
-    assert result["qualified_for_ranking"] is True
+    assert result["qualified_for_ranking"] is False
+    assert result["qualified_for_entry"] is False
     assert result["candidate_status"] == "Strengthening"
     assert result["raw_candidate_state"] == "Strengthening"
     assert strengthening_decision(result)["status"] == "Accepted for Strengthening"
@@ -1856,3 +1855,76 @@ def test_legacy_diagnostic_never_accepts_unqualified_actionable_label():
 
     assert diagnostic["accepted"] is False
     assert diagnostic["status"] != "Accepted for Strengthening"
+
+
+def test_extended_symbol_remains_strengthening_but_is_not_entry_ready():
+    from mide.scanner_v2 import apply_scanner_v2
+
+    record = {
+        **base(symbol="EXTENDED", price=1.03, vwap_distance_pct=3.0).__dict__,
+        "vwap_value": 1.00,
+        "opportunity_score": 95,
+        "participation_score": 95,
+        "expansion_quality": 90,
+        "status": "ALERT",
+        "timeframes": {
+            "1m": {"above_vwap": True, "supertrend": True},
+            "3m": {"above_vwap": True, "supertrend": True},
+        },
+        "reasons": [],
+        "cautions": [],
+    }
+
+    result = apply_scanner_v2([record], {})[0]
+
+    assert result["candidate_status"] == "Strengthening"
+    assert result["qualified_for_watch"] is True
+    assert result["qualified_for_entry"] is False
+    assert result["qualified_for_alert"] is False
+    assert result["qualified_for_ranking"] == result["qualified_for_entry"]
+    assert "not_extended" in result["trigger_diagnostics"]["failed_conditions"]
+    assert any("Entry blocked: extended" in item for item in result["cautions"])
+
+
+def test_entry_ready_requires_the_unchanged_trigger_rule_set():
+    from mide.scanner_v2 import apply_scanner_v2, trigger_diagnostics
+
+    record = {
+        **base(symbol="NO_TRIGGER", supertrend_flip=False).__dict__,
+        "supertrend_30s_flip": False,
+        "vwap_value": 0.50,
+        "opportunity_score": 95,
+        "participation_score": 95,
+        "expansion_quality": 90,
+        "status": "ALERT",
+        "timeframes": {
+            "1m": {"above_vwap": True, "supertrend": True},
+            "3m": {"above_vwap": True, "supertrend": True},
+        },
+        "reasons": [],
+        "cautions": [],
+    }
+
+    before = trigger_diagnostics(record)
+    result = apply_scanner_v2([record], {})[0]
+
+    assert [check["condition"] for check in before["checks"]] == [
+        "participation",
+        "supertrend_flip",
+        "vwap",
+        "not_extended",
+        "expansion_beginning",
+    ]
+    assert "supertrend_flip" in before["failed_conditions"]
+    assert "supertrend_flip" in result["trigger_diagnostics"]["failed_conditions"]
+    assert result["trigger"] == "NO"
+    assert result["candidate_status"] == "Strengthening"
+    assert result["qualified_for_entry"] is False
+
+
+def test_phase_one_workflow_does_not_change_ranking_formula_outputs():
+    original = score(base())
+
+    assert original.opportunity_score == 77.8
+    assert original.participation_score == 55.0
+    assert original.attention_score == 48.9

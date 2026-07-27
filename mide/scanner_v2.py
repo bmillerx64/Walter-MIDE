@@ -72,6 +72,9 @@ __all__ = [
     "momentum_quality_diagnostics",
     "trend_stability_diagnostics",
     "trigger_diagnostics",
+    "qualified_for_watch",
+    "qualified_for_entry",
+    "qualified_for_alert",
 ]
 
 
@@ -237,7 +240,9 @@ def strengthening_decision(record: dict, scan_time: datetime | None = None) -> d
         ("SuperTrend", _has_strengthening_supertrend(record), "SuperTrend"),
     ]
     state = record.get("candidate_status") or record.get("status")
-    qualified = record.get("qualified_for_ranking") is True
+    qualified = (
+        record.get("qualified_for_watch", record.get("qualified_for_ranking")) is True
+    )
     accepted = state in {"Strengthening", "Entry Ready"} and qualified
     structure_gate = record.get("structure_gate") or {}
     waiting_for_structure = (
@@ -270,6 +275,8 @@ def strengthening_decision(record: dict, scan_time: datetime | None = None) -> d
         "candidate_status": state,
         "raw_candidate_state": record.get("raw_candidate_state"),
         "qualified_for_ranking": record.get("qualified_for_ranking"),
+        "qualified_for_watch": record.get("qualified_for_watch"),
+        "qualified_for_entry": record.get("qualified_for_entry"),
         "structure_gate": structure_gate,
         "failed_structure_gate_reasons": structure_gate.get("failed_reasons") or [],
         "scanner_v2_score": record.get("scanner_v2_score"),
@@ -684,31 +691,52 @@ def _current_vwap_diagnostics(record: dict, prior: dict | None = None) -> dict:
 def _strengthening_vwap_qualified(record: dict, prior: dict | None = None) -> bool:
     """Return whether current VWAP structure allows Strengthening."""
     return bool(
-        _current_vwap_diagnostics(record, prior).get(
-            "strengthening_vwap_floor_passed"
-        )
+        _current_vwap_diagnostics(record, prior).get("strengthening_vwap_floor_passed")
     )
 
 
-def _entry_ready_requirements(record: dict, prior: dict | None = None) -> bool:
-    price_at_or_above_vwap = (
-        _current_vwap_diagnostics(record, prior)["distance_pct"] >= 0
-    )
-    catalyst_30s = bool(
-        record.get("supertrend_30s_flip", record.get("supertrend_flip"))
-    )
-    one_min_support = _tf_supportive(record, "1m") or bool(
-        record.get("supertrend_bullish")
-    )
-    three_min_support = _tf_supportive(record, "3m")
+def qualified_for_watch(record: dict, raw_state: str | None = None) -> bool:
+    """Return whether a discovered symbol remains worth monitoring.
 
-    return all(
-        [
-            catalyst_30s,
-            price_at_or_above_vwap,
-            one_min_support,
-            three_min_support,
-        ]
+    Discovery supplies the candidate universe.  This predicate deliberately uses
+    only the scanner's existing liquidity/tradeability removal decision and does
+    not apply entry-location or extension gates.
+    """
+    state = (
+        raw_state or record.get("raw_candidate_state") or record.get("candidate_status")
+    )
+    participation = record.get("participation_gate") or {}
+    return bool(
+        state not in {None, "Removed", "Rejected – No Participation"}
+        and participation.get("passed", True)
+    )
+
+
+def qualified_for_entry(
+    record: dict,
+    participation_gate: dict | None = None,
+    structure_gate: dict | None = None,
+    prior: dict | None = None,
+    scan_time: datetime | None = None,
+) -> bool:
+    """Return whether the setup is executable through all existing hard gates."""
+    participation_gate = participation_gate or record.get("participation_gate") or {}
+    structure_gate = structure_gate or record.get("structure_gate") or {}
+    trigger = record.get("trigger_diagnostics") or trigger_diagnostics(
+        record, prior, scan_time
+    )
+    return bool(
+        participation_gate.get("passed")
+        and structure_gate.get("passed")
+        and trigger.get("passed")
+    )
+
+
+def qualified_for_alert(record: dict) -> bool:
+    """Return whether an executable setup is eligible for an entry alert."""
+    return bool(
+        record.get("qualified_for_entry")
+        and (record.get("candidate_status") or record.get("status")) == "Entry Ready"
     )
 
 
@@ -1592,7 +1620,7 @@ def classify_state(
     )
     if _num(record, "dollar_volume") < 50_000 or _num(record, "spread_pct") > 10:
         return "Removed"
-    if _entry_ready_requirements(record, prior):
+    if trigger_diagnostics(record, prior, scan_time)["passed"]:
         return "Entry Ready"
     if (
         prior
@@ -1600,7 +1628,7 @@ def classify_state(
         < _num(prior, "scanner_v2_score", _num(prior, "opportunity_score")) - 12
     ):
         return "Weakening"
-    if score >= 66 and _strengthening_vwap_qualified(record, prior):
+    if score >= 66:
         return "Strengthening"
     if score >= 52:
         return "Emerging"
@@ -1641,9 +1669,11 @@ def apply_scanner_v2(
             record, prior, scan_time, surge
         )
         structure_gate = structure_gate_diagnostics(record, prior)
-        qualified_for_ranking = (
-            participation_gate["passed"] and structure_gate["passed"]
-        )
+        record["strengthening_vwap_gate"] = vwap_gate_diagnostics
+        record["participation_surge_diagnostics"] = surge
+        record["participation_gate"] = participation_gate
+        record["structure_gate"] = structure_gate
+        trigger = trigger_diagnostics(record, prior, scan_time)
         if not participation_gate["passed"]:
             score, reasons, cautions = 0.0, [], participation_gate["failed_reasons"]
             raw_state = classify_state(record, prior, scan_time)
@@ -1651,11 +1681,25 @@ def apply_scanner_v2(
         else:
             score, reasons, cautions = momentum_evidence(record, prior, scan_time)
             raw_state = classify_state(record, prior, scan_time)
-            state = (
-                "Waiting for Structure"
-                if not structure_gate["passed"]
-                and raw_state in {"Strengthening", "Entry Ready"}
-                else raw_state
+            state = raw_state
+        watch_qualified = qualified_for_watch(record, raw_state)
+        entry_qualified = qualified_for_entry(
+            record, participation_gate, structure_gate, prior, scan_time
+        )
+        if raw_state == "Entry Ready" and not entry_qualified:
+            state = "Strengthening" if score >= 66 else "Emerging"
+        record["qualified_for_entry"] = entry_qualified
+        record["candidate_status"] = state
+        alert_qualified = qualified_for_alert(record)
+        # TODO Walter 2.0 Phase 2: remove this compatibility field after all
+        # ranking consumers have migrated to qualified_for_entry.
+        qualified_for_ranking = entry_qualified
+        entry_blockers = (
+            list(trigger.get("reasons") or []) if not entry_qualified else []
+        )
+        if state == "Strengthening" and vwap_gate_diagnostics["distance_pct"] > 2.0:
+            cautions.append(
+                f"Entry blocked: extended {vwap_gate_diagnostics['distance_pct']:.1f}% above VWAP"
             )
         advanced = STATE_RANK.get(state, 0) > STATE_RANK.get(previous_state, 0)
         entered_watch = state in WATCH_STATES and previous_state not in WATCH_STATES
@@ -1728,7 +1772,11 @@ def apply_scanner_v2(
                 "candidate_status": state,
                 "raw_candidate_state": raw_state,
                 "decision_status": state,
+                "qualified_for_watch": watch_qualified,
+                "qualified_for_entry": entry_qualified,
+                "qualified_for_alert": alert_qualified,
                 "qualified_for_ranking": qualified_for_ranking,
+                "entry_blockers": entry_blockers,
                 "participation_gate": participation_gate,
                 "structure_gate": structure_gate,
                 "rejection_reason": (
@@ -1738,7 +1786,7 @@ def apply_scanner_v2(
                 ),
                 "action": (
                     "Evaluate for entry"
-                    if qualified_for_ranking
+                    if entry_qualified
                     else (
                         "Ignore"
                         if not participation_gate["passed"]
