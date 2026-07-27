@@ -527,7 +527,11 @@ def arm_live_clock_engine(
           const enabled = {str(enabled).lower()};
           const updatedAt = {updated_ms};
           const refreshMs = {refresh_ms};
-          const scanKey = 'walterScanStartedAt';
+          // Keep the in-flight marker in this browser tab so the old page can
+          // continue painting SCANNING while Streamlit performs its blocking
+          // rerun.  Store the scan's baseline as well: comparing server and
+          // browser timestamps directly is unreliable when their clocks skew.
+          const scanKey = 'walterScanState';
           if (root.__walterLiveClockInterval) root.clearInterval(root.__walterLiveClockInterval);
 
           const node = id => root.document.getElementById(id);
@@ -562,32 +566,38 @@ def arm_live_clock_engine(
             next.classList.remove('control-scanning', 'control-overdue');
             if (!enabled) {{
               next.textContent = 'MANUAL';
-              root.localStorage.removeItem(scanKey);
+              root.sessionStorage.removeItem(scanKey);
               return;
             }}
-            let scanStarted = Number(root.localStorage.getItem(scanKey) || 0);
-            if (scanStarted && updatedAt >= scanStarted) {{
-              root.localStorage.removeItem(scanKey);
-              scanStarted = 0;
+            let scanState = null;
+            try {{
+              scanState = JSON.parse(root.sessionStorage.getItem(scanKey) || 'null');
+            }} catch (_) {{
+              root.sessionStorage.removeItem(scanKey);
+            }}
+            if (scanState && scanState.baselineUpdatedAt !== updatedAt) {{
+              root.sessionStorage.removeItem(scanKey);
+              scanState = null;
             }}
             const deadline = updatedAt ? updatedAt + refreshMs : now;
-            if (!scanStarted && now < deadline) {{
+            if (!scanState && now < deadline) {{
               const remaining = Math.max(0, Math.floor((deadline - now) / 1000));
               next.textContent = `${{String(Math.floor(remaining / 60)).padStart(2, '0')}}:${{String(remaining % 60).padStart(2, '0')}}`;
               return;
             }}
-            if (!scanStarted) {{
-              scanStarted = now;
-              root.localStorage.setItem(scanKey, String(scanStarted));
+            if (!scanState) {{
+              scanState = {{startedAt: now, baselineUpdatedAt: updatedAt}};
+              root.sessionStorage.setItem(scanKey, JSON.stringify(scanState));
               root.setTimeout(() => root.location.reload(), 80);
             }}
-            const scanSeconds = Math.floor((now - scanStarted) / 1000);
-            if (scanSeconds <= 60) {{
+            const scanSeconds = Math.max(0, Math.floor((now - scanState.startedAt) / 1000));
+            const intervalSeconds = Math.max(1, Math.floor(refreshMs / 1000));
+            if (scanSeconds <= intervalSeconds) {{
               next.classList.add('control-scanning');
               next.innerHTML = '<span class="scan-spinner" aria-hidden="true"></span>SCANNING...';
             }} else {{
               next.classList.add('control-overdue');
-              next.textContent = `OVERDUE +${{String(scanSeconds - 60).padStart(2, '0')}}s`;
+              next.textContent = `OVERDUE +${{String(scanSeconds - intervalSeconds).padStart(2, '0')}}s`;
             }}
           }};
           tick();
@@ -1283,10 +1293,3 @@ Scanner V1 is preserved as the classic technical screener. Scanner V2 is an adap
 - **Likely Webull differences:** Webull may source consolidated real-time data, extended-hours/session templates, proprietary tick aggregation, rounding, and configurable indicator presets that can differ from Walter's Alpaca feed and fixed `10, 3.0` SuperTrend settings.
 - **Data limitations:** Walter currently receives Alpaca bars at the configured feed and computes the primary SuperTrend catalyst from the available scan bars; exact Webull matching is limited without Webull's raw bar feed, session settings, extended-hours handling, and confirmed default SuperTrend preset.
 """)
-
-
-if mode == "Live Alpaca" and auto_refresh:
-    st.components.v1.html(
-        f"<script>setTimeout(() => window.parent.location.reload(), {settings.refresh_seconds * 1000});</script>",
-        height=0,
-    )
