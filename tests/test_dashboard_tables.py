@@ -269,6 +269,59 @@ def test_mission_control_separates_extended_symbols_into_ignore():
     ]
 
 
+def test_opportunity_meter_shows_only_remaining_condition_and_change_flash():
+    previous = sample_record(
+        candidate_status="Strengthening",
+        vwap_relation="below",
+        supertrend_bullish=False,
+        participation_score=94,
+    )
+    current = sample_record(
+        symbol="WAIT",
+        candidate_status="Strengthening",
+        vwap_relation="above",
+        vwap_distance_pct=0.4,
+        supertrend_bullish=False,
+        participation_score=94,
+        opportunity_pulse_previous=previous,
+    )
+
+    markup = ui._mission_target_markup(
+        walter_mission_control([current])["primary"], "Primary target"
+    )
+
+    assert "Opportunity Meter" in markup
+    assert "aria-valuenow='" in markup
+    assert "One Thing Left" in markup
+    assert "Waiting for SuperTrend flip" in markup
+    assert "VWAP reclaim achieved ✓" in markup
+    assert "mission-condition-met" in markup
+    assert "Ready checklist" not in markup
+
+
+def test_opportunity_meter_pulses_when_entry_window_first_opens():
+    previous = sample_record(
+        candidate_status="Strengthening",
+        supertrend_bullish=False,
+        participation_score=96,
+    )
+    current = sample_record(
+        symbol="OPEN",
+        candidate_status="Entry Ready",
+        supertrend_bullish=True,
+        participation_score=96,
+        opportunity_pulse_previous=previous,
+    )
+
+    markup = ui._mission_target_markup(
+        walter_mission_control([current])["primary"], "Primary target"
+    )
+
+    assert "ENTRY WINDOW OPEN" in markup
+    assert "entry-window-pulse" in markup
+    assert "Thing Left" not in markup
+
+
 def test_hot_list_renders_priority_score_as_confidence_meter(monkeypatch):
     rendered = []
 

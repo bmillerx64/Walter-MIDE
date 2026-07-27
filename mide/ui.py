@@ -116,8 +116,18 @@ def inject_css():
     .mission-band {color:var(--mission-color);font-size:.76rem;font-weight:950;text-transform:uppercase;letter-spacing:.08em}
     .mission-status {font-size:1.05rem;font-weight:850;color:#e2e8f0;margin:8px 0}
     .mission-meta {font-size:.84rem;color:#aeb9c7;margin-top:4px}.mission-meta b{color:#f8fafc}
-    .mission-checks {display:grid;grid-template-columns:repeat(auto-fit,minmax(155px,1fr));gap:4px;margin-top:10px}
-    .mission-check {font-size:.84rem;font-weight:750}.mission-pass{color:#86efac}.mission-wait{color:#fca5a5}
+    .opportunity-meter {margin:10px 0 12px}.opportunity-meter-top{display:flex;align-items:baseline;justify-content:space-between;gap:10px;margin-bottom:6px}
+    .opportunity-meter-label{font-size:.68rem;letter-spacing:.12em;text-transform:uppercase;color:#aab7c7;font-weight:950}.opportunity-meter-value{font-size:1.55rem;color:#f8fafc;font-weight:950;font-variant-numeric:tabular-nums}
+    .opportunity-meter-track{height:15px;overflow:hidden;background:#202a36;border:1px solid #3b4a5c;border-radius:999px;box-shadow:inset 0 2px 4px rgba(0,0,0,.35)}
+    .opportunity-meter-fill{height:100%;width:var(--opportunity);background:linear-gradient(90deg,#ca8a04,#facc15);border-radius:999px;transition:width .55s ease}
+    .mission-remaining-title{font-size:1.03rem;letter-spacing:.08em;text-transform:uppercase;color:#fde047;font-weight:950;margin-top:8px}
+    .mission-needs{list-style:none;margin:6px 0 0;padding:0;display:grid;gap:4px}.mission-needs li{color:#f8fafc;font-size:.91rem;font-weight:800}
+    .mission-condition-met{display:inline-block;color:#86efac;font-size:.84rem;font-weight:900;margin-top:8px;animation:condition-flash 1.35s ease-out 1}
+    .entry-window-open{margin:10px 0 5px;padding:11px 12px;text-align:center;border:1px solid #4ade80;border-radius:8px;background:#064e3b;color:#dcfce7;font-size:1.15rem;font-weight:950;letter-spacing:.11em}
+    .entry-window-pulse{animation:entry-window-pulse 2s ease-out 1}
+    @keyframes condition-flash{0%{background:#f8fafc;color:#064e3b;box-shadow:0 0 22px #4ade80}100%{background:transparent;color:#86efac;box-shadow:none}}
+    @keyframes entry-window-pulse{0%,100%{box-shadow:0 0 0 rgba(74,222,128,0)}25%,70%{box-shadow:0 0 30px rgba(74,222,128,.75);border-color:#86efac}}
+    @media(prefers-reduced-motion:reduce){.mission-condition-met,.entry-window-pulse{animation:none}}
     .mission-ignore {margin-top:11px;padding-top:10px;border-top:1px solid #273548;color:#94a3b8;font-size:.82rem}
     .escalation-card {background:#0b131d;border:1px solid #334155;border-left:6px solid var(--escalation-color);border-radius:11px;padding:13px 15px;margin:8px 0}
     .escalation-top {display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap}
@@ -858,7 +868,7 @@ def _mission_band(record: dict, conditions: list[dict]) -> str:
     if state is None or distance > 5:
         return "ignore"
     remaining = sum(not condition["passed"] for condition in conditions)
-    if state == "Entry Ready" and remaining <= 1:
+    if state == "Entry Ready" and remaining == 0:
         return "trade_soon"
     if state in {"Entry Ready", "Strengthening"}:
         return "watch_closely"
@@ -888,6 +898,7 @@ def walter_mission_control(records: list[dict]) -> dict:
     ignored = []
     for record in actionable_candidate_records(records):
         conditions = _mission_conditions(record)
+        previous_record = record.get("opportunity_pulse_previous") or {}
         band = _mission_band(record, conditions)
         item = {
             "symbol": str(record.get("symbol") or "").upper(),
@@ -895,6 +906,10 @@ def walter_mission_control(records: list[dict]) -> dict:
             "band": band,
             "status": _mission_status(record, band, conditions),
             "conditions": conditions,
+            "previous_conditions": (
+                _mission_conditions(previous_record) if previous_record else []
+            ),
+            "previous_record": previous_record,
         }
         if band == "ignore":
             ignored.append(item)
@@ -921,25 +936,42 @@ def _mission_target_markup(item: dict, role: str) -> str:
         if remaining == 0
         else ("1–5 minutes" if remaining == 1 else "5–15 minutes")
     )
-    checks = "".join(
-        f"<div class='mission-check {'mission-pass' if condition['passed'] else 'mission-wait'}'>"
-        f"{'✓' if condition['passed'] else '✕'} {html.escape(condition['label'])}</div>"
+    remaining_conditions = [condition for condition in item["conditions"] if not condition["passed"]]
+    previous_conditions = {
+        condition["label"]: condition["passed"]
+        for condition in item.get("previous_conditions", [])
+    }
+    newly_met = [
+        condition["label"]
         for condition in item["conditions"]
+        if condition["passed"] and previous_conditions.get(condition["label"]) is False
+    ]
+    count_words = {1: "One", 2: "Two"}
+    remaining_title = f"{count_words.get(remaining, str(remaining))} Thing{'s' if remaining != 1 else ''} Left"
+    needs = "".join(
+        f"<li>• Waiting for {html.escape(condition['label'])}</li>"
+        for condition in remaining_conditions
     )
-    remaining_labels = (
-        ", ".join(
-            condition["label"]
-            for condition in item["conditions"]
-            if not condition["passed"]
-        )
-        or "None — all setup conditions are present"
+    changed = "".join(
+        f"<div class='mission-condition-met'>{html.escape(label)} achieved ✓</div>"
+        for label in newly_met
+    )
+    previous = item.get("previous_record") or {}
+    just_opened = item["band"] == "trade_soon" and bool(previous) and _mission_band(
+        previous, _mission_conditions(previous)
+    ) != "trade_soon"
+    state_markup = (
+        f"<div class='entry-window-open{' entry-window-pulse' if just_opened else ''}'>ENTRY WINDOW OPEN</div>"
+        if item["band"] == "trade_soon"
+        else f"<div class='mission-remaining-title'>{remaining_title}</div><ul class='mission-needs'>{needs}</ul>"
     )
     return (
-        f"<div class='mission-target' style='--mission-color:{color}'>"
+        f"<div class='mission-target{' entry-window-pulse' if just_opened else ''}' style='--mission-color:{color}'>"
         f"<div class='mission-role'>{role}</div><div class='mission-symbol'>{html.escape(item['symbol'])}</div>"
-        f"<div class='mission-band'>{label}</div><div class='mission-status'>{html.escape(item['status'])}</div>"
-        f"<div class='mission-meta'>Confidence: <b>{item['confidence']}%</b> · Estimated setup window: <b>{window}</b></div>"
-        f"<div class='mission-checks'>{checks}</div><div class='mission-meta'>Remaining: <b>{html.escape(remaining_labels)}</b></div></div>"
+        f"<div class='mission-band'>{label}</div>"
+        f"<div class='opportunity-meter'><div class='opportunity-meter-top'><span class='opportunity-meter-label'>Opportunity Meter</span><span class='opportunity-meter-value'>{item['confidence']}%</span></div>"
+        f"<div class='opportunity-meter-track' role='progressbar' aria-label='Opportunity meter' aria-valuemin='0' aria-valuemax='100' aria-valuenow='{item['confidence']}'><div class='opportunity-meter-fill' style='--opportunity:{item['confidence']}%'></div></div></div>"
+        f"{state_markup}{changed}<div class='mission-meta'>Estimated setup window: <b>{window}</b></div></div>"
     )
 
 
