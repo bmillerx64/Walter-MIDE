@@ -3,6 +3,14 @@ Clean Streamlit foundation preserving the v0.9.3 live SIP discovery, scoring and
 
 Deploy `app.py` from the repository root. Add `ALPACA_API_KEY`, `ALPACA_SECRET_KEY`, and `ALPACA_FEED = "sip"` to Streamlit Secrets.
 
+## Walter 2.15 — Live Opportunity Feed
+
+The compact feed directly beneath Today's Mission narrates material changes for
+Walter's primary and secondary focus symbols. It retains the latest 20 events,
+newest first, and reports threshold crossings, VWAP and SuperTrend transitions,
+material confidence moves, entry-window changes, extension, and removal from
+Focus without changing scanner qualification, scoring, or ranking.
+
 ## Walter 2.14 — Trade Readiness Gauge
 
 The dashboard now answers **“Can I start preparing to buy?”** with one immediate,
