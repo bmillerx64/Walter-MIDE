@@ -237,7 +237,12 @@ def strengthening_decision(record: dict, scan_time: datetime | None = None) -> d
         ("SuperTrend", _has_strengthening_supertrend(record), "SuperTrend"),
     ]
     state = record.get("candidate_status") or record.get("status")
-    accepted = state in {"Strengthening", "Entry Ready"}
+    qualified = record.get("qualified_for_ranking") is True
+    accepted = state in {"Strengthening", "Entry Ready"} and qualified
+    structure_gate = record.get("structure_gate") or {}
+    waiting_for_structure = (
+        state == "Waiting for Structure" and structure_gate.get("passed") is False
+    )
     first_failed = next(
         ((label, bucket) for label, passed, bucket in checks if not passed), None
     )
@@ -245,7 +250,13 @@ def strengthening_decision(record: dict, scan_time: datetime | None = None) -> d
         "symbol": record.get("symbol", ""),
         "accepted": accepted,
         "status": (
-            "Accepted for Strengthening" if accepted else "Rejected from Strengthening"
+            "Accepted for Strengthening"
+            if accepted
+            else (
+                "Rejected from Strengthening — Waiting for Structure"
+                if waiting_for_structure
+                else "Rejected from Strengthening"
+            )
         ),
         "checks": [
             {"rule": label, "passed": bool(passed)} for label, passed, _bucket in checks
@@ -257,6 +268,10 @@ def strengthening_decision(record: dict, scan_time: datetime | None = None) -> d
             None if accepted else (first_failed[1] if first_failed else "Other")
         ),
         "candidate_status": state,
+        "raw_candidate_state": record.get("raw_candidate_state"),
+        "qualified_for_ranking": record.get("qualified_for_ranking"),
+        "structure_gate": structure_gate,
+        "failed_structure_gate_reasons": structure_gate.get("failed_reasons") or [],
         "scanner_v2_score": record.get("scanner_v2_score"),
         "vwap_gate": record.get("strengthening_vwap_gate")
         or _current_vwap_diagnostics(record),
@@ -1561,7 +1576,11 @@ def classify_state(
     record: dict, prior: dict | None = None, scan_time: datetime | None = None
 ) -> str:
     score, reasons, cautions = momentum_evidence(record, prior, scan_time)
-    prior_state = (prior or {}).get("candidate_status") or (prior or {}).get("status")
+    prior_state = (
+        (prior or {}).get("raw_candidate_state")
+        or (prior or {}).get("candidate_status")
+        or (prior or {}).get("status")
+    )
     if _num(record, "dollar_volume") < 50_000 or _num(record, "spread_pct") > 10:
         return "Removed"
     if _entry_ready_requirements(record, prior):
@@ -1613,16 +1632,22 @@ def apply_scanner_v2(
             record, prior, scan_time, surge
         )
         structure_gate = structure_gate_diagnostics(record, prior)
-        gates_passed = participation_gate["passed"]
         qualified_for_ranking = (
             participation_gate["passed"] and structure_gate["passed"]
         )
         if not participation_gate["passed"]:
             score, reasons, cautions = 0.0, [], participation_gate["failed_reasons"]
+            raw_state = classify_state(record, prior, scan_time)
             state = "Rejected – No Participation"
         else:
             score, reasons, cautions = momentum_evidence(record, prior, scan_time)
-            state = classify_state(record, prior, scan_time)
+            raw_state = classify_state(record, prior, scan_time)
+            state = (
+                "Waiting for Structure"
+                if not structure_gate["passed"]
+                and raw_state in {"Strengthening", "Entry Ready"}
+                else raw_state
+            )
         advanced = STATE_RANK.get(state, 0) > STATE_RANK.get(previous_state, 0)
         entered_watch = state in WATCH_STATES and previous_state not in WATCH_STATES
         prior_entered_at = prior.get("state_entered_at")
@@ -1679,7 +1704,7 @@ def apply_scanner_v2(
                             + quality_adjustment
                             + stability_adjustment
                         )
-                        if gates_passed
+                        if participation_gate["passed"]
                         else 0.0
                     ),
                 ),
@@ -1692,6 +1717,7 @@ def apply_scanner_v2(
                 "scanner_v2_score": current_momentum,
                 "current_momentum": current_momentum,
                 "candidate_status": state,
+                "raw_candidate_state": raw_state,
                 "decision_status": state,
                 "qualified_for_ranking": qualified_for_ranking,
                 "participation_gate": participation_gate,

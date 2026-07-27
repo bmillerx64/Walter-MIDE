@@ -635,6 +635,13 @@ with st.expander("Legacy candidate diagnostics", expanded=False):
             ):
                 st.markdown(f"**{symbol}**")
                 st.markdown(decision.get("status", "Strengthening decision"))
+                failed_structure_reasons = decision.get(
+                    "failed_structure_gate_reasons"
+                ) or []
+                if failed_structure_reasons:
+                    st.markdown("**Failed Structure Gate reasons**")
+                    for reason in failed_structure_reasons:
+                        st.write(f"✗ {reason}")
                 for check in decision.get("checks", []):
                     mark = "✓" if check.get("passed") else "✗"
                     st.write(f"{mark} {check.get('rule')}")
