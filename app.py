@@ -176,8 +176,15 @@ def scan_alert_phrase(records: list[dict]) -> str:
     entry_symbols = [
         r.get("symbol")
         for r in actionable_records
-        if r.get("candidate_status") == "Entry Ready"
-        or r.get("status") == "Entry Ready"
+        if (
+            r.get("qualified_for_alert", r.get("qualified_for_ranking", True))
+            # TODO Walter 2.0 Phase 2: remove qualified_for_ranking fallback
+            # after callers that construct legacy alert records are migrated.
+            and (
+                r.get("candidate_status") == "Entry Ready"
+                or r.get("status") == "Entry Ready"
+            )
+        )
     ]
     entry_symbols = [str(s).upper() for s in entry_symbols if s]
     if entry_symbols:
@@ -635,9 +642,9 @@ with st.expander("Legacy candidate diagnostics", expanded=False):
             ):
                 st.markdown(f"**{symbol}**")
                 st.markdown(decision.get("status", "Strengthening decision"))
-                failed_structure_reasons = decision.get(
-                    "failed_structure_gate_reasons"
-                ) or []
+                failed_structure_reasons = (
+                    decision.get("failed_structure_gate_reasons") or []
+                )
                 if failed_structure_reasons:
                     st.markdown("**Failed Structure Gate reasons**")
                     for reason in failed_structure_reasons:

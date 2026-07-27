@@ -187,6 +187,8 @@ class FlightRecorder:
                     for item in structure.get("checks", [])
                 },
             )
+            # TODO Walter 2.0 Phase 2: replace this compatibility-stage trace
+            # with the three explicit workflow predicates.
             qualified = bool(
                 record and record.get("qualified_for_ranking", not scanner_v2)
             )
