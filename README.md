@@ -3,6 +3,17 @@ Clean Streamlit foundation preserving the v0.9.3 live SIP discovery, scoring and
 
 Deploy `app.py` from the repository root. Add `ALPACA_API_KEY`, `ALPACA_SECRET_KEY`, and `ALPACA_FEED = "sip"` to Streamlit Secrets.
 
+## Walter Enhancement 2.9 — Escalation Engine
+
+Walter adds a display-only escalation layer after every completed scan. It labels
+actionable symbols **Entry Window Open**, **Watch Closely**, **Monitor**, or
+**Too Extended**; shows confidence direction, a readiness checklist, and only
+meaningful evidence changes from the immediately prior scan; and announces
+actual escalation-state changes through the configured audible alert voice.
+
+The escalation layer does not qualify, reject, score, or reorder candidates.
+All scanner logic, thresholds, ranking, and scoring remain unchanged.
+
 ## Walter 2.0 Phase 1 workflow compatibility
 
 Scanner V2 records expose three separate workflow decisions:
