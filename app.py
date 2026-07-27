@@ -14,6 +14,7 @@ from mide.scanner_v2 import (
     strengthening_diagnostics,
 )
 from mide.memory import MemoryStore
+from mide.flight_recorder import FlightRecorder
 from mide.demo import demo_records
 from mide.ui import (
     inject_css,
@@ -204,6 +205,11 @@ def log(message: str) -> None:
 @st.cache_resource
 def get_store() -> MemoryStore:
     return MemoryStore()
+
+
+@st.cache_resource
+def get_flight_recorder() -> FlightRecorder:
+    return FlightRecorder()
 
 
 def get_secret(name: str, default: str = "") -> str:
@@ -452,6 +458,7 @@ def run_live(scanner_version: str = "Scanner V2 (adaptive momentum)"):
     log("Stage 5/5: analyzing bars and scoring")
     status.write("5/5 Analyzing VWAP, SuperTrend, EMA, volume and catalysts")
     records = analyze_candidates(client, candidates, index_news(news_items), reasons)
+    analyzed_records = records
     store = get_store()
     previous = store.latest_by_symbol()
     records = store.enrich_velocity(records, previous=previous)
@@ -470,6 +477,21 @@ def run_live(scanner_version: str = "Scanner V2 (adaptive momentum)"):
         for record in records:
             record["scanner_version"] = "V1"
             record.setdefault("candidate_status", record.get("status", "PASS"))
+    flight_scan = get_flight_recorder().record_scan(
+        seeds=seeds,
+        discovery_reasons=reasons,
+        snapshots=snapshots,
+        candidates=candidates,
+        analyzed=analyzed_records,
+        records=records,
+        settings=settings,
+        scanner_v2=scanner_version.startswith("Scanner V2"),
+    )
+    client.diagnostics["flight_recorder"] = {
+        "scan_id": flight_scan["scan_id"],
+        "timestamp": flight_scan["timestamp"],
+        "funnel": flight_scan["funnel"],
+    }
     store.append(records)
     progress.progress(1.0, text="Scan complete")
     status.update(
@@ -553,7 +575,8 @@ if not records:
         mode == "Live Alpaca" and auto_refresh and live_possible,
         settings.refresh_seconds,
     )
-    st.stop()
+    # Continue rendering the Diagnostics tab: a zero-result scan can still
+    # contain the most useful flight-recorder failure paths.
 
 clock = market_clock()
 st.info(
@@ -572,7 +595,7 @@ arm_auto_scan_timer(
     mode == "Live Alpaca" and auto_refresh and live_possible, settings.refresh_seconds
 )
 
-with st.expander("Diagnostics", expanded=False):
+with st.expander("Legacy candidate diagnostics", expanded=False):
     if inspect_symbol:
         st.subheader(f"Symbol lookup: {inspect_symbol}")
         match = next((r for r in records if r.get("symbol") == inspect_symbol), None)
@@ -637,7 +660,7 @@ alert_phrase = scan_alert_phrase(actionable_records)
 if alerts and alert_phrase:
     play_alert("assets/alert.wav", alert_phrase, alert_voice_for_session())
 
-tabs = st.tabs(["Radar", "What changed", "Data validation", "Method"])
+tabs = st.tabs(["Radar", "Diagnostics", "What changed", "Data validation", "Method"])
 with tabs[0]:
     if not display_records:
         st.success("No stock currently deserves elevated attention.")
@@ -669,6 +692,63 @@ with tabs[0]:
                 )
 
 with tabs[1]:
+    st.subheader("Walter Flight Recorder")
+    latest_flight_scan = get_flight_recorder().latest_scan()
+    if not latest_flight_scan:
+        st.info("Run a live scan to create the first flight-recorder trace.")
+    else:
+        st.caption(
+            f"Most recent scan {latest_flight_scan.get('scan_id')} · "
+            f"{latest_flight_scan.get('timestamp')}"
+        )
+        st.write("Per-scan funnel")
+        funnel = latest_flight_scan.get("funnel", {})
+        funnel_columns = st.columns(7)
+        for column, label in zip(
+            funnel_columns,
+            [
+                "Sampled",
+                "Prefiltered",
+                "Analyzed",
+                "Participation PASS",
+                "Structure PASS",
+                "Qualified",
+                "Displayed",
+            ],
+        ):
+            column.metric(label, funnel.get(label, 0))
+        diagnostic_symbol = (
+            st.text_input(
+                "Look up symbol in most recent scan",
+                value=inspect_symbol,
+                placeholder="EDBL",
+            )
+            .strip()
+            .upper()
+        )
+        if diagnostic_symbol:
+            trace = get_flight_recorder().latest_for_symbol(diagnostic_symbol)
+            if not trace:
+                st.warning(
+                    f"{diagnostic_symbol} was not discovered in the most recent scan."
+                )
+            else:
+                st.success(
+                    f"{diagnostic_symbol} reached {trace.get('stage_reached', 'discovery')}."
+                )
+                for decision in trace.get("events", []):
+                    mark = "✅" if decision.get("passed") else "❌"
+                    with st.expander(
+                        f"{mark} {decision.get('stage')} — {decision.get('reason')}",
+                        expanded=True,
+                    ):
+                        st.write(f"Timestamp: {decision.get('timestamp')}")
+                        st.write("Measured values")
+                        st.json(decision.get("measured_values", {}))
+                        st.write("Thresholds")
+                        st.json(decision.get("thresholds", {}))
+
+with tabs[2]:
     for record in sorted(
         records, key=lambda r: abs(r.get("velocity", 0)), reverse=True
     )[:15]:
@@ -679,7 +759,7 @@ with tabs[1]:
             f"{record.get('current_momentum', record['opportunity_score']):.1f} ({record.get('velocity', 0):+.1f})"
         )
 
-with tabs[2]:
+with tabs[3]:
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("Configured feed", settings.feed.upper())
     c2.metric("Ranked records", len(records))
@@ -691,7 +771,7 @@ with tabs[2]:
     for warning in api_warnings:
         st.warning(warning)
 
-with tabs[3]:
+with tabs[4]:
     st.markdown("""
 Scanner V1 is preserved as the classic technical screener. Scanner V2 is an adaptive momentum assistant: Walter rewards fresh catalysts, flat bases beginning to expand, increasing feed and dollar volume, RVOL, float turnover, acceleration and improvements versus the previous scan. VWAP, EMA65 and SuperTrend improve ranking and state progression, but they no longer eliminate promising discovery-stage candidates.
 

@@ -18,6 +18,7 @@ from .indicators import (
 )
 from .volume_pace import volume_pace_metrics
 from .scoring import Evidence, score
+from .flight_recorder import prefilter_decision
 
 
 def _value(obj, *path, default=None):
@@ -120,12 +121,8 @@ def prefilter_snapshots(snapshots, settings):
             else 99
         )
         dollar = price * volume
-        if not settings.min_price <= price <= settings.max_price:
-            continue
-        # Candidate if meaningful gain OR meaningful participation.
-        if pct < settings.min_pct_change and volume < settings.min_day_volume:
-            continue
-        if dollar < 50_000:
+        # Keep filtering and recorder explanations on one exact rule definition.
+        if not prefilter_decision(symbol, snap, settings)["passed"]:
             continue
         selected.append(
             {
