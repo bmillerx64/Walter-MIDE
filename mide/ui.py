@@ -6,7 +6,7 @@ from pathlib import Path
 import streamlit as st
 import pandas as pd
 
-from mide.escalation import escalation_snapshot
+from mide.escalation import escalation_snapshot, trade_recommendation
 from mide.scanner_v2 import state_elapsed_seconds
 from mide.trader_priority import (
     sortable_text as _sortable_text,
@@ -78,6 +78,9 @@ def inject_css():
     .current-value {font-size:1.15rem;font-weight:900;color:#f8fafc;margin-top:2px}
     .threshold-pass {color:#86efac;font-size:.75rem;font-weight:900}.threshold-fail {color:#fca5a5;font-size:.75rem;font-weight:900}
     .action-box {border:1px solid #60a5fa;background:#0c1728;border-radius:9px;padding:10px 12px;margin:8px 0;font-size:1.25rem;font-weight:950}
+    .recommendation-box {border:2px solid var(--recommendation-color);background:#0c121a;border-radius:12px;padding:14px 16px;margin:8px 0 12px}
+    .recommendation-label {color:var(--recommendation-color);font-size:1.5rem;font-weight:950;letter-spacing:.04em}
+    .recommendation-message {color:#f8fafc;font-size:1rem;font-weight:750;margin-top:4px}
     .context-heading {font-size:.70rem;text-transform:uppercase;letter-spacing:.1em;color:#93a4b8;font-weight:950;margin-top:10px}
     .evidence-list {list-style:none;margin:5px 0 0;padding:0;display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:3px}
     .hot-card {background:linear-gradient(145deg,#17130c,#111821);border:1px solid #76551c;border-top:3px solid #f59e0b;border-radius:12px;padding:14px 16px;min-height:245px;margin-bottom:14px}
@@ -315,7 +318,7 @@ def mission_control_header_markup(
     return (
         "<div class='control-header'><div class='control-heading'><div>"
         "<div class='control-title'>🛰 Walter • MIDE Radar</div>"
-        "<div class='control-version'>v3.0 Beta — Mission Control</div></div>"
+        "<div class='control-version'>v2.12 — Green Light</div></div>"
         "<div class='control-engine'>Market Intelligence Decision Engine</div></div>"
         f"<div class='control-strip'>{strip}</div></div>"
     )
@@ -1067,16 +1070,26 @@ ESCALATION_COLORS = {
     "Too Extended": "#f87171",
 }
 
+RECOMMENDATION_COLORS = {
+    "GREEN LIGHT": "#4ade80",
+    "GET READY": "#facc15",
+    "NO TRADE": "#f87171",
+}
+
 
 def render_escalation_engine(records: list[dict]) -> None:
-    """Render Walter 2.9 urgency without changing scanner decisions or order."""
+    """Render Walter's immediate preparation recommendation and supporting evidence."""
     snapshots = [
         escalation_snapshot(record) for record in actionable_candidate_records(records)
     ]
     if not snapshots:
+        st.markdown(
+            "<div class='recommendation-box' style='--recommendation-color:#f87171'><div class='recommendation-label'>🔴 NO TRADE</div><div class='recommendation-message'>No setup currently qualifies for preparation.</div></div>",
+            unsafe_allow_html=True,
+        )
         return
-    st.subheader("🚨 Escalation Engine")
-    st.caption("Display-only urgency based on Walter's existing scanner evidence.")
+    st.subheader("Walter's Recommendation")
+    st.caption("Can I start preparing to buy?")
     for item in snapshots[:5]:
         trend = item["confidence_trend"]
         trend_arrow = {"Rising": "↗", "Falling": "↘", "Steady": "→"}[trend["direction"]]
@@ -1092,7 +1105,10 @@ def render_escalation_engine(records: list[dict]) -> None:
             or "<li class='small'>No meaningful evidence change since the prior scan.</li>"
         )
         color = ESCALATION_COLORS[item["state"]]
+        recommendation = item["recommendation"]
+        recommendation_color = RECOMMENDATION_COLORS[recommendation["label"]]
         st.markdown(
+            f"<div class='recommendation-box' style='--recommendation-color:{recommendation_color}'><div class='recommendation-label'>{recommendation['emoji']} {html.escape(recommendation['label'])}</div><div class='recommendation-message'>{html.escape(recommendation['message'])}</div></div>"
             f"<div class='escalation-card' style='--escalation-color:{color}'><div class='escalation-top'>"
             f"<span class='escalation-symbol'>{html.escape(item['symbol'])}</span><span class='escalation-state'>{html.escape(item['state'])}</span>"
             f"<span class='escalation-trend'>Confidence {trend_arrow} {trend['direction']} ({trend['delta']:+.1f})</span></div>"
@@ -1345,25 +1361,10 @@ def opportunity_card(r):
         for name, value, passed, threshold in current_items
     )
 
-    tradeability = str(r.get("tradeability") or "Wait")
     workflow = str(r.get("workflow_label") or r.get("candidate_status") or status)
-    action = (
-        "BUY SETUP"
-        if tradeability == "Buyable" or workflow == "Entry Ready"
-        else (
-            "WAIT FOR PULLBACK"
-            if tradeability == "Don't Chase" or distance > 2
-            else "NOT TRADEABLE" if workflow in {"Removed", "Weakening"} else "WAIT"
-        )
-    )
-    if action == "WAIT FOR PULLBACK":
-        why = f"Price is {distance:.1f}% above VWAP, beyond Walter's 2% maximum entry range. Wait for a pullback instead of chasing."
-    elif action == "BUY SETUP":
-        why = "The displayed entry conditions pass their thresholds. Walter considers this a buy setup under the current rules."
-    elif surge < 72:
-        why = f"Participation Surge is {surge:.0f}/100 and requires 72. Walter recommends waiting for confirmation."
-    else:
-        why = "The current evidence is not yet an entry signal. Walter recommends waiting for the remaining confirmation."
+    recommendation = trade_recommendation(r)
+    action = f"{recommendation['emoji']} {recommendation['label']}"
+    why = recommendation["message"]
 
     evidence = []
     if r.get("headline"):
