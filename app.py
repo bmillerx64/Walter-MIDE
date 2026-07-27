@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone, timedelta
+import json
 import platform
 import streamlit as st
 
@@ -15,7 +16,14 @@ from mide.scanner_v2 import (
 )
 from mide.memory import MemoryStore
 from mide.flight_recorder import FlightRecorder
-from mide.runtime_history import read_runtime_history
+from mide.runtime_evidence import (
+    current_scan_export,
+    json_bytes,
+    read_scans,
+    runtime_file,
+    symbol_history,
+    symbol_summary,
+)
 from mide.demo import demo_records
 from mide.ui import (
     inject_css,
@@ -242,6 +250,85 @@ def get_flight_recorder() -> FlightRecorder:
     return FlightRecorder()
 
 
+def symbol_export(symbol: str, store: MemoryStore, recorder: FlightRecorder) -> dict:
+    """Build one portable, scan-by-scan diagnostic bundle for a symbol."""
+    return {
+        "symbol": symbol.strip().upper(),
+        "exported_at": datetime.now(timezone.utc).isoformat(),
+        "candidate_history": store.history_for_symbol(symbol),
+        "flight_recorder": recorder.history_for_symbol(symbol),
+    }
+
+
+def symbol_outcome(bundle: dict) -> str:
+    """Map a symbol bundle to Walter's four troubleshooting outcomes."""
+    flights = bundle.get("flight_recorder") or []
+    candidates = bundle.get("candidate_history") or []
+    if not flights:
+        return (
+            f"No {bundle.get('symbol', 'symbol')} record: discovery never supplied it."
+        )
+    prefilter_passed = any(
+        any(
+            event.get("stage") == "prefilter" and event.get("passed")
+            for event in trace.get("events", [])
+        )
+        for trace in flights
+    )
+    if not prefilter_passed:
+        return "Discovered but prefilter failed: the prefilter removed it."
+    strengthened = any(
+        str(record.get("candidate_status") or record.get("status", "")).lower()
+        == "strengthening"
+        for record in candidates
+    )
+    if not strengthened:
+        return "Candidate/Watch but never Strengthening: workflow or confirmation blocked it."
+    return (
+        "Strengthening but not obvious to you: presentation or alert delivery failed."
+    )
+
+
+def symbol_chart_rows(bundle: dict) -> list[dict]:
+    """Create a compact scan timeline suitable for Streamlit's line chart."""
+    stage_number = {
+        stage: index + 1
+        for index, stage in enumerate(
+            (
+                "discovery",
+                "snapshot",
+                "prefilter",
+                "Scanner V2",
+                "Participation Gate",
+                "Structure Gate",
+                "qualified_for_ranking",
+                "actionable display",
+            )
+        )
+    }
+    candidate_by_time = {
+        str(item.get("scan_timestamp") or item.get("timestamp")): item
+        for item in bundle.get("candidate_history", [])
+    }
+    rows = []
+    for trace in bundle.get("flight_recorder", []):
+        candidate = candidate_by_time.get(str(trace.get("timestamp")), {})
+        row = {
+            "Scan": trace.get("timestamp"),
+            "Stage reached": stage_number.get(trace.get("stage_reached"), 0),
+        }
+        for key, label in (
+            ("current_momentum", "Momentum"),
+            ("opportunity_score", "Opportunity"),
+            ("conviction_v2_score", "Conviction"),
+        ):
+            value = candidate.get(key)
+            if isinstance(value, (int, float)):
+                row[label] = value
+        rows.append(row)
+    return rows
+
+
 def get_secret(name: str, default: str = "") -> str:
     try:
         return str(st.secrets.get(name, default))
@@ -385,6 +472,24 @@ with st.sidebar:
             f"Active voice identifier: {st.session_state.get(ACTIVE_VOICE_SESSION_KEY, SYSTEM_DEFAULT_VOICE_ID)}"
         )
         st.write(f"Voice currently selected: {selected_voice}")
+    st.subheader("Session backups")
+    st.caption(
+        "Download both files before refreshing, restarting, or deploying Walter."
+    )
+    st.download_button(
+        "Download Candidate History",
+        data=get_store().export_bytes(),
+        file_name="candidate_history.jsonl",
+        mime="application/x-ndjson",
+        use_container_width=True,
+    )
+    st.download_button(
+        "Download Flight Recorder",
+        data=get_flight_recorder().export_bytes(),
+        file_name="flight_recorder.jsonl",
+        mime="application/x-ndjson",
+        use_container_width=True,
+    )
     run_scan = st.button(
         "Run live scan",
         type="primary",
@@ -729,28 +834,73 @@ with tabs[0]:
                 )
 
 with tabs[1]:
-    st.subheader("Runtime History")
-    candidate_history = read_runtime_history(get_store().path)
-    flight_recorder_history = read_runtime_history(get_flight_recorder().path)
-    history_columns = st.columns(2)
-    history_columns[0].download_button(
-        "Download Candidate History JSONL",
-        data=candidate_history or b"",
-        file_name="candidate_history.jsonl",
-        mime="application/x-ndjson",
-        disabled=candidate_history is None,
-        use_container_width=True,
-    )
-    history_columns[1].download_button(
-        "Download Flight Recorder JSONL",
-        data=flight_recorder_history or b"",
-        file_name="flight_recorder.jsonl",
-        mime="application/x-ndjson",
-        disabled=flight_recorder_history is None,
-        use_container_width=True,
-    )
-    if candidate_history is None or flight_recorder_history is None:
-        st.info("Runtime history not available.")
+    with st.expander("Runtime Evidence", expanded=False):
+        st.caption(
+            "Read-only exports retain all scans recorded during the trading day/session; "
+            "they do not alter scanner decisions."
+        )
+        runtime_recorder = get_flight_recorder()
+        runtime_scans = read_scans(runtime_recorder.path)
+        current_export = current_scan_export(
+            runtime_scans[-1] if runtime_scans else None
+        )
+        st.download_button(
+            "Download Current Scan JSON",
+            data=json_bytes(current_export),
+            file_name="walter_current_scan.json",
+            mime="application/json",
+            disabled=not runtime_scans,
+        )
+
+        history_symbol = (
+            st.text_input(
+                "Symbol",
+                value=inspect_symbol,
+                placeholder="DFNS",
+                key="runtime_evidence_symbol",
+            )
+            .strip()
+            .upper()
+        )
+        history = (
+            symbol_history(runtime_scans, history_symbol) if history_symbol else []
+        )
+        summary = symbol_summary(history, history_symbol) if history_symbol else None
+        if history_symbol:
+            if summary:
+                st.write(summary)
+            else:
+                st.info(f"No retained runtime records found for {history_symbol}.")
+        st.download_button(
+            "Export Symbol History",
+            data=json_bytes(history),
+            file_name=f"walter_{history_symbol.lower() or 'symbol'}_history.json",
+            mime="application/json",
+            disabled=not history,
+        )
+
+        for label, path, filename in (
+            (
+                "Download Flight Recorder JSONL",
+                runtime_recorder.path,
+                "flight_recorder.jsonl",
+            ),
+            (
+                "Download Candidate History JSONL",
+                get_store().path,
+                "candidate_history.jsonl",
+            ),
+        ):
+            contents, absent_message = runtime_file(path)
+            if contents is None:
+                st.info(absent_message)
+            else:
+                st.download_button(
+                    label,
+                    data=contents,
+                    file_name=filename,
+                    mime="application/x-ndjson",
+                )
 
     st.subheader("Current trigger diagnostics")
     for record in display_records:
@@ -767,9 +917,12 @@ with tabs[1]:
                     {
                         "Condition": check.get("condition", ""),
                         "Result": "PASS" if check.get("passed") else "FAIL",
-                        "Explanation": check.get("passed_reason")
-                        if check.get("passed")
-                        else check.get("failed_reason") or "Covered by VWAP Distance",
+                        "Explanation": (
+                            check.get("passed_reason")
+                            if check.get("passed")
+                            else check.get("failed_reason")
+                            or "Covered by VWAP Distance"
+                        ),
                     }
                     for check in checks
                 ],
@@ -803,7 +956,7 @@ with tabs[1]:
             column.metric(label, funnel.get(label, 0))
         diagnostic_symbol = (
             st.text_input(
-                "Look up symbol in most recent scan",
+                "Look up symbol across recorded scans",
                 value=inspect_symbol,
                 placeholder="EDBL",
             )
@@ -811,14 +964,27 @@ with tabs[1]:
             .upper()
         )
         if diagnostic_symbol:
-            trace = get_flight_recorder().latest_for_symbol(diagnostic_symbol)
-            if not trace:
-                st.warning(
-                    f"{diagnostic_symbol} was not discovered in the most recent scan."
+            bundle = symbol_export(
+                diagnostic_symbol, get_store(), get_flight_recorder()
+            )
+            st.info(symbol_outcome(bundle))
+            st.download_button(
+                f"Download {diagnostic_symbol} symbol history",
+                data=json.dumps(bundle, indent=2, default=str),
+                file_name=f"{diagnostic_symbol}_symbol_history.json",
+                mime="application/json",
+            )
+            chart_rows = symbol_chart_rows(bundle)
+            if chart_rows:
+                st.caption(
+                    "Stage reached: 1 Discovery · 2 Snapshot · 3 Prefilter · "
+                    "4 Scanner V2 · 5 Participation · 6 Structure · 7 Qualified · 8 Displayed"
                 )
-            else:
+                st.line_chart(chart_rows, x="Scan")
+            trace = bundle["flight_recorder"][-1] if bundle["flight_recorder"] else None
+            if trace:
                 st.success(
-                    f"{diagnostic_symbol} reached {trace.get('stage_reached', 'discovery')}."
+                    f"Latest appearance reached {trace.get('stage_reached', 'discovery')}."
                 )
                 for decision in trace.get("events", []):
                     mark = "✅" if decision.get("passed") else "❌"

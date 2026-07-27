@@ -73,3 +73,10 @@ def test_recorder_persists_complete_paths_funnel_and_latest_lookup(tmp_path):
     assert trace["events"][2]["passed"] is False
     assert "outside" in trace["events"][2]["reason"]
     assert recorder.latest_for_symbol("missing") is None
+
+    exported = recorder.export_bytes()
+    assert scan["scan_id"].encode() in exported
+    history = recorder.history_for_symbol("pass")
+    assert len(history) == 1
+    assert history[0]["scanner_version"] == "V2"
+    assert history[0]["stage_reached"] == "actionable display"

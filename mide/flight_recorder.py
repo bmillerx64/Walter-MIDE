@@ -224,7 +224,95 @@ class FlightRecorder:
             reached = next(
                 (e["stage"] for e in reversed(events) if e["passed"]), "discovery"
             )
-            paths.append({"symbol": symbol, "stage_reached": reached, "events": events})
+            prefilter = next(e for e in events if e["stage"] == "prefilter")
+            trigger = (record or {}).get("trigger_diagnostics") or {}
+            evidence = {
+                "symbol": symbol,
+                "scan_timestamp": stamp,
+                "discovery_status": "; ".join(discovery_reasons.get(symbol, []))
+                or "discovered",
+                "snapshot_prefilter_result": prefilter["passed"],
+                "snapshot_prefilter_rejection_reason": (
+                    None if prefilter["passed"] else prefilter["reason"]
+                ),
+                "workflow_state": (record or {}).get("candidate_status")
+                or (record or {}).get("status")
+                or "Candidate",
+                "qualified_for_watch": bool(
+                    (record or {}).get("qualified_for_watch", False)
+                ),
+                "qualified_for_entry": bool(
+                    (record or {}).get("qualified_for_entry", False)
+                ),
+                "qualified_for_alert": bool(
+                    (record or {}).get("qualified_for_alert", False)
+                ),
+                "participation_score": (record or {}).get("participation_score"),
+                "participation_surge_score": (record or {}).get(
+                    "participation_surge_score"
+                ),
+                "vpi": (record or {}).get("volume_pace_ratio"),
+                "five_minute_vpi_acceleration": (record or {}).get(
+                    "acceleration_ratio"
+                ),
+                "legacy_volume_acceleration": (record or {}).get("volume_acceleration"),
+                "dollar_flow_acceleration": (record or {}).get(
+                    "dollar_flow_acceleration_5m",
+                    (record or {}).get("dollar_flow_acceleration"),
+                ),
+                "price": (record or {}).get("price"),
+                "vwap": (record or {}).get("vwap_value"),
+                "vwap_distance": (record or {}).get("vwap_distance_pct"),
+                "supertrend_state": (record or {}).get(
+                    "supertrend_state",
+                    (
+                        "bullish"
+                        if (record or {}).get("supertrend_bullish")
+                        else "bearish" if record else None
+                    ),
+                ),
+                "supertrend_flip_age": (record or {}).get(
+                    "supertrend_30s_flip_age_seconds",
+                    (record or {}).get(
+                        "supertrend_flip_age_seconds",
+                        (record or {}).get("supertrend_flip_age"),
+                    ),
+                ),
+                "structure_gate": structure,
+                "participation_gate": participation,
+                "trigger_result": trigger.get("trigger", (record or {}).get("trigger")),
+                "trigger_failed_conditions": [
+                    c.get("failed_reason") or c.get("condition")
+                    for c in trigger.get("checks", [])
+                    if not c.get("passed")
+                ],
+                "trigger_diagnostics": trigger,
+                "opportunity_score": (record or {}).get("opportunity_score"),
+                "conviction_score": (record or {}).get(
+                    "conviction_v2_score", (record or {}).get("conviction_score")
+                ),
+                "source_bar_timestamp": (record or {}).get(
+                    "source_bar_timestamp",
+                    (record or {}).get(
+                        "last_bar_timestamp", (record or {}).get("bar_timestamp")
+                    ),
+                ),
+                "source_bar_age": (record or {}).get(
+                    "source_bar_age", (record or {}).get("bar_age_seconds")
+                ),
+                "latest_rejection_or_blocker": (record or {}).get("rejection_reason")
+                or next(
+                    iter((record or {}).get("entry_blockers_explained") or []), None
+                ),
+            }
+            paths.append(
+                {
+                    "symbol": symbol,
+                    "stage_reached": reached,
+                    "events": events,
+                    "evidence": evidence,
+                }
+            )
 
         funnel = {
             "Sampled": len(seeds),
@@ -265,6 +353,46 @@ class FlightRecorder:
             except (ValueError, TypeError):
                 continue
         return None
+
+    def export_bytes(self) -> bytes:
+        """Return the untouched recorder file for a browser download."""
+        return self.path.read_bytes() if self.path.exists() else b""
+
+    def scans(self) -> list[dict]:
+        """Read every valid scan, preserving its on-disk order."""
+        if not self.path.exists():
+            return []
+        scans = []
+        for line in self.path.read_text(errors="ignore").splitlines():
+            try:
+                scans.append(json.loads(line))
+            except (ValueError, TypeError):
+                continue
+        return scans
+
+    def history_for_symbol(self, symbol: str) -> list[dict]:
+        """Return this symbol's trace from every scan where it was discovered."""
+        symbol = symbol.strip().upper()
+        history = []
+        for scan in self.scans():
+            path = next(
+                (
+                    item
+                    for item in scan.get("symbols", [])
+                    if str(item.get("symbol", "")).upper() == symbol
+                ),
+                None,
+            )
+            if path:
+                history.append(
+                    {
+                        "scan_id": scan.get("scan_id"),
+                        "timestamp": scan.get("timestamp"),
+                        "scanner_version": scan.get("scanner_version"),
+                        **path,
+                    }
+                )
+        return history
 
     def latest_for_symbol(self, symbol: str) -> dict | None:
         scan = self.latest_scan()
