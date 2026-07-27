@@ -292,7 +292,7 @@ def test_mission_control_header_contains_compact_operational_status():
     )
 
     assert "Walter • MIDE Radar" in markup
-    assert "v2.12 — Green Light" in markup
+    assert "v2.13 — Conviction Engine" in markup
     assert "Market Intelligence Decision Engine" in markup
     for value in (
         "🟢 LIVE",
@@ -344,18 +344,20 @@ def test_entry_window_shows_checklist_estimate_and_direction():
         walter_mission_control([current])["primary"], "Primary target"
     )
 
-    assert "Opportunity Meter" in markup
+    assert "Conviction Meter" in markup
     assert "aria-valuenow='" in markup
-    assert "ENTRY WINDOW" in markup
-    assert "🟡 OPENING" in markup
-    assert ">NEXT<" in markup
-    assert "✓ VWAP" in markup
-    assert "□ SuperTrend Flip" in markup
-    assert ">THEN<" in markup
-    assert "✓ Participation &gt; 90" in markup
-    assert "Estimated:<br><b>2–5 minutes</b>" in markup
+    assert "CONVICTION" in markup
+    assert "🔵 EARLY" in markup
+    assert "WHY #1 TODAY" in markup
+    assert markup.count("mission-reason") == 4  # container plus three concise reasons
+    assert "ENTRY PATH" in markup
+    assert "1. ✓ VWAP" in markup
+    assert "2. □ SuperTrend Flip" in markup
+    assert "3. ✓ Participation &gt; 90" in markup
+    assert "Estimated: <b>2–5 minutes</b>" in markup
     assert "▼ -2" in markup
-    assert "Ready checklist" not in markup
+    assert ">NEXT<" not in markup
+    assert ">THEN<" not in markup
 
 
 def test_opportunity_meter_pulses_when_entry_window_first_opens():
@@ -376,10 +378,38 @@ def test_opportunity_meter_pulses_when_entry_window_first_opens():
         walter_mission_control([current])["primary"], "Primary target"
     )
 
-    assert "ENTRY WINDOW" in markup
-    assert "🟢 OPEN NOW" in markup
+    assert "CONVICTION" in markup
+    assert "Conviction Meter" in markup
     assert "entry-window-pulse" in markup
-    assert "✓ SuperTrend Flip" in markup
+    assert "2. ✓ SuperTrend Flip" in markup
+
+
+def test_secondary_target_has_one_line_reason_it_is_not_primary():
+    mission = walter_mission_control(
+        [
+            sample_record(
+                symbol="LEAD", candidate_status="Strengthening", participation_score=95
+            ),
+            sample_record(
+                symbol="NEXT", candidate_status="Strengthening", participation_score=70
+            ),
+        ]
+    )
+
+    markup = ui._mission_target_markup(
+        mission["secondary"], "Secondary target", mission["primary"]
+    )
+
+    assert "WHY NOT #1" in markup
+    assert "Needs stronger participation." in markup
+    assert "WHY #1 TODAY" not in markup
+
+
+def test_conviction_presentation_labels_do_not_change_confidence():
+    assert ui._mission_conviction_label(91)[0] == "🟢 GREEN LIGHT"
+    assert ui._mission_conviction_label(90)[0] == "🟡 BUILDING"
+    assert ui._mission_conviction_label(75)[0] == "🟡 BUILDING"
+    assert ui._mission_conviction_label(74)[0] == "🔵 EARLY"
 
 
 def test_hot_list_renders_priority_score_as_confidence_meter(monkeypatch):

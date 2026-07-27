@@ -125,9 +125,11 @@ def inject_css():
     .opportunity-meter-value small{font-size:.78rem;margin-left:5px}.meter-delta-up{color:#4ade80}.meter-delta-down{color:#f87171}
     .opportunity-meter-track{height:15px;overflow:hidden;background:#202a36;border:1px solid #3b4a5c;border-radius:999px;box-shadow:inset 0 2px 4px rgba(0,0,0,.35)}
     .opportunity-meter-fill{height:100%;width:var(--opportunity);background:linear-gradient(90deg,#ca8a04,#facc15);border-radius:999px;transition:width .55s ease}
-    .mission-remaining-title{font-size:.72rem;letter-spacing:.12em;text-transform:uppercase;color:#fde047;font-weight:950;margin-top:8px}
-    .mission-needs{margin-top:7px;display:grid;gap:7px}.mission-next-label{display:block;color:#fde047;font-size:.65rem;letter-spacing:.12em;font-weight:950}.mission-next-value{display:block;color:#f8fafc;font-size:1rem;font-weight:900;line-height:1.2;margin-top:1px}
-    .mission-check{color:#f8fafc;font-size:.95rem;font-weight:850;line-height:1.45}.mission-then{margin-top:9px}
+    .mission-section-title{color:#fde047;font-size:.68rem;letter-spacing:.12em;font-weight:950;margin-top:9px}
+    .mission-reasons,.mission-path{display:grid;gap:2px;margin-top:4px}
+    .mission-reason{color:#dcfce7;font-size:.88rem;font-weight:850;line-height:1.35}
+    .mission-check{color:#f8fafc;font-size:.90rem;font-weight:850;line-height:1.4}
+    .mission-why-not{margin-top:9px;padding-top:8px;border-top:1px solid #273548;color:#cbd5e1;font-size:.86rem;font-weight:800}.mission-why-not b{display:block;color:#fca5a5;font-size:.68rem;letter-spacing:.12em;margin-bottom:3px}
     .mission-condition-met{display:inline-block;color:#86efac;font-size:.84rem;font-weight:900;margin-top:8px;animation:condition-flash 1.35s ease-out 1}
     .entry-window-open{margin:10px 0 5px;padding:11px 12px;text-align:center;border:1px solid #4ade80;border-radius:8px;background:#064e3b;color:#dcfce7;font-size:1.15rem;font-weight:950;letter-spacing:.11em}
     .entry-window-pulse{animation:entry-window-pulse 2s ease-out 1}
@@ -321,7 +323,7 @@ def mission_control_header_markup(
     return (
         "<div class='control-header'><div class='control-heading'><div>"
         "<div class='control-title'>🛰 Walter • MIDE Radar</div>"
-        "<div class='control-version'>v2.12 — Green Light</div></div>"
+        "<div class='control-version'>v2.13 — Conviction Engine</div></div>"
         "<div class='control-engine'>Market Intelligence Decision Engine</div></div>"
         f"<div class='control-strip'>{strip}</div></div>"
     )
@@ -956,6 +958,63 @@ def _mission_status(record: dict, band: str, conditions: list[dict]) -> str:
     return "Wait for participation above 90"
 
 
+def _mission_conviction_label(confidence: int) -> tuple[str, str]:
+    """Return the compact, display-only readiness label for mission confidence."""
+    if confidence > 90:
+        return "🟢 GREEN LIGHT", "#4ade80"
+    if confidence >= 75:
+        return "🟡 BUILDING", "#facc15"
+    return "🔵 EARLY", "#60a5fa"
+
+
+def _mission_conviction_reasons(record: dict) -> list[str]:
+    """Select the three strongest existing evidence signals for HUD presentation."""
+    previous = record.get("opportunity_pulse_previous") or {}
+    participation = _bounded_score(
+        record.get("participation_surge_score", record.get("participation_score", 0))
+    )
+    expansion = _bounded_score(record.get("expansion_quality", 0))
+    flow = _bounded_score(
+        record.get("dollar_flow_score", record.get("market_dominance_score", 0))
+    )
+    distance = abs(float(record.get("vwap_distance_pct", 0) or 0))
+    headline = str(record.get("headline") or "").strip()
+    news_age = record.get("news_age_hours")
+    fresh_news = bool(headline) and (news_age is None or float(news_age) <= 24)
+    confidence_gain = hot_list_priority_score(record) - (
+        hot_list_priority_score(previous)
+        if previous
+        else hot_list_priority_score(record)
+    )
+    signals = [
+        (participation, "Strongest Participation today"),
+        (100 if fresh_news else 0, "Fresh news catalyst"),
+        (flow, "Highest dollar flow"),
+        (max(0.0, 100 - distance * 20), "Best VWAP structure"),
+        (max(0, 50 + confidence_gain * 5), "Fastest improving confidence"),
+        (expansion, "Best Expansion Quality"),
+    ]
+    signals.sort(key=lambda signal: signal[0], reverse=True)
+    return [label for _, label in signals[:3]]
+
+
+def _mission_why_not_primary(item: dict, primary: dict) -> str:
+    """Summarize the secondary target's single most important visible gap."""
+    distance = float(item["record"].get("vwap_distance_pct", 0) or 0)
+    participation = _bounded_score(
+        item["record"].get(
+            "participation_surge_score", item["record"].get("participation_score", 0)
+        )
+    )
+    if distance > 2:
+        return "Slightly extended."
+    if not item["conditions"][0]["passed"]:
+        return "Waiting for VWAP reclaim."
+    if participation < 90:
+        return "Needs stronger participation."
+    return f"Lower conviction than {primary['symbol']}."
+
+
 def walter_mission_control(records: list[dict]) -> dict:
     """Commit attention to one primary and one secondary without issuing trades."""
     candidates = []
@@ -974,6 +1033,8 @@ def walter_mission_control(records: list[dict]) -> dict:
                 _mission_conditions(previous_record) if previous_record else []
             ),
             "previous_record": previous_record,
+            "record": record,
+            "reasons": _mission_conviction_reasons(record),
         }
         if band == "ignore":
             ignored.append(item)
@@ -992,7 +1053,7 @@ def walter_mission_control(records: list[dict]) -> dict:
     }
 
 
-def _mission_target_markup(item: dict, role: str) -> str:
+def _mission_target_markup(item: dict, role: str, primary: dict | None = None) -> str:
     remaining = sum(not condition["passed"] for condition in item["conditions"])
     presentation_band = (
         "ignore"
@@ -1003,17 +1064,21 @@ def _mission_target_markup(item: dict, role: str) -> str:
             else ("watch_closely" if remaining <= 2 else "background")
         )
     )
-    label, color = MISSION_BANDS[presentation_band]
+    _, band_color = MISSION_BANDS[presentation_band]
+    conviction_label, color = _mission_conviction_label(item["confidence"])
     window = (
         "Now"
         if remaining == 0
         else ("2–5 minutes" if remaining == 1 else "5–15 minutes")
     )
     checklist = "".join(
-        f"<div class='mission-check'>{'✓' if condition['passed'] else '□'} {html.escape(condition['label'])}</div>"
-        for condition in item["conditions"][:2]
+        f"<div class='mission-check'>{index}. {'✓' if condition['passed'] else '□'} {html.escape(condition['label'])}</div>"
+        for index, condition in enumerate(item["conditions"], 1)
     )
-    then = item["conditions"][2]
+    reasons = "".join(
+        f"<div class='mission-reason'>✓ {html.escape(reason)}</div>"
+        for reason in item["reasons"]
+    )
     previous = item.get("previous_record") or {}
     previous_confidence = (
         hot_list_priority_score(previous) if previous else item["confidence"]
@@ -1029,12 +1094,21 @@ def _mission_target_markup(item: dict, role: str) -> str:
     return (
         f"<div class='mission-target{' entry-window-pulse' if just_opened else ''}' style='--mission-color:{color}'>"
         f"<div class='mission-role'>{role}</div><div class='mission-symbol'>{html.escape(item['symbol'])}</div>"
-        f"<div class='mission-band'>ENTRY WINDOW</div><div class='mission-window-status'>{label}</div>"
-        f"<div class='opportunity-meter'><div class='opportunity-meter-top'><span class='opportunity-meter-label'>Opportunity Meter</span><span class='opportunity-meter-value'>{item['confidence']}% <small class='{delta_class}'>{direction} {delta:+d}</small></span></div>"
-        f"<div class='opportunity-meter-track' role='progressbar' aria-label='Opportunity meter' aria-valuemin='0' aria-valuemax='100' aria-valuenow='{item['confidence']}'><div class='opportunity-meter-fill' style='--opportunity:{item['confidence']}%'></div></div></div>"
-        f"<div class='mission-next-label'>NEXT</div>{checklist}"
-        f"<div class='mission-next-label mission-then'>THEN</div><div class='mission-check'>{'✓' if then['passed'] else '□'} {html.escape(then['label'])}</div>"
-        f"<div class='mission-meta'>Estimated:<br><b>{window}</b></div></div>"
+        f"<div class='mission-band' style='color:{band_color}'>CONVICTION</div><div class='mission-window-status'>{conviction_label}</div>"
+        f"<div class='opportunity-meter'><div class='opportunity-meter-top'><span class='opportunity-meter-label'>Conviction Meter</span><span class='opportunity-meter-value'>{item['confidence']}% <small class='{delta_class}'>{direction} {delta:+d}</small></span></div>"
+        f"<div class='opportunity-meter-track' role='progressbar' aria-label='Conviction meter' aria-valuemin='0' aria-valuemax='100' aria-valuenow='{item['confidence']}'><div class='opportunity-meter-fill' style='--opportunity:{item['confidence']}%'></div></div></div>"
+        + (
+            f"<div class='mission-section-title'>WHY #1 TODAY</div><div class='mission-reasons'>{reasons}</div>"
+            if primary is None
+            else ""
+        )
+        + f"<div class='mission-section-title'>ENTRY PATH</div><div class='mission-path'>{checklist}</div>"
+        + (
+            f"<div class='mission-why-not'><b>WHY NOT #1</b>{html.escape(_mission_why_not_primary(item, primary))}</div>"
+            if primary is not None
+            else ""
+        )
+        + f"<div class='mission-meta'>Estimated: <b>{window}</b></div></div>"
     )
 
 
@@ -1049,7 +1123,9 @@ def render_walter_mission_control(records: list[dict]) -> None:
         return
     targets = _mission_target_markup(mission["primary"], "Primary target")
     if mission["secondary"]:
-        targets += _mission_target_markup(mission["secondary"], "Secondary")
+        targets += _mission_target_markup(
+            mission["secondary"], "Secondary target", mission["primary"]
+        )
     ignored = mission["ignored"]
     ignore_markup = ""
     if ignored:
