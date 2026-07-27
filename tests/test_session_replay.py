@@ -66,7 +66,10 @@ def test_replay_builds_chronological_milestones_diagnostics_and_summary():
     assert peak["expansion_quality"] == 72
     assert peak["vpi"] == 1.8
     assert peak["volume_acceleration"] == 1.4
-    assert replay["summary"]["most_limiting_rule"] == "price has not reclaimed VWAP"
+    assert replay["summary"]["most_limiting_rule"] == (
+        "VWAP — price has not reclaimed VWAP"
+    )
+    assert replay["summary"]["most_limiting_rule_count"] == 1
     assert "participation surged" in replay["summary"]["why_promoted"]
     assert "did not recommend entry" in replay["summary"]["why_no_entry"]
 
@@ -93,3 +96,75 @@ def test_replay_reports_entry_ready_and_does_not_mutate_exports():
         "Walter recorded an Entry Ready qualification during this session."
     )
     assert replay["summary"]["most_limiting_rule"] == "None recorded"
+
+
+def test_replay_shows_exact_categorized_blockers_and_compresses_identical_events():
+    failed_gates = {
+        "participation_gate": {
+            "passed": False,
+            "failed_criteria": [
+                {
+                    "condition": "Dollar volume increasing",
+                    "failed_reason": "Dollar flow not increasing",
+                    "measured": 1.02,
+                    "threshold": 1.15,
+                }
+            ],
+        },
+        "structure_gate": {
+            "passed": False,
+            "checks": [
+                {
+                    "condition": "VWAP reclaim or constructive test",
+                    "passed": False,
+                    "failed_reason": "VWAP not reclaimed",
+                    "measured": "below",
+                    "threshold": "above or testing",
+                },
+                {
+                    "condition": "SuperTrend confirmation",
+                    "passed": False,
+                    "failed_reason": "SuperTrend not confirmed",
+                },
+            ],
+        },
+    }
+    bundle = {
+        "symbol": "same",
+        "flight_recorder": [
+            trace("2026-07-27T14:30:00Z", "Watching", **failed_gates),
+            trace("2026-07-27T14:31:00Z", "Watching", **failed_gates),
+            trace("2026-07-27T14:32:00Z", "Strengthening", **failed_gates),
+        ],
+    }
+
+    replay = build_session_replay(bundle)
+
+    assert len(replay["scans"]) == 2
+    event = replay["scans"][0]
+    assert event["scan_count"] == 2
+    assert event["end_timestamp"] == "2026-07-27T14:31:00Z"
+    assert event["promotion_blockers"] == [
+        {
+            "category": "Participation",
+            "reason": "Dollar flow not increasing",
+            "condition": "Dollar volume increasing",
+            "measured": 1.02,
+            "threshold": 1.15,
+        },
+        {
+            "category": "VWAP",
+            "reason": "VWAP not reclaimed",
+            "condition": "VWAP reclaim or constructive test",
+            "measured": "below",
+            "threshold": "above or testing",
+        },
+        {
+            "category": "SuperTrend",
+            "reason": "SuperTrend not confirmed",
+            "condition": "SuperTrend confirmation",
+        },
+    ]
+    assert replay["summary"]["total_scans"] == 3
+    assert replay["summary"]["summarized_events"] == 2
+    assert replay["summary"]["most_limiting_rule_count"] == 3
