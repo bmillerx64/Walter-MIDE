@@ -20,7 +20,6 @@ from .volume_pace import volume_pace_metrics
 from .scoring import Evidence, score
 from .flight_recorder import prefilter_decision
 
-
 # Fourteen calendar days reliably covers at least five completed U.S. trading
 # sessions across weekends and ordinary exchange holidays.
 VOLUME_PROFILE_LOOKBACK_DAYS = 14
@@ -240,6 +239,10 @@ def apply_attention_ranking(records):
             r["reasons"] = [f"Market dominance {dominance:.0f}/100"] + r.get(
                 "reasons", []
             )
+    from mide.opportunity import enrich_opportunity
+
+    for record in records:
+        enrich_opportunity(record)
     return sorted(
         records,
         key=lambda x: (

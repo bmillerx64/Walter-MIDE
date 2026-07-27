@@ -7,6 +7,7 @@ import streamlit as st
 import pandas as pd
 
 from mide.scanner_v2 import state_elapsed_seconds
+from mide.opportunity import COMPONENT_WEIGHTS as COMPONENT_MAX
 from mide.trader_priority import (
     sortable_text as _sortable_text,
     trader_priority_label,
@@ -479,8 +480,10 @@ def _state_entered_sort_value(record):
 
 
 def automatic_watching_sort_key(record):
-    """Return Walter's automatic live-trading priority for watch-list symbols."""
-    return trader_priority_sort_key(record)
+    """Rank within a workflow stage by additive Opportunity Score."""
+    return (
+        float(record.get("opportunity_score_v2", 0) or 0),
+    ) + trader_priority_sort_key(record)
 
 
 SCANNER_V2_DISPLAY_ORDER = (
@@ -518,7 +521,7 @@ def state_sections(records):
         else:
             sections["Removed"].append(record)
     for state in sections:
-        sections[state].sort(key=trader_priority_sort_key, reverse=True)
+        sections[state].sort(key=automatic_watching_sort_key, reverse=True)
     return sections
 
 
@@ -674,6 +677,26 @@ def opportunity_card(r):
     current_momentum = r.get(
         "current_momentum", r.get("scanner_v2_score", r["opportunity_score"])
     )
+    opportunity = float(r.get("opportunity_score_v2", current_momentum) or 0)
+    opportunity_label = r.get("opportunity_status", "")
+    strengths = r.get("opportunity_strengths") or []
+    blockers = r.get("opportunity_blockers") or []
+    opportunity_explanation = (
+        "<div class='why-summary'><div class='why-summary-title'>Opportunity "
+        f"{opportunity:.1f} · {html.escape(str(opportunity_label))}</div>"
+        + "".join(f"<div>✓ {html.escape(str(item))}</div>" for item in strengths)
+        + (
+            f"<div style='color:#fca5a5'>• {html.escape(str(blockers[0]))}</div>"
+            if blockers
+            else ""
+        )
+        + "</div>"
+    )
+    breakdown = r.get("opportunity_breakdown") or {}
+    opportunity_diagnostics = "".join(
+        f"<div class='score-box'><div class='score-name'>{html.escape(name.title())}</div><div class='score-value'>{float(value):.1f} / {COMPONENT_MAX[name]:.0f}</div></div>"
+        for name, value in breakdown.items()
+    )
     trend_health = r.get("trend_health", "Future")
     score_boxes = "".join(
         [
@@ -719,10 +742,12 @@ def opportunity_card(r):
         <div style="font-size:1.15rem;font-weight:800">{html.escape(str(r['status']))}</div>
       </div>
       {promo_badge}
+      {opportunity_explanation}
       {summary_markup}
       {trigger_markup}
       <div class="why">{html.escape(reasons)}</div>
       <div class="score-grid">{score_boxes}</div>
+      <div class="score-grid">{opportunity_diagnostics}</div>
       {transition_history_markup(r)}
       <div class="small"><b>Evidence:</b> Feed volume {r['volume']/1_000_000:.2f}M · Dollar volume ${r['dollar_volume']/1_000_000:.2f}M · RVOL {r.get('rvol_proxy',0):.1f}×</div>
       <div class="freshness">{html.escape(freshness)} · evaluated {html.escape(evaluated)}</div>

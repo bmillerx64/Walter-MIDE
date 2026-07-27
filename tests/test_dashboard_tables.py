@@ -1,4 +1,4 @@
-from mide.ui import radar_table, summary_reasons
+from mide.ui import radar_table, state_sections, summary_reasons
 
 
 def sample_record(**overrides):
@@ -81,7 +81,11 @@ def test_summary_reasons_prioritize_entry_ready_state_over_list_order():
         )
     )
 
-    assert reasons == ["30-second SuperTrend flipped", "Above VWAP", "RVOL 4.2× and increasing"]
+    assert reasons == [
+        "30-second SuperTrend flipped",
+        "Above VWAP",
+        "RVOL 4.2× and increasing",
+    ]
 
 
 def test_summary_reasons_prioritize_watch_list_state_over_list_order():
@@ -104,11 +108,29 @@ def test_summary_reasons_prioritize_watch_list_state_over_list_order():
 
 
 def test_radar_table_preserves_priority_sorted_input_order():
-    table = radar_table([
-        sample_record(symbol="ROCKET", status="ALERT", conviction_score=60),
-        sample_record(symbol="ENTRY", status="Entry Ready", conviction_score=99),
-        sample_record(symbol="STRONG", status="WATCH NOW", conviction_score=95),
-    ])
+    table = radar_table(
+        [
+            sample_record(symbol="ROCKET", status="ALERT", conviction_score=60),
+            sample_record(symbol="ENTRY", status="Entry Ready", conviction_score=99),
+            sample_record(symbol="STRONG", status="WATCH NOW", conviction_score=95),
+        ]
+    )
 
     assert table["Symbol"].tolist() == ["ROCKET", "ENTRY", "STRONG"]
     assert table["Priority"].tolist() == ["ROCKET", "ENTRY READY", "STRONG"]
+
+
+def test_workflow_section_ranks_by_additive_opportunity_score():
+    lower = sample_record(
+        symbol="LOW", candidate_status="Strengthening", opportunity_score_v2=61
+    )
+    higher = sample_record(
+        symbol="HIGH", candidate_status="Strengthening", opportunity_score_v2=88
+    )
+
+    assert [
+        item["symbol"] for item in state_sections([lower, higher])["Strengthening"]
+    ] == [
+        "HIGH",
+        "LOW",
+    ]
