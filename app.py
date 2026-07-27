@@ -26,7 +26,11 @@ from mide.runtime_evidence import (
 )
 from mide.session_replay import build_session_replay
 from mide.demo import demo_records
-from mide.escalation import escalation_alert_phrase, escalation_state_changes
+from mide.escalation import (
+    escalation_alert_phrase,
+    escalation_snapshot,
+    escalation_state_changes,
+)
 from mide.ui import (
     inject_css,
     metric_strip,
@@ -41,6 +45,8 @@ from mide.ui import (
     trader_priority_sort_key,
     render_walter_mission_control,
     render_escalation_engine,
+    mission_control_header_markup,
+    walter_mission_control,
 )
 from mide.time_service import format_eastern_time, market_clock, market_phase_at
 
@@ -234,7 +240,7 @@ def scan_alert_phrase(records: list[dict]) -> str:
     return ""
 
 
-st.set_page_config(page_title="Walter MIDE Radar", page_icon="📡", layout="wide")
+st.set_page_config(page_title="Walter • MIDE Radar", page_icon="🛰", layout="wide")
 inject_css()
 
 
@@ -348,11 +354,8 @@ def secrets_mapping() -> dict:
 
 settings = Settings.from_mapping(secrets_mapping())
 
-st.title("📡 Walter · MIDE Radar")
-st.caption(f"Market Intelligence Decision Engine · $0.02–$5.00 · v{VERSION}")
-st.success(
-    "Walter is online. Live mode scans automatically every 60 seconds and still supports manual scans."
-)
+mission_header_slot = st.empty()
+mission_plan_slot = st.empty()
 
 session_defaults = {
     "records": [],
@@ -361,6 +364,8 @@ session_defaults = {
     "last_updated": None,
     "scan_diagnostics": {},
     "scan_in_progress": False,
+    "symbols_sampled": 0,
+    "prefilter_count": 0,
     "last_escalation_alert": "",
     ALERT_VOICE_SESSION_KEY: SYSTEM_DEFAULT_VOICE_ID,
     DAVID_AVAILABLE_SESSION_KEY: False,
@@ -657,6 +662,8 @@ should_scan = False
 
 if use_demo or mode == "Demo":
     st.session_state.records = demo_records()
+    st.session_state.symbols_sampled = len(st.session_state.records)
+    st.session_state.prefilter_count = len(st.session_state.records)
     st.session_state.source_label = "Demonstration data"
     st.session_state.api_warnings = []
     st.session_state.last_updated = datetime.now().astimezone()
@@ -683,6 +690,8 @@ if mode == "Live Alpaca" and should_scan:
             scanner_version
         )
         st.session_state.records = records
+        st.session_state.symbols_sampled = universe_count
+        st.session_state.prefilter_count = prefiltered
         st.session_state.source_label = f"Live {settings.feed.upper()} · {universe_count} symbols sampled · {prefiltered} prefiltered"
         st.session_state.api_warnings = warnings
         st.session_state.scan_diagnostics = diagnostics
@@ -734,6 +743,41 @@ display_records = (
     if show_pass
     else [r for r in actionable_records if r.get("status") not in {"PASS", "Removed"}]
 )
+
+mission = walter_mission_control(actionable_records)
+focus_count = int(mission["primary"] is not None) + int(
+    mission["secondary"] is not None
+)
+escalation_count = sum(
+    escalation_snapshot(record)["state"] in {"Watch Closely", "Entry Window Open"}
+    for record in actionable_records
+)
+seconds_to_scan = 0
+if mode == "Live Alpaca" and auto_refresh and updated:
+    elapsed = (datetime.now().astimezone() - updated).total_seconds()
+    seconds_to_scan = max(0, int(settings.refresh_seconds - elapsed))
+next_scan = (
+    f"{seconds_to_scan // 60:02d}:{seconds_to_scan % 60:02d}"
+    if mode == "Live Alpaca" and auto_refresh
+    else "Manual"
+)
+with mission_header_slot:
+    st.markdown(
+        mission_control_header_markup(
+            live=mode == "Live Alpaca",
+            market_phase=clock.phase,
+            market_time=clock.time_text,
+            symbols_sampled=st.session_state.symbols_sampled,
+            prefilter_count=st.session_state.prefilter_count,
+            candidate_count=len(actionable_records),
+            focus_count=focus_count,
+            escalation_count=escalation_count,
+            next_scan=next_scan,
+        ),
+        unsafe_allow_html=True,
+    )
+with mission_plan_slot:
+    render_walter_mission_control(actionable_records)
 
 arm_auto_scan_timer(
     mode == "Live Alpaca" and auto_refresh and live_possible, settings.refresh_seconds
@@ -806,7 +850,6 @@ with st.expander("Legacy candidate diagnostics", expanded=False):
     elif not inspect_symbol:
         st.caption("No diagnostics recorded for this scan yet.")
 
-render_walter_mission_control(actionable_records)
 render_escalation_engine(actionable_records)
 metric_strip(actionable_records)
 state_changes = escalation_state_changes(actionable_records)
