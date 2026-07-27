@@ -292,7 +292,7 @@ def test_mission_control_header_contains_compact_operational_status():
     )
 
     assert "Walter • MIDE Radar" in markup
-    assert "v2.14 — Trade Readiness Gauge" in markup
+    assert "v2.15 — Live Opportunity Feed" in markup
     assert "Market Intelligence Decision Engine" in markup
     for value in (
         "🟢 LIVE",

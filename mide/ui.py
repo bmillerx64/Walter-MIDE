@@ -111,6 +111,13 @@ def inject_css():
     .hot-reason {color:#dcfce7;font-size:.90rem;font-weight:750;line-height:1.45}
     .hot-need {color:#fecaca;font-size:.90rem;font-weight:750;line-height:1.4}
     .mission-shell {background:linear-gradient(145deg,#101a27,#0b1119);border:1px solid #334155;border-top:4px solid #60a5fa;border-radius:14px;padding:18px 20px;margin:4px 0 16px;box-shadow:0 12px 30px rgba(0,0,0,.22)}
+    .feed-shell {background:#0b1119;border:1px solid #29384b;border-radius:12px;padding:12px 16px;margin:-6px 0 16px}
+    .feed-title {font-size:.82rem;letter-spacing:.1em;font-weight:950;color:#dbe7f4;margin-bottom:7px}
+    .feed-empty {font-size:.84rem;color:#7f8fa3;padding:3px 0}
+    .feed-event {display:grid;grid-template-columns:72px 64px 1fr auto;gap:9px;align-items:center;border-top:1px solid #1e2937;padding:7px 0;font-size:.88rem}
+    .feed-time {color:#8291a5;font-variant-numeric:tabular-nums}.feed-symbol {font-weight:950;color:#f8fafc}
+    .feed-message {font-weight:750}.feed-green {color:#4ade80}.feed-yellow {color:#facc15}.feed-red {color:#f87171}
+    .feed-delta {font-weight:950;font-variant-numeric:tabular-nums}
     .mission-title {font-size:1.25rem;font-weight:950;color:#f8fafc;margin-bottom:13px}
     .mission-grid {display:grid;grid-template-columns:minmax(280px,1.35fr) minmax(240px,1fr);gap:12px}
     .mission-target {background:#0c121a;border:1px solid #273548;border-left:6px solid var(--mission-color);border-radius:10px;padding:13px 15px}
@@ -335,7 +342,7 @@ def mission_control_header_markup(
     return (
         "<div class='control-header'><div class='control-heading'><div>"
         "<div class='control-title'>🛰 Walter • MIDE Radar</div>"
-        "<div class='control-version'>v2.14 — Trade Readiness Gauge</div></div>"
+        "<div class='control-version'>v2.15 — Live Opportunity Feed</div></div>"
         "<div class='control-engine'>Market Intelligence Decision Engine</div></div>"
         f"<div class='control-strip'>{strip}</div></div>"
     )
@@ -1232,6 +1239,32 @@ def render_walter_mission_control(records: list[dict]) -> None:
         )
     st.markdown(
         f"<div class='mission-shell'><div class='mission-title'>🎯 TODAY'S MISSION</div><div class='mission-grid'>{targets}</div>{ignore_markup}</div>",
+        unsafe_allow_html=True,
+    )
+
+
+def render_live_opportunity_feed(events: list[dict]) -> None:
+    """Render the compact, newest-first mission log beneath Today's Mission."""
+    rows = []
+    for event in events[:20]:
+        color = event.get("color", "yellow")
+        marker = {"green": "🟢", "yellow": "🟡", "red": "🔴"}.get(color, "🟡")
+        delta = event.get("confidence_delta")
+        delta_markup = (
+            f"<span class='feed-delta feed-{color}'>{int(delta):+d}</span>"
+            if delta is not None
+            else "<span></span>"
+        )
+        rows.append(
+            "<div class='feed-event'>"
+            f"<span class='feed-time'>{html.escape(str(event.get('time', '')))}</span>"
+            f"<span class='feed-symbol'>{html.escape(str(event.get('symbol', '')))}</span>"
+            f"<span class='feed-message feed-{color}'>{marker} {html.escape(str(event.get('message', '')))}</span>"
+            f"{delta_markup}</div>"
+        )
+    content = "".join(rows) or "<div class='feed-empty'>Waiting for a meaningful change.</div>"
+    st.markdown(
+        f"<div class='feed-shell'><div class='feed-title'>LIVE OPPORTUNITY FEED</div>{content}</div>",
         unsafe_allow_html=True,
     )
 

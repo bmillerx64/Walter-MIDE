@@ -44,13 +44,15 @@ from mide.ui import (
     rejected_candidates_table,
     trader_priority_sort_key,
     render_walter_mission_control,
+    render_live_opportunity_feed,
     render_escalation_engine,
     mission_control_header_markup,
     walter_mission_control,
 )
+from mide.live_opportunity_feed import update_opportunity_feed
 from mide.time_service import format_eastern_time, market_clock, market_phase_at
 
-VERSION = "2.14 — Trade Readiness Gauge"
+VERSION = "2.15 — Live Opportunity Feed"
 
 SYSTEM_DEFAULT_VOICE_ID = "__system_default__"
 DEFAULT_VOICE = "System Default"
@@ -356,6 +358,7 @@ settings = Settings.from_mapping(secrets_mapping())
 
 mission_header_slot = st.empty()
 mission_plan_slot = st.empty()
+opportunity_feed_slot = st.empty()
 escalation_engine_slot = st.empty()
 system_status_panel = st.expander("System Status", expanded=False)
 scan_runtime_slot = system_status_panel.container()
@@ -370,6 +373,8 @@ session_defaults = {
     "symbols_sampled": 0,
     "prefilter_count": 0,
     "last_escalation_alert": "",
+    "opportunity_feed_snapshot": {},
+    "opportunity_feed_events": [],
     ALERT_VOICE_SESSION_KEY: SYSTEM_DEFAULT_VOICE_ID,
     DAVID_AVAILABLE_SESSION_KEY: False,
     ACTIVE_VOICE_SESSION_KEY: SYSTEM_DEFAULT_VOICE_ID,
@@ -802,6 +807,23 @@ with mission_header_slot:
     )
 with mission_plan_slot:
     render_walter_mission_control(actionable_records)
+
+focus_records = [
+    item["record"]
+    for item in (mission["primary"], mission["secondary"])
+    if item is not None
+]
+if updated:
+    feed_snapshot, feed_events = update_opportunity_feed(
+        focus_records,
+        st.session_state.opportunity_feed_snapshot,
+        st.session_state.opportunity_feed_events,
+        updated,
+    )
+    st.session_state.opportunity_feed_snapshot = feed_snapshot
+    st.session_state.opportunity_feed_events = feed_events
+with opportunity_feed_slot:
+    render_live_opportunity_feed(st.session_state.opportunity_feed_events)
 
 arm_live_clock_engine(
     mode == "Live Alpaca" and auto_refresh and live_possible,
