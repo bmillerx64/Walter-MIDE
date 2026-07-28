@@ -35,8 +35,6 @@ def test_run_live_enrichment_path_passes_previous_state(monkeypatch, tmp_path):
     assert signature.parameters["previous"].default is None
 
     monkeypatch.setattr("app.get_secret", lambda name, default="": "secret")
-    monkeypatch.setattr("app.credential_status", lambda client: "paper")
-    monkeypatch.setattr("app.AlpacaClient", lambda *args, **kwargs: DummyClient())
     monkeypatch.setattr("app.st.status", lambda *args, **kwargs: DummyStatus())
     monkeypatch.setattr("app.st.progress", lambda *args, **kwargs: DummyProgress())
     monkeypatch.setattr(
@@ -90,7 +88,9 @@ def test_run_live_enrichment_path_passes_previous_state(monkeypatch, tmp_path):
     monkeypatch.setattr("app.get_flight_recorder", lambda: BrokenRecorder())
 
     records, seed_count, candidate_count, warnings, diagnostics = run_live(
-        "Scanner V2 (adaptive momentum)"
+        "Scanner V2 (adaptive momentum)",
+        client_factory=lambda *args, **kwargs: DummyClient(),
+        credential_checker=lambda client: "paper",
     )
 
     assert seed_count == 1
@@ -113,8 +113,6 @@ def test_run_live_scanner_v1_enrichment_path_accepts_previous_state(
     monkeypatch, tmp_path
 ):
     monkeypatch.setattr("app.get_secret", lambda name, default="": "secret")
-    monkeypatch.setattr("app.credential_status", lambda client: "paper")
-    monkeypatch.setattr("app.AlpacaClient", lambda *args, **kwargs: DummyClient())
     monkeypatch.setattr("app.st.status", lambda *args, **kwargs: DummyStatus())
     monkeypatch.setattr("app.st.progress", lambda *args, **kwargs: DummyProgress())
     monkeypatch.setattr(
@@ -160,7 +158,9 @@ def test_run_live_scanner_v1_enrichment_path_accepts_previous_state(
     monkeypatch.setattr("app.get_store", lambda: store)
 
     records, seed_count, candidate_count, warnings, diagnostics = run_live(
-        "Scanner V1 (classic screener)"
+        "Scanner V1 (classic screener)",
+        client_factory=lambda *args, **kwargs: DummyClient(),
+        credential_checker=lambda client: "paper",
     )
 
     assert seed_count == 1
