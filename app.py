@@ -17,6 +17,7 @@ def repair_mide_module_links() -> None:
     ``sys.modules``.  Reattaching those modules to their parents avoids mixing a
     newly imported package with orphaned, stale submodule references.
     """
+    importlib.invalidate_caches()
     package = sys.modules.get("mide")
     if package is None:
         package = importlib.import_module("mide")
@@ -77,6 +78,7 @@ from mide.ui import (
 )
 from mide.live_opportunity_feed import update_opportunity_feed
 from mide.time_service import format_eastern_time, market_clock, market_phase_at
+from mide.watchdog import ScanAlreadyRunning
 
 VERSION = "2.18.1 — Reliable Scan Commit"
 
@@ -427,6 +429,8 @@ session_defaults = {
     "last_updated": None,
     "scan_diagnostics": {},
     "scan_in_progress": False,
+    "last_scan_attempt": None,
+    "scan_failure_count": 0,
     "symbols_sampled": 0,
     "prefilter_count": 0,
     "last_escalation_alert": "",
@@ -579,18 +583,28 @@ with st.sidebar:
 
 
 def arm_live_clock_engine(
-    enabled: bool, refresh_seconds: int, last_updated: datetime | None
+    enabled: bool,
+    refresh_seconds: int,
+    last_updated: datetime | None,
+    last_scan_attempt: datetime | None = None,
+    retry_seconds: int = 5,
 ) -> None:
     """Keep dashboard clocks live and trigger scheduled scans without showing a timer."""
     updated_ms = int(last_updated.timestamp() * 1000) if last_updated else 0
+    attempt_ms = int(last_scan_attempt.timestamp() * 1000) if last_scan_attempt else 0
+    baseline_ms = max(updated_ms, attempt_ms)
     refresh_ms = max(1, int(refresh_seconds)) * 1000
+    retry_ms = max(1, int(retry_seconds)) * 1000
     st.components.v1.html(
         f"""<script>
         (() => {{
           const root = window.parent;
           const enabled = {str(enabled).lower()};
           const updatedAt = {updated_ms};
+          const attemptedAt = {attempt_ms};
+          const baselineAt = {baseline_ms};
           const refreshMs = {refresh_ms};
+          const retryMs = {retry_ms};
           // Keep an in-flight marker in this browser tab to prevent repeated
           // reloads while Streamlit performs its blocking scan rerun. Store the
           // scan baseline as well because server and browser clocks can skew.
@@ -634,14 +648,16 @@ def arm_live_clock_engine(
             }} catch (_) {{
               root.sessionStorage.removeItem(scanKey);
             }}
-            if (scanState && scanState.baselineUpdatedAt !== updatedAt) {{
+            if (scanState && scanState.baselineUpdatedAt !== baselineAt) {{
               root.sessionStorage.removeItem(scanKey);
               scanState = null;
             }}
-            const deadline = updatedAt ? updatedAt + refreshMs : now;
+            const deadline = attemptedAt > updatedAt
+              ? attemptedAt + retryMs
+              : (updatedAt ? updatedAt + refreshMs : now);
             if (!scanState && now < deadline) return;
             if (!scanState) {{
-              scanState = {{startedAt: now, baselineUpdatedAt: updatedAt}};
+              scanState = {{startedAt: now, baselineUpdatedAt: baselineAt}};
               root.sessionStorage.setItem(scanKey, JSON.stringify(scanState));
               root.setTimeout(() => root.location.reload(), 80);
             }}
@@ -654,17 +670,29 @@ def arm_live_clock_engine(
     )
 
 
-def run_live(scanner_version: str = "Scanner V2 (adaptive momentum)"):
+def run_live(
+    scanner_version: str = "Scanner V2 (adaptive momentum)",
+    *,
+    client_factory=None,
+    credential_checker=None,
+):
     api_key = get_secret("ALPACA_API_KEY")
     secret = get_secret("ALPACA_SECRET_KEY")
     if not api_key or not secret:
         raise AlpacaError("Alpaca credentials are not configured in Streamlit Secrets.")
 
-    client = AlpacaClient(api_key, secret, feed=settings.feed, timeout=12)
+    # Resolve deployment-sensitive classes/functions for every attempt. A retry
+    # therefore gets a fresh client and cannot retain a class detached during a
+    # Streamlit/GitHub hot reload.
+    repair_mide_module_links()
+    alpaca_module = importlib.import_module("mide.alpaca")
+    client_factory = client_factory or alpaca_module.AlpacaClient
+    credential_checker = credential_checker or alpaca_module.credential_status
+    client = client_factory(api_key, secret, feed=settings.feed, timeout=12)
     with scan_runtime_slot:
         status = st.status("Walter is scanning…", expanded=True)
     try:
-        environment = credential_status(client)
+        environment = credential_checker(client)
         status.write(f"Alpaca credentials accepted ({environment} environment)")
         log(f"Credentials accepted by Alpaca {environment} environment")
     except Exception as exc:
@@ -721,8 +749,11 @@ def run_live(scanner_version: str = "Scanner V2 (adaptive momentum)"):
     previous = store.latest_by_symbol()
     records = store.enrich_velocity(records, previous=previous)
     if scanner_version.startswith("Scanner V2"):
-        records = apply_scanner_v2(records, previous)
-        participation_rejections = participation_gate_rejection_diagnostics(records)
+        scanner_module = importlib.import_module("mide.scanner_v2")
+        records = scanner_module.apply_scanner_v2(records, previous)
+        participation_rejections = (
+            scanner_module.participation_gate_rejection_diagnostics(records)
+        )
         client.diagnostics["participation_gate_rejections"] = participation_rejections
         for detail in participation_rejections["details"]:
             log(
@@ -730,7 +761,9 @@ def run_live(scanner_version: str = "Scanner V2 (adaptive momentum)"):
                 f"{detail['symbol']}: "
                 f"{'; '.join(detail['failed_reasons'])}"
             )
-        client.diagnostics["strengthening"] = strengthening_diagnostics(records)
+        client.diagnostics["strengthening"] = (
+            scanner_module.strengthening_diagnostics(records)
+        )
     else:
         for record in records:
             record["scanner_version"] = "V1"
@@ -834,10 +867,15 @@ else:
     should_scan = run_scan or due
 
 if mode == "Live Alpaca" and should_scan:
+    st.session_state.last_scan_attempt = datetime.now().astimezone()
     try:
         st.session_state.scan_in_progress = True
-        records, universe_count, prefiltered, warnings, diagnostics = run_live(
-            scanner_version
+        # Resolve the watchdog dynamically: a deployment may have replaced the
+        # module while this Streamlit session still holds older app globals.
+        repair_mide_module_links()
+        watchdog = importlib.import_module("mide.watchdog").PROCESS_SCAN_WATCHDOG
+        records, universe_count, prefiltered, warnings, diagnostics = watchdog.run(
+            lambda: run_live(scanner_version), before_retry=repair_mide_module_links
         )
         st.session_state.records = records
         st.session_state.symbols_sampled = universe_count
@@ -846,11 +884,16 @@ if mode == "Live Alpaca" and should_scan:
         st.session_state.api_warnings = warnings
         st.session_state.scan_diagnostics = diagnostics
         st.session_state.last_updated = datetime.now().astimezone()
+        st.session_state.scan_failure_count = 0
+    except ScanAlreadyRunning as exc:
+        log(f"Scan deferred: {exc}")
+        st.info("Another Walter session is scanning. This session will retry automatically.")
     except Exception as exc:
+        st.session_state.scan_failure_count += 1
         log(f"Scan failed: {type(exc).__name__}: {exc}")
         st.error(f"Live scan could not complete: {exc}")
         st.info(
-            "Walter remains online. Correct the issue and press Run live scan again."
+            "Walter remains online and will retry automatically with backoff."
         )
     finally:
         st.session_state.scan_in_progress = False
@@ -926,6 +969,8 @@ arm_live_clock_engine(
     mode == "Live Alpaca" and auto_refresh and live_possible,
     settings.refresh_seconds,
     updated,
+    st.session_state.last_scan_attempt,
+    retry_seconds=min(60, 5 * (2 ** min(st.session_state.scan_failure_count, 3))),
 )
 
 with escalation_engine_slot:
