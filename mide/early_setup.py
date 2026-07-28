@@ -7,6 +7,173 @@ from datetime import datetime, timezone
 MIN_DOLLAR_VOLUME = 250_000.0
 
 
+def _series(record: dict, *keys: str) -> list[float]:
+    for key in keys:
+        value = record.get(key)
+        if isinstance(value, (list, tuple)):
+            output = []
+            for item in value:
+                try:
+                    output.append(float(item))
+                except (TypeError, ValueError):
+                    continue
+            return output
+    return []
+
+
+def _increasing_window(values: list[float], window: int) -> bool:
+    sample = values[-window:]
+    return (
+        len(sample) >= window
+        and sample[-1] > sample[0]
+        and sum(current > previous for previous, current in zip(sample, sample[1:]))
+        >= max(1, len(sample) - 2)
+    )
+
+
+def structure_evaluation(record: dict, prior: dict | None = None) -> dict:
+    """Score whether a chart is worth opening, rather than whether it is an entry.
+
+    The five components intentionally describe pre-breakout structure.  A fresh
+    SuperTrend flip is a separate 20-point event bonus and the displayed
+    probability is always capped at 100.
+    """
+    prior = prior or {}
+    relation = str(record.get("vwap_relation") or "").lower()
+    above_vwap = relation == "above" or bool(record.get("price_above_vwap"))
+    reclaim_age = _num(
+        record, "vwap_reclaim_age_bars", "bars_since_vwap_reclaim", default=999
+    )
+    reclaimed = bool(record.get("vwap_reclaimed_last_10m"))
+    recent_reclaim = reclaimed and reclaim_age <= 5
+    holding_reclaim = above_vwap and (
+        reclaimed
+        or bool(record.get("holding_above_vwap_after_reclaim"))
+        or bool((prior.get("structure") or {}).get("vwap_reclaimed"))
+    )
+    vwap_points = (
+        35.0 if recent_reclaim or holding_reclaim else 18.0 if above_vwap else 0.0
+    )
+
+    st_distance = _num(record, "supertrend_distance_pct", default=999.0)
+    if st_distance == 999.0:
+        price = _num(record, "price")
+        st_value = _num(record, "supertrend_value", "supertrend_line")
+        if price and st_value:
+            st_distance = abs(price - st_value) / price * 100
+        elif record.get("supertrend_bullish"):
+            st_distance = 0.0
+    # Full credit at <=0.10%, fading continuously to zero at 1.50%.
+    st_points = 30.0 * max(0.0, min(1.0, (1.5 - st_distance) / 1.4))
+    flipped = bool(record.get("supertrend_flipped_last_10m")) or bool(
+        record.get("supertrend_flip")
+    )
+
+    ranges = _series(record, "last_five_candle_ranges_pct", "candle_ranges_pct")[-5:]
+    declining = bool(record.get("candle_ranges_declining")) or (
+        len(ranges) == 5
+        and ranges[-1] < ranges[0]
+        and sum(b <= a for a, b in zip(ranges, ranges[1:])) >= 3
+    )
+    compression_points = 15.0 if declining else 0.0
+
+    history = _series(record, "rvol_history", "participation_history")
+    prior_history = _series(
+        prior,
+        "rvol_history",
+        "participation_history",
+    ) or list((prior.get("structure") or {}).get("participation_history") or [])
+    if not history:
+        history = prior_history
+        current_rvol = _num(record, "rvol", "rvol_proxy")
+        if current_rvol and (not history or current_rvol != history[-1]):
+            history = [*history, current_rvol]
+    history = history[-10:]
+    acceleration_windows = [
+        window for window in (3, 5, 10) if _increasing_window(history, window)
+    ]
+    participation_accelerating = bool(acceleration_windows) or bool(
+        record.get("participation_accelerating")
+    )
+    participation_points = (
+        min(12.0, 6.0 + 2.0 * len(acceleration_windows))
+        if participation_accelerating
+        else 0.0
+    )
+
+    float_shares = _num(record, "float_shares", "shares_float", "float", default=0.0)
+    float_millions = _num(record, "float_millions", default=0.0) or (
+        float_shares / 1_000_000 if float_shares else 0.0
+    )
+    if 0 < float_millions < 2:
+        float_points, float_tier = 8.0, "Huge"
+    elif float_millions < 5 and float_millions:
+        float_points, float_tier = 6.0, "Strong"
+    elif float_millions < 10 and float_millions:
+        float_points, float_tier = 4.0, "Moderate"
+    elif float_millions <= 20 and float_millions:
+        float_points, float_tier = 2.0, "Small"
+    else:
+        float_points, float_tier = 0.0, "Minimal" if float_millions else "Unknown"
+
+    base_score = (
+        vwap_points
+        + st_points
+        + compression_points
+        + participation_points
+        + float_points
+    )
+    probability = round(min(100.0, base_score + (20.0 if flipped else 0.0)), 1)
+    state = (
+        "ENTRY"
+        if flipped and probability >= 90
+        else (
+            "READY"
+            if probability >= 98
+            else (
+                "COILED"
+                if probability >= 75
+                else (
+                    "BUILDING"
+                    if probability >= 60
+                    else "WATCH" if probability >= 40 else "NOT READY"
+                )
+            )
+        )
+    )
+    return {
+        "score": probability,
+        "probability_of_breakout": probability,
+        "state": state,
+        "vwap_reclaimed": recent_reclaim or holding_reclaim,
+        "vwap_status": (
+            "reclaimed"
+            if recent_reclaim
+            else (
+                "holding after reclaim"
+                if holding_reclaim
+                else "above" if above_vwap else "below"
+            )
+        ),
+        "vwap_points": round(vwap_points, 1),
+        "supertrend_distance_pct": round(st_distance, 3),
+        "supertrend_points": round(st_points, 1),
+        "supertrend_flipped": flipped,
+        "supertrend_flip_bonus": 20 if flipped else 0,
+        "candle_ranges_declining": declining,
+        "last_five_candle_ranges_pct": ranges,
+        "compression_points": compression_points,
+        "participation_accelerating": participation_accelerating,
+        "participation_acceleration_windows": acceleration_windows,
+        "participation_history": history,
+        "participation_points": participation_points,
+        "float_millions": round(float_millions, 2) if float_millions else None,
+        "float_tier": float_tier,
+        "float_points": float_points,
+        "alert_eligible": state == "COILED",
+    }
+
+
 def _num(record: dict, *keys: str, default: float = 0.0) -> float:
     for key in keys:
         if record.get(key) is not None:
@@ -194,13 +361,19 @@ def early_setup_evaluation(record: dict, prior: dict | None = None) -> dict:
     detection_delay = (
         max(0, int((now - detection_time).total_seconds())) if detection_time else 0
     )
+    structure = structure_evaluation(record, prior)
     return {
         "qualified": early_qualified,
         "base_qualified": qualified,
         "timing_qualified": timing_qualified,
         "timing_state": state,
         "state": state,
-        "score": score,
+        "score": structure["score"],
+        "legacy_ignition_score": score,
+        "structure": structure,
+        "structure_score": structure["score"],
+        "structure_state": structure["state"],
+        "probability_of_breakout": structure["probability_of_breakout"],
         "override": override,
         "volume_acceleration": round(acceleration, 2),
         "structure_count": structure_count,
@@ -232,10 +405,16 @@ def enrich_early_setups(
         record = dict(source)
         prior = previous_by_symbol.get(str(source.get("symbol") or ""), {})
         result = early_setup_evaluation(source, prior)
+        structure = result["structure"]
         record.update(
             early_setup=result,
             early_setup_qualified=result["qualified"],
             early_setup_score=result["score"],
+            structure=structure,
+            structure_score=structure["score"],
+            structure_state=structure["state"],
+            breakout_probability=structure["probability_of_breakout"],
+            coiled_alert_eligible=structure["alert_eligible"],
             discovery_state=result["state"],
             timing_state=result["timing_state"],
             early_setup_alert_eligible=result["alert_eligible"],
@@ -276,6 +455,6 @@ def newly_entered_symbols(
     current = {
         str(r.get("symbol") or "").upper()
         for r in records
-        if r.get("early_setup_alert_eligible") and r.get("symbol")
+        if r.get("coiled_alert_eligible") and r.get("symbol")
     }
     return sorted(current - set(active_symbols)), current

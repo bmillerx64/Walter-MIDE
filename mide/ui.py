@@ -230,30 +230,38 @@ def play_alert(sound_path: str, phrase: str, voice_name: str = ""):
 
 
 def early_setups_markup(records: list[dict]) -> str:
-    """Render the five highest ignition candidates as a compact chart-review panel."""
+    """Render the five charts Walter is most likely to want opened now."""
     cards = []
     for record in top_timing_setups(records):
         detail = record.get("early_setup") or {}
+        structure = record.get("structure") or detail.get("structure") or {}
         if detail.get("timing_state") in {"LATE MOMENTUM", "WAIT FOR RESET"}:
             cards.append(
                 f'<div class="mide-card mide-watch">{timing_status_markup(record)}</div>'
             )
             continue
-        age = record.get("news_age_hours")
-        news = f" · News {float(age):.1f}h" if age is not None else ""
+        float_millions = structure.get("float_millions")
+        float_text = (
+            f"{float(float_millions):.1f}M" if float_millions is not None else "unknown"
+        )
+        participation = (
+            "accelerating" if structure.get("participation_accelerating") else "steady"
+        )
         cards.append(
             f'<div class="mide-card mide-watch"><b>{html.escape(str(record.get("symbol") or "").upper())}</b> '
             f'${float(record.get("price") or 0):.2f} &nbsp; {float(record.get("pct_change") or 0):+.1f}%<br>'
-            f'<b>Early Setup {float(record.get("early_setup_score") or 0):.0f}</b> · Volume {float(detail.get("volume_acceleration") or 0):.1f}× · '
-            f'VWAP {html.escape(str(detail.get("vwap_status") or "unknown"))} · SuperTrend {html.escape(str(detail.get("supertrend_status") or "unknown"))}{news}<br>'
-            f'<span class="small">Next: {html.escape(str(detail.get("next_condition") or "maintain structure"))}</span></div>'
+            f'<b>⚡ {html.escape(str(structure.get("state") or "BUILDING"))}</b> · Structure Score {float(structure.get("score") or 0):.0f}<br>'
+            f'VWAP {html.escape(str(structure.get("vwap_status") or "unknown"))} · '
+            f'SuperTrend {float(structure.get("supertrend_distance_pct") or 0):.2f}% away<br>'
+            f"Participation {participation} · Float {float_text}<br>"
+            f'<span class="small">Probability of breakout <b>{float(structure.get("probability_of_breakout") or 0):.0f}%</b></span></div>'
         )
     body = (
         "".join(cards)
         if cards
         else '<div class="feed-empty">No developing ignition structures right now.</div>'
     )
-    return f'<div class="feed-shell"><div class="feed-title">⚡ EARLY SETUPS</div>{body}</div>'
+    return f'<div class="feed-shell"><div class="feed-title">⚡ STRUCTURE ENGINE</div>{body}</div>'
 
 
 def timing_status_markup(record: dict) -> str:

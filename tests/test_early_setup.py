@@ -3,6 +3,7 @@ from mide.early_setup import (
     enrich_early_setups,
     newly_entered_symbols,
     top_early_setups,
+    structure_evaluation,
 )
 from mide.scanner_v2 import trigger_diagnostics
 from mide.ui import early_setups_markup
@@ -84,7 +85,15 @@ def test_weak_volume_vwap_cross_does_not_qualify():
 
 
 def test_duplicate_early_setup_alerts_are_suppressed():
-    records = enrich_early_setups([record()])
+    records = enrich_early_setups(
+        [
+            record(
+                supertrend_distance_pct=0.18,
+                last_five_candle_ranges_pct=[1.2, 0.9, 0.7, 0.5, 0.3],
+                float_millions=1.5,
+            )
+        ]
+    )
     entered, active = newly_entered_symbols(records, set())
     duplicate, active_again = newly_entered_symbols(records, active)
     assert entered == ["FIRE"]
@@ -107,8 +116,36 @@ def test_panel_is_limited_to_highest_five_and_compact():
     )
     assert len(top_early_setups(records)) == 5
     markup = early_setups_markup(records)
-    assert "⚡ EARLY SETUPS" in markup and markup.count("Early Setup ") == 5
-    assert "Next:" in markup
+    assert "⚡ STRUCTURE ENGINE" in markup and markup.count("Structure Score ") == 5
+    assert markup.count("Probability of breakout") == 5
+
+
+def test_structure_score_rewards_coiling_evidence_and_adds_coiled_state():
+    result = structure_evaluation(
+        record(
+            vwap_reclaim_age_bars=2,
+            supertrend_distance_pct=0.18,
+            last_five_candle_ranges_pct=[1.2, 0.9, 0.7, 0.5, 0.3],
+            rvol_history=[1.1, 1.3, 1.6, 1.9, 2.4],
+            float_millions=1.5,
+        )
+    )
+    assert result["state"] == "COILED"
+    assert result["vwap_points"] == 35
+    assert result["candle_ranges_declining"]
+    assert result["participation_acceleration_windows"] == [3, 5]
+    assert result["float_tier"] == "Huge"
+
+
+def test_supertrend_distance_rises_smoothly_and_flip_gets_twenty_point_bonus():
+    far = structure_evaluation(record(supertrend_distance_pct=0.8))
+    close = structure_evaluation(record(supertrend_distance_pct=0.09))
+    flipped = structure_evaluation(
+        record(supertrend_distance_pct=0.09, supertrend_flip=True)
+    )
+    assert far["supertrend_points"] < close["supertrend_points"]
+    assert flipped["supertrend_flip_bonus"] == 20
+    assert flipped["score"] == min(100, close["score"] + 20)
 
 
 def test_timing_signals_before_breakout_are_early_setup():

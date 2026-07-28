@@ -145,6 +145,8 @@ def intraday_participation_metrics(df: pd.DataFrame) -> dict:
             "current_dollar_flow_5m": 0.0,
             "baseline_dollar_flow_per_minute": 0.0,
             "expansion_quality": 0.0,
+            "last_five_candle_ranges_pct": [],
+            "candle_ranges_declining": False,
         }
 
     x = df.copy().tail(35)
@@ -170,6 +172,20 @@ def intraday_participation_metrics(df: pd.DataFrame) -> dict:
 
     bodies = (x["close"] - x["open"]).tail(5)
     ranges = (x["high"] - x["low"]).replace(0, np.nan).tail(5)
+    range_pct = (
+        ((x["high"] - x["low"]) / x["close"].replace(0, np.nan) * 100)
+        .replace([np.inf, -np.inf], np.nan)
+        .dropna()
+        .tail(5)
+    )
+    # Allow one flat/noisy bar while still requiring the five-bar range trend to
+    # contract.  Perfectly monotonic candles are unnecessarily rare in live tape.
+    declining_steps = int((range_pct.diff().dropna() <= 0).sum())
+    ranges_declining = bool(
+        len(range_pct) == 5
+        and range_pct.iloc[-1] < range_pct.iloc[0]
+        and declining_steps >= 3
+    )
     bullish_ratio = float((bodies > 0).mean()) if len(bodies) else 0.0
     body_share = float(
         (bodies.abs() / ranges).replace([np.inf, -np.inf], np.nan).fillna(0).mean()
@@ -214,4 +230,6 @@ def intraday_participation_metrics(df: pd.DataFrame) -> dict:
         "current_dollar_flow_5m": round(float(dollar_flow.tail(5).sum()), 2),
         "baseline_dollar_flow_per_minute": round(baseline_dollar_per_minute, 2),
         "expansion_quality": round(max(0.0, min(100.0, quality)), 1),
+        "last_five_candle_ranges_pct": [round(float(value), 3) for value in range_pct],
+        "candle_ranges_declining": ranges_declining,
     }
