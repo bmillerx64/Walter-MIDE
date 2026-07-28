@@ -53,7 +53,7 @@ from mide.ui import (
 from mide.live_opportunity_feed import update_opportunity_feed
 from mide.time_service import format_eastern_time, market_clock, market_phase_at
 
-VERSION = "2.16 — Market Session Quality"
+VERSION = "2.17 — Live Opportunity Feed"
 
 SYSTEM_DEFAULT_VOICE_ID = "__system_default__"
 DEFAULT_VOICE = "System Default"
