@@ -76,6 +76,47 @@ def identity_decision(record: dict, policy: IdentityPolicy) -> tuple[bool, list[
     return True, audit
 
 
+def stage2_filter(records: Iterable[dict], policy: IdentityPolicy | None = None) -> tuple[list[dict], list[dict], dict]:
+    """Apply the authoritative identity gate before any behavioral analysis.
+
+    Rejections are returned as diagnostics, rather than candidates, so callers
+    cannot accidentally score, display, or monitor a Stage 2 failure.
+    """
+    policy = policy or IdentityPolicy()
+    accepted: list[dict] = []
+    rejected: list[dict] = []
+    counts = {"universe": 0, "tradability": 0, "price": 0, "free_float": 0}
+    for source in records:
+        counts["universe"] += 1
+        passed, audit = identity_decision(source, policy)
+        categories = {step["category"]: step["passed"] for step in audit}
+        if categories.get("Tradability"):
+            counts["tradability"] += 1
+        if categories.get("Price"):
+            counts["price"] += 1
+        if categories.get("Free Float"):
+            counts["free_float"] += 1
+        if passed:
+            accepted.append(dict(source))
+            continue
+        failure = audit[-1]
+        diagnostic = {
+            "symbol": str(source.get("symbol") or "").upper(),
+            "decision": "Rejected",
+            "stage": "Stage 2",
+            "reason": failure["category"],
+            "result": failure["result"],
+            "evidence": list(failure.get("evidence") or []),
+        }
+        if failure["category"] == "Free Float":
+            evidence = diagnostic["evidence"]
+            diagnostic["free_float"] = evidence[0].removeprefix("Actual: ")
+            diagnostic["maximum"] = evidence[1].removeprefix("Limit: ")
+        rejected.append(diagnostic)
+    counts["stage_3_analysis"] = len(accepted)
+    return accepted, rejected, counts
+
+
 def _band(value: float, bands: tuple[tuple[float, str], ...]) -> str:
     return next(label for threshold, label in bands if value >= threshold)
 

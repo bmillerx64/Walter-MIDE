@@ -350,6 +350,34 @@ def test_mission_control_header_contains_compact_operational_status():
     assert "Next scan" not in markup
 
 
+def test_mission_control_header_tells_the_complete_funnel_story():
+    markup = mission_control_header_markup(
+        live=True,
+        market_phase="Live Market",
+        market_time="9:31:18 AM EDT",
+        symbols_sampled=737,
+        prefilter_count=14,
+        candidate_count=3,
+        focus_count=2,
+        escalation_count=1,
+        auto_scan="Every 60 sec",
+        funnel_counts={
+            "universe": 737,
+            "tradability": 712,
+            "price": 184,
+            "free_float": 14,
+            "analyzed": 14,
+            "qualified": 3,
+            "entry_ready": 1,
+        },
+    )
+
+    assert (
+        "737 scanned ↓ 712 tradable ↓ 184 price qualified ↓ "
+        "14 free-float qualified ↓ 14 analyzed ↓ 3 monitored ↓ 1 entry-ready"
+    ) in markup
+
+
 def test_ignore_today_explains_non_actionable_quality():
     mission = walter_mission_control(
         [

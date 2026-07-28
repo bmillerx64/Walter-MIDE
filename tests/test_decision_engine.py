@@ -1,4 +1,4 @@
-from mide.decision_engine import IdentityPolicy, evaluate
+from mide.decision_engine import IdentityPolicy, evaluate, stage2_filter
 from mide.ui import decision_funnel_markup
 
 
@@ -37,6 +37,32 @@ def test_float_limit_is_strict_and_auditable():
     assert rejected["final_decision"] == "Rejected"
     assert rejected["decision_funnel"][-1]["category"] == "Free Float"
     assert "Limit: 3.50M" in rejected["decision_funnel"][-1]["evidence"]
+
+
+def test_stage_two_failure_never_reaches_stage_three_candidates():
+    accepted, diagnostics, counts = stage2_filter([
+        record(symbol="BDTX", float_shares=56_670_000),
+        record(symbol="PASS", float_shares=3_500_000),
+    ])
+
+    assert [item["symbol"] for item in accepted] == ["PASS"]
+    assert diagnostics == [{
+        "symbol": "BDTX",
+        "decision": "Rejected",
+        "stage": "Stage 2",
+        "reason": "Free Float",
+        "result": "Exceeds limit",
+        "evidence": ["Actual: 56.67M", "Limit: 3.50M"],
+        "free_float": "56.67M",
+        "maximum": "3.50M",
+    }]
+    assert counts == {
+        "universe": 2,
+        "tradability": 2,
+        "price": 2,
+        "free_float": 1,
+        "stage_3_analysis": 1,
+    }
 
 
 def test_behavior_categories_are_independent_and_catalyst_is_not_scored():

@@ -384,6 +384,7 @@ def mission_control_header_markup(
     focus_count: int,
     escalation_count: int,
     auto_scan: str,
+    funnel_counts: dict | None = None,
 ) -> str:
     """Build the compact, presentation-only Mission Control header."""
     status = "🟢 LIVE" if live else "🟡 DEMO"
@@ -404,13 +405,25 @@ def mission_control_header_markup(
         f"<div id='{element_id}' class='control-stat-value {css_class}'>{html.escape(value)}</div></div>"
         for label, value, css_class, element_id in stats
     )
+    funnel = ""
+    if funnel_counts:
+        labels = (
+            ("universe", "scanned"), ("tradability", "tradable"),
+            ("price", "price qualified"), ("free_float", "free-float qualified"),
+            ("analyzed", "analyzed"), ("qualified", "monitored"),
+            ("entry_ready", "entry-ready"),
+        )
+        funnel = "<div class='small'>" + " ↓ ".join(
+            f"{int(funnel_counts[key])} {label}"
+            for key, label in labels if key in funnel_counts
+        ) + "</div>"
     return (
         "<div class='control-header'><div class='control-heading'><div>"
         "<div class='control-title'>🛰 Walter • MIDE Radar</div>"
         f"<div class='control-version'>v{html.escape(BUILD.version)} · "
         f"{html.escape(BUILD.git_sha)} · {html.escape(BUILD.built_at)}</div></div>"
         "<div class='control-engine'>Market Intelligence Decision Engine</div></div>"
-        f"<div class='control-strip'>{strip}</div></div>"
+        f"<div class='control-strip'>{strip}</div>{funnel}</div>"
     )
 
 

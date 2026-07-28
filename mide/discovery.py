@@ -42,6 +42,32 @@ def is_valid_us_symbol(symbol):
     return bool(_US_SYMBOL_RE.fullmatch(symbol)) and ":" not in symbol
 
 
+def snapshot_identity_records(snapshots):
+    """Extract only the reference fields needed by the Stage 2 identity gate."""
+    records = []
+    for symbol, snap in snapshots.items():
+        trade = snap.get("latestTrade") or {}
+        daily = snap.get("dailyBar") or {}
+        reference = snap.get("reference") or {}
+        record = {
+            "symbol": symbol,
+            "tradable": snap.get("tradable", True),
+            "halted": snap.get("halted", False),
+            "asset_type": snap.get("asset_type") or snap.get("type"),
+            "exchange": snap.get("exchange"),
+            "asset_status": snap.get("asset_status") or snap.get("status", "active"),
+            "price": float(trade.get("p") or daily.get("c") or 0),
+        }
+        for key in ("float_shares", "shares_float", "free_float", "float_millions"):
+            value = snap.get(key)
+            if value is None:
+                value = reference.get(key)
+            if value is not None:
+                record[key] = value
+        records.append(record)
+    return records
+
+
 def build_seed_symbols(client, settings, news_items):
     symbols: set[str] = set()
     why: dict[str, list[str]] = {}
@@ -128,9 +154,13 @@ def prefilter_snapshots(snapshots, settings):
         # Keep filtering and recorder explanations on one exact rule definition.
         if not prefilter_decision(symbol, snap, settings)["passed"]:
             continue
-        selected.append(
-            {
+        candidate = {
                 "symbol": symbol,
+                "tradable": snap.get("tradable", True),
+                "halted": snap.get("halted", False),
+                "asset_type": snap.get("asset_type") or snap.get("type"),
+                "exchange": snap.get("exchange"),
+                "asset_status": snap.get("asset_status") or snap.get("status", "active"),
                 "price": price,
                 "pct_change": pct,
                 "volume": volume,
@@ -139,7 +169,15 @@ def prefilter_snapshots(snapshots, settings):
                 "day_high": float(daily.get("h") or price),
                 "prev_volume": float(previous.get("v") or 0),
             }
-        )
+        # Preserve reference-data float fields for the authoritative Stage 2
+        # gate.  Snapshot adapters may expose any of these established names.
+        for key in ("float_shares", "shares_float", "free_float", "float_millions"):
+            value = snap.get(key)
+            if value is None:
+                value = (snap.get("reference") or {}).get(key)
+            if value is not None:
+                candidate[key] = value
+        selected.append(candidate)
     return sorted(
         selected, key=lambda x: (x["pct_change"], x["dollar_volume"]), reverse=True
     )

@@ -35,7 +35,12 @@ repair_mide_module_links()
 from mide.config import Settings
 from mide.alpaca import AlpacaClient, AlpacaError, credential_status
 from mide.news import index_news, recent_wire_news_log
-from mide.discovery import build_seed_symbols, prefilter_snapshots, analyze_candidates
+from mide.discovery import (
+    analyze_candidates,
+    build_seed_symbols,
+    prefilter_snapshots,
+    snapshot_identity_records,
+)
 from mide.scanner_v2 import (
     apply_scanner_v2,
     participation_gate_rejection_diagnostics,
@@ -82,7 +87,11 @@ from mide.live_opportunity_feed import update_opportunity_feed
 from mide.early_setup import newly_entered_symbols
 from mide.time_service import format_eastern_time, market_clock, market_phase_at
 from mide.watchdog import ScanAlreadyRunning
-from mide.decision_engine import evaluate as evaluate_decision_funnel, IdentityPolicy
+from mide.decision_engine import (
+    evaluate as evaluate_decision_funnel,
+    IdentityPolicy,
+    stage2_filter,
+)
 from mide.version import BUILD
 
 SYSTEM_DEFAULT_VOICE_ID = "__system_default__"
@@ -738,21 +747,52 @@ def run_live(
             0.24 + 0.36 * (done / total), text=f"Snapshots {done}/{len(seeds)}"
         )
 
-    log("Stage 4/5: prefiltering")
-    status.write("4/5 Filtering the strongest candidates")
-    candidates = prefilter_snapshots(snapshots, settings)
-    progress.progress(0.68, text=f"{len(candidates)} candidates prefiltered")
+    policy = IdentityPolicy(settings.min_price, settings.max_price,
+                            settings.max_free_float, settings.include_etfs)
+    eligible_identities, stage2_rejections, funnel_counts = stage2_filter(
+        snapshot_identity_records(snapshots), policy
+    )
+    eligible_symbols = {record["symbol"] for record in eligible_identities}
+    eligible_snapshots = {
+        symbol: snapshot for symbol, snapshot in snapshots.items()
+        if symbol in eligible_symbols
+    }
+    log("Stage 4/5: applying Stage 2 and prefiltering")
+    status.write("4/5 Applying tradability, price, and free-float gates")
+    candidates = [
+        candidate
+        for candidate in prefilter_snapshots(eligible_snapshots, settings)
+        if candidate.get("symbol") in eligible_symbols
+    ]
+    progress.progress(0.68, text=f"{len(candidates)} Stage 2-qualified candidates")
+
+    # A candidate can reach analysis only through the authoritative gate above.
+    stage3_candidates = candidates
+    funnel_counts["stage_3_analysis"] = len(stage3_candidates)
+    client.diagnostics["stage_2_rejections"] = stage2_rejections
+    client.diagnostics["funnel_counts"] = funnel_counts
+    log(
+        "Decision funnel: "
+        + " -> ".join(f"{name}={count}" for name, count in funnel_counts.items())
+    )
 
     log("Stage 5/5: analyzing bars and scoring")
-    status.write("5/5 Analyzing VWAP, SuperTrend, EMA, volume and catalysts")
-    records = analyze_candidates(client, candidates, index_news(news_items), reasons)
+    status.write(
+        f"5/5 Analyzing {len(stage3_candidates)} free-float-qualified symbols"
+    )
+    records = analyze_candidates(client, stage3_candidates, index_news(news_items), reasons)
     analyzed_records = records
     store = get_store()
     previous = store.latest_by_symbol()
     records = store.enrich_velocity(records, previous=previous)
-    policy = IdentityPolicy(settings.min_price, settings.max_price,
-                            settings.max_free_float, settings.include_etfs)
     records = evaluate_decision_funnel(records, policy)
+    funnel_counts["analyzed"] = len(records)
+    funnel_counts["qualified"] = sum(
+        record.get("final_decision") == "Attention Earned" for record in records
+    )
+    funnel_counts["entry_ready"] = sum(
+        record.get("candidate_status") == "Entry Ready" for record in records
+    )
     client.diagnostics["decision_funnel"] = {
         "universe": len(records),
         "eligible": sum(record["eligible"] for record in records),
@@ -933,6 +973,7 @@ with mission_header_slot:
             focus_count=focus_count,
             escalation_count=escalation_count,
             auto_scan=auto_scan,
+            funnel_counts=scan_diagnostics.get("funnel_counts", {}),
         ),
         unsafe_allow_html=True,
     )
