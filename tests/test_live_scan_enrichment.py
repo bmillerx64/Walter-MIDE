@@ -26,7 +26,13 @@ class DummyClient:
         return []
 
     def snapshots(self, symbols):
-        return {}
+        return {
+            symbol: {
+                "latestTrade": {"p": 1.25},
+                "float_shares": 2_000_000,
+            }
+            for symbol in symbols
+        }
 
 
 def test_run_live_enrichment_path_passes_previous_state(monkeypatch, tmp_path):
