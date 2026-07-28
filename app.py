@@ -2,9 +2,34 @@ from __future__ import annotations
 
 from datetime import datetime, timezone, timedelta
 import html
+import importlib
 import json
+import logging
 import platform
+import sys
 import streamlit as st
+
+
+def repair_mide_module_links() -> None:
+    """Restore package attributes that a hot reload may have detached.
+
+    Streamlit can rerun this module while Python still has MIDE submodules in
+    ``sys.modules``.  Reattaching those modules to their parents avoids mixing a
+    newly imported package with orphaned, stale submodule references.
+    """
+    package = sys.modules.get("mide")
+    if package is None:
+        package = importlib.import_module("mide")
+    for name, module in tuple(sys.modules.items()):
+        if not name.startswith("mide.") or module is None:
+            continue
+        parent_name, _, child_name = name.rpartition(".")
+        parent = sys.modules.get(parent_name)
+        if parent is not None and getattr(parent, child_name, None) is not module:
+            setattr(parent, child_name, module)
+
+
+repair_mide_module_links()
 
 from mide.config import Settings
 from mide.alpaca import AlpacaClient, AlpacaError, credential_status
@@ -53,7 +78,7 @@ from mide.ui import (
 from mide.live_opportunity_feed import update_opportunity_feed
 from mide.time_service import format_eastern_time, market_clock, market_phase_at
 
-VERSION = "2.17 — Live Opportunity Feed"
+VERSION = "2.18.1 — Reliable Scan Commit"
 
 SYSTEM_DEFAULT_VOICE_ID = "__system_default__"
 DEFAULT_VOICE = "System Default"
@@ -259,7 +284,37 @@ def get_store() -> MemoryStore:
 
 @st.cache_resource
 def get_flight_recorder() -> FlightRecorder:
-    return FlightRecorder()
+    # Resolve the class at call time so a Streamlit hot reload never keeps the
+    # pre-deployment FlightRecorder class captured by this app module.
+    repair_mide_module_links()
+    recorder_class = importlib.import_module("mide.flight_recorder").FlightRecorder
+    return recorder_class()
+
+
+def record_scan_safely(recorder, *, recent_news_log=None, **scan_data):
+    """Write an optional flight trace without affecting the live dashboard."""
+    try:
+        try:
+            return recorder.record_scan(
+                **scan_data, recent_news_log=recent_news_log
+            )
+        except TypeError as exc:
+            # Rolling/hot deployments can briefly retain the pre-news recorder
+            # instance.  It is safe to omit only this optional field for that
+            # known interface mismatch.
+            if "unexpected keyword argument 'recent_news_log'" not in str(exc):
+                raise
+            logging.getLogger(__name__).warning(
+                "Flight Recorder is using the legacy interface; news log omitted"
+            )
+            return recorder.record_scan(**scan_data)
+    except Exception as exc:
+        logging.getLogger(__name__).exception("Flight Recorder write failed")
+        log(
+            "Flight Recorder write failed; dashboard updated: "
+            f"{type(exc).__name__}: {exc}"
+        )
+        return None
 
 
 def symbol_export(symbol: str, store: MemoryStore, recorder: FlightRecorder) -> dict:
@@ -689,7 +744,23 @@ def run_live(scanner_version: str = "Scanner V2 (adaptive momentum)"):
     )
     for item in wire_news_log:
         log("Recent wire news: " + json.dumps(item, separators=(",", ":")))
-    flight_scan = get_flight_recorder().record_scan(
+    client.diagnostics["recent_wire_news"] = wire_news_log
+
+    # Commit the completed scan to the UI before best-effort persistence.  A
+    # recorder or history write must never leave the previous scan displayed.
+    st.session_state.records = records
+    st.session_state.symbols_sampled = len(seeds)
+    st.session_state.prefilter_count = len(candidates)
+    st.session_state.source_label = (
+        f"Live {settings.feed.upper()} · {len(seeds)} symbols sampled · "
+        f"{len(candidates)} prefiltered"
+    )
+    st.session_state.api_warnings = list(client.warnings)
+    st.session_state.scan_diagnostics = dict(client.diagnostics)
+    st.session_state.last_updated = datetime.now().astimezone()
+
+    flight_scan = record_scan_safely(
+        get_flight_recorder(),
         seeds=seeds,
         discovery_reasons=reasons,
         snapshots=snapshots,
@@ -700,13 +771,22 @@ def run_live(scanner_version: str = "Scanner V2 (adaptive momentum)"):
         scanner_v2=scanner_version.startswith("Scanner V2"),
         recent_news_log=wire_news_log,
     )
-    client.diagnostics["flight_recorder"] = {
-        "scan_id": flight_scan["scan_id"],
-        "timestamp": flight_scan["timestamp"],
-        "funnel": flight_scan["funnel"],
-    }
-    client.diagnostics["recent_wire_news"] = wire_news_log
-    store.append(records)
+    if flight_scan is not None:
+        client.diagnostics["flight_recorder"] = {
+            "scan_id": flight_scan["scan_id"],
+            "timestamp": flight_scan["timestamp"],
+            "funnel": flight_scan["funnel"],
+        }
+    else:
+        client.diagnostics["flight_recorder_error"] = "write failed; scan continued"
+    try:
+        store.append(records)
+    except Exception as exc:
+        logging.getLogger(__name__).exception("Scan history write failed")
+        log(
+            "Scan history write failed; dashboard updated: "
+            f"{type(exc).__name__}: {exc}"
+        )
     # Preserve the immediately previous evidence only for the display layer. This
     # is attached after persistence so it cannot affect Scanner V2 or compound in
     # candidate history across refreshes.

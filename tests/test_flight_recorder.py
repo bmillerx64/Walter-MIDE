@@ -1,5 +1,6 @@
 from types import SimpleNamespace
 
+from app import record_scan_safely, repair_mide_module_links
 from mide.flight_recorder import FlightRecorder, STAGES, prefilter_decision
 
 SETTINGS = SimpleNamespace(
@@ -101,3 +102,48 @@ def test_recorder_keeps_legacy_schema_when_news_log_is_not_provided(tmp_path):
 
     assert "recent_wire_news" not in scan
     assert "recent_wire_news" not in recorder.latest_scan()
+
+
+def test_safe_record_scan_retries_legacy_interface_without_news():
+    class LegacyRecorder:
+        def __init__(self):
+            self.calls = []
+
+        def record_scan(self, **kwargs):
+            if "recent_news_log" in kwargs:
+                raise TypeError(
+                    "record_scan() got an unexpected keyword argument 'recent_news_log'"
+                )
+            self.calls.append(kwargs)
+            return {"scan_id": "legacy"}
+
+    recorder = LegacyRecorder()
+    result = record_scan_safely(
+        recorder, recent_news_log=[{"Ticker": "NEWS"}], records=[]
+    )
+
+    assert result == {"scan_id": "legacy"}
+    assert recorder.calls == [{"records": []}]
+
+
+def test_safe_record_scan_logs_and_swallows_write_failure(caplog):
+    class BrokenRecorder:
+        def record_scan(self, **kwargs):
+            raise OSError("disk unavailable")
+
+    with caplog.at_level("ERROR", logger="app"):
+        result = record_scan_safely(BrokenRecorder(), records=[])
+
+    assert result is None
+    assert "Flight Recorder write failed" in caplog.text
+
+
+def test_hot_reload_repair_restores_scanner_package_reference(monkeypatch):
+    import mide
+    import mide.scanner_v2 as scanner_v2
+
+    monkeypatch.delattr(mide, "scanner_v2", raising=False)
+
+    repair_mide_module_links()
+
+    assert mide.scanner_v2 is scanner_v2

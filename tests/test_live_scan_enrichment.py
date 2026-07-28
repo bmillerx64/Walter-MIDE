@@ -82,6 +82,13 @@ def test_run_live_enrichment_path_passes_previous_state(monkeypatch, tmp_path):
     store = MemoryStore(history_path)
     monkeypatch.setattr("app.get_store", lambda: store)
 
+    class BrokenRecorder:
+        def record_scan(self, **kwargs):
+            assert kwargs["records"] is __import__("app").st.session_state.records
+            raise OSError("recorder unavailable")
+
+    monkeypatch.setattr("app.get_flight_recorder", lambda: BrokenRecorder())
+
     records, seed_count, candidate_count, warnings, diagnostics = run_live(
         "Scanner V2 (adaptive momentum)"
     )
@@ -95,6 +102,8 @@ def test_run_live_enrichment_path_passes_previous_state(monkeypatch, tmp_path):
     assert records[0]["candidate_status"] == "Rejected – No Participation"
     assert records[0]["rejection_reason"] == "No Participation"
     assert records[0]["previous_candidate_status"] == "Watching"
+    assert __import__("app").st.session_state.records is records
+    assert diagnostics["flight_recorder_error"] == "write failed; scan continued"
     persisted = [json.loads(line) for line in history_path.read_text().splitlines()]
     assert persisted[-1]["symbol"] == records[0]["symbol"]
     assert persisted[-1]["velocity"] == records[0]["velocity"]
