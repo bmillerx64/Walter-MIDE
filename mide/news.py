@@ -1,6 +1,8 @@
 from __future__ import annotations
 import re
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+
+from .flight_recorder import prefilter_decision
 
 POSITIVE = {
     "fda": 18, "approval": 14, "positive": 8, "contract": 12,
@@ -50,3 +52,116 @@ def index_news(news_items):
             if symbol not in index or dt > index[symbol]["created_at"]:
                 index[symbol] = entry
     return index
+
+
+def _news_timestamp(item: dict) -> datetime | None:
+    raw = item.get("created_at") or item.get("updated_at")
+    if isinstance(raw, datetime):
+        value = raw
+    else:
+        try:
+            value = datetime.fromisoformat(str(raw).replace("Z", "+00:00"))
+        except (TypeError, ValueError):
+            return None
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
+
+
+def recent_wire_news_log(
+    news_items,
+    *,
+    snapshots,
+    analyzed,
+    records,
+    settings,
+    now: datetime | None = None,
+    max_age_minutes: int = 90,
+) -> list[dict]:
+    """Build one auditable scanner outcome per symbol with fresh wire news.
+
+    Alpaca can return several articles for a symbol. The newest qualifying Reuters
+    or Benzinga article wins so the log remains a symbol log rather than an
+    article feed. This is diagnostic-only and never changes scanner decisions.
+    """
+    now = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+    cutoff = now - timedelta(minutes=max_age_minutes)
+    newest = {}
+    for item in news_items or []:
+        source = str(item.get("source") or item.get("author") or "").strip()
+        normalized_source = source.casefold()
+        if "reuters" not in normalized_source and "benzinga" not in normalized_source:
+            continue
+        published = _news_timestamp(item)
+        if published is None or not cutoff <= published <= now:
+            continue
+        canonical_source = "Reuters" if "reuters" in normalized_source else "Benzinga"
+        score, _flags = classify_headline(item.get("headline", ""))
+        for raw_symbol in item.get("symbols", []) or []:
+            symbol = str(raw_symbol or "").strip().upper()
+            if not symbol:
+                continue
+            candidate = {
+                "source": canonical_source,
+                "timestamp": published,
+                "score": score,
+            }
+            if symbol not in newest or published > newest[symbol]["timestamp"]:
+                newest[symbol] = candidate
+
+    analyzed_by_symbol = {item.get("symbol"): item for item in analyzed or []}
+    records_by_symbol = {item.get("symbol"): item for item in records or []}
+    output = []
+    for symbol, article in sorted(newest.items()):
+        snapshot = (snapshots or {}).get(symbol)
+        prefilter = (
+            prefilter_decision(symbol, snapshot, settings)
+            if snapshot is not None
+            else {"passed": False, "reason": "snapshot unavailable"}
+        )
+        record = records_by_symbol.get(symbol)
+        participation = (record or {}).get("participation_gate") or {}
+        participation_passed = bool(participation.get("passed"))
+        expansion = float((record or {}).get("expansion_quality", 0) or 0)
+        expansion_passed = record is not None and expansion >= 58
+
+        state = (record or {}).get("candidate_status") or (record or {}).get("status")
+        if not prefilter["passed"] or record is None:
+            final_state = "Ignored" if not prefilter["passed"] else "Candidate"
+        elif state == "Entry Ready":
+            final_state = "Entry Ready"
+        elif state == "Strengthening":
+            final_state = "Strengthening"
+        elif state in {"Watching", "Emerging", "Watch List"}:
+            final_state = "Watch"
+        elif participation_passed:
+            final_state = "Candidate"
+        else:
+            final_state = "Ignored"
+
+        rejected = None
+        if not prefilter["passed"]:
+            rejected = prefilter["reason"]
+        elif symbol not in analyzed_by_symbol:
+            rejected = "Scanner analysis unavailable: insufficient or missing bar data"
+        elif not participation_passed:
+            rejected = "; ".join(participation.get("failed_reasons") or []) or (
+                (record or {}).get("rejection_reason") or "Participation gate failed"
+            )
+        elif not expansion_passed:
+            rejected = f"Expansion Quality {expansion:.0f}/100 (requires 58)"
+
+        output.append(
+            {
+                "Ticker": symbol,
+                "News source": article["source"],
+                "News timestamp": article["timestamp"].isoformat(),
+                "News score": article["score"],
+                "Prefilter": "PASS" if prefilter["passed"] else "FAIL",
+                "Participation": "PASS" if participation_passed else "FAIL",
+                "Expansion": "PASS" if expansion_passed else "FAIL",
+                "Final state": final_state,
+                "Reason if rejected": rejected,
+            }
+        )
+    return output

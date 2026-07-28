@@ -89,6 +89,7 @@ class FlightRecorder:
         records,
         settings,
         scanner_v2=True,
+        recent_news_log=None,
         timestamp=None,
     ) -> dict:
         timestamp = timestamp or datetime.now(timezone.utc)
@@ -338,6 +339,7 @@ class FlightRecorder:
             "timestamp": stamp,
             "scanner_version": "V2" if scanner_v2 else "V1",
             "funnel": funnel,
+            "recent_wire_news": recent_news_log or [],
             "symbols": paths,
         }
         with self.path.open("a", encoding="utf-8") as handle:
