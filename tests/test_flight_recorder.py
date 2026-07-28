@@ -57,6 +57,7 @@ def test_recorder_persists_complete_paths_funnel_and_latest_lookup(tmp_path):
         records=[record],
         settings=SETTINGS,
         scanner_v2=True,
+        recent_news_log=[{"Ticker": "PASS", "News source": "Reuters"}],
     )
 
     assert scan["funnel"] == {
@@ -68,6 +69,9 @@ def test_recorder_persists_complete_paths_funnel_and_latest_lookup(tmp_path):
         "Qualified": 1,
         "Displayed": 1,
     }
+    assert scan["recent_wire_news"] == [
+        {"Ticker": "PASS", "News source": "Reuters"}
+    ]
     trace = recorder.latest_for_symbol("drop")
     assert [event["stage"] for event in trace["events"]] == list(STAGES)
     assert trace["events"][2]["passed"] is False

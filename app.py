@@ -8,7 +8,7 @@ import streamlit as st
 
 from mide.config import Settings
 from mide.alpaca import AlpacaClient, AlpacaError, credential_status
-from mide.news import index_news
+from mide.news import index_news, recent_wire_news_log
 from mide.discovery import build_seed_symbols, prefilter_snapshots, analyze_candidates
 from mide.scanner_v2 import (
     apply_scanner_v2,
@@ -680,6 +680,15 @@ def run_live(scanner_version: str = "Scanner V2 (adaptive momentum)"):
         for record in records:
             record["scanner_version"] = "V1"
             record.setdefault("candidate_status", record.get("status", "PASS"))
+    wire_news_log = recent_wire_news_log(
+        news_items,
+        snapshots=snapshots,
+        analyzed=analyzed_records,
+        records=records,
+        settings=settings,
+    )
+    for item in wire_news_log:
+        log("Recent wire news: " + json.dumps(item, separators=(",", ":")))
     flight_scan = get_flight_recorder().record_scan(
         seeds=seeds,
         discovery_reasons=reasons,
@@ -689,12 +698,14 @@ def run_live(scanner_version: str = "Scanner V2 (adaptive momentum)"):
         records=records,
         settings=settings,
         scanner_v2=scanner_version.startswith("Scanner V2"),
+        recent_news_log=wire_news_log,
     )
     client.diagnostics["flight_recorder"] = {
         "scan_id": flight_scan["scan_id"],
         "timestamp": flight_scan["timestamp"],
         "funnel": flight_scan["funnel"],
     }
+    client.diagnostics["recent_wire_news"] = wire_news_log
     store.append(records)
     # Preserve the immediately previous evidence only for the display layer. This
     # is attached after persistence so it cannot affect Scanner V2 or compound in
@@ -996,6 +1007,13 @@ with tabs[0]:
                 )
 
 with tabs[1]:
+    st.subheader("Reuters / Benzinga — last 90 minutes")
+    recent_wire_news = scan_diagnostics.get("recent_wire_news", [])
+    if recent_wire_news:
+        st.dataframe(recent_wire_news, width="stretch", hide_index=True)
+    else:
+        st.info("No Reuters or Benzinga symbols were published in the last 90 minutes.")
+
     with st.expander("Runtime Evidence", expanded=False):
         st.caption(
             "Read-only exports retain all scans recorded during the trading day/session; "
