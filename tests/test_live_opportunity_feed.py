@@ -35,19 +35,22 @@ def test_feed_reports_only_material_transitions():
     )
 
     assert [event["message"] for event in changes] == [
-        "Participation crossed 90",
+        "Participation 80→92",
         "VWAP reclaimed",
         "SuperTrend flipped bullish",
         "Confidence +12",
-        "Entry Window opened",
+        "ENTRY WINDOW OPEN",
     ]
     assert all(event["time"] == "14:30:15" for event in changes)
 
 
 def test_feed_ignores_unchanged_states_and_small_confidence_moves():
-    assert opportunity_feed_changes(
-        {"DSX": state(confidence=70)}, {"DSX": state(confidence=74)}, NOW
-    ) == []
+    assert (
+        opportunity_feed_changes(
+            {"DSX": state(confidence=70)}, {"DSX": state(confidence=74)}, NOW
+        )
+        == []
+    )
 
 
 def test_feed_reports_negative_changes_and_focus_removal():
@@ -65,9 +68,47 @@ def test_feed_reports_negative_changes_and_focus_removal():
     ]
 
 
-def test_feed_does_not_emit_initial_state_and_retains_twenty_events():
+def test_feed_does_not_emit_initial_state_and_retains_ten_events():
     record = {"symbol": "DSX", "conviction_score": 70}
     snapshot, events = update_opportunity_feed(record and [record], {}, [{}] * 25, NOW)
 
     assert snapshot["DSX"]["confidence"] == 70
-    assert len(events) == 20
+    assert len(events) == 10
+
+
+def test_feed_reports_building_pullback_and_extension_with_requested_colors():
+    changes = opportunity_feed_changes(
+        {
+            "DSX": state(extended=True),
+            "LPRO": state(),
+            "RISK": state(),
+        },
+        {
+            "DSX": state(extended=False, pullback=True),
+            "LPRO": state(building=True),
+            "RISK": state(extended=True),
+        },
+        NOW,
+    )
+
+    assert [
+        (event["symbol"], event["message"], event["color"]) for event in changes
+    ] == [
+        ("DSX", "Pullback", "yellow"),
+        ("LPRO", "Entered BUILDING", "yellow"),
+        ("RISK", "Too extended", "red"),
+    ]
+
+
+def test_new_events_are_newest_first():
+    _, events = update_opportunity_feed(
+        [],
+        {"OLD": state()},
+        [{"message": "older"}],
+        NOW,
+    )
+
+    assert [event["message"] for event in events] == [
+        "Symbol removed from Focus",
+        "older",
+    ]
