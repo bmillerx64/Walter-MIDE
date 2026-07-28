@@ -1,6 +1,7 @@
 from __future__ import annotations
 import base64
 import html
+from mide.version import BUILD
 from datetime import datetime
 from pathlib import Path
 import streamlit as st
@@ -406,9 +407,33 @@ def mission_control_header_markup(
     return (
         "<div class='control-header'><div class='control-heading'><div>"
         "<div class='control-title'>🛰 Walter • MIDE Radar</div>"
-        "<div class='control-version'>v2.17 — Live Opportunity Feed</div></div>"
+        f"<div class='control-version'>v{html.escape(BUILD.version)} · "
+        f"{html.escape(BUILD.git_sha)} · {html.escape(BUILD.built_at)}</div></div>"
         "<div class='control-engine'>Market Intelligence Decision Engine</div></div>"
         f"<div class='control-strip'>{strip}</div></div>"
+    )
+
+
+def decision_funnel_markup(record: dict) -> str:
+    """Render an audit trail without interpreting or changing its decisions."""
+    steps = record.get("decision_funnel") or []
+    rows = []
+    for step in steps:
+        mark = "✓" if step.get("passed") else "✕"
+        evidence = " · ".join(str(item) for item in step.get("evidence") or [] if item)
+        rows.append(
+            "<div class='funnel-step'>"
+            f"<b>{mark} Stage {int(step.get('stage', 0))} — {html.escape(str(step.get('category', '')))}</b>"
+            f"<br>{html.escape(str(step.get('result', '')))}"
+            + (f"<br><span class='small'>{html.escape(evidence)}</span>" if evidence else "")
+            + "</div>"
+        )
+    return (
+        "<div class='control-card'><b>Decision Funnel</b>"
+        + "<div class='small'>Stage 1 ↓ Stage 2 ↓ Stage 3 ↓ Current Stage ↓ Final Decision</div>"
+        + "".join(rows)
+        + f"<hr><b>Current Stage:</b> {html.escape(str(record.get('current_stage', 'Unknown')))}"
+        + f"<br><b>Final Decision:</b> {html.escape(str(record.get('final_decision', 'Pending')))}</div>"
     )
 
 

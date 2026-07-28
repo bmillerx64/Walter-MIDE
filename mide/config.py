@@ -3,8 +3,10 @@ import os
 
 @dataclass(frozen=True)
 class Settings:
-    min_price: float = 0.02
+    min_price: float = 0.05
     max_price: float = 5.00
+    max_free_float: int = 3_500_000
+    include_etfs: bool = False
     min_pct_change: float = 3.0
     min_day_volume: int = 100_000
     min_dollar_volume: float = 100_000.0
@@ -23,6 +25,10 @@ class Settings:
         def get(name, default):
             return mapping.get(name, os.getenv(name, default))
         return cls(
+            min_price=float(get("MIN_PRICE", 0.05)),
+            max_price=float(get("MAX_PRICE", 5.00)),
+            max_free_float=int(get("MAX_FREE_FLOAT", 3_500_000)),
+            include_etfs=str(get("INCLUDE_ETFS", "false")).lower() in {"1", "true", "yes"},
             refresh_seconds=int(get("SCAN_REFRESH_SECONDS", 60)),
             feed=str(get("ALPACA_FEED", "iex")).lower(),
         )
