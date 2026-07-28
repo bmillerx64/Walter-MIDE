@@ -75,12 +75,12 @@ def test_behavior_categories_are_independent_and_catalyst_is_not_scored():
     assert without_news["decision_funnel"][5]["result"] == "No Catalyst"
 
 
-def test_weak_participation_rejects_at_stage_three_with_explanation():
-    rejected = evaluate([record(participation_score=10)])[0]
-    assert rejected["current_stage"] == "Stage 3"
-    assert rejected["final_decision"] == "Rejected"
-    participation = next(s for s in rejected["decision_funnel"] if s["category"] == "Participation")
-    assert participation["result"] == "Weak"
+def test_weak_participation_is_evidence_and_does_not_veto_confluence():
+    accepted = evaluate([record(participation_score=10, volume_acceleration_3m=.8)])[0]
+    assert accepted["current_stage"] == "Stage 4"
+    assert accepted["final_decision"] == "Attention Earned"
+    participation = next(s for s in accepted["decision_funnel"] if s["category"] == "Participation")
+    assert participation["result"] == "10 — 3-minute volume flattening"
     assert not participation["passed"]
 
 

@@ -131,12 +131,23 @@ def _catalyst(record: dict) -> str:
 
 
 def behavioral_decision(record: dict) -> tuple[bool, list[dict], int]:
-    """Assess independent evidence, then measure agreement (never an average)."""
+    """Assess every category, then let confluence make the only advance decision."""
     audit: list[dict] = []
     participation = _number(record, "participation_surge_score", "participation_score") or 0
     participation_state = _band(participation, ((82, "Explosive"), (65, "Strong"), (40, "Building"), (0, "Weak")))
-    audit.append(_step(3, "Participation", participation_state, passed=participation_state != "Weak",
-                       evidence=[f"Dollar flow ${(_number(record, 'dollar_volume') or 0):,.0f}", f"Participation evidence {participation:.0f}/100"]))
+    acceleration_3m = _number(record, "volume_acceleration_3m")
+    participation_reason = (
+        "3-minute volume flattening"
+        if acceleration_3m is not None and acceleration_3m <= 1
+        else (
+            f"3-minute volume expanding {acceleration_3m:.2f}×"
+            if acceleration_3m is not None else "3-minute volume unavailable"
+        )
+    )
+    audit.append(_step(3, "Participation", f"{participation:.0f} — {participation_reason}",
+                       passed=participation_state != "Weak",
+                       evidence=[f"State: {participation_state}",
+                                 f"Dollar flow ${(_number(record, 'dollar_volume') or 0):,.0f}"]))
     audit.append(_step(3, "Catalyst", _catalyst(record), evidence=[record.get("headline")] if record.get("headline") else []))
 
     structure_score = _number(record, "structure_score")
@@ -173,7 +184,9 @@ def behavioral_decision(record: dict) -> tuple[bool, list[dict], int]:
     confluence = (0, 20, 45, 65, 82, 100)[agreement]
     audit.append(_step(3, "Confluence", str(confluence), passed=agreement >= 3,
                        evidence=[f"{agreement}/5 independent evidence categories agree", "Catalyst not required or scored"]))
-    return participation_state != "Weak" and agreement >= 3, audit, confluence
+    # A weak category is evidence against the setup, never a veto.  Confluence is
+    # the sole Stage 3 authority and advances any setup with three agreeing inputs.
+    return agreement >= 3, audit, confluence
 
 
 def evaluate(records: Iterable[dict], policy: IdentityPolicy | None = None) -> list[dict]:

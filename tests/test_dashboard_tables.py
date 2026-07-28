@@ -366,16 +366,17 @@ def test_mission_control_header_tells_the_complete_funnel_story():
             "tradability": 712,
             "price": 184,
             "free_float": 14,
-            "analyzed": 14,
-            "qualified": 3,
+            "stage_3_analysis": 14,
+            "monitored": 3,
             "entry_ready": 1,
         },
     )
 
     assert (
-        "737 scanned ↓ 712 tradable ↓ 184 price qualified ↓ "
-        "14 free-float qualified ↓ 14 analyzed ↓ 3 monitored ↓ 1 entry-ready"
+        "Universe: 737 → Tradability: 712 → Price: 184 → Free Float: 14 → "
+        "Stage 3 Analysis: 14 → Monitored: 3 → Entry Ready: 1"
     ) in markup
+    assert "Stage Summary" in markup
 
 
 def test_ignore_today_explains_non_actionable_quality():

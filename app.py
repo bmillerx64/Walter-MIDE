@@ -786,8 +786,8 @@ def run_live(
     previous = store.latest_by_symbol()
     records = store.enrich_velocity(records, previous=previous)
     records = evaluate_decision_funnel(records, policy)
-    funnel_counts["analyzed"] = len(records)
-    funnel_counts["qualified"] = sum(
+    funnel_counts["stage_3_analysis"] = len(records)
+    funnel_counts["monitored"] = sum(
         record.get("final_decision") == "Attention Earned" for record in records
     )
     funnel_counts["entry_ready"] = sum(

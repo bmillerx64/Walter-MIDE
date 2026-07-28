@@ -711,10 +711,8 @@ def qualified_for_watch(record: dict, raw_state: str | None = None) -> bool:
     state = (
         raw_state or record.get("raw_candidate_state") or record.get("candidate_status")
     )
-    participation = record.get("participation_gate") or {}
     return bool(
         state not in {None, "Removed", "Rejected – No Participation"}
-        and participation.get("passed", True)
     )
 
 
@@ -725,15 +723,17 @@ def qualified_for_entry(
     prior: dict | None = None,
     scan_time: datetime | None = None,
 ) -> bool:
-    """Return whether the setup is executable through all existing hard gates."""
+    """Return whether structure and trigger evidence make the setup executable.
+
+    Participation is a scored Stage 3 category, not a hard gate.
+    """
     participation_gate = participation_gate or record.get("participation_gate") or {}
     structure_gate = structure_gate or record.get("structure_gate") or {}
     trigger = record.get("trigger_diagnostics") or trigger_diagnostics(
         record, prior, scan_time
     )
     return bool(
-        participation_gate.get("passed")
-        and structure_gate.get("passed")
+        structure_gate.get("passed")
         and trigger.get("passed")
     )
 
@@ -1029,12 +1029,15 @@ def participation_gate_diagnostics(
 
 
 def participation_gate_rejection_diagnostics(records: list[dict]) -> dict:
-    """Summarize hard-gate participation rejections for scan-level diagnostics."""
+    """Compatibility report for legacy participation rejection states.
+
+    Walter 3.0 never creates these states; weak participation remains visible as
+    category evidence.  Historical records can still be summarized safely.
+    """
     rejected = [
         record
         for record in records
-        if record.get("qualified_for_ranking") is False
-        and (record.get("participation_gate") or {}).get("status") == "FAIL"
+        if record.get("candidate_status") == "Rejected – No Participation"
     ]
     by_reason: dict[str, int] = {}
     details = []
@@ -1681,14 +1684,13 @@ def apply_scanner_v2(
         record["participation_gate"] = participation_gate
         record["structure_gate"] = structure_gate
         trigger = trigger_diagnostics(record, prior, scan_time)
+        # Participation contributes explainable evidence; it never terminates
+        # analysis or forces a rejection state.
+        score, reasons, cautions = momentum_evidence(record, prior, scan_time)
         if not participation_gate["passed"]:
-            score, reasons, cautions = 0.0, [], participation_gate["failed_reasons"]
-            raw_state = classify_state(record, prior, scan_time)
-            state = "Rejected – No Participation"
-        else:
-            score, reasons, cautions = momentum_evidence(record, prior, scan_time)
-            raw_state = classify_state(record, prior, scan_time)
-            state = raw_state
+            cautions.extend(participation_gate["failed_reasons"])
+        raw_state = classify_state(record, prior, scan_time)
+        state = raw_state
         watch_qualified = qualified_for_watch(record, raw_state)
         entry_qualified = qualified_for_entry(
             record, participation_gate, structure_gate, prior, scan_time
@@ -1757,16 +1759,10 @@ def apply_scanner_v2(
                 0.0,
                 min(
                     100.0,
-                    (
-                        (
-                            score
-                            + max(0.0, surge["participation_score"] - 65) * 0.14
-                            + quality_adjustment
-                            + stability_adjustment
-                        )
-                        if participation_gate["passed"]
-                        else 0.0
-                    ),
+                    score
+                    + max(0.0, surge["participation_score"] - 65) * 0.14
+                    + quality_adjustment
+                    + stability_adjustment,
                 ),
             ),
             1,
@@ -1786,18 +1782,12 @@ def apply_scanner_v2(
                 "entry_blockers": entry_blockers,
                 "participation_gate": participation_gate,
                 "structure_gate": structure_gate,
-                "rejection_reason": (
-                    None
-                    if participation_gate["passed"]
-                    else participation_gate["reason"]
-                ),
+                "rejection_reason": None,
                 "action": (
                     "Evaluate for entry"
                     if entry_qualified
                     else (
-                        "Ignore"
-                        if not participation_gate["passed"]
-                        else "Waiting for structure"
+                        "Waiting for confluence"
                     )
                 ),
                 "previous_candidate_status": previous_state or "None",

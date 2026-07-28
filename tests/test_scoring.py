@@ -479,9 +479,9 @@ def test_entry_ready_state_uses_chart_preparation_requirements_only():
     }
 
     ranked = apply_scanner_v2([record], prior)
-    assert ranked[0]["candidate_status"] == "Rejected – No Participation"
+    assert ranked[0]["candidate_status"] == "Strengthening"
     assert ranked[0]["qualified_for_ranking"] is False
-    assert ranked[0]["rejection_reason"] == "No Participation"
+    assert ranked[0]["rejection_reason"] is None
 
 
 def test_scanner_v2_timer_starts_when_entering_timed_state():
@@ -1629,7 +1629,7 @@ def test_trigger_diagnostics_yes_when_all_conditions_pass():
     assert "Expansion Quality 82/100 (Pass ≥58)" in diagnostics["reasons"]
 
 
-def test_scanner_v2_hard_rejects_clean_structure_when_participation_fails():
+def test_scanner_v2_scores_clean_structure_when_participation_is_weak():
     from datetime import datetime, timezone
 
     from mide.scanner_v2 import apply_scanner_v2
@@ -1662,19 +1662,19 @@ def test_scanner_v2_hard_rejects_clean_structure_when_participation_fails():
         [record], {}, datetime(2026, 7, 24, 14, 0, tzinfo=timezone.utc)
     )
 
-    assert ranked[0]["candidate_status"] == "Rejected – No Participation"
+    assert ranked[0]["candidate_status"] == "Watching"
     assert ranked[0]["qualified_for_ranking"] is False
-    assert ranked[0]["scanner_v2_score"] == 0
+    assert ranked[0]["scanner_v2_score"] > 0
     assert ranked[0]["participation_gate"]["status"] == "FAIL"
     assert ranked[0]["structure_gate"]["status"] == "PASS"
-    assert ranked[0]["rejection_reason"] == "No Participation"
+    assert ranked[0]["rejection_reason"] is None
     assert (
         "Dollar flow not increasing"
         in ranked[0]["participation_gate"]["failed_reasons"]
     )
 
 
-def test_participation_gate_rejection_is_separated_from_actionable_collection():
+def test_weak_participation_diagnostics_do_not_create_a_rejection_state():
     from datetime import datetime, timezone
 
     from mide.scanner_v2 import (
@@ -1713,7 +1713,7 @@ def test_participation_gate_rejection_is_separated_from_actionable_collection():
         record["symbol"] for record in rejected_candidate_records(scanner_output)
     ] == ["FAILPG"]
     rejected = rejected_candidate_records(scanner_output)[0]
-    assert rejected["candidate_status"] == "Rejected – No Participation"
+    assert rejected["candidate_status"] == "Removed"
     assert rejected["participation_gate"]["failed_reasons"]
     assert rejected["participation_gate"]["failed_criteria"]
     assert {"condition", "measured", "threshold"} <= set(
@@ -1721,10 +1721,9 @@ def test_participation_gate_rejection_is_separated_from_actionable_collection():
     )
 
     diagnostics = participation_gate_rejection_diagnostics(scanner_output)
-    assert diagnostics["candidates_rejected"] == 1
-    assert diagnostics["rejected_by_reason"]["Dollar flow not increasing"] == 1
-    assert diagnostics["details"][0]["symbol"] == "FAILPG"
-    assert diagnostics["details"][0]["failed_criteria"]
+    # The compatibility diagnostic can describe weak evidence, but it no longer
+    # reports a Participation category rejection.
+    assert diagnostics["candidates_rejected"] == 0
 
 
 def test_participation_passing_record_remains_actionable_and_mixed_inputs_are_split():
