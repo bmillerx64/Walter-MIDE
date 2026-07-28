@@ -14,7 +14,7 @@ from mide.trader_priority import (
     trader_priority_sort_key,
 )
 from mide.time_service import format_eastern_time
-from mide.early_setup import top_early_setups
+from mide.early_setup import top_timing_setups
 
 
 def inject_css():
@@ -232,8 +232,13 @@ def play_alert(sound_path: str, phrase: str, voice_name: str = ""):
 def early_setups_markup(records: list[dict]) -> str:
     """Render the five highest ignition candidates as a compact chart-review panel."""
     cards = []
-    for record in top_early_setups(records):
+    for record in top_timing_setups(records):
         detail = record.get("early_setup") or {}
+        if detail.get("timing_state") in {"LATE MOMENTUM", "WAIT FOR RESET"}:
+            cards.append(
+                f'<div class="mide-card mide-watch">{timing_status_markup(record)}</div>'
+            )
+            continue
         age = record.get("news_age_hours")
         news = f" · News {float(age):.1f}h" if age is not None else ""
         cards.append(
@@ -243,8 +248,28 @@ def early_setups_markup(records: list[dict]) -> str:
             f'VWAP {html.escape(str(detail.get("vwap_status") or "unknown"))} · SuperTrend {html.escape(str(detail.get("supertrend_status") or "unknown"))}{news}<br>'
             f'<span class="small">Next: {html.escape(str(detail.get("next_condition") or "maintain structure"))}</span></div>'
         )
-    body = "".join(cards) if cards else '<div class="feed-empty">No developing ignition structures right now.</div>'
+    body = (
+        "".join(cards)
+        if cards
+        else '<div class="feed-empty">No developing ignition structures right now.</div>'
+    )
     return f'<div class="feed-shell"><div class="feed-title">⚡ EARLY SETUPS</div>{body}</div>'
+
+
+def timing_status_markup(record: dict) -> str:
+    """Render the timing verdict without presenting late discovery as early."""
+    detail = record.get("early_setup") or {}
+    state = str(
+        detail.get("timing_state") or record.get("timing_state") or "Discovered"
+    )
+    symbol = html.escape(str(record.get("symbol") or "").upper())
+    if state not in {"LATE MOMENTUM", "WAIT FOR RESET"}:
+        return f"<b>{symbol}</b><br>{html.escape(state.title())}"
+    move = float(detail.get("percent_move_since_first_detection") or 0)
+    return (
+        f"<b>{symbol}</b><br>Late Momentum<br>"
+        f"Detected {move:+.0f}% after ignition<br>Wait for reset"
+    )
 
 
 def render_early_setups(records: list[dict]) -> None:
