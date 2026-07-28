@@ -325,6 +325,18 @@ def analyze_candidates(client, candidates, news_index, discovery_reasons):
 
         vpi = volume_pace_metrics(symbol, frame)
         surge_metrics = intraday_participation_metrics(session)
+        ema5_value = float(ema(session["close"], 5).iloc[-1])
+        ten_minute_start = float(session["close"].iloc[-11]) if len(session) > 10 else price
+        price_change_10m_pct = ((price / ten_minute_start) - 1) * 100 if ten_minute_start else 0
+        prior_15 = session.iloc[-16:-1] if len(session) >= 16 else session.iloc[:-1]
+        recent_5 = session.tail(5)
+        prior_15_pace = float(prior_15["volume"].mean()) if len(prior_15) else 0
+        recent_pace = float(recent_5["volume"].mean()) if len(recent_5) else 0
+        broke_15m_high = bool(len(prior_15) and price > float(prior_15["high"].max()) and recent_pace > prior_15_pace)
+        session_vwaps = session_vwap(session)
+        recent_closes = session["close"].tail(11)
+        recent_vwaps = session_vwaps.tail(11)
+        reclaimed_10m = bool(len(recent_closes) > 1 and (recent_closes.iloc[:-1] < recent_vwaps.iloc[:-1]).any() and price >= vw)
 
         evidence = Evidence(
             symbol=symbol,
@@ -372,6 +384,14 @@ def analyze_candidates(client, candidates, news_index, discovery_reasons):
                 "volume_pace_passed": vpi.passed,
                 "volume_pace_status": vpi.status,
                 "volume_pace_reason": vpi.reason,
+                "ema5_relation": "above" if price >= ema5_value else "below",
+                "above_ema5_and_ema60_65": bool(price >= ema5_value and price >= ema65),
+                "price_change_10m_pct": round(price_change_10m_pct, 2),
+                "volume_above_preceding_15m_pace": bool(prior_15_pace and recent_pace >= prior_15_pace * 1.5),
+                "broke_previous_15m_high_with_volume": broke_15m_high,
+                "vwap_reclaimed_last_10m": reclaimed_10m,
+                "supertrend_flipped_last_10m": bool(st_flip),
+                "crossed_vwap_and_supertrend": bool(reclaimed_10m and st_bull),
                 **surge_metrics,
             }
         )

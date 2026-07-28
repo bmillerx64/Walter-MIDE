@@ -70,6 +70,7 @@ from mide.ui import (
     rejected_candidates_table,
     trader_priority_sort_key,
     render_walter_mission_control,
+    render_early_setups,
     render_live_opportunity_feed,
     render_escalation_engine,
     mission_control_header_markup,
@@ -77,6 +78,7 @@ from mide.ui import (
     walter_mission_control,
 )
 from mide.live_opportunity_feed import update_opportunity_feed
+from mide.early_setup import newly_entered_symbols
 from mide.time_service import format_eastern_time, market_clock, market_phase_at
 from mide.watchdog import ScanAlreadyRunning
 
@@ -416,6 +418,7 @@ settings = Settings.from_mapping(secrets_mapping())
 
 mission_header_slot = st.empty()
 market_session_slot = st.empty()
+early_setup_slot = st.empty()
 mission_plan_slot = st.empty()
 opportunity_feed_slot = st.empty()
 escalation_engine_slot = st.empty()
@@ -434,6 +437,7 @@ session_defaults = {
     "symbols_sampled": 0,
     "prefilter_count": 0,
     "last_escalation_alert": "",
+    "active_early_setup_symbols": set(),
     "opportunity_feed_snapshot": {},
     "opportunity_feed_events": [],
     ALERT_VOICE_SESSION_KEY: SYSTEM_DEFAULT_VOICE_ID,
@@ -945,6 +949,8 @@ with market_session_slot:
     st.markdown(
         market_session_quality_markup(actionable_records), unsafe_allow_html=True
     )
+with early_setup_slot:
+    render_early_setups(records)
 with mission_plan_slot:
     render_walter_mission_control(actionable_records)
 
@@ -1074,13 +1080,24 @@ with system_status_panel:
     st.caption(f"{clock.phase} — Rankings describe evidence only.")
 
 state_changes = escalation_state_changes(actionable_records)
+new_early_symbols, active_early_symbols = newly_entered_symbols(
+    records, st.session_state.active_early_setup_symbols
+)
+st.session_state.active_early_setup_symbols = active_early_symbols
 state_change_signature = "|".join(
     f"{item['symbol']}:{item['from']}->{item['to']}" for item in state_changes
 )
 alert_phrase = escalation_alert_phrase(actionable_records) or scan_alert_phrase(
     actionable_records
 )
-if alerts and alert_phrase:
+entry_alert_open = "Entry Window" in alert_phrase or "Entry Ready" in alert_phrase
+if alerts and new_early_symbols and not entry_alert_open:
+    play_alert(
+        "assets/alert.wav",
+        f"{new_early_symbols[0]}. Early setup detected.",
+        alert_voice_for_session(),
+    )
+elif alerts and alert_phrase:
     # Escalation transitions are audible once per distinct scan transition, rather
     # than replaying whenever Streamlit reruns for an unrelated widget change.
     if (
