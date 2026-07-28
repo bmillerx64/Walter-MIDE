@@ -408,13 +408,13 @@ def mission_control_header_markup(
     funnel = ""
     if funnel_counts:
         labels = (
-            ("universe", "scanned"), ("tradability", "tradable"),
-            ("price", "price qualified"), ("free_float", "free-float qualified"),
-            ("analyzed", "analyzed"), ("qualified", "monitored"),
-            ("entry_ready", "entry-ready"),
+            ("universe", "Universe"), ("tradability", "Tradability"),
+            ("price", "Price"), ("free_float", "Free Float"),
+            ("stage_3_analysis", "Stage 3 Analysis"), ("monitored", "Monitored"),
+            ("entry_ready", "Entry Ready"),
         )
-        funnel = "<div class='small'>" + " ↓ ".join(
-            f"{int(funnel_counts[key])} {label}"
+        funnel = "<div class='small'><b>Stage Summary</b><br>" + " → ".join(
+            f"{label}: {int(funnel_counts[key])}"
             for key, label in labels if key in funnel_counts
         ) + "</div>"
     return (
