@@ -47,12 +47,13 @@ from mide.ui import (
     render_live_opportunity_feed,
     render_escalation_engine,
     mission_control_header_markup,
+    market_session_quality_markup,
     walter_mission_control,
 )
 from mide.live_opportunity_feed import update_opportunity_feed
 from mide.time_service import format_eastern_time, market_clock, market_phase_at
 
-VERSION = "2.15 — Live Opportunity Feed"
+VERSION = "2.16 — Market Session Quality"
 
 SYSTEM_DEFAULT_VOICE_ID = "__system_default__"
 DEFAULT_VOICE = "System Default"
@@ -357,6 +358,7 @@ def secrets_mapping() -> dict:
 settings = Settings.from_mapping(secrets_mapping())
 
 mission_header_slot = st.empty()
+market_session_slot = st.empty()
 mission_plan_slot = st.empty()
 opportunity_feed_slot = st.empty()
 escalation_engine_slot = st.empty()
@@ -804,6 +806,10 @@ with mission_header_slot:
             auto_scan=auto_scan,
         ),
         unsafe_allow_html=True,
+    )
+with market_session_slot:
+    st.markdown(
+        market_session_quality_markup(actionable_records), unsafe_allow_html=True
     )
 with mission_plan_slot:
     render_walter_mission_control(actionable_records)
