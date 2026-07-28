@@ -330,7 +330,8 @@ def test_mission_control_header_contains_compact_operational_status():
     )
 
     assert "Walter • MIDE Radar" in markup
-    assert "v2.17 — Live Opportunity Feed" in markup
+    assert "v3.0.0" in markup
+    assert "Live Opportunity Feed" not in markup
     assert "Market Intelligence Decision Engine" in markup
     for value in (
         "🟢 LIVE",

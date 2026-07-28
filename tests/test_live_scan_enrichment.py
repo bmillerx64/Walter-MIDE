@@ -98,10 +98,11 @@ def test_run_live_enrichment_path_passes_previous_state(monkeypatch, tmp_path):
     assert records[0]["previous_score"] == 42
     assert records[0]["velocity"] == 13
     assert records[0]["status_changed"] is True
-    assert records[0]["scanner_version"] == "V2"
-    assert records[0]["candidate_status"] == "Rejected – No Participation"
-    assert records[0]["rejection_reason"] == "No Participation"
-    assert records[0]["previous_candidate_status"] == "Watching"
+    assert records[0]["scanner_version"] == "Decision Funnel 3.0"
+    assert records[0]["current_stage"] == "Stage 2"
+    assert records[0]["candidate_status"] == "Removed"
+    assert records[0]["final_decision"] == "Rejected"
+    assert records[0]["rejection_reason"] == "Price: Outside permitted range"
     assert __import__("app").st.session_state.records is records
     assert diagnostics["flight_recorder_error"] == "write failed; scan continued"
     persisted = [json.loads(line) for line in history_path.read_text().splitlines()]
@@ -165,13 +166,13 @@ def test_run_live_scanner_v1_enrichment_path_accepts_previous_state(
 
     assert seed_count == 1
     assert candidate_count == 1
-    assert records[0]["scanner_version"] == "V1"
+    assert records[0]["scanner_version"] == "Decision Funnel 3.0"
     assert records[0]["previous_score"] == 50
     assert records[0]["velocity"] == 11
     assert records[0]["status_changed"] is True
     persisted = [json.loads(line) for line in history_path.read_text().splitlines()]
     assert persisted[-1]["symbol"] == records[0]["symbol"]
-    assert persisted[-1]["scanner_version"] == "V1"
+    assert persisted[-1]["scanner_version"] == "Decision Funnel 3.0"
     assert persisted[-1]["velocity"] == records[0]["velocity"]
 
 

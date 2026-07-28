@@ -74,6 +74,7 @@ from mide.ui import (
     render_live_opportunity_feed,
     render_escalation_engine,
     mission_control_header_markup,
+    decision_funnel_markup,
     market_session_quality_markup,
     walter_mission_control,
 )
@@ -81,8 +82,8 @@ from mide.live_opportunity_feed import update_opportunity_feed
 from mide.early_setup import newly_entered_symbols
 from mide.time_service import format_eastern_time, market_clock, market_phase_at
 from mide.watchdog import ScanAlreadyRunning
-
-VERSION = "2.18.1 — Reliable Scan Commit"
+from mide.decision_engine import evaluate as evaluate_decision_funnel, IdentityPolicy
+from mide.version import BUILD
 
 SYSTEM_DEFAULT_VOICE_ID = "__system_default__"
 DEFAULT_VOICE = "System Default"
@@ -459,11 +460,8 @@ with st.sidebar:
     mode = st.radio(
         "Data mode", ["Live Alpaca", "Demo"], index=0 if live_possible else 1
     )
-    scanner_version = st.radio(
-        "Scanner",
-        ["Scanner V2 (adaptive momentum)", "Scanner V1 (classic screener)"],
-        index=0,
-    )
+    st.caption(f"Decision Funnel v{BUILD.version} · {BUILD.git_sha}")
+    scanner_version = "Decision Funnel 3.0"
     auto_refresh = st.toggle(
         "Auto live scan every 60 seconds", value=True, disabled=(mode != "Live Alpaca")
     )
@@ -675,7 +673,7 @@ def arm_live_clock_engine(
 
 
 def run_live(
-    scanner_version: str = "Scanner V2 (adaptive momentum)",
+    scanner_version: str = "Decision Funnel 3.0",
     *,
     client_factory=None,
     credential_checker=None,
@@ -752,26 +750,14 @@ def run_live(
     store = get_store()
     previous = store.latest_by_symbol()
     records = store.enrich_velocity(records, previous=previous)
-    if scanner_version.startswith("Scanner V2"):
-        scanner_module = importlib.import_module("mide.scanner_v2")
-        records = scanner_module.apply_scanner_v2(records, previous)
-        participation_rejections = (
-            scanner_module.participation_gate_rejection_diagnostics(records)
-        )
-        client.diagnostics["participation_gate_rejections"] = participation_rejections
-        for detail in participation_rejections["details"]:
-            log(
-                "Participation gate rejected "
-                f"{detail['symbol']}: "
-                f"{'; '.join(detail['failed_reasons'])}"
-            )
-        client.diagnostics["strengthening"] = (
-            scanner_module.strengthening_diagnostics(records)
-        )
-    else:
-        for record in records:
-            record["scanner_version"] = "V1"
-            record.setdefault("candidate_status", record.get("status", "PASS"))
+    policy = IdentityPolicy(settings.min_price, settings.max_price,
+                            settings.max_free_float, settings.include_etfs)
+    records = evaluate_decision_funnel(records, policy)
+    client.diagnostics["decision_funnel"] = {
+        "universe": len(records),
+        "eligible": sum(record["eligible"] for record in records),
+        "rejected": sum(record["final_decision"] == "Rejected" for record in records),
+    }
     wire_news_log = recent_wire_news_log(
         news_items,
         snapshots=snapshots,
@@ -805,7 +791,7 @@ def run_live(
         analyzed=analyzed_records,
         records=records,
         settings=settings,
-        scanner_v2=scanner_version.startswith("Scanner V2"),
+        scanner_v2=False,
         recent_news_log=wire_news_log,
     )
     if flight_scan is not None:
@@ -848,7 +834,7 @@ def run_live(
 should_scan = False
 
 if use_demo or mode == "Demo":
-    st.session_state.records = demo_records()
+    st.session_state.records = evaluate_decision_funnel(demo_records())
     st.session_state.symbols_sampled = len(st.session_state.records)
     st.session_state.prefilter_count = len(st.session_state.records)
     st.session_state.source_label = "Demonstration data"
@@ -908,6 +894,11 @@ scan_diagnostics = st.session_state.scan_diagnostics
 updated = st.session_state.last_updated
 updated_text = format_eastern_time(updated)
 clock = market_clock()
+
+if records:
+    with st.expander("Decision Funnel audit trails", expanded=False):
+        for record in records:
+            st.markdown(decision_funnel_markup(record), unsafe_allow_html=True)
 
 actionable_records = actionable_candidate_records(records)
 rejected_records = rejected_candidate_records(records)
