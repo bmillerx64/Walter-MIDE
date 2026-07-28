@@ -3,6 +3,15 @@ Clean Streamlit foundation preserving the v0.9.3 live SIP discovery, scoring and
 
 Deploy `app.py` from the repository root. Add `ALPACA_API_KEY`, `ALPACA_SECRET_KEY`, and `ALPACA_FEED = "sip"` to Streamlit Secrets.
 
+## Walter 2.19 — Structure Engine
+
+Walter now ranks the charts a trader should stop and open. The Structure Score
+combines a recent or held VWAP reclaim, shrinking distance to SuperTrend,
+five-candle range compression, participation acceleration across 3/5/10 scans,
+and a graduated float bonus. A fresh SuperTrend flip adds a 20-point event bonus.
+The new **COILED** state sits between BUILDING and READY, and its alert presents
+the evidence plus a capped breakout probability instead of an Early Setup score.
+
 ## Walter 2.15 — Live Opportunity Feed
 
 The compact feed directly beneath Today's Mission narrates material changes for

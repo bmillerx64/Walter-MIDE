@@ -283,6 +283,11 @@ def analyze_candidates(client, candidates, news_index, discovery_reasons):
             else float("nan")
         )
         st_line, st_trend = supertrend(session, 10, 3)
+        st_value = (
+            float(st_line.iloc[-1])
+            if len(st_line) and not pd.isna(st_line.iloc[-1])
+            else 0.0
+        )
         st_bull = bool(st_trend.iloc[-1]) if len(st_trend) else False
         st_flip = bool(
             len(st_trend) >= 2 and st_trend.iloc[-1] and not st_trend.iloc[-2]
@@ -326,17 +331,42 @@ def analyze_candidates(client, candidates, news_index, discovery_reasons):
         vpi = volume_pace_metrics(symbol, frame)
         surge_metrics = intraday_participation_metrics(session)
         ema5_value = float(ema(session["close"], 5).iloc[-1])
-        ten_minute_start = float(session["close"].iloc[-11]) if len(session) > 10 else price
-        price_change_10m_pct = ((price / ten_minute_start) - 1) * 100 if ten_minute_start else 0
+        ten_minute_start = (
+            float(session["close"].iloc[-11]) if len(session) > 10 else price
+        )
+        price_change_10m_pct = (
+            ((price / ten_minute_start) - 1) * 100 if ten_minute_start else 0
+        )
         prior_15 = session.iloc[-16:-1] if len(session) >= 16 else session.iloc[:-1]
         recent_5 = session.tail(5)
         prior_15_pace = float(prior_15["volume"].mean()) if len(prior_15) else 0
         recent_pace = float(recent_5["volume"].mean()) if len(recent_5) else 0
-        broke_15m_high = bool(len(prior_15) and price > float(prior_15["high"].max()) and recent_pace > prior_15_pace)
+        broke_15m_high = bool(
+            len(prior_15)
+            and price > float(prior_15["high"].max())
+            and recent_pace > prior_15_pace
+        )
         session_vwaps = session_vwap(session)
         recent_closes = session["close"].tail(11)
         recent_vwaps = session_vwaps.tail(11)
-        reclaimed_10m = bool(len(recent_closes) > 1 and (recent_closes.iloc[:-1] < recent_vwaps.iloc[:-1]).any() and price >= vw)
+        reclaimed_10m = bool(
+            len(recent_closes) > 1
+            and (recent_closes.iloc[:-1] < recent_vwaps.iloc[:-1]).any()
+            and price >= vw
+        )
+        reclaim_crosses = recent_closes >= recent_vwaps
+        reclaim_age_bars = next(
+            (
+                age
+                for age in range(min(5, len(reclaim_crosses) - 1) + 1)
+                if bool(reclaim_crosses.iloc[-1 - age])
+                and (
+                    len(reclaim_crosses) - 1 - age == 0
+                    or not bool(reclaim_crosses.iloc[-2 - age])
+                )
+            ),
+            999,
+        )
 
         evidence = Evidence(
             symbol=symbol,
@@ -375,6 +405,13 @@ def analyze_candidates(client, candidates, news_index, discovery_reasons):
                 "last_bar_timestamp": last_bar_time.isoformat(),
                 "bar_age_seconds": round(bar_age_seconds, 1),
                 "vwap_value": round(vw, 6),
+                "vwap_reclaim_age_bars": reclaim_age_bars,
+                "supertrend_value": round(st_value, 6),
+                "supertrend_distance_pct": (
+                    round(abs(price - st_value) / price * 100, 3)
+                    if price and st_value
+                    else 999.0
+                ),
                 "vwap_bar_timeframe_source": "Alpaca 1Min current-session bars (same bars as primary SuperTrend)",
                 "expected_volume_by_time": round(vpi.expected_volume),
                 "volume_pace_ratio": round(vpi.volume_pace_ratio, 2),
@@ -387,7 +424,9 @@ def analyze_candidates(client, candidates, news_index, discovery_reasons):
                 "ema5_relation": "above" if price >= ema5_value else "below",
                 "above_ema5_and_ema60_65": bool(price >= ema5_value and price >= ema65),
                 "price_change_10m_pct": round(price_change_10m_pct, 2),
-                "volume_above_preceding_15m_pace": bool(prior_15_pace and recent_pace >= prior_15_pace * 1.5),
+                "volume_above_preceding_15m_pace": bool(
+                    prior_15_pace and recent_pace >= prior_15_pace * 1.5
+                ),
                 "broke_previous_15m_high_with_volume": broke_15m_high,
                 "vwap_reclaimed_last_10m": reclaimed_10m,
                 "supertrend_flipped_last_10m": bool(st_flip),

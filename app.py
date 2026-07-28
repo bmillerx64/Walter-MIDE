@@ -1092,9 +1092,26 @@ alert_phrase = escalation_alert_phrase(actionable_records) or scan_alert_phrase(
 )
 entry_alert_open = "Entry Window" in alert_phrase or "Entry Ready" in alert_phrase
 if alerts and new_early_symbols and not entry_alert_open:
+    coiled = next(
+        record
+        for record in records
+        if str(record.get("symbol") or "").upper() == new_early_symbols[0]
+    )
+    structure = coiled.get("structure") or {}
+    float_millions = structure.get("float_millions")
+    float_phrase = (
+        f" Float {float(float_millions):.1f} million."
+        if float_millions is not None
+        else ""
+    )
     play_alert(
         "assets/alert.wav",
-        f"{new_early_symbols[0]}. Early setup detected.",
+        (
+            f"{new_early_symbols[0]}. Coiling. VWAP {structure.get('vwap_status', 'developing')}. "
+            f"SuperTrend {float(structure.get('supertrend_distance_pct') or 0):.2f} percent away. "
+            f"Participation {'accelerating' if structure.get('participation_accelerating') else 'steady'}."
+            f"{float_phrase} Probability of breakout {float(structure.get('probability_of_breakout') or 0):.0f} percent."
+        ),
         alert_voice_for_session(),
     )
 elif alerts and alert_phrase:
