@@ -84,3 +84,20 @@ def test_recorder_persists_complete_paths_funnel_and_latest_lookup(tmp_path):
     assert len(history) == 1
     assert history[0]["scanner_version"] == "V2"
     assert history[0]["stage_reached"] == "actionable display"
+
+
+def test_recorder_keeps_legacy_schema_when_news_log_is_not_provided(tmp_path):
+    recorder = FlightRecorder(tmp_path / "flights.jsonl")
+
+    scan = recorder.record_scan(
+        seeds=[],
+        discovery_reasons={},
+        snapshots={},
+        candidates=[],
+        analyzed=[],
+        records=[],
+        settings=SETTINGS,
+    )
+
+    assert "recent_wire_news" not in scan
+    assert "recent_wire_news" not in recorder.latest_scan()
