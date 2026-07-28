@@ -1,6 +1,8 @@
 from mide import ui
 from mide.ui import (
     mission_control_header_markup,
+    market_session_quality,
+    market_session_quality_markup,
     opportunity_pulse,
     radar_table,
     state_sections,
@@ -33,6 +35,42 @@ def sample_record(**overrides):
     }
     record.update(overrides)
     return record
+
+
+def test_market_session_quality_aggregates_existing_scanner_evidence():
+    records = [
+        sample_record(
+            candidate_status="Entry Ready",
+            participation_surge_score=90,
+            expansion_quality=80,
+            headline="FDA approval",
+        ),
+        sample_record(
+            symbol="BBB",
+            candidate_status="Strengthening",
+            participation_surge_score=70,
+            expansion_quality=60,
+        ),
+    ]
+
+    session = market_session_quality(records)
+
+    assert session["qualified"] == 2
+    assert session["strengthening"] == 1
+    assert session["entry_ready"] == 1
+    assert session["average_participation"] == 80
+    assert session["average_expansion"] == 70
+    assert session["news_symbols"] == 1
+    assert session["mode"] == "🟡 SELECTIVE DAY"
+
+
+def test_market_session_quality_dead_tape_empty_state_is_compact_and_actionable():
+    panel = market_session_quality_markup([])
+
+    assert "TODAY'S MARKET" in panel
+    assert "🔴 DEAD TAPE" in panel
+    assert "Market Confidence <b>0%</b>" in panel
+    assert "Protect capital. Avoid forcing trades." in panel
 
 
 def test_radar_table_does_not_display_velocity_placeholder_column():
@@ -292,7 +330,7 @@ def test_mission_control_header_contains_compact_operational_status():
     )
 
     assert "Walter • MIDE Radar" in markup
-    assert "v2.15 — Live Opportunity Feed" in markup
+    assert "v2.16 — Market Session Quality" in markup
     assert "Market Intelligence Decision Engine" in markup
     for value in (
         "🟢 LIVE",

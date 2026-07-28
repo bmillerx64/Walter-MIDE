@@ -165,13 +165,20 @@ def inject_css():
     .control-stat-label {font-size:.62rem;letter-spacing:.08em;text-transform:uppercase;color:#8291a5;font-weight:900;white-space:nowrap}
     .control-stat-value {font-size:.96rem;color:#f8fafc;font-weight:950;margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-variant-numeric:tabular-nums}
     .control-live{color:#4ade80}.control-demo{color:#facc15}
+    .market-day {display:grid;grid-template-columns:minmax(240px,1.25fr) minmax(330px,2fr);gap:14px;align-items:center;background:#0b131d;border:1px solid #334155;border-left:6px solid var(--market-color);border-radius:11px;padding:11px 15px;margin:-2px 0 12px}
+    .market-day-title {font-size:.65rem;letter-spacing:.13em;color:#94a3b8;font-weight:950}
+    .market-day-mode {font-size:1.28rem;color:var(--market-color);font-weight:950;margin:2px 0}
+    .market-day-guidance {font-size:.9rem;color:#e2e8f0;font-weight:850}
+    .market-day-confidence {font-size:.72rem;letter-spacing:.08em;text-transform:uppercase;color:#94a3b8;font-weight:900}.market-day-confidence b{font-size:1.25rem;color:#f8fafc;margin-left:5px}
+    .market-day-metrics {display:grid;grid-template-columns:repeat(6,minmax(72px,1fr));gap:6px;margin-top:7px}
+    .market-day-metric {border-left:1px solid #334155;padding-left:8px}.market-day-metric span{display:block;font-size:.58rem;line-height:1.15;text-transform:uppercase;letter-spacing:.06em;color:#8291a5;font-weight:850}.market-day-metric b{font-size:.9rem;color:#f8fafc;font-variant-numeric:tabular-nums}
     .escalation-card {background:#0b131d;border:1px solid #334155;border-left:6px solid var(--escalation-color);border-radius:11px;padding:13px 15px;margin:8px 0}
     .escalation-top {display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap}
     .escalation-symbol {font-size:1.35rem;font-weight:950;color:#f8fafc}.escalation-state {font-weight:950;color:var(--escalation-color)}
     .escalation-trend {font-size:.82rem;color:#cbd5e1;font-weight:800}.escalation-details {display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:9px}
     .escalation-list {list-style:none;padding:0;margin:5px 0 0;display:grid;gap:3px;font-size:.83rem}.delta-up{color:#86efac}.delta-down{color:#fca5a5}
     @media(max-width:1050px){.control-strip{grid-template-columns:repeat(3,1fr)}}
-    @media(max-width:760px){.mission-grid{grid-template-columns:1fr}.control-strip{grid-template-columns:repeat(2,1fr)}}
+    @media(max-width:760px){.mission-grid{grid-template-columns:1fr}.control-strip{grid-template-columns:repeat(2,1fr)}.market-day{grid-template-columns:1fr}.market-day-metrics{grid-template-columns:repeat(3,1fr)}}
     @media(max-width:760px){.escalation-details{grid-template-columns:1fr}}
     </style>
     """,
@@ -342,9 +349,100 @@ def mission_control_header_markup(
     return (
         "<div class='control-header'><div class='control-heading'><div>"
         "<div class='control-title'>🛰 Walter • MIDE Radar</div>"
-        "<div class='control-version'>v2.15 — Live Opportunity Feed</div></div>"
+        "<div class='control-version'>v2.16 — Market Session Quality</div></div>"
         "<div class='control-engine'>Market Intelligence Decision Engine</div></div>"
         f"<div class='control-strip'>{strip}</div></div>"
+    )
+
+
+def market_session_quality(records: list[dict]) -> dict:
+    """Summarize session-wide scanner evidence without changing candidate ranking."""
+    records = actionable_candidate_records(records)
+    counts = scanner_v2_dashboard_counts(records)
+    total = len(records)
+
+    def average(primary: str, fallback: str | None = None) -> float:
+        values = []
+        for record in records:
+            value = record.get(primary)
+            if value is None and fallback:
+                value = record.get(fallback)
+            if value is not None:
+                values.append(_bounded_score(value))
+        return sum(values) / len(values) if values else 0.0
+
+    participation = average("participation_surge_score", "participation_score")
+    expansion = average("expansion_quality")
+    news_symbols = sum(
+        bool(str(record.get("headline") or "").strip()) for record in records
+    )
+    # All inputs are already-produced scanner evidence. Count caps prevent a large
+    # universe alone from overstating the quality of the trading environment.
+    confidence = round(
+        participation * 0.30
+        + expansion * 0.30
+        + min(total / 10, 1) * 15
+        + min(counts["strengthening"] / 4, 1) * 10
+        + min(counts["entry_ready"] / 3, 1) * 10
+        + min(news_symbols / 4, 1) * 5
+    )
+    confidence = max(0, min(100, confidence))
+    if confidence >= 75:
+        mode, guidance, color = (
+            "🟢 MOMENTUM DAY",
+            "Trade strong setups aggressively.",
+            "#4ade80",
+        )
+    elif confidence >= 55:
+        mode, guidance, color = "🟡 SELECTIVE DAY", "Trade only A setups.", "#facc15"
+    elif confidence >= 35:
+        mode, guidance, color = (
+            "🟠 CHOPPY DAY",
+            "Be patient. Reduce position size.",
+            "#fb923c",
+        )
+    else:
+        mode, guidance, color = (
+            "🔴 DEAD TAPE",
+            "Protect capital. Avoid forcing trades.",
+            "#f87171",
+        )
+    return {
+        "mode": mode,
+        "guidance": guidance,
+        "color": color,
+        "confidence": confidence,
+        "qualified": total,
+        "strengthening": counts["strengthening"],
+        "entry_ready": counts["entry_ready"],
+        "average_participation": round(participation),
+        "average_expansion": round(expansion),
+        "news_symbols": news_symbols,
+    }
+
+
+def market_session_quality_markup(records: list[dict]) -> str:
+    """Build the compact Today's Market panel from aggregate session evidence."""
+    session = market_session_quality(records)
+    metrics = (
+        ("Qualified", session["qualified"]),
+        ("Strengthening", session["strengthening"]),
+        ("Entry Ready", session["entry_ready"]),
+        ("Avg Participation", f'{session["average_participation"]}%'),
+        ("Avg Expansion", f'{session["average_expansion"]}%'),
+        ("News Symbols", session["news_symbols"]),
+    )
+    metric_html = "".join(
+        f"<div class='market-day-metric'><span>{html.escape(label)}</span><b>{html.escape(str(value))}</b></div>"
+        for label, value in metrics
+    )
+    return (
+        f"<div class='market-day' style='--market-color:{session['color']}'><div>"
+        "<div class='market-day-title'>TODAY'S MARKET</div>"
+        f"<div class='market-day-mode'>{session['mode']}</div>"
+        f"<div class='market-day-guidance'>{html.escape(session['guidance'])}</div></div><div>"
+        f"<div class='market-day-confidence'>Market Confidence <b>{session['confidence']}%</b></div>"
+        f"<div class='market-day-metrics'>{metric_html}</div></div></div>"
     )
 
 
@@ -932,9 +1030,10 @@ TRADE_READINESS_STATES = (
 def trade_readiness(item: dict) -> dict:
     """Derive a display-only readiness stage from existing state and confidence."""
     record = item["record"]
-    state = _hot_state(record) or str(
-        record.get("candidate_status") or record.get("status") or ""
-    ).strip()
+    state = (
+        _hot_state(record)
+        or str(record.get("candidate_status") or record.get("status") or "").strip()
+    )
     confidence = int(item["confidence"])
     distance = float(record.get("vwap_distance_pct", 0) or 0)
     extended = distance > 2
@@ -1262,7 +1361,10 @@ def render_live_opportunity_feed(events: list[dict]) -> None:
             f"<span class='feed-message feed-{color}'>{marker} {html.escape(str(event.get('message', '')))}</span>"
             f"{delta_markup}</div>"
         )
-    content = "".join(rows) or "<div class='feed-empty'>Waiting for a meaningful change.</div>"
+    content = (
+        "".join(rows)
+        or "<div class='feed-empty'>Waiting for a meaningful change.</div>"
+    )
     st.markdown(
         f"<div class='feed-shell'><div class='feed-title'>LIVE OPPORTUNITY FEED</div>{content}</div>",
         unsafe_allow_html=True,
