@@ -14,6 +14,7 @@ from mide.trader_priority import (
     trader_priority_sort_key,
 )
 from mide.time_service import format_eastern_time
+from mide.early_setup import top_early_setups
 
 
 def inject_css():
@@ -226,6 +227,28 @@ def play_alert(sound_path: str, phrase: str, voice_name: str = ""):
         """,
         height=48 if voice_name else 0,
     )
+
+
+def early_setups_markup(records: list[dict]) -> str:
+    """Render the five highest ignition candidates as a compact chart-review panel."""
+    cards = []
+    for record in top_early_setups(records):
+        detail = record.get("early_setup") or {}
+        age = record.get("news_age_hours")
+        news = f" · News {float(age):.1f}h" if age is not None else ""
+        cards.append(
+            f'<div class="mide-card mide-watch"><b>{html.escape(str(record.get("symbol") or "").upper())}</b> '
+            f'${float(record.get("price") or 0):.2f} &nbsp; {float(record.get("pct_change") or 0):+.1f}%<br>'
+            f'<b>Early Setup {float(record.get("early_setup_score") or 0):.0f}</b> · Volume {float(detail.get("volume_acceleration") or 0):.1f}× · '
+            f'VWAP {html.escape(str(detail.get("vwap_status") or "unknown"))} · SuperTrend {html.escape(str(detail.get("supertrend_status") or "unknown"))}{news}<br>'
+            f'<span class="small">Next: {html.escape(str(detail.get("next_condition") or "maintain structure"))}</span></div>'
+        )
+    body = "".join(cards) if cards else '<div class="feed-empty">No developing ignition structures right now.</div>'
+    return f'<div class="feed-shell"><div class="feed-title">⚡ EARLY SETUPS</div>{body}</div>'
+
+
+def render_early_setups(records: list[dict]) -> None:
+    st.markdown(early_setups_markup(records), unsafe_allow_html=True)
 
 
 def is_actionable_candidate(record: dict) -> bool:

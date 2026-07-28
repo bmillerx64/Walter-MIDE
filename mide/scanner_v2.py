@@ -8,6 +8,7 @@ from numbers import Real
 from mide.market_phase import apply_market_phase
 from mide.opportunity import enrich_opportunity
 from mide.conviction import enrich_conviction
+from mide.early_setup import enrich_early_setups
 from mide.trader_priority import (
     sortable_number as _sortable_number,
     trader_priority_sort_key,
@@ -1848,4 +1849,8 @@ def apply_scanner_v2(
         enrich_opportunity(record)
         enrich_conviction(record, prior)
         output.append(record)
-    return sorted(output, key=_ranked_record_sort_key, reverse=True)
+    # Early discovery is attached only after every execution decision and the
+    # existing ranking order have completed.
+    return enrich_early_setups(
+        sorted(output, key=_ranked_record_sort_key, reverse=True)
+    )
