@@ -6,6 +6,7 @@ from mide.early_setup import (
 )
 from mide.scanner_v2 import trigger_diagnostics
 from mide.ui import early_setups_markup
+from mide.ui import timing_status_markup
 
 
 def record(**changes):
@@ -108,3 +109,79 @@ def test_panel_is_limited_to_highest_five_and_compact():
     markup = early_setups_markup(records)
     assert "⚡ EARLY SETUPS" in markup and markup.count("Early Setup ") == 5
     assert "Next:" in markup
+
+
+def test_timing_signals_before_breakout_are_early_setup():
+    result = early_setup_evaluation(
+        record(
+            price=10.4,
+            first_abnormal_volume_price=10,
+            first_abnormal_volume_time="2026-07-28T14:30:00Z",
+            first_vwap_reclaim_time="2026-07-28T14:31:00Z",
+            first_supertrend_flip_time="2026-07-28T14:32:00Z",
+            scan_time="2026-07-28T14:33:00Z",
+        )
+    )
+    assert result["qualified"] and result["timing_state"] == "EARLY SETUP"
+    assert result["detection_delay_seconds"] == 180
+
+
+def test_detection_after_twenty_five_percent_move_and_halt_is_late():
+    result = early_setup_evaluation(
+        record(
+            price=12.5,
+            first_abnormal_volume_price=10,
+            first_abnormal_volume_time="2026-07-28T14:00:00Z",
+            first_halt_time="2026-07-28T14:10:00Z",
+            vwap_reclaimed_last_10m=False,
+            supertrend_flipped_last_10m=False,
+            scan_time="2026-07-28T14:30:00Z",
+        )
+    )
+    assert result["base_qualified"] and not result["qualified"]
+    assert result["timing_state"] == "LATE MOMENTUM"
+    assert result["percent_move_since_first_detection"] == 25
+    assert "Detected +25% after ignition" in timing_status_markup(
+        {"symbol": "LGHL", "early_setup": result}
+    )
+
+
+def test_breakout_within_three_completed_bars_is_early():
+    result = early_setup_evaluation(
+        record(
+            price=15,
+            first_abnormal_volume_price=10,
+            first_halt_time="2026-07-28T14:10:00Z",
+            broke_previous_15m_high_with_volume=True,
+            breakout_age_completed_bars=3,
+        )
+    )
+    assert result["qualified"]
+    assert "breakout within 3 completed bars" in result["timing_conditions"]
+
+
+def test_late_building_pullback_cannot_receive_retroactive_early_alert():
+    prior = {
+        "timing_state": "LATE MOMENTUM",
+        "first_abnormal_volume_price": 10,
+        "first_abnormal_volume_time": "2026-07-28T14:00:00Z",
+        "first_halt_time": "2026-07-28T14:10:00Z",
+    }
+    result = early_setup_evaluation(
+        record(price=10.5, pullback=True, candidate_status="Strengthening"), prior
+    )
+    assert result["base_qualified"] and not result["qualified"]
+    assert result["timing_state"] == "WAIT FOR RESET"
+    assert result["alert_eligible"] is False
+
+
+def test_alert_is_suppressed_past_twelve_percent_even_if_other_timing_rule_applies():
+    result = early_setup_evaluation(
+        record(
+            price=11.3,
+            first_abnormal_volume_price=10,
+            broke_previous_15m_high_with_volume=True,
+            breakout_age_completed_bars=1,
+        )
+    )
+    assert result["qualified"] and result["alert_eligible"] is False

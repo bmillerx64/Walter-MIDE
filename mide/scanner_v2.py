@@ -1660,6 +1660,7 @@ def apply_scanner_v2(
     scan_time_iso = _iso_timestamp(scan_time)
     for source in records:
         record = dict(source)
+        record.setdefault("scan_time", scan_time_iso)
         prior = previous_by_symbol.get(record.get("symbol"), {})
         previous_state = prior.get("candidate_status") or prior.get("status")
         vwap_gate_diagnostics = _current_vwap_diagnostics(record, prior)
@@ -1852,5 +1853,5 @@ def apply_scanner_v2(
     # Early discovery is attached only after every execution decision and the
     # existing ranking order have completed.
     return enrich_early_setups(
-        sorted(output, key=_ranked_record_sort_key, reverse=True)
+        sorted(output, key=_ranked_record_sort_key, reverse=True), previous_by_symbol
     )
