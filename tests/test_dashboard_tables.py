@@ -178,6 +178,7 @@ def test_radar_table_alignment_preserves_other_metric_columns():
         "$ Vol",
         "Attention",
         "Dominance",
+        "RS Score",
         "Participation",
         "Tier",
         "Phase",

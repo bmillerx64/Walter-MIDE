@@ -75,7 +75,7 @@ def inject_css():
     .conviction-rising {color:#4ade80}.conviction-falling {color:#f87171}.conviction-steady {color:#facc15}
     .conviction-history {display:flex;gap:6px;color:#cbd5e1;font-weight:800}
     .watch-list {list-style:none;margin:5px 0 0;padding:0;display:grid;gap:4px}
-    .current-grid {display:grid;grid-template-columns:repeat(4,minmax(125px,1fr));gap:8px;margin:8px 0 12px}
+    .current-grid {display:grid;grid-template-columns:repeat(5,minmax(125px,1fr));gap:8px;margin:8px 0 12px}
     .current-item {background:#0c121a;border:1px solid #202c3c;border-radius:8px;padding:9px 10px}
     .current-value {font-size:1.15rem;font-weight:900;color:#f8fafc;margin-top:2px}
     .threshold-pass {color:#86efac;font-size:.75rem;font-weight:900}.threshold-fail {color:#fca5a5;font-size:.75rem;font-weight:900}
@@ -679,6 +679,7 @@ def radar_table(records):
                     r.get("attention_score", r["opportunity_score"]),
                 ),
                 "Dominance": r.get("market_dominance_score", 0),
+                "RS Score": r.get("relative_strength_score"),
                 "Participation": r["participation_score"],
                 "Tier": r.get("participation_tier", ""),
                 "Phase": r.get("market_phase", "Emerging"),
@@ -1847,6 +1848,12 @@ def opportunity_card(r):
     )
     st_bullish = bool(r.get("supertrend_bullish"))
     current_items = [
+        (
+            "RS Score",
+            f"{float(r.get('relative_strength_score', 0) or 0):+.1f}%",
+            True,
+            f"vs {r.get('relative_strength_benchmark', 'SPY')} · RANKING ONLY",
+        ),
         (
             "Participation Surge",
             f"{surge:.0f} /100",

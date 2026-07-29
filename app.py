@@ -1371,6 +1371,11 @@ with tabs[0]:
     if not display_records:
         st.success("No stock currently deserves elevated attention.")
     else:
+        radar_sort = st.selectbox(
+            "Sort candidates by",
+            ("Walter Priority", "RS Score"),
+            help="RS Score sorting is presentation-only and never changes qualification.",
+        )
         for section_name, section_records, expanded in scanner_v2_display_sections(
             display_records
         ):
@@ -1379,9 +1384,12 @@ with tabs[0]:
             with st.expander(
                 f"{section_name.upper()} ({len(section_records)})", expanded=expanded
             ):
-                sorted_records = sorted(
-                    section_records, key=trader_priority_sort_key, reverse=True
+                sort_key = (
+                    (lambda record: float(record.get("relative_strength_score", 0) or 0))
+                    if radar_sort == "RS Score"
+                    else trader_priority_sort_key
                 )
+                sorted_records = sorted(section_records, key=sort_key, reverse=True)
                 for record in sorted_records[:10]:
                     opportunity_card(record)
                 st.dataframe(
@@ -1746,6 +1754,15 @@ with tabs[2]:
                             if scan.get("volume_acceleration") is not None
                             else "N/A"
                         ),
+                    )
+                    right.metric(
+                        "RS Score",
+                        (
+                            f"{float(scan['relative_strength_score']):+.1f}%"
+                            if scan.get("relative_strength_score") is not None
+                            else "N/A"
+                        ),
+                        help=f"Relative to {scan.get('relative_strength_benchmark') or 'market benchmark'}; ranking signal only.",
                     )
                     st.write(f"**Recommendation:** {scan['recommendation']}")
                     st.write("**Promotion blockers recorded for this event**")

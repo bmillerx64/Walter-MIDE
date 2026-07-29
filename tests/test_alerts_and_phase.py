@@ -439,13 +439,14 @@ def test_watching_auto_sort_normalizes_mixed_key_types():
     ]
 
 
-def test_watching_sort_dropdown_no_longer_appears():
+def test_radar_offers_relative_strength_sort_without_per_section_dropdowns():
     from pathlib import Path
 
     app_source = Path("app.py").read_text()
 
     assert 'f"Sort {section_name}"' not in app_source
-    assert "key=trader_priority_sort_key" in app_source
+    assert '"Sort candidates by"' in app_source
+    assert '("Walter Priority", "RS Score")' in app_source
 
 
 def test_transition_history_markup_stays_compact_under_prioritized_reasons():
