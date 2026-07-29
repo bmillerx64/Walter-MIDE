@@ -768,6 +768,21 @@ def run_live(
     eligible_identities, stage2_rejections, funnel_counts = stage2_filter(
         snapshot_identity_records(snapshots), policy
     )
+    ncra_lookup_failure = next((
+        rejection for rejection in stage2_rejections
+        if rejection.get("symbol") == "NCRA"
+        and rejection.get("reason") == "Free Float"
+        and rejection.get("result") == "Unavailable"
+    ), None)
+    if ncra_lookup_failure:
+        diagnostic = client.free_float_diagnostic("NCRA")
+        log("NCRA FREE FLOAT DIAGNOSTIC: " + json.dumps(
+            diagnostic, sort_keys=True, separators=(",", ":"), default=str
+        ))
+        raise AlpacaError(
+            "Stage 3 halted after completing the NCRA free-float diagnostic: "
+            + str(diagnostic.get("failure_reason") or "lookup unexpectedly succeeded")
+        )
     eligible_symbols = {record["symbol"] for record in eligible_identities}
     eligible_snapshots = {
         symbol: snapshot for symbol, snapshot in snapshots.items()
