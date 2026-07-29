@@ -48,6 +48,8 @@ def test_recorder_persists_complete_paths_funnel_and_latest_lookup(tmp_path):
         "qualified_for_ranking": True,
         "participation_gate": gate,
         "structure_gate": structure,
+        "quality_score": 88,
+        "quality_grade": "B+",
     }
     scan = recorder.record_scan(
         seeds=["PASS", "DROP"],
@@ -85,6 +87,8 @@ def test_recorder_persists_complete_paths_funnel_and_latest_lookup(tmp_path):
     assert len(history) == 1
     assert history[0]["scanner_version"] == "V2"
     assert history[0]["stage_reached"] == "actionable display"
+    assert history[0]["evidence"]["quality_score"] == 88
+    assert history[0]["evidence"]["quality_grade"] == "B+"
 
 
 def test_recorder_keeps_legacy_schema_when_news_log_is_not_provided(tmp_path):

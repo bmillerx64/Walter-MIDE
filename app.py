@@ -278,6 +278,11 @@ def scan_alert_phrase(records: list[dict]) -> str:
             phrase += f" Reason: {detail}."
         if workflow != "Entry Ready" and blockers:
             phrase += f" Not yet Entry Ready: {blockers[0]}."
+        if record.get("quality_score") is not None:
+            phrase += (
+                f" Grade {record.get('quality_grade', 'Watch Only')}."
+                f" Score {int(record['quality_score'])}."
+            )
         return phrase
     entry_symbols = [
         r.get("symbol")
@@ -294,6 +299,17 @@ def scan_alert_phrase(records: list[dict]) -> str:
     ]
     entry_symbols = [str(s).upper() for s in entry_symbols if s]
     if entry_symbols:
+        entry_records = [
+            r
+            for r in actionable_records
+            if str(r.get("symbol") or "").upper() in entry_symbols
+        ]
+        if len(entry_records) == 1 and entry_records[0].get("quality_score") is not None:
+            record = entry_records[0]
+            return (
+                f"{entry_symbols[0]}. Grade {record.get('quality_grade', 'Watch Only')}. "
+                f"Score {int(record['quality_score'])}."
+            )
         if len(entry_symbols) == 1:
             symbol_text = entry_symbols[0]
         else:
@@ -1663,6 +1679,13 @@ with tabs[1]:
                 st.success(
                     f"Latest appearance reached {trace.get('stage_reached', 'discovery')}."
                 )
+                evidence = trace.get("evidence") or {}
+                if evidence.get("quality_score") is not None:
+                    st.metric(
+                        "Alert Quality Score",
+                        f"{evidence.get('quality_grade')} · {evidence.get('quality_score')}/100",
+                        help="Ranking only; scanner acceptance and rejection are unchanged.",
+                    )
                 for decision in trace.get("events", []):
                     mark = "✅" if decision.get("passed") else "❌"
                     with st.expander(
@@ -1719,6 +1742,15 @@ with tabs[2]:
                     expanded=False,
                 ):
                     left, middle, right = st.columns(3)
+                    left.metric(
+                        "Quality Score",
+                        (
+                            f"{scan.get('quality_grade')} · {scan.get('quality_score')}/100"
+                            if scan.get("quality_score") is not None
+                            else "N/A"
+                        ),
+                        help="Ranking only; this score never changes scanner qualification.",
+                    )
                     left.metric(
                         "Participation Surge",
                         (

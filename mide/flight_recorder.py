@@ -252,6 +252,11 @@ class FlightRecorder:
                 "participation_surge_score": (record or {}).get(
                     "participation_surge_score"
                 ),
+                "quality_score": (record or {}).get("quality_score"),
+                "quality_grade": (record or {}).get("quality_grade"),
+                "quality_score_breakdown": (record or {}).get(
+                    "quality_score_breakdown"
+                ),
                 "vpi": (record or {}).get("volume_pace_ratio"),
                 "five_minute_vpi_acceleration": (record or {}).get(
                     "acceleration_ratio"

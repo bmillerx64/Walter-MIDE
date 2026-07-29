@@ -1849,6 +1849,12 @@ def opportunity_card(r):
     st_bullish = bool(r.get("supertrend_bullish"))
     current_items = [
         (
+            "Quality Score",
+            f"{r.get('quality_grade', 'Watch Only')} · {int(r.get('quality_score', 0) or 0)} /100",
+            float(r.get("quality_score", 0) or 0) >= 75,
+            "RANKING ONLY",
+        ),
+        (
             "RS Score",
             f"{float(r.get('relative_strength_score', 0) or 0):+.1f}%",
             True,
