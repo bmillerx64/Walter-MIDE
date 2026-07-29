@@ -183,6 +183,11 @@ def _readiness(record: dict) -> tuple:
 def build_session_replay(bundle: dict) -> dict:
     """Build a chronological, presentation-only replay from an export bundle."""
     symbol = str(bundle.get("symbol") or "").strip().upper()
+    outcomes = [
+        item
+        for item in bundle.get("trade_outcomes") or []
+        if str(item.get("symbol") or "").upper() == symbol
+    ]
     candidates = sorted(bundle.get("candidate_history") or [], key=_stamp)
     candidate_by_stamp = {_stamp(item): item for item in candidates if _stamp(item)}
     scans = []
@@ -270,9 +275,7 @@ def build_session_replay(bundle: dict) -> dict:
                     "volume_acceleration": candidate.get(
                         "acceleration_ratio", candidate.get("volume_acceleration")
                     ),
-                    "relative_strength_score": candidate.get(
-                        "relative_strength_score"
-                    ),
+                    "relative_strength_score": candidate.get("relative_strength_score"),
                     "relative_strength_benchmark": candidate.get(
                         "relative_strength_benchmark"
                     ),
@@ -355,6 +358,8 @@ def build_session_replay(bundle: dict) -> dict:
     events = _compress_scans(scans)
     return {
         "symbol": symbol,
+        "outcomes": outcomes,
+        "latest_outcome": outcomes[-1] if outcomes else None,
         "milestones": milestones,
         "scans": events,
         "summary": {

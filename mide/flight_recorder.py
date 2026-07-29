@@ -7,6 +7,8 @@ import json
 from pathlib import Path
 from uuid import uuid4
 
+from mide.trade_outcomes import TradeOutcomeStore
+
 STAGES = (
     "discovery",
     "snapshot",
@@ -74,9 +76,12 @@ def prefilter_decision(symbol: str, snapshot: dict, settings) -> dict:
 class FlightRecorder:
     """Append complete scans and retrieve the newest trace for a symbol."""
 
-    def __init__(self, path="data/flight_recorder.jsonl"):
+    def __init__(self, path="data/flight_recorder.jsonl", outcomes_path=None):
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
+        self.outcomes = TradeOutcomeStore(
+            outcomes_path or self.path.parent / "trade_outcomes.json"
+        )
 
     def record_scan(
         self,
@@ -384,6 +389,10 @@ class FlightRecorder:
     def export_bytes(self) -> bytes:
         """Return the untouched recorder file for a browser download."""
         return self.path.read_bytes() if self.path.exists() else b""
+
+    def export_with_outcomes(self) -> dict:
+        """Export flight scans together with downstream user feedback."""
+        return {"flight_recorder": self.scans(), "trade_outcomes": self.outcomes.all()}
 
     def scans(self) -> list[dict]:
         """Read every valid scan, preserving its on-disk order."""
