@@ -1,3 +1,4 @@
+from datetime import datetime
 from unittest.mock import Mock, patch
 import json
 
@@ -106,6 +107,36 @@ def test_expired_fmp_float_cache_is_refreshed(tmp_path):
     assert errors == {}
     assert client.requests_made == 1
     get.assert_called_once()
+
+
+def test_fmp_float_cache_discards_expired_and_bounds_rotating_symbols(tmp_path):
+    cache_path = tmp_path / "float.json"
+    cache_path.write_text(
+        json.dumps(
+            {
+                "EXPIRED": {
+                    "float_shares": 1,
+                    "retrieved_at": "2000-01-01T00:00:00+00:00",
+                },
+                **{
+                    f"S{index}": {
+                        "float_shares": index + 1,
+                        "retrieved_at": f"2026-07-29T12:{index:02d}:00+00:00",
+                    }
+                    for index in range(4)
+                },
+            }
+        )
+    )
+
+    with patch("mide.free_float.datetime") as clock:
+        clock.now.return_value = datetime.fromisoformat("2026-07-29T13:00:00+00:00")
+        clock.fromisoformat.side_effect = datetime.fromisoformat
+        client = FreeFloatClient("key", cache_path=cache_path, cache_max_entries=2)
+        cache = client._read_cache()
+
+    assert list(cache) == ["S3", "S2"]
+    assert json.loads(cache_path.read_text()) == cache
 from mide.alpaca import AlpacaClient
 from mide.discovery import snapshot_identity_records
 from mide.free_float import YahooFinanceFloatProvider

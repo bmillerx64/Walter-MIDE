@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections import OrderedDict
 from dataclasses import dataclass
 from datetime import time
 from typing import Hashable
@@ -9,7 +10,10 @@ import pandas as pd
 MARKET_OPEN = time(9, 30)
 MARKET_CLOSE = time(16, 0)
 MIN_EXPECTED_VOLUME = 1.0
-_PROFILE_CACHE: dict[tuple[str, Hashable, int], dict[int, dict[str, float]]] = {}
+MAX_PROFILE_CACHE_ENTRIES = 128
+_PROFILE_CACHE: OrderedDict[
+    tuple[str, Hashable, int], dict[int, dict[str, float]]
+] = OrderedDict()
 
 
 @dataclass(frozen=True)
@@ -66,6 +70,7 @@ def historical_volume_profile(
         return {}
     cache_key = (symbol, historical.index[-1], len(historical))
     if cache_key in _PROFILE_CACHE:
+        _PROFILE_CACHE.move_to_end(cache_key)
         return _PROFILE_CACHE[cache_key]
 
     historical["session_date"] = historical.index.date
@@ -91,6 +96,9 @@ def historical_volume_profile(
         .to_dict("index")
     )
     _PROFILE_CACHE[cache_key] = profile
+    _PROFILE_CACHE.move_to_end(cache_key)
+    while len(_PROFILE_CACHE) > MAX_PROFILE_CACHE_ENTRIES:
+        _PROFILE_CACHE.popitem(last=False)
     return profile
 
 
