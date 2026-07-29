@@ -9,13 +9,14 @@ reference data before applying the identity gate.
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from datetime import datetime, timedelta, timezone
-import json
+from datetime import date, datetime, timedelta, timezone
 import logging
 import os
 from pathlib import Path
+import sqlite3
 from threading import Lock
 from typing import Iterable, Protocol
+from zoneinfo import ZoneInfo
 
 import requests
 
@@ -34,7 +35,12 @@ class FreeFloatProvider(Protocol):
 
 
 class FreeFloatClient:
-    """Small adapter for FMP's stable Shares Float endpoint."""
+    """FMP adapter backed by a daily, persistent SQLite cache.
+
+    Successful values are scoped to the New York trading date and live for at
+    most 24 hours.  Failures have a much shorter lifetime so a transient FMP
+    outage cannot turn every scan into another request storm.
+    """
 
     BASE_URL = "https://financialmodelingprep.com/stable"
     provider_name = "Financial Modeling Prep"
@@ -47,82 +53,103 @@ class FreeFloatClient:
         *,
         cache_path: str | Path | None = None,
         cache_ttl: timedelta = timedelta(hours=24),
-        cache_max_entries: int = 512,
+        failure_ttl: timedelta = timedelta(minutes=10),
+        preload_bulk: bool | None = None,
     ):
         self.api_key = str(api_key or "").strip()
         self.timeout = timeout
         self.max_workers = max(1, int(max_workers))
-        default_path = Path.home() / ".cache" / "walter-mide" / "fmp-float.json"
+        default_path = Path.home() / ".cache" / "walter-mide" / "fmp-float.sqlite3"
         self.cache_path = Path(
             cache_path or os.getenv("FMP_FLOAT_CACHE_PATH") or default_path
         )
         self.cache_ttl = cache_ttl
-        self.cache_max_entries = max(1, int(cache_max_entries))
+        self.failure_ttl = failure_ttl
+        self.preload_bulk = (
+            str(os.getenv("FMP_FLOAT_BULK_PRELOAD", "")).lower() in {"1", "true", "yes"}
+            if preload_bulk is None else bool(preload_bulk)
+        )
         self.requests_made = 0
         self.cache_hits = 0
+        self.cache_misses = 0
+        self.requests_avoided = 0
+        self.cache_age_seconds: float | None = None
         self._cache_lock = Lock()
 
-    def _read_cache(self) -> dict[str, dict]:
-        try:
-            payload = json.loads(self.cache_path.read_text())
-            if not isinstance(payload, dict):
-                return {}
-        except (OSError, ValueError):
-            return {}
+    @staticmethod
+    def _now() -> datetime:
+        return datetime.now(timezone.utc)
 
-        # A rotating discovery universe previously made this dictionary grow
-        # forever.  Every client then materialized the complete JSON object for
-        # every scan.  Keep only the newest useful entries; the cache is an
-        # optimization and must not become runtime history.
-        now = datetime.now(timezone.utc)
-        retained: list[tuple[datetime, str, dict]] = []
-        for ticker, entry in payload.items():
-            try:
-                retrieved_at = datetime.fromisoformat(str(entry["retrieved_at"]))
-                retrieved_at = retrieved_at.astimezone(timezone.utc)
-                shares = float(entry["float_shares"])
-            except (AttributeError, KeyError, TypeError, ValueError):
-                continue
-            if shares > 0 and now - retrieved_at < self.cache_ttl:
-                retained.append((retrieved_at, ticker, entry))
-        retained.sort(reverse=True)
-        cache = {
-            ticker: entry
-            for _, ticker, entry in retained[: self.cache_max_entries]
-        }
-        if len(cache) != len(payload):
-            self._write_cache(cache)
-        return cache
+    def _trading_date(self, now: datetime | None = None) -> date:
+        return (now or self._now()).astimezone(ZoneInfo("America/New_York")).date()
 
-    def _write_cache(self, cache: dict[str, dict]) -> None:
-        """Persist successful lookups atomically; cache failure never stops a scan."""
+    def _connect(self) -> sqlite3.Connection:
+        self.cache_path.parent.mkdir(parents=True, exist_ok=True)
+        connection = sqlite3.connect(self.cache_path, timeout=15)
+        connection.execute("PRAGMA journal_mode=WAL")
+        connection.execute(
+            """CREATE TABLE IF NOT EXISTS float_cache (
+                ticker TEXT NOT NULL, trading_date TEXT NOT NULL,
+                float_shares REAL, error TEXT, retrieved_at TEXT NOT NULL,
+                PRIMARY KEY (ticker, trading_date)
+            )"""
+        )
+        return connection
+
+    def _store(self, rows: Iterable[tuple[str, float | None, str | None]], now: datetime) -> None:
         try:
-            self.cache_path.parent.mkdir(parents=True, exist_ok=True)
-            temporary = self.cache_path.with_suffix(self.cache_path.suffix + ".tmp")
-            temporary.write_text(json.dumps(cache, sort_keys=True))
-            temporary.replace(self.cache_path)
-        except OSError:
-            return
+            with self._cache_lock, self._connect() as connection:
+                connection.executemany(
+                    "INSERT OR REPLACE INTO float_cache VALUES (?, ?, ?, ?, ?)",
+                    ((ticker, self._trading_date(now).isoformat(), shares, error,
+                      now.isoformat()) for ticker, shares, error in rows),
+                )
+                # Old dates are never read; bound disk growth without affecting today.
+                connection.execute(
+                    "DELETE FROM float_cache WHERE retrieved_at < ?",
+                    ((now - timedelta(days=7)).isoformat(),),
+                )
+        except (OSError, sqlite3.Error):
+            logger.warning("Unable to persist FMP float cache", exc_info=True)
 
     def _cached_values(self, tickers: list[str]) -> tuple[dict[str, float], list[str]]:
-        now = datetime.now(timezone.utc)
-        cache = self._read_cache()
+        now = self._now()
         values: dict[str, float] = {}
         missing: list[str] = []
+        self._cached_errors: dict[str, str] = {}
+        try:
+            with self._connect() as connection:
+                rows = {
+                    row[0]: row[1:]
+                    for row in connection.execute(
+                        "SELECT ticker, float_shares, error, retrieved_at FROM float_cache "
+                        "WHERE trading_date = ?", (self._trading_date(now).isoformat(),)
+                    )
+                }
+        except (OSError, sqlite3.Error):
+            rows = {}
+        ages = []
         for ticker in tickers:
-            entry = cache.get(ticker) or {}
-            try:
-                retrieved_at = datetime.fromisoformat(str(entry["retrieved_at"]))
-                shares = float(entry["float_shares"])
-                fresh = now - retrieved_at.astimezone(timezone.utc) < self.cache_ttl
-            except (KeyError, TypeError, ValueError):
-                fresh = False
-                shares = 0
-            if fresh and shares > 0:
-                values[ticker] = shares
-            else:
-                missing.append(ticker)
+            row = rows.get(ticker)
+            if row:
+                shares, error, timestamp = row
+                try:
+                    age = now - datetime.fromisoformat(timestamp).astimezone(timezone.utc)
+                    ttl = self.failure_ttl if error else self.cache_ttl
+                    if age < ttl:
+                        ages.append(age.total_seconds())
+                        if error:
+                            self._cached_errors[ticker] = error
+                        elif shares and shares > 0:
+                            values[ticker] = float(shares)
+                        continue
+                except (TypeError, ValueError):
+                    pass
+            missing.append(ticker)
         self.cache_hits = len(values)
+        self.cache_misses = len(missing)
+        self.requests_avoided = len(values) + len(self._cached_errors)
+        self.cache_age_seconds = max(ages) if ages else None
         return values, missing
 
     def _lookup(self, symbol: str) -> tuple[str, float | None, str | None]:
@@ -155,14 +182,21 @@ class FreeFloatClient:
 
     def lookup_many(self, symbols: Iterable[str]) -> tuple[dict[str, float], dict[str, str]]:
         """Return successful float-share values and per-symbol lookup errors."""
+        # Diagnostics describe this scan, rather than the lifetime of this object.
+        self.requests_made = 0
         tickers = list(
             dict.fromkeys(
                 str(symbol or "").strip().upper() for symbol in symbols if symbol
             )
         )
         values, uncached = self._cached_values(tickers)
-        errors: dict[str, str] = {}
+        errors: dict[str, str] = dict(self._cached_errors)
+        if self.preload_bulk and uncached and self.api_key:
+            self.preload_all()
+            values, uncached = self._cached_values(tickers)
+            errors.update(self._cached_errors)
         if not self.api_key or not uncached:
+            self._log_diagnostics()
             return values, errors
         with ThreadPoolExecutor(max_workers=min(self.max_workers, len(uncached))) as pool:
             futures = {pool.submit(self._lookup, ticker): ticker for ticker in uncached}
@@ -172,25 +206,42 @@ class FreeFloatClient:
                     values[ticker] = shares
                 elif error:
                     errors[ticker] = error
-        if values:
-            cache = self._read_cache()
-            retrieved_at = datetime.now(timezone.utc).isoformat()
-            for ticker in uncached:
-                if ticker in values:
-                    cache[ticker] = {
-                        "float_shares": values[ticker],
-                        "retrieved_at": retrieved_at,
-                    }
-            if len(cache) > self.cache_max_entries:
-                cache = dict(
-                    sorted(
-                        cache.items(),
-                        key=lambda item: item[1].get("retrieved_at", ""),
-                        reverse=True,
-                    )[: self.cache_max_entries]
-                )
-            self._write_cache(cache)
+        self._store(
+            ((ticker, values.get(ticker), errors.get(ticker)) for ticker in uncached),
+            self._now(),
+        )
+        self._log_diagnostics()
         return values, errors
+
+    def preload_all(self) -> int:
+        """Optionally populate today's cache with FMP's bulk float universe."""
+        url = f"{self.BASE_URL}/shares-float-all"
+        try:
+            with self._cache_lock:
+                self.requests_made += 1
+            response = requests.get(url, params={"apikey": self.api_key}, timeout=self.timeout)
+            response.raise_for_status()
+            payload = response.json()
+            rows = []
+            for item in payload if isinstance(payload, list) else []:
+                ticker = str(item.get("symbol") or "").strip().upper()
+                shares = item.get("floatShares")
+                if ticker and shares is not None and float(shares) > 0:
+                    rows.append((ticker, float(shares), None))
+            self._store(rows, self._now())
+            return len(rows)
+        except Exception as exc:
+            logger.warning("FMP bulk float preload failed: %s", exc)
+            return 0
+
+    def _log_diagnostics(self) -> None:
+        logger.info(
+            "FMP float cache: hits=%d misses=%d requests_made=%d "
+            "requests_avoided=%d cache_age_seconds=%s",
+            self.cache_hits, self.cache_misses, self.requests_made,
+            self.requests_avoided,
+            "n/a" if self.cache_age_seconds is None else f"{self.cache_age_seconds:.1f}",
+        )
 
 
 def enrich_snapshots_with_free_float(
