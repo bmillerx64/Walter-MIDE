@@ -106,9 +106,18 @@ class FreeFloatClient:
         self.requests_made = 0
         self.cache_hits = 0
         self.cache_misses = 0
-        self.requests_avoided = 0
         self.cache_age_seconds: float | None = None
         self._cache_lock = Lock()
+
+    @property
+    def requests_avoided(self) -> int:
+        """Return cache-served lookups using the legacy diagnostic name.
+
+        An avoided FMP request is not a separate event: every fresh cache hit
+        avoids exactly one per-symbol request. Deriving the value prevents the
+        two labels from reporting contradictory counts.
+        """
+        return self.cache_hits
 
     @staticmethod
     def _now() -> datetime:
@@ -183,11 +192,9 @@ class FreeFloatClient:
                     pass
             missing.append(ticker)
         # A fresh cached failure is also a served lookup: it prevents another
-        # provider request just as a cached float does. Keep hits and avoided
-        # in lockstep so both counters describe cache-served lookups.
+        # provider request just as a cached float does.
         self.cache_hits += hits
         self.cache_misses += len(missing)
-        self.requests_avoided += hits
         self.cache_age_seconds = max(ages) if ages else None
         return values, missing
 
@@ -196,7 +203,6 @@ class FreeFloatClient:
         self.requests_made = 0
         self.cache_hits = 0
         self.cache_misses = 0
-        self.requests_avoided = 0
         self.cache_age_seconds = None
 
     def cache_diagnostics(self) -> FreeFloatCacheDiagnostics:
