@@ -6,6 +6,7 @@ from dataclasses import asdict, dataclass
 from typing import Any
 
 from .discovery import is_valid_us_symbol
+from .free_float import FreeFloatProvider
 
 
 FIELD_ALIASES = {
@@ -30,24 +31,15 @@ class FreeFloatInspection:
         return asdict(self)
 
 
-def _containers(payload: dict) -> list[tuple[str, dict]]:
-    containers = [("response", payload)]
-    for key in ("reference", "results", "ticker"):
-        value = payload.get(key)
-        if isinstance(value, dict):
-            containers.append((key, value))
-    return containers
-
-
-def inspect_free_float(client, symbol: str) -> FreeFloatInspection:
-    """Fetch one unmodified snapshot and expose float-related provider fields."""
+def inspect_free_float(provider: FreeFloatProvider, symbol: str) -> FreeFloatInspection:
+    """Look up one ticker through the same provider contract used by enrichment."""
     ticker = str(symbol or "").strip().upper()
-    provider = getattr(client, "provider_name", "Alpaca Market Data")
+    provider_name = getattr(provider, "provider_name", type(provider).__name__)
     empty_fields = {field: None for field in FIELD_ALIASES}
     if not is_valid_us_symbol(ticker):
         return FreeFloatInspection(
             ticker=ticker,
-            provider=provider,
+            provider=provider_name,
             request_succeeded=False,
             returned_fields=empty_fields,
             computed_free_float=None,
@@ -56,13 +48,16 @@ def inspect_free_float(client, symbol: str) -> FreeFloatInspection:
         )
 
     try:
-        payload = client.stock_snapshot(ticker)
-        if not isinstance(payload, dict):
-            raise ValueError(f"Unexpected response type: {type(payload).__name__}")
+        values, errors = provider.lookup_many([ticker])
+        if ticker in errors:
+            raise RuntimeError(errors[ticker])
+        computed = values.get(ticker)
+        if computed is not None:
+            computed = float(computed)
     except Exception as exc:
         return FreeFloatInspection(
             ticker=ticker,
-            provider=provider,
+            provider=provider_name,
             request_succeeded=False,
             returned_fields=empty_fields,
             computed_free_float=None,
@@ -71,40 +66,12 @@ def inspect_free_float(client, symbol: str) -> FreeFloatInspection:
         )
 
     returned = dict(empty_fields)
-    found: dict[str, tuple[Any, str]] = {}
-    for label, container in _containers(payload):
-        for display_name, aliases in FIELD_ALIASES.items():
-            for alias in aliases:
-                if alias in container and container[alias] is not None:
-                    returned[display_name] = container[alias]
-                    found[display_name] = (container[alias], f"{label}.{alias}")
-                    break
-
-    computed = None
-    computed_from = None
-    for field in ("floatShares", "freeFloat"):
-        if field not in found:
-            continue
-        value, source = found[field]
-        try:
-            computed = float(str(value).replace(",", ""))
-            computed_from = source
-        except (TypeError, ValueError):
-            pass
-        break
-
-    # This established adapter field explicitly denotes millions of shares.
-    for label, container in _containers(payload):
-        if computed is None and container.get("float_millions") is not None:
-            try:
-                computed = float(container["float_millions"]) * 1_000_000
-                computed_from = f"{label}.float_millions × 1,000,000"
-            except (TypeError, ValueError):
-                pass
+    returned["floatShares"] = computed
+    computed_from = f"{provider_name}.lookup_many" if computed is not None else None
 
     return FreeFloatInspection(
         ticker=ticker,
-        provider=provider,
+        provider=provider_name,
         request_succeeded=True,
         returned_fields=returned,
         computed_free_float=computed,
