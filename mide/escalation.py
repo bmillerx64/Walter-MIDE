@@ -7,6 +7,8 @@ of truth; this module only explains how urgently a trader should review them.
 
 from __future__ import annotations
 
+from mide.timeframe_alignment import alignment_voice
+
 from dataclasses import dataclass
 
 ENTRY_WINDOW_OPEN = "Entry Window Open"
@@ -228,6 +230,13 @@ def escalation_alert_phrase(records: list[dict]) -> str:
         return ""
     first = changes[0]
     phrase = f"{first['symbol']} escalation changed to {first['to']}."
+    record = next(
+        (r for r in records if str(r.get("symbol") or "").upper() == first["symbol"]),
+        {},
+    )
+    alignment = alignment_voice(record)
+    if alignment:
+        phrase += f" {alignment}"
     if len(changes) > 1:
         phrase += f" {len(changes) - 1} additional state change{'s' if len(changes) > 2 else ''}."
     return phrase

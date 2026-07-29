@@ -89,8 +89,9 @@ def trader_priority_sort_key(record: dict) -> tuple[float, float, str]:
         )
         surge = sortable_number(record.get("participation_surge_score", 0))
         relative_strength = sortable_number(record.get("relative_strength_score", 0))
+        alignment = sortable_number(record.get("alignment_score", 0))
         return (
-            current + surge * 0.18 + relative_strength * 0.08,
+            current + surge * 0.18 + relative_strength * 0.08 + alignment,
             historical,
             relative_strength,
             surge,

@@ -214,6 +214,10 @@ def build_session_replay(bundle: dict) -> dict:
                         "bearish" if record.get("supertrend_bullish") is False else None
                     )
                 ),
+                "alignment_score": record.get("alignment_score"),
+                "alignment_total": record.get("alignment_total", 3),
+                "alignment_label": record.get("alignment_label"),
+                "timeframe_alignment": record.get("timeframe_alignment") or {},
                 "vpi": record.get("volume_pace_ratio", record.get("vpi")),
                 "volume_acceleration": record.get(
                     "acceleration_ratio",

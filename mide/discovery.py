@@ -19,6 +19,7 @@ from .indicators import (
 from .volume_pace import volume_pace_metrics
 from .scoring import Evidence, score
 from .flight_recorder import prefilter_decision
+from .timeframe_alignment import alignment_summary
 
 # Fourteen calendar days reliably covers at least five completed U.S. trading
 # sessions across weekends and ordinary exchange holidays.
@@ -312,6 +313,12 @@ def analyze_candidates(client, candidates, news_index, discovery_reasons):
         x["symbol"] for x in candidates[:80] if is_valid_us_symbol(x.get("symbol"))
     ]
     raw = client.bars(symbols, start=start, timeframe="1Min", limit=10_000)
+    try:
+        raw_30s = client.bars(symbols, start=start, timeframe="30Sec", limit=10_000)
+    except Exception as exc:
+        raw_30s = {}
+        if hasattr(client, "warnings"):
+            client.warnings.append(f"30-second trend confirmation unavailable: {exc}")
     from mide.relative_strength import benchmark_for, relative_strength_metrics
 
     benchmark_symbols = sorted({benchmark_for(item) for item in candidates[:80]})
@@ -363,6 +370,18 @@ def analyze_candidates(client, candidates, news_index, discovery_reasons):
             len(st_trend) >= 2 and st_trend.iloc[-1] and not st_trend.iloc[-2]
         )
         tf_count, tf_details = _timeframe_confirmation(session)
+        thirty_second_frame = client.bars_frame(raw_30s.get(symbol, []))
+        if len(thirty_second_frame):
+            thirty_second_frame = thirty_second_frame[
+                thirty_second_frame.index.date == latest_date
+            ].copy()
+        alignment = alignment_summary(
+            {
+                "30s": thirty_second_frame,
+                "1m": session,
+                "5m": resample_ohlcv(session, "5min"),
+            }
+        )
 
         news = news_index.get(symbol)
         headline = news["headline"] if news else ""
@@ -504,6 +523,7 @@ def analyze_candidates(client, candidates, news_index, discovery_reasons):
                 "relative_strength_benchmark": benchmark_symbol,
                 **rs_metrics,
                 **surge_metrics,
+                **alignment,
             }
         )
     return apply_attention_ranking(output)

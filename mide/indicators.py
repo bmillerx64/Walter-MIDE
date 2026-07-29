@@ -46,6 +46,14 @@ def supertrend(df: pd.DataFrame, period: int = 10, multiplier: float = 3.0):
         prev = i - 1
         if pd.isna(atr_value.iloc[i]):
             continue
+        # Seed the bands on the first ATR-ready bar.  Without this, the leading
+        # NaNs propagate through every comparison and direction is always false.
+        if pd.isna(final_upper.iloc[prev]) or pd.isna(final_lower.iloc[prev]):
+            final_upper.iloc[i] = upper.iloc[i]
+            final_lower.iloc[i] = lower.iloc[i]
+            trend.iloc[i] = trend.iloc[prev]
+            st.iloc[i] = final_lower.iloc[i] if trend.iloc[i] else final_upper.iloc[i]
+            continue
         if (
             upper.iloc[i] < final_upper.iloc[prev]
             or df["close"].iloc[prev] > final_upper.iloc[prev]
