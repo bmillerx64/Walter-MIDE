@@ -182,6 +182,81 @@ class AlpacaClient:
             midpoint = len(cleaned) // 2
             return {**self.snapshots(cleaned[:midpoint]), **self.snapshots(cleaned[midpoint:])}
 
+    def free_float_diagnostic(self, symbol: str) -> dict:
+        """Fetch and describe one raw snapshot without concealing missing float data.
+
+        Authentication values are deliberately redacted, but the diagnostic retains
+        the complete request shape and response so it is safe to emit to runtime logs.
+        """
+        symbol = str(symbol or "").strip().upper()
+        if not symbol or ":" in symbol:
+            raise ValueError("A valid U.S. equity symbol is required")
+        url = f"{self.DATA}/v2/stocks/{symbol}/snapshot"
+        params = {"feed": self.feed}
+        response = requests.get(
+            url, headers=self.headers, params=params, timeout=self.timeout
+        )
+        try:
+            payload = response.json()
+        except ValueError:
+            payload = None
+        supported_fields = (
+            "float_shares", "shares_float", "free_float", "float_millions"
+        )
+        parsed_fields = {}
+        if isinstance(payload, dict):
+            reference = payload.get("reference") or {}
+            for field in supported_fields:
+                parsed_fields[field] = {
+                    "snapshot": payload.get(field),
+                    "snapshot.reference": (
+                        reference.get(field) if isinstance(reference, dict) else None
+                    ),
+                }
+        fields_found = [
+            f"{location}.{field}" if location != "snapshot" else field
+            for field, locations in parsed_fields.items()
+            for location, value in locations.items()
+            if value is not None
+        ]
+        if response.status_code >= 400:
+            reason = f"HTTP {response.status_code} prevented the snapshot lookup"
+        elif not isinstance(payload, dict):
+            reason = "Response body was not a JSON object"
+        elif not fields_found:
+            reason = (
+                "Alpaca snapshot response contains none of the supported free-float "
+                f"fields: {', '.join(supported_fields)}"
+            )
+        else:
+            reason = "Free-float field found"
+        prepared_url = getattr(getattr(response, "request", None), "url", None)
+        diagnostic = {
+            "ticker": symbol,
+            "request": {
+                "method": "GET",
+                "url": prepared_url or url,
+                "params": params,
+                "headers": {
+                    "APCA-API-KEY-ID": "<redacted>",
+                    "APCA-API-SECRET-KEY": "<redacted>",
+                },
+                "timeout_seconds": self.timeout,
+            },
+            "response": {
+                "status_code": response.status_code,
+                "headers": dict(response.headers),
+                "body": response.text,
+                "json": payload,
+            },
+            "parsed_fields": parsed_fields,
+            "fields_found": fields_found,
+            "lookup_succeeded": bool(fields_found),
+            "failure_reason": None if fields_found else reason,
+        }
+        self.diagnostics[f"free_float_diagnostic_{symbol}"] = diagnostic
+        return diagnostic
+
     def bars(self, symbols: Iterable[str], start: datetime, timeframe="1Min", limit=10000):
         cleaned = []
         for raw in symbols:
