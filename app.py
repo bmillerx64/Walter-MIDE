@@ -59,17 +59,8 @@ from mide.scanner_v2 import (
 memory_checkpoint("scanner import", object_name="mide.scanner_v2")
 from mide.memory import MemoryStore
 from mide.flight_recorder import FlightRecorder, prefilter_decision
-from mide.trade_outcomes import OUTCOME_LABELS, TradeOutcomeStore
 memory_checkpoint("cache stores import", object_name="MemoryStore, FlightRecorder")
-from mide.runtime_evidence import (
-    current_scan_export,
-    json_bytes,
-    read_scans,
-    runtime_file,
-    symbol_history,
-    symbol_summary,
-)
-from mide.session_replay import build_session_replay
+from mide.memory_profile import compact_previous_record, profile as memory_profile, release_temporaries
 from mide.timeframe_alignment import alignment_voice
 memory_checkpoint("runtime evidence imports")
 from mide.demo import demo_records
@@ -357,7 +348,7 @@ def get_flight_recorder() -> FlightRecorder:
     return recorder
 
 
-def get_trade_outcome_store(recorder=None) -> TradeOutcomeStore:
+def get_trade_outcome_store(recorder=None):
     """Return the outcome store, including for a cached pre-feature recorder.
 
     Streamlit can retain a ``FlightRecorder`` resource created before Trade
@@ -376,7 +367,7 @@ def get_trade_outcome_store(recorder=None) -> TradeOutcomeStore:
         if recorder_path is not None
         else "data/trade_outcomes.json"
     )
-    outcome_store = TradeOutcomeStore(outcomes_path)
+    outcome_store = importlib.import_module("mide.trade_outcomes").TradeOutcomeStore(outcomes_path)
     # Repair a cached legacy instance for every subsequent UI access. Some
     # unusual proxy objects may reject assignment; returning the store is still
     # enough to keep this render safe.
@@ -548,6 +539,7 @@ for key, default in session_defaults.items():
     if key not in st.session_state:
         st.session_state[key] = default
 memory_checkpoint("session cache initialization", object_name="st.session_state")
+memory_profile("startup", session_state=st.session_state)
 persisted_alert_voice()
 
 with st.sidebar:
@@ -1056,7 +1048,23 @@ def _run_live_pipeline(
     # is attached after persistence so it cannot affect Scanner V2 or compound in
     # candidate history across refreshes.
     for record in records:
-        record["opportunity_pulse_previous"] = previous.get(record["symbol"], {})
+        record["opportunity_pulse_previous"] = compact_previous_record(
+            previous.get(record["symbol"])
+        )
+    result = (
+        records, len(seeds), len(candidates), list(client.warnings),
+        dict(client.diagnostics),
+    )
+    memory_profile(
+        "scan complete", session_state=st.session_state,
+        structures={"ranked_records": records, "scan_diagnostics": client.diagnostics},
+    )
+    # Persistence and ranking are complete. These potentially large provider payloads
+    # must not survive into Streamlit's next rerun.
+    release_temporaries(
+        snapshots, cheap_gate_snapshots, float_snapshots, eligible_snapshots,
+        identity_records, candidates, analyzed_records, news_items, previous,
+    )
     progress.progress(1.0, text="Scan complete")
     status.update(
         label=f"Scan complete: {len(records)} ranked records",
@@ -1064,13 +1072,7 @@ def _run_live_pipeline(
         expanded=False,
     )
     log(f"Complete: {len(records)} ranked records")
-    return (
-        records,
-        len(seeds),
-        len(candidates),
-        list(client.warnings),
-        dict(client.diagnostics),
-    )
+    return result
 
 
 def run_live(
@@ -1411,8 +1413,7 @@ elif alerts and alert_phrase:
         if state_change_signature:
             st.session_state.last_escalation_alert = state_change_signature
 
-tabs = st.tabs(
-    [
+tab_names = [
         "Radar",
         "Diagnostics",
         "Session Replay",
@@ -1421,8 +1422,11 @@ tabs = st.tabs(
         "Data validation",
         "Method",
     ]
+active_tab = st.radio(
+    "View", tab_names, horizontal=True, key="active_dashboard_tab",
+    help="Diagnostic views are loaded only when selected to keep memory bounded.",
 )
-with tabs[0]:
+if active_tab == "Radar":
     if not display_records:
         st.success("No stock currently deserves elevated attention.")
     else:
@@ -1450,7 +1454,14 @@ with tabs[0]:
                 st.dataframe(
                     radar_table(sorted_records), width="stretch", hide_index=True
                 )
-with tabs[1]:
+if active_tab == "Diagnostics":
+    runtime_evidence = importlib.import_module("mide.runtime_evidence")
+    current_scan_export = runtime_evidence.current_scan_export
+    json_bytes = runtime_evidence.json_bytes
+    read_scans = runtime_evidence.read_scans
+    runtime_file = runtime_evidence.runtime_file
+    symbol_history = runtime_evidence.symbol_history
+    symbol_summary = runtime_evidence.symbol_summary
     st.subheader("Rejected Candidates")
     st.caption(
         "Most recent 100 Stage 2+ rejections. Select the Stage, Rule, or Symbol "
@@ -1748,7 +1759,8 @@ with tabs[1]:
                         st.write("Thresholds")
                         st.json(decision.get("thresholds", {}))
 
-with tabs[2]:
+if active_tab == "Session Replay":
+    build_session_replay = importlib.import_module("mide.session_replay").build_session_replay
     st.subheader("Runtime Session Replay")
     st.caption(
         "A read-only reconstruction from Candidate History and Flight Recorder files. "
@@ -1903,7 +1915,8 @@ with tabs[2]:
                 f"({replay['summary']['most_limiting_rule_count']} scans)"
             )
 
-with tabs[3]:
+if active_tab == "Trade Outcomes":
+    OUTCOME_LABELS = importlib.import_module("mide.trade_outcomes").OUTCOME_LABELS
     st.subheader("Trade Outcome Feedback")
     st.caption(
         "Feedback is descriptive only. Walter provides recommendations and never "
@@ -1958,7 +1971,7 @@ with tabs[3]:
     else:
         st.caption("At least five completed trades in a cohort are needed for a recommendation.")
 
-with tabs[4]:
+if active_tab == "What changed":
     for record in sorted(
         records, key=lambda r: abs(r.get("velocity", 0)), reverse=True
     )[:15]:
@@ -1969,7 +1982,7 @@ with tabs[4]:
             f"{record.get('current_momentum', record['opportunity_score']):.1f} ({record.get('velocity', 0):+.1f})"
         )
 
-with tabs[5]:
+if active_tab == "Data validation":
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("Configured feed", settings.feed.upper())
     c2.metric("Ranked records", len(records))
@@ -1981,7 +1994,7 @@ with tabs[5]:
     for warning in api_warnings:
         st.warning(warning)
 
-with tabs[6]:
+if active_tab == "Method":
     st.markdown("""
 Scanner V1 is preserved as the classic technical screener. Scanner V2 is an adaptive momentum assistant: Walter rewards fresh catalysts, flat bases beginning to expand, increasing feed and dollar volume, RVOL, float turnover, acceleration and improvements versus the previous scan. VWAP, EMA65 and SuperTrend improve ranking and state progression, but they no longer eliminate promising discovery-stage candidates.
 
