@@ -58,7 +58,7 @@ from mide.scanner_v2 import (
 )
 memory_checkpoint("scanner import", object_name="mide.scanner_v2")
 from mide.memory import MemoryStore
-from mide.flight_recorder import FlightRecorder
+from mide.flight_recorder import FlightRecorder, prefilter_decision
 memory_checkpoint("cache stores import", object_name="MemoryStore, FlightRecorder")
 from mide.runtime_evidence import (
     current_scan_export,
@@ -894,6 +894,17 @@ def _run_live_pipeline(
         for candidate in prefilter_snapshots(eligible_snapshots, settings)
         if candidate.get("symbol") in eligible_symbols
     ]
+    # Capture failures from the unchanged prefilter as diagnostics. These symbols
+    # passed the authoritative Stage 2 identity gate but otherwise disappeared
+    # before Stage 3, which made a symbol-level rejection audit incomplete.
+    candidate_symbols = {candidate.get("symbol") for candidate in candidates}
+    prefilter_rejections = [
+        decision
+        for symbol, snapshot in eligible_snapshots.items()
+        if symbol not in candidate_symbols
+        for decision in [prefilter_decision(symbol, snapshot, settings)]
+        if not decision["passed"]
+    ]
     progress.progress(0.68, text=f"{len(candidates)} Stage 2-qualified candidates")
 
     # A candidate can reach analysis only through the authoritative gate above.
@@ -930,7 +941,10 @@ def _run_live_pipeline(
     }
     rejection_timestamp = datetime.now().astimezone().isoformat(timespec="seconds")
     client.diagnostics["rejected_candidates"] = rejection_diagnostics(
-        records, stage2_rejections, timestamp=rejection_timestamp
+        records,
+        stage2_rejections,
+        prefilter_rejections=prefilter_rejections,
+        timestamp=rejection_timestamp,
     )
     wire_news_log = recent_wire_news_log(
         news_items,

@@ -314,14 +314,14 @@ def _actual_and_required(evidence: list[str], result: str) -> tuple[str, str]:
         ),
         "",
     )
-    required = next(
-        (
-            item.split(":", 1)[1].strip()
-            for item in evidence
-            if item.startswith(("Limit:", "Range:"))
-        ),
-        "",
-    )
+    required = ""
+    for item in evidence:
+        if item.startswith("Limit:"):
+            required = "<= " + item.split(":", 1)[1].strip()
+            break
+        if item.startswith("Range:"):
+            required = item.split(":", 1)[1].strip()
+            break
     agreement = next((item for item in evidence if "categories agree" in item), "")
     if agreement:
         actual = agreement.split(" ", 1)[0]
@@ -330,7 +330,11 @@ def _actual_and_required(evidence: list[str], result: str) -> tuple[str, str]:
 
 
 def rejection_diagnostics(
-    records: list[dict], stage2_rejections: list[dict] | None = None, *, timestamp=""
+    records: list[dict],
+    stage2_rejections: list[dict] | None = None,
+    *,
+    prefilter_rejections: list[dict] | None = None,
+    timestamp="",
 ) -> list[dict]:
     """Normalize existing Stage 2+ failures into presentation-only audit rows."""
     rows: list[dict] = []
@@ -344,6 +348,45 @@ def rejection_diagnostics(
                 "Symbol": str(rejected.get("symbol") or "").upper(),
                 "Stage": rejected.get("stage") or "Stage 2",
                 "Rule": rejected.get("reason") or "Unknown",
+                "Actual Value": actual,
+                "Required Threshold": required,
+                "Timestamp": timestamp,
+            }
+        )
+    for rejected in prefilter_rejections or []:
+        measured = rejected.get("measured_values") or {}
+        thresholds = rejected.get("thresholds") or {}
+        price = float(measured.get("price") or 0)
+        change = float(measured.get("pct_change") or 0)
+        volume = float(measured.get("volume") or 0)
+        dollar_volume = float(measured.get("dollar_volume") or 0)
+        if not thresholds.get("min_price", 0) <= price <= thresholds.get(
+            "max_price", float("inf")
+        ):
+            rule = "Price"
+            actual = f"${price:.2f}"
+            required = (
+                f"${thresholds.get('min_price', 0):.2f}–"
+                f"${thresholds.get('max_price', 0):.2f}"
+            )
+        elif change < thresholds.get("min_pct_change", 0) and volume < thresholds.get(
+            "min_day_volume", 0
+        ):
+            rule = "Percent Change or Day Volume"
+            actual = f"{change:+.2f}% / {volume:,.0f} shares"
+            required = (
+                f">= {thresholds.get('min_pct_change', 0):g}% or >= "
+                f"{thresholds.get('min_day_volume', 0):,.0f} shares"
+            )
+        else:
+            rule = "Dollar Volume"
+            actual = f"${dollar_volume:,.0f}"
+            required = f">= ${thresholds.get('min_dollar_volume', 0):,.0f}"
+        rows.append(
+            {
+                "Symbol": str(rejected.get("symbol") or "").upper(),
+                "Stage": "Stage 2 Prefilter",
+                "Rule": rule,
                 "Actual Value": actual,
                 "Required Threshold": required,
                 "Timestamp": timestamp,

@@ -67,7 +67,7 @@ def test_rejection_diagnostics_combines_stage2_and_stage3_failures():
     assert rows == [
         {
             "Symbol": "NCRA", "Stage": "Stage 2", "Rule": "Free Float",
-            "Actual Value": "17.60M", "Required Threshold": "3.50M",
+            "Actual Value": "17.60M", "Required Threshold": "<= 3.50M",
             "Timestamp": "2026-07-29T12:00:00+00:00",
         },
         {
@@ -76,6 +76,40 @@ def test_rejection_diagnostics_combines_stage2_and_stage3_failures():
             "Timestamp": "2026-07-29T12:00:00+00:00",
         },
     ]
+
+
+def test_rejection_diagnostics_includes_symbols_dropped_by_prefilter():
+    prefilter = [{
+        "symbol": "SLOW",
+        "passed": False,
+        "reason": "pct_change 1 < 3 and volume 50000 < 100000",
+        "measured_values": {
+            "price": 1.25,
+            "pct_change": 1,
+            "volume": 50_000,
+            "dollar_volume": 62_500,
+        },
+        "thresholds": {
+            "min_price": 0.05,
+            "max_price": 5,
+            "min_pct_change": 3,
+            "min_day_volume": 100_000,
+            "min_dollar_volume": 50_000,
+        },
+    }]
+
+    rows = rejection_diagnostics(
+        [], prefilter_rejections=prefilter, timestamp="2026-07-29T12:00:00+00:00"
+    )
+
+    assert rows == [{
+        "Symbol": "SLOW",
+        "Stage": "Stage 2 Prefilter",
+        "Rule": "Percent Change or Day Volume",
+        "Actual Value": "+1.00% / 50,000 shares",
+        "Required Threshold": ">= 3% or >= 100,000 shares",
+        "Timestamp": "2026-07-29T12:00:00+00:00",
+    }]
 
 
 def test_rejected_candidates_table_caps_history_at_100():
