@@ -90,8 +90,8 @@ from mide.watchdog import ScanAlreadyRunning
 from mide.decision_engine import (
     evaluate as evaluate_decision_funnel,
     IdentityPolicy,
+    identity_decision,
     stage2_filter,
-    identity_decision_without_float,
 )
 from mide.free_float_inspector import inspect_free_float
 from mide.free_float import FreeFloatClient, enrich_snapshots_with_free_float
@@ -759,7 +759,7 @@ def _run_live_pipeline(
     cheap_gate_snapshots = {
         record["symbol"]: snapshots[record["symbol"]]
         for record in identity_records
-        if identity_decision_without_float(record, policy)
+        if identity_decision(record, policy, evaluate_float=False)[0]
     }
     inexpensive_candidates = {
         candidate["symbol"]
