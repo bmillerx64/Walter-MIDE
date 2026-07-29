@@ -59,7 +59,7 @@ from mide.scanner_v2 import (
 memory_checkpoint("scanner import", object_name="mide.scanner_v2")
 from mide.memory import MemoryStore
 from mide.flight_recorder import FlightRecorder, prefilter_decision
-from mide.trade_outcomes import OUTCOME_LABELS
+from mide.trade_outcomes import OUTCOME_LABELS, TradeOutcomeStore
 memory_checkpoint("cache stores import", object_name="MemoryStore, FlightRecorder")
 from mide.runtime_evidence import (
     current_scan_export,
@@ -357,6 +357,36 @@ def get_flight_recorder() -> FlightRecorder:
     return recorder
 
 
+def get_trade_outcome_store(recorder=None) -> TradeOutcomeStore:
+    """Return the outcome store, including for a cached pre-feature recorder.
+
+    Streamlit can retain a ``FlightRecorder`` resource created before Trade
+    Outcomes added the public ``outcomes`` attribute.  Keep that deployment
+    transition out of the UI: an old or only partially initialized recorder
+    gets the same empty-on-first-use store beside its flight log.
+    """
+    recorder = recorder or get_flight_recorder()
+    outcome_store = getattr(recorder, "outcomes", None)
+    if outcome_store is not None:
+        return outcome_store
+
+    recorder_path = getattr(recorder, "path", None)
+    outcomes_path = (
+        recorder_path.parent / "trade_outcomes.json"
+        if recorder_path is not None
+        else "data/trade_outcomes.json"
+    )
+    outcome_store = TradeOutcomeStore(outcomes_path)
+    # Repair a cached legacy instance for every subsequent UI access. Some
+    # unusual proxy objects may reject assignment; returning the store is still
+    # enough to keep this render safe.
+    try:
+        recorder.outcomes = outcome_store
+    except (AttributeError, TypeError):
+        pass
+    return outcome_store
+
+
 def record_scan_safely(recorder, *, recent_news_log=None, **scan_data):
     """Write an optional flight trace without affecting the live dashboard."""
     try:
@@ -390,7 +420,7 @@ def symbol_export(symbol: str, store: MemoryStore, recorder: FlightRecorder) -> 
         "exported_at": datetime.now(timezone.utc).isoformat(),
         "candidate_history": store.history_for_symbol(symbol),
         "flight_recorder": recorder.history_for_symbol(symbol),
-        "trade_outcomes": recorder.outcomes.for_symbol(symbol),
+        "trade_outcomes": get_trade_outcome_store(recorder).for_symbol(symbol),
     }
 
 
@@ -1879,7 +1909,8 @@ with tabs[3]:
         "Feedback is descriptive only. Walter provides recommendations and never "
         "changes scanner thresholds automatically."
     )
-    outcome_store = get_flight_recorder().outcomes
+    outcome_recorder = get_flight_recorder()
+    outcome_store = get_trade_outcome_store(outcome_recorder)
     outcome_scan_time = (scan_diagnostics.get("flight_recorder") or {}).get("timestamp")
     for alert_record in actionable_records:
         outcome_store.register_alert(alert_record, timestamp=outcome_scan_time)
@@ -1907,7 +1938,11 @@ with tabs[3]:
             if st.form_submit_button("Save outcome"):
                 saved = outcome_store.mark(selected_id, outcome=outcome_label, entry_price=entry_price, exit_price=exit_price, mfe=mfe, mae=mae)
                 st.success(f"Saved {saved['outcome']} for {saved['symbol']} ({saved.get('pl_pct')}% P/L).")
-        st.download_button("Export Flight Recorder with outcomes", data=json.dumps(get_flight_recorder().export_with_outcomes(), indent=2), file_name="flight_recorder_with_outcomes.json", mime="application/json")
+        outcome_export = {
+            "flight_recorder": outcome_recorder.scans(),
+            "trade_outcomes": outcome_store.all(),
+        }
+        st.download_button("Export Flight Recorder with outcomes", data=json.dumps(outcome_export, indent=2), file_name="flight_recorder_with_outcomes.json", mime="application/json")
     st.markdown("#### Observed win rates")
     for dimension, groups in outcome_store.analytics().items():
         st.write(f"**{dimension.replace('_', ' ').title()}**")
