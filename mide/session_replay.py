@@ -135,6 +135,8 @@ def _compress_scans(scans: list[dict]) -> list[dict]:
         signature = (
             scan["state"],
             scan["recommendation"],
+            scan.get("quality_score"),
+            scan.get("quality_grade"),
             scan.get("relative_strength_score"),
             tuple(
                 (item["category"], item["reason"])
@@ -194,6 +196,8 @@ def build_session_replay(bundle: dict) -> dict:
                 "scan_id": trace.get("scan_id"),
                 "stage_reached": trace.get("stage_reached"),
                 "state": _state(record),
+                "quality_score": record.get("quality_score"),
+                "quality_grade": record.get("quality_grade"),
                 "participation_surge": record.get(
                     "participation_surge_detected",
                     record.get("participation_surge_score"),
@@ -241,6 +245,8 @@ def build_session_replay(bundle: dict) -> dict:
                     "scan_id": candidate.get("scan_id"),
                     "stage_reached": None,
                     "state": _state(candidate),
+                    "quality_score": candidate.get("quality_score"),
+                    "quality_grade": candidate.get("quality_grade"),
                     "participation_surge": candidate.get(
                         "participation_surge_detected",
                         candidate.get("participation_surge_score"),

@@ -125,6 +125,18 @@ def test_entry_ready_suppresses_watching_announcement():
     assert scan_alert_phrase(records) == "Entry Ready: INLF."
 
 
+def test_single_entry_ready_voice_includes_quality_grade_and_score():
+    records = [
+        {
+            "symbol": "GSUN",
+            "candidate_status": "Entry Ready",
+            "quality_grade": "B+",
+            "quality_score": 88,
+        }
+    ]
+    assert scan_alert_phrase(records) == "GSUN. Grade B+. Score 88."
+
+
 def test_entry_ready_symbols_repeat_every_scan():
     records = [
         {"symbol": "INLF", "candidate_status": "Entry Ready"},

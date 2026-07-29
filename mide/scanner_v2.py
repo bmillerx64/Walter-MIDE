@@ -7,6 +7,7 @@ from numbers import Real
 
 from mide.market_phase import apply_market_phase
 from mide.opportunity import enrich_opportunity
+from mide.quality_score import enrich_quality_score
 from mide.conviction import enrich_conviction
 from mide.early_setup import enrich_early_setups
 from mide.trader_priority import (
@@ -1838,6 +1839,8 @@ def apply_scanner_v2(
         # Additive presentation/ranking metadata only; all workflow and alert
         # predicates above have already completed using their existing inputs.
         enrich_opportunity(record)
+        # Quality is ranking/presentation metadata and cannot alter acceptance.
+        enrich_quality_score(record)
         enrich_conviction(record, prior)
         output.append(record)
     # Early discovery is attached only after every execution decision and the

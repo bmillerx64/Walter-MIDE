@@ -20,6 +20,8 @@ def test_replay_builds_chronological_milestones_diagnostics_and_summary():
                 "2026-07-27T14:31:00Z",
                 "Strengthening",
                 participation_surge_score=82,
+                quality_score=88,
+                quality_grade="B+",
                 supertrend_state="bullish",
                 opportunity_score=74,
                 trigger_diagnostics={
@@ -66,6 +68,8 @@ def test_replay_builds_chronological_milestones_diagnostics_and_summary():
     assert peak["expansion_quality"] == 72
     assert peak["vpi"] == 1.8
     assert peak["volume_acceleration"] == 1.4
+    assert peak["quality_score"] == 88
+    assert peak["quality_grade"] == "B+"
     assert replay["summary"]["most_limiting_rule"] == (
         "VWAP — price has not reclaimed VWAP"
     )
