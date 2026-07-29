@@ -59,6 +59,7 @@ from mide.scanner_v2 import (
 memory_checkpoint("scanner import", object_name="mide.scanner_v2")
 from mide.memory import MemoryStore
 from mide.flight_recorder import FlightRecorder, prefilter_decision
+from mide.trade_outcomes import OUTCOME_LABELS
 memory_checkpoint("cache stores import", object_name="MemoryStore, FlightRecorder")
 from mide.runtime_evidence import (
     current_scan_export,
@@ -389,6 +390,7 @@ def symbol_export(symbol: str, store: MemoryStore, recorder: FlightRecorder) -> 
         "exported_at": datetime.now(timezone.utc).isoformat(),
         "candidate_history": store.history_for_symbol(symbol),
         "flight_recorder": recorder.history_for_symbol(symbol),
+        "trade_outcomes": recorder.outcomes.for_symbol(symbol),
     }
 
 
@@ -1384,6 +1386,7 @@ tabs = st.tabs(
         "Radar",
         "Diagnostics",
         "Session Replay",
+        "Trade Outcomes",
         "What changed",
         "Data validation",
         "Method",
@@ -1735,6 +1738,13 @@ with tabs[2]:
         replay = build_session_replay(
             symbol_export(replay_symbol, get_store(), get_flight_recorder())
         )
+        if replay["latest_outcome"]:
+            outcome = replay["latest_outcome"]
+            st.info(
+                f"Recorded outcome: {outcome['outcome']} · P/L "
+                f"{outcome.get('pl_pct') if outcome.get('pl_pct') is not None else 'N/A'}% · "
+                f"MFE {outcome.get('mfe', 'N/A')} · MAE {outcome.get('mae', 'N/A')}"
+            )
         if not replay["scans"]:
             st.info(f"No runtime history was retained for {replay_symbol}.")
         else:
@@ -1864,6 +1874,56 @@ with tabs[2]:
             )
 
 with tabs[3]:
+    st.subheader("Trade Outcome Feedback")
+    st.caption(
+        "Feedback is descriptive only. Walter provides recommendations and never "
+        "changes scanner thresholds automatically."
+    )
+    outcome_store = get_flight_recorder().outcomes
+    outcome_scan_time = (scan_diagnostics.get("flight_recorder") or {}).get("timestamp")
+    for alert_record in actionable_records:
+        outcome_store.register_alert(alert_record, timestamp=outcome_scan_time)
+    available_alerts = outcome_store.all()
+    if not available_alerts:
+        st.info("No alerts have been recorded yet.")
+    else:
+        labels = {
+            item["alert_id"]: f"{item['symbol']} · {item['alert_time']}"
+            for item in available_alerts
+        }
+        selected_id = st.selectbox("Alert", list(labels), format_func=labels.get)
+        selected = next(item for item in available_alerts if item["alert_id"] == selected_id)
+        with st.form("trade_outcome_form"):
+            outcome_label = st.selectbox(
+                "Outcome", OUTCOME_LABELS,
+                index=OUTCOME_LABELS.index(selected["outcome"])
+                if selected.get("outcome") in OUTCOME_LABELS else 0,
+            )
+            left, right = st.columns(2)
+            entry_price = left.number_input("Entry price", min_value=0.0, value=float(selected.get("entry_price") or 0), format="%.4f")
+            exit_price = right.number_input("Exit price", min_value=0.0, value=float(selected.get("exit_price") or 0), format="%.4f")
+            mfe = left.number_input("MFE (%)", value=float(selected.get("mfe") or 0), format="%.2f")
+            mae = right.number_input("MAE (%)", value=float(selected.get("mae") or 0), format="%.2f")
+            if st.form_submit_button("Save outcome"):
+                saved = outcome_store.mark(selected_id, outcome=outcome_label, entry_price=entry_price, exit_price=exit_price, mfe=mfe, mae=mae)
+                st.success(f"Saved {saved['outcome']} for {saved['symbol']} ({saved.get('pl_pct')}% P/L).")
+        st.download_button("Export Flight Recorder with outcomes", data=json.dumps(get_flight_recorder().export_with_outcomes(), indent=2), file_name="flight_recorder_with_outcomes.json", mime="application/json")
+    st.markdown("#### Observed win rates")
+    for dimension, groups in outcome_store.analytics().items():
+        st.write(f"**{dimension.replace('_', ' ').title()}**")
+        if groups:
+            st.dataframe(groups, hide_index=True, width="stretch")
+        else:
+            st.caption("No completed Winner/Loser trades yet.")
+    st.markdown("#### Recommendations")
+    recommendations = outcome_store.recommendations()
+    if recommendations:
+        for recommendation in recommendations:
+            st.info(recommendation)
+    else:
+        st.caption("At least five completed trades in a cohort are needed for a recommendation.")
+
+with tabs[4]:
     for record in sorted(
         records, key=lambda r: abs(r.get("velocity", 0)), reverse=True
     )[:15]:
@@ -1874,7 +1934,7 @@ with tabs[3]:
             f"{record.get('current_momentum', record['opportunity_score']):.1f} ({record.get('velocity', 0):+.1f})"
         )
 
-with tabs[4]:
+with tabs[5]:
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("Configured feed", settings.feed.upper())
     c2.metric("Ranked records", len(records))
@@ -1886,7 +1946,7 @@ with tabs[4]:
     for warning in api_warnings:
         st.warning(warning)
 
-with tabs[5]:
+with tabs[6]:
     st.markdown("""
 Scanner V1 is preserved as the classic technical screener. Scanner V2 is an adaptive momentum assistant: Walter rewards fresh catalysts, flat bases beginning to expand, increasing feed and dollar volume, RVOL, float turnover, acceleration and improvements versus the previous scan. VWAP, EMA65 and SuperTrend improve ranking and state progression, but they no longer eliminate promising discovery-stage candidates.
 
