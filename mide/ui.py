@@ -304,29 +304,93 @@ def rejected_candidate_records(records: list[dict]) -> list[dict]:
     return [record for record in records if not is_actionable_candidate(record)]
 
 
-def rejected_candidates_table(records: list[dict]) -> pd.DataFrame:
-    """Build a diagnostic table for rejected candidates without affecting ranking."""
-    rows = []
-    for record in rejected_candidate_records(records):
-        gate = record.get("participation_gate") or {}
-        failed_criteria = gate.get("failed_criteria") or []
+def _actual_and_required(evidence: list[str], result: str) -> tuple[str, str]:
+    """Extract display values from the decision engine's existing audit evidence."""
+    actual = next(
+        (
+            item.split(":", 1)[1].strip()
+            for item in evidence
+            if item.startswith("Actual:")
+        ),
+        "",
+    )
+    required = next(
+        (
+            item.split(":", 1)[1].strip()
+            for item in evidence
+            if item.startswith(("Limit:", "Range:"))
+        ),
+        "",
+    )
+    agreement = next((item for item in evidence if "categories agree" in item), "")
+    if agreement:
+        actual = agreement.split(" ", 1)[0]
+        required = ">= 3/5 categories agree"
+    return actual or result, required or "Pass"
+
+
+def rejection_diagnostics(
+    records: list[dict], stage2_rejections: list[dict] | None = None, *, timestamp=""
+) -> list[dict]:
+    """Normalize existing Stage 2+ failures into presentation-only audit rows."""
+    rows: list[dict] = []
+    for rejected in stage2_rejections or []:
+        evidence = list(rejected.get("evidence") or [])
+        actual, required = _actual_and_required(
+            evidence, str(rejected.get("result") or "")
+        )
         rows.append(
             {
-                "Symbol": record.get("symbol", ""),
-                "Candidate Status": record.get("candidate_status")
-                or record.get("status", ""),
-                "Rejection Reason": record.get("rejection_reason")
-                or gate.get("reason", ""),
-                "Failed Participation Gate Reasons": "; ".join(
-                    gate.get("failed_reasons") or []
-                ),
-                "Failed Measurements": "; ".join(
-                    f"{item.get('condition')}: {item.get('measured')} < {item.get('threshold')}"
-                    for item in failed_criteria
-                ),
+                "Symbol": str(rejected.get("symbol") or "").upper(),
+                "Stage": rejected.get("stage") or "Stage 2",
+                "Rule": rejected.get("reason") or "Unknown",
+                "Actual Value": actual,
+                "Required Threshold": required,
+                "Timestamp": timestamp,
             }
         )
-    return pd.DataFrame(rows)
+    for record in records:
+        if record.get("final_decision") != "Rejected":
+            continue
+        failed = next(
+            (
+                step
+                for step in reversed(record.get("decision_funnel") or [])
+                if not step.get("passed", True)
+            ),
+            {},
+        )
+        evidence = list(failed.get("evidence") or [])
+        actual, required = _actual_and_required(
+            evidence, str(failed.get("result") or "")
+        )
+        rows.append(
+            {
+                "Symbol": str(record.get("symbol") or "").upper(),
+                "Stage": record.get("current_stage")
+                or f"Stage {failed.get('stage', '')}".strip(),
+                "Rule": failed.get("category")
+                or record.get("rejection_reason")
+                or "Unknown",
+                "Actual Value": actual,
+                "Required Threshold": required,
+                "Timestamp": timestamp,
+            }
+        )
+    return rows
+
+
+def rejected_candidates_table(records: list[dict]) -> pd.DataFrame:
+    """Build the sortable, most-recent-first rejection diagnostics table."""
+    columns = [
+        "Symbol",
+        "Stage",
+        "Rule",
+        "Actual Value",
+        "Required Threshold",
+        "Timestamp",
+    ]
+    return pd.DataFrame(records[:100], columns=columns)
 
 
 def scanner_v2_dashboard_counts(records):

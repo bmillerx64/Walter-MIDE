@@ -5,6 +5,8 @@ from mide.ui import (
     market_session_quality_markup,
     opportunity_pulse,
     radar_table,
+    rejected_candidates_table,
+    rejection_diagnostics,
     state_sections,
     summary_reasons,
     walter_mission_control,
@@ -35,6 +37,57 @@ def sample_record(**overrides):
     }
     record.update(overrides)
     return record
+
+
+def test_rejection_diagnostics_combines_stage2_and_stage3_failures():
+    stage2 = [{
+        "symbol": "NCRA",
+        "stage": "Stage 2",
+        "reason": "Free Float",
+        "result": "Exceeds limit",
+        "evidence": ["Actual: 17.60M", "Limit: 3.50M"],
+    }]
+    stage3 = sample_record(
+        symbol="AMIX",
+        final_decision="Rejected",
+        current_stage="Stage 3",
+        decision_funnel=[{
+            "stage": 3,
+            "category": "Confluence",
+            "result": "45",
+            "passed": False,
+            "evidence": ["2/5 independent evidence categories agree"],
+        }],
+    )
+
+    rows = rejection_diagnostics(
+        [stage3], stage2, timestamp="2026-07-29T12:00:00+00:00"
+    )
+
+    assert rows == [
+        {
+            "Symbol": "NCRA", "Stage": "Stage 2", "Rule": "Free Float",
+            "Actual Value": "17.60M", "Required Threshold": "3.50M",
+            "Timestamp": "2026-07-29T12:00:00+00:00",
+        },
+        {
+            "Symbol": "AMIX", "Stage": "Stage 3", "Rule": "Confluence",
+            "Actual Value": "2/5", "Required Threshold": ">= 3/5 categories agree",
+            "Timestamp": "2026-07-29T12:00:00+00:00",
+        },
+    ]
+
+
+def test_rejected_candidates_table_caps_history_at_100():
+    rows = [{"Symbol": f"S{i}"} for i in range(105)]
+
+    table = rejected_candidates_table(rows)
+
+    assert len(table) == 100
+    assert list(table.columns) == [
+        "Symbol", "Stage", "Rule", "Actual Value", "Required Threshold", "Timestamp"
+    ]
+    assert table.iloc[-1]["Symbol"] == "S99"
 
 
 def test_market_session_quality_aggregates_existing_scanner_evidence():

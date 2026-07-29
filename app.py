@@ -84,8 +84,8 @@ from mide.ui import (
     scanner_v2_display_sections,
     scanner_v2_dashboard_counts,
     actionable_candidate_records,
-    rejected_candidate_records,
     rejected_candidates_table,
+    rejection_diagnostics,
     trader_priority_sort_key,
     render_walter_mission_control,
     render_early_setups,
@@ -482,6 +482,8 @@ session_defaults = {
     "active_early_setup_symbols": set(),
     "opportunity_feed_snapshot": {},
     "opportunity_feed_events": [],
+    "rejected_candidate_history": [],
+    "rejection_diagnostics_signature": (),
     ALERT_VOICE_SESSION_KEY: SYSTEM_DEFAULT_VOICE_ID,
     DAVID_AVAILABLE_SESSION_KEY: False,
     ACTIVE_VOICE_SESSION_KEY: SYSTEM_DEFAULT_VOICE_ID,
@@ -926,6 +928,10 @@ def _run_live_pipeline(
         "eligible": sum(record["eligible"] for record in records),
         "rejected": sum(record["final_decision"] == "Rejected" for record in records),
     }
+    rejection_timestamp = datetime.now().astimezone().isoformat(timespec="seconds")
+    client.diagnostics["rejected_candidates"] = rejection_diagnostics(
+        records, stage2_rejections, timestamp=rejection_timestamp
+    )
     wire_news_log = recent_wire_news_log(
         news_items,
         snapshots=snapshots,
@@ -1100,6 +1106,18 @@ records = st.session_state.records
 api_warnings = st.session_state.api_warnings
 scan_diagnostics = st.session_state.scan_diagnostics
 updated = st.session_state.last_updated
+current_rejections = scan_diagnostics.get("rejected_candidates", [])
+if current_rejections:
+    signature = tuple(
+        (row.get("Symbol"), row.get("Stage"), row.get("Rule"), row.get("Timestamp"))
+        for row in current_rejections
+    )
+    if signature != st.session_state.get("rejection_diagnostics_signature"):
+        st.session_state.rejected_candidate_history = (
+            list(current_rejections)
+            + list(st.session_state.get("rejected_candidate_history", []))
+        )[:100]
+        st.session_state.rejection_diagnostics_signature = signature
 updated_text = format_eastern_time(updated)
 clock = market_clock()
 
@@ -1109,7 +1127,7 @@ if records:
             st.markdown(decision_funnel_markup(record), unsafe_allow_html=True)
 
 actionable_records = actionable_candidate_records(records)
-rejected_records = rejected_candidate_records(records)
+rejected_records = st.session_state.get("rejected_candidate_history", [])
 display_records = (
     actionable_records
     if show_pass
@@ -1355,17 +1373,15 @@ with tabs[0]:
                 st.dataframe(
                     radar_table(sorted_records), width="stretch", hide_index=True
                 )
-        if rejected_records:
-            with st.expander(
-                f"REJECTED CANDIDATES ({len(rejected_records)})", expanded=False
-            ):
-                st.dataframe(
-                    rejected_candidates_table(rejected_records),
-                    width="stretch",
-                    hide_index=True,
-                )
-
 with tabs[1]:
+    st.subheader("Rejected Candidates")
+    st.caption(
+        "Most recent 100 Stage 2+ rejections. Select the Stage, Rule, or Symbol "
+        "column header to sort; this diagnostic view does not affect scanner decisions."
+    )
+    st.dataframe(
+        rejected_candidates_table(rejected_records), width="stretch", hide_index=True
+    )
     st.subheader("Free Float Cache")
     persistent_cache = cache_diagnostics_or_default(FreeFloatClient(""))
     cache_metrics = {
