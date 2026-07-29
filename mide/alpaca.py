@@ -182,6 +182,53 @@ class AlpacaClient:
             midpoint = len(cleaned) // 2
             return {**self.snapshots(cleaned[:midpoint]), **self.snapshots(cleaned[midpoint:])}
 
+    def free_float_probe(self, symbol: str = "NCRA") -> dict[str, object]:
+        """Return auditable evidence about Alpaca's raw snapshot float data.
+
+        This deliberately uses the same endpoint as the live scan.  The payload
+        is returned verbatim (it contains market data, not credentials), while
+        the remaining fields make a missing free-float value distinguishable
+        from a failed HTTP request.
+        """
+        ticker = str(symbol or "").strip().upper()
+        path = "/v2/stocks/snapshots"
+        params = {"symbols": ticker, "feed": self.feed}
+        float_names = {"float_shares", "shares_float", "free_float", "float_millions"}
+        try:
+            raw = self._get(self.DATA, path, params)
+        except Exception as exc:
+            return {
+                "provider": "Alpaca",
+                "endpoint": path,
+                "ticker": ticker,
+                "request_succeeded": False,
+                "error": str(exc),
+                "raw_response": None,
+                "json_fields": [],
+                "free_float_field_present": False,
+                "free_float_status": "UNKNOWN: request failed",
+            }
+
+        snapshot = raw.get(ticker) if isinstance(raw, dict) else None
+        snapshot = snapshot if isinstance(snapshot, dict) else {}
+        fields = sorted(snapshot)
+        present = sorted(float_names.intersection(fields))
+        return {
+            "provider": "Alpaca",
+            "endpoint": path,
+            "ticker": ticker,
+            "request_succeeded": True,
+            "raw_response": raw,
+            "json_fields": fields,
+            "free_float_field_present": bool(present),
+            "free_float_fields": present,
+            "free_float_status": (
+                "PRESENT: " + ", ".join(present)
+                if present
+                else "MISSING: Alpaca snapshot supplied no Free Float field"
+            ),
+        }
+
     def bars(self, symbols: Iterable[str], start: datetime, timeframe="1Min", limit=10000):
         cleaned = []
         for raw in symbols:
