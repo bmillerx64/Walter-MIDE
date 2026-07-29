@@ -1,7 +1,15 @@
-import json
 import inspect
+import json
+import logging
 
-from app import ALERT_VOICE_SESSION_KEY, alert_voice_for_session, run_live
+import pytest
+
+from app import (
+    ALERT_VOICE_SESSION_KEY,
+    alert_voice_for_session,
+    record_ncra_float_diagnostic,
+    run_live,
+)
 from mide.memory import MemoryStore
 
 
@@ -196,3 +204,49 @@ def test_system_default_voice_normalizes_to_browser_default_across_auto_scans():
     session_state = {ALERT_VOICE_SESSION_KEY: "System"}
 
     assert [alert_voice_for_session(session_state) for _ in range(2)] == ["", ""]
+
+
+def test_ncra_missing_float_diagnostic_never_aborts_scan(caplog):
+    class DiagnosticFailureClient:
+        def __init__(self):
+            self.warnings = []
+
+        def free_float_diagnostic(self, symbol):
+            raise TimeoutError("provider timed out")
+
+    client = DiagnosticFailureClient()
+    rejection = [{
+        "symbol": "NCRA",
+        "reason": "Free Float",
+        "result": "Unavailable",
+    }]
+
+    with caplog.at_level(logging.ERROR):
+        record_ncra_float_diagnostic(client, rejection)
+
+    assert "live scan continuing" in caplog.text
+    assert client.warnings == [
+        "NCRA free-float diagnostic unavailable; scan continued: provider timed out"
+    ]
+
+
+def test_run_live_logs_entire_pipeline_failure_and_closes_status(monkeypatch, caplog):
+    status = DummyStatus()
+    updates = []
+    status.update = lambda **kwargs: updates.append(kwargs)
+    monkeypatch.setattr("app.st.status", lambda *args, **kwargs: status)
+    monkeypatch.setattr(
+        "app._run_live_pipeline",
+        lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("stage exploded")),
+    )
+
+    with caplog.at_level(logging.ERROR), pytest.raises(RuntimeError, match="stage exploded"):
+        run_live()
+
+    assert "Live scan pipeline failed" in caplog.text
+    assert "Traceback" in caplog.text
+    assert updates == [{
+        "label": "Scan failed: RuntimeError: stage exploded",
+        "state": "error",
+        "expanded": True,
+    }]
