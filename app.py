@@ -729,6 +729,22 @@ def run_live(
     seeds, reasons = build_seed_symbols(client, settings, news_items)
     progress.progress(0.24, text=f"{len(seeds)} symbols discovered")
 
+    # Keep raw, provider-specific evidence for a stable known ticker.  This
+    # makes an absent Free Float field visible instead of folding it into the
+    # aggregate lookup-failure counter later in Stage 2.
+    if hasattr(client, "free_float_probe"):
+        float_probe = client.free_float_probe("NCRA")
+    else:
+        float_probe = {
+            "provider": "Alpaca",
+            "ticker": "NCRA",
+            "request_succeeded": False,
+            "free_float_field_present": False,
+            "free_float_status": "UNKNOWN: deployed client lacks free_float_probe",
+        }
+    client.diagnostics["free_float_provider_probe"] = float_probe
+    log("Free Float provider evidence: " + json.dumps(float_probe, separators=(",", ":")))
+
     for key, value in client.diagnostics.items():
         log(f"Discovery diagnostic: {key}={value}")
     for warning in client.warnings:
