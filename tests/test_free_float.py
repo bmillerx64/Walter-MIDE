@@ -1,9 +1,10 @@
 from unittest.mock import Mock, patch
+import json
 
 from mide.free_float import FreeFloatClient, enrich_snapshots_with_free_float
 
 
-def test_fmp_lookup_uses_float_shares_not_free_float_percentage():
+def test_fmp_lookup_uses_float_shares_not_free_float_percentage(tmp_path):
     response = Mock()
     response.raise_for_status.return_value = None
     response.json.return_value = [{
@@ -11,7 +12,9 @@ def test_fmp_lookup_uses_float_shares_not_free_float_percentage():
     }]
 
     with patch("mide.free_float.requests.get", return_value=response) as get:
-        values, errors = FreeFloatClient("key", max_workers=1).lookup_many(["ncra"])
+        values, errors = FreeFloatClient(
+            "key", max_workers=1, cache_path=tmp_path / "float.json"
+        ).lookup_many(["ncra"])
 
     assert values == {"NCRA": 1_300_000}
     assert errors == {}
@@ -44,16 +47,58 @@ def test_enrichment_adds_provider_reference_without_overwriting_existing_float()
     assert snapshots["KNOWN"]["float_shares"] == 900_000
 
 
-def test_fmp_lookup_reports_missing_float_as_failure():
+def test_fmp_lookup_reports_missing_float_as_failure(tmp_path):
     response = Mock()
     response.raise_for_status.return_value = None
     response.json.return_value = [{"symbol": "NCRA", "freeFloat": 62.4}]
 
     with patch("mide.free_float.requests.get", return_value=response):
-        values, errors = FreeFloatClient("key", max_workers=1).lookup_many(["NCRA"])
+        values, errors = FreeFloatClient(
+            "key", max_workers=1, cache_path=tmp_path / "float.json"
+        ).lookup_many(["NCRA"])
 
     assert values == {}
     assert errors == {"NCRA": "response contained no positive floatShares"}
+
+
+def test_fmp_float_cache_is_reused_across_client_instances(tmp_path):
+    response = Mock()
+    response.raise_for_status.return_value = None
+    response.json.return_value = [{"symbol": "NCRA", "floatShares": 1_300_000}]
+    cache_path = tmp_path / "float.json"
+
+    with patch("mide.free_float.requests.get", return_value=response) as get:
+        first = FreeFloatClient("key", max_workers=1, cache_path=cache_path)
+        second = FreeFloatClient("key", max_workers=1, cache_path=cache_path)
+        assert first.lookup_many(["NCRA"])[0] == {"NCRA": 1_300_000}
+        assert second.lookup_many(["NCRA"])[0] == {"NCRA": 1_300_000}
+
+    assert get.call_count == 1
+    assert first.requests_made == 1
+    assert second.requests_made == 0
+    assert second.cache_hits == 1
+
+
+def test_expired_fmp_float_cache_is_refreshed(tmp_path):
+    cache_path = tmp_path / "float.json"
+    cache_path.write_text(json.dumps({
+        "NCRA": {
+            "float_shares": 900_000,
+            "retrieved_at": "2000-01-01T00:00:00+00:00",
+        }
+    }))
+    response = Mock()
+    response.raise_for_status.return_value = None
+    response.json.return_value = [{"symbol": "NCRA", "floatShares": 1_300_000}]
+
+    with patch("mide.free_float.requests.get", return_value=response) as get:
+        client = FreeFloatClient("key", max_workers=1, cache_path=cache_path)
+        values, errors = client.lookup_many(["NCRA"])
+
+    assert values == {"NCRA": 1_300_000}
+    assert errors == {}
+    assert client.requests_made == 1
+    get.assert_called_once()
 from mide.alpaca import AlpacaClient
 from mide.discovery import snapshot_identity_records
 from mide.free_float import YahooFinanceFloatProvider

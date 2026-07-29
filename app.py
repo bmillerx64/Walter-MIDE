@@ -91,6 +91,7 @@ from mide.decision_engine import (
     evaluate as evaluate_decision_funnel,
     IdentityPolicy,
     stage2_filter,
+    identity_decision_without_float,
 )
 from mide.free_float_inspector import inspect_free_float
 from mide.free_float import FreeFloatClient, enrich_snapshots_with_free_float
@@ -749,19 +750,46 @@ def _run_live_pipeline(
             0.24 + 0.36 * (done / total), text=f"Snapshots {done}/{len(seeds)}"
         )
 
-    # Alpaca's snapshot schema is limited to trades, quotes, and OHLCV bars; it
-    # does not include free-float fundamentals.  Enrich only the snapshots that
-    # need float data with the configured reference-data provider before Stage 2.
+    policy = IdentityPolicy(settings.min_price, settings.max_price,
+                            settings.max_free_float, settings.include_etfs)
+    identity_records = snapshot_identity_records(snapshots)
+    # Run every local, inexpensive gate before requesting fundamentals. The
+    # authoritative Stage 2 gate below remains unchanged; this only narrows the
+    # symbols sent to FMP and the fallback provider.
+    cheap_gate_snapshots = {
+        record["symbol"]: snapshots[record["symbol"]]
+        for record in identity_records
+        if identity_decision_without_float(record, policy)
+    }
+    inexpensive_candidates = {
+        candidate["symbol"]
+        for candidate in prefilter_snapshots(cheap_gate_snapshots, settings)
+    }
+    float_snapshots = {
+        symbol: snapshots[symbol] for symbol in inexpensive_candidates
+    }
+
     fmp_api_key = get_secret("FMP_API_KEY") or get_secret(
         "FINANCIAL_MODELING_PREP_API_KEY"
     )
+    missing_before = sum(
+        not any(
+            record.get(key) is not None
+            for key in ("float_shares", "shares_float", "free_float", "float_millions")
+        )
+        for record in identity_records
+    )
+    client.diagnostics["fmp_requests_before_optimization"] = missing_before
     if fmp_api_key:
+        float_provider = FreeFloatClient(fmp_api_key, timeout=12)
         float_count, float_errors = enrich_snapshots_with_free_float(
-            snapshots, FreeFloatClient(fmp_api_key, timeout=12)
+            float_snapshots, float_provider
         )
         client.diagnostics["free_float_provider"] = "Financial Modeling Prep"
         client.diagnostics["free_float_enriched"] = float_count
         client.diagnostics["free_float_provider_failures"] = len(float_errors)
+        client.diagnostics["fmp_requests_this_scan"] = float_provider.requests_made
+        client.diagnostics["fmp_float_cache_hits"] = float_provider.cache_hits
         if float_errors:
             sample = ", ".join(sorted(float_errors)[:5])
             client.warnings.append(
@@ -773,17 +801,20 @@ def _run_live_pipeline(
         client.warnings.append(
             "FMP_API_KEY is not configured; Stage 2 free-float lookups cannot be enriched"
         )
+        client.diagnostics["fmp_requests_this_scan"] = 0
+        client.diagnostics["fmp_float_cache_hits"] = 0
+    log(
+        "FMP requests per scan: "
+        f"before={client.diagnostics['fmp_requests_before_optimization']} "
+        f"after={client.diagnostics['fmp_requests_this_scan']} "
+        f"cache_hits={client.diagnostics['fmp_float_cache_hits']}"
+    )
 
-    policy = IdentityPolicy(settings.min_price, settings.max_price,
-                            settings.max_free_float, settings.include_etfs)
     # Alpaca snapshots intentionally contain real-time market fields, not
     # fundamental share statistics.  Ask the fallback only for symbols which
     # have already passed the price range so the provider is not needlessly
     # queried for the whole discovery universe.
-    price_qualified = [
-        record["symbol"] for record in snapshot_identity_records(snapshots)
-        if policy.min_price <= record["price"] <= policy.max_price
-    ]
+    price_qualified = sorted(inexpensive_candidates)
     if hasattr(client, "enrich_free_float"):
         try:
             client.enrich_free_float(snapshots, price_qualified)

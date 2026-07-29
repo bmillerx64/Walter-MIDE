@@ -9,6 +9,10 @@ reference data before applying the identity gate.
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import datetime, timedelta, timezone
+import json
+import os
+from pathlib import Path
 from threading import Lock
 from typing import Iterable, Protocol
 
@@ -31,14 +35,70 @@ class FreeFloatClient:
     BASE_URL = "https://financialmodelingprep.com/stable"
     provider_name = "Financial Modeling Prep"
 
-    def __init__(self, api_key: str, timeout: int = 12, max_workers: int = 8):
+    def __init__(
+        self,
+        api_key: str,
+        timeout: int = 12,
+        max_workers: int = 8,
+        *,
+        cache_path: str | Path | None = None,
+        cache_ttl: timedelta = timedelta(hours=24),
+    ):
         self.api_key = str(api_key or "").strip()
         self.timeout = timeout
         self.max_workers = max(1, int(max_workers))
+        default_path = Path.home() / ".cache" / "walter-mide" / "fmp-float.json"
+        self.cache_path = Path(
+            cache_path or os.getenv("FMP_FLOAT_CACHE_PATH") or default_path
+        )
+        self.cache_ttl = cache_ttl
+        self.requests_made = 0
+        self.cache_hits = 0
+        self._cache_lock = Lock()
+
+    def _read_cache(self) -> dict[str, dict]:
+        try:
+            payload = json.loads(self.cache_path.read_text())
+            return payload if isinstance(payload, dict) else {}
+        except (OSError, ValueError):
+            return {}
+
+    def _write_cache(self, cache: dict[str, dict]) -> None:
+        """Persist successful lookups atomically; cache failure never stops a scan."""
+        try:
+            self.cache_path.parent.mkdir(parents=True, exist_ok=True)
+            temporary = self.cache_path.with_suffix(self.cache_path.suffix + ".tmp")
+            temporary.write_text(json.dumps(cache, sort_keys=True))
+            temporary.replace(self.cache_path)
+        except OSError:
+            return
+
+    def _cached_values(self, tickers: list[str]) -> tuple[dict[str, float], list[str]]:
+        now = datetime.now(timezone.utc)
+        cache = self._read_cache()
+        values: dict[str, float] = {}
+        missing: list[str] = []
+        for ticker in tickers:
+            entry = cache.get(ticker) or {}
+            try:
+                retrieved_at = datetime.fromisoformat(str(entry["retrieved_at"]))
+                shares = float(entry["float_shares"])
+                fresh = now - retrieved_at.astimezone(timezone.utc) < self.cache_ttl
+            except (KeyError, TypeError, ValueError):
+                fresh = False
+                shares = 0
+            if fresh and shares > 0:
+                values[ticker] = shares
+            else:
+                missing.append(ticker)
+        self.cache_hits = len(values)
+        return values, missing
 
     def _lookup(self, symbol: str) -> tuple[str, float | None, str | None]:
         ticker = str(symbol).strip().upper()
         try:
+            with self._cache_lock:
+                self.requests_made += 1
             response = requests.get(
                 f"{self.BASE_URL}/shares-float",
                 params={"symbol": ticker, "apikey": self.api_key},
@@ -62,18 +122,28 @@ class FreeFloatClient:
                 str(symbol or "").strip().upper() for symbol in symbols if symbol
             )
         )
-        values: dict[str, float] = {}
+        values, uncached = self._cached_values(tickers)
         errors: dict[str, str] = {}
-        if not self.api_key or not tickers:
+        if not self.api_key or not uncached:
             return values, errors
-        with ThreadPoolExecutor(max_workers=min(self.max_workers, len(tickers))) as pool:
-            futures = {pool.submit(self._lookup, ticker): ticker for ticker in tickers}
+        with ThreadPoolExecutor(max_workers=min(self.max_workers, len(uncached))) as pool:
+            futures = {pool.submit(self._lookup, ticker): ticker for ticker in uncached}
             for future in as_completed(futures):
                 ticker, shares, error = future.result()
                 if shares is not None:
                     values[ticker] = shares
                 elif error:
                     errors[ticker] = error
+        if values:
+            cache = self._read_cache()
+            retrieved_at = datetime.now(timezone.utc).isoformat()
+            for ticker in uncached:
+                if ticker in values:
+                    cache[ticker] = {
+                        "float_shares": values[ticker],
+                        "retrieved_at": retrieved_at,
+                    }
+            self._write_cache(cache)
         return values, errors
 
 

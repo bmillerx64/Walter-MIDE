@@ -75,7 +75,9 @@ def _log_free_float_diagnostic(
     logger.info("\n".join(lines))
 
 
-def identity_decision(record: dict, policy: IdentityPolicy) -> tuple[bool, list[dict]]:
+def identity_decision(
+    record: dict, policy: IdentityPolicy, *, evaluate_float: bool = True
+) -> tuple[bool, list[dict]]:
     """Apply Stage 2's non-negotiable filters in their mandated order."""
     audit: list[dict] = []
     symbol = str(record.get("symbol") or "").upper()
@@ -103,6 +105,9 @@ def identity_decision(record: dict, policy: IdentityPolicy) -> tuple[bool, list[
         return False, audit
     audit.append(_step(2, "Price", "Passed", evidence=[f"${price:.2f}"]))
 
+    if not evaluate_float:
+        return True, audit
+
     shares, float_source, lookup_reason = _free_float_lookup(record)
     _log_free_float_diagnostic(
         symbol, price, shares, float_source, lookup_reason, policy
@@ -114,6 +119,12 @@ def identity_decision(record: dict, policy: IdentityPolicy) -> tuple[bool, list[
         return False, audit
     audit.append(_step(2, "Free Float", "Passed", evidence=[f"{shares / 1_000_000:.2f}M"]))
     return True, audit
+
+
+def identity_decision_without_float(record: dict, policy: IdentityPolicy) -> bool:
+    """Return whether a record passes Stage 2's cheap gates, without float I/O."""
+    passed, _audit = identity_decision(record, policy, evaluate_float=False)
+    return passed
 
 
 def stage2_filter(records: Iterable[dict], policy: IdentityPolicy | None = None) -> tuple[list[dict], list[dict], dict]:
