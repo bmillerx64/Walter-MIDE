@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+from mide.startup_memory import checkpoint as memory_checkpoint
+
+memory_checkpoint("app.py bootstrap")
+
 from datetime import datetime, timezone, timedelta
 import html
 import importlib
@@ -7,7 +11,10 @@ import json
 import logging
 import platform
 import sys
+memory_checkpoint("app.py standard-library imports")
+
 import streamlit as st
+memory_checkpoint("streamlit import", object_name="streamlit module graph")
 
 
 def repair_mide_module_links() -> None:
@@ -31,9 +38,11 @@ def repair_mide_module_links() -> None:
 
 
 repair_mide_module_links()
+memory_checkpoint("mide package repair")
 
 from mide.config import Settings
 from mide.alpaca import AlpacaClient, AlpacaError, credential_status
+memory_checkpoint("providers import", object_name="mide.alpaca")
 from mide.news import index_news, recent_wire_news_log
 from mide.discovery import (
     analyze_candidates,
@@ -41,13 +50,16 @@ from mide.discovery import (
     prefilter_snapshots,
     snapshot_identity_records,
 )
+memory_checkpoint("discovery import", object_name="mide.discovery")
 from mide.scanner_v2 import (
     apply_scanner_v2,
     participation_gate_rejection_diagnostics,
     strengthening_diagnostics,
 )
+memory_checkpoint("scanner import", object_name="mide.scanner_v2")
 from mide.memory import MemoryStore
 from mide.flight_recorder import FlightRecorder
+memory_checkpoint("cache stores import", object_name="MemoryStore, FlightRecorder")
 from mide.runtime_evidence import (
     current_scan_export,
     json_bytes,
@@ -57,6 +69,7 @@ from mide.runtime_evidence import (
     symbol_summary,
 )
 from mide.session_replay import build_session_replay
+memory_checkpoint("runtime evidence imports")
 from mide.demo import demo_records
 from mide.escalation import (
     escalation_alert_phrase,
@@ -83,6 +96,7 @@ from mide.ui import (
     market_session_quality_markup,
     walter_mission_control,
 )
+memory_checkpoint("UI import", object_name="mide.ui")
 from mide.live_opportunity_feed import update_opportunity_feed
 from mide.early_setup import newly_entered_symbols
 from mide.time_service import format_eastern_time, market_clock, market_phase_at
@@ -93,9 +107,11 @@ from mide.decision_engine import (
     identity_decision,
     stage2_filter,
 )
+memory_checkpoint("decision engine import", object_name="mide.decision_engine")
 from mide.free_float_inspector import inspect_free_float
 from mide.free_float import FreeFloatClient, enrich_snapshots_with_free_float
 from mide.version import BUILD
+memory_checkpoint("remaining providers and application imports")
 
 SYSTEM_DEFAULT_VOICE_ID = "__system_default__"
 DEFAULT_VOICE = "System Default"
@@ -287,6 +303,7 @@ def scan_alert_phrase(records: list[dict]) -> str:
 
 st.set_page_config(page_title="Walter • MIDE Radar", page_icon="🛰", layout="wide")
 inject_css()
+memory_checkpoint("Streamlit page initialization", object_name="page config and CSS")
 
 
 def log(message: str) -> None:
@@ -296,7 +313,9 @@ def log(message: str) -> None:
 
 @st.cache_resource
 def get_store() -> MemoryStore:
-    return MemoryStore()
+    store = MemoryStore()
+    memory_checkpoint("candidate cache initialization", object_name="MemoryStore")
+    return store
 
 
 @st.cache_resource
@@ -305,7 +324,9 @@ def get_flight_recorder() -> FlightRecorder:
     # pre-deployment FlightRecorder class captured by this app module.
     repair_mide_module_links()
     recorder_class = importlib.import_module("mide.flight_recorder").FlightRecorder
-    return recorder_class()
+    recorder = recorder_class()
+    memory_checkpoint("flight recorder cache initialization", object_name="FlightRecorder")
+    return recorder
 
 
 def record_scan_safely(recorder, *, recent_news_log=None, **scan_data):
@@ -428,6 +449,7 @@ def secrets_mapping() -> dict:
 
 
 settings = Settings.from_mapping(secrets_mapping())
+memory_checkpoint("settings initialization", object_name="Settings")
 
 mission_header_slot = st.empty()
 market_session_slot = st.empty()
@@ -437,6 +459,7 @@ opportunity_feed_slot = st.empty()
 escalation_engine_slot = st.empty()
 system_status_panel = st.expander("System Status", expanded=False)
 scan_runtime_slot = system_status_panel.container()
+memory_checkpoint("dashboard container initialization", object_name="Streamlit DeltaGenerators")
 
 session_defaults = {
     "records": [],
@@ -463,6 +486,7 @@ session_defaults = {
 for key, default in session_defaults.items():
     if key not in st.session_state:
         st.session_state[key] = default
+memory_checkpoint("session cache initialization", object_name="st.session_state")
 persisted_alert_voice()
 
 with st.sidebar:
@@ -705,6 +729,7 @@ def _run_live_pipeline(
     client_factory = client_factory or alpaca_module.AlpacaClient
     credential_checker = credential_checker or alpaca_module.credential_status
     client = client_factory(api_key, secret, feed=settings.feed, timeout=12)
+    memory_checkpoint("market provider initialization", object_name=type(client).__name__)
     try:
         environment = credential_checker(client)
         status.write(f"Alpaca credentials accepted ({environment} environment)")
@@ -782,6 +807,7 @@ def _run_live_pipeline(
     client.diagnostics["fmp_requests_before_optimization"] = missing_before
     if fmp_api_key:
         float_provider = FreeFloatClient(fmp_api_key, timeout=12)
+        memory_checkpoint("free-float provider initialization", object_name="FreeFloatClient")
         float_count, float_errors = enrich_snapshots_with_free_float(
             float_snapshots, float_provider
         )

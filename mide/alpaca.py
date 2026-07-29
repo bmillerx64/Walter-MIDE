@@ -4,9 +4,15 @@ from typing import Iterable
 import csv
 import io
 import requests
+from .startup_memory import checkpoint as memory_checkpoint
+
+memory_checkpoint("HTTP provider dependency import", object_name="requests")
+
 import pandas as pd
+memory_checkpoint("dataframe dependency import", object_name="pandas")
 
 from .free_float import YahooFinanceFloatProvider
+memory_checkpoint("free-float fallback import", object_name="YahooFinanceFloatProvider")
 
 
 class AlpacaError(RuntimeError):
