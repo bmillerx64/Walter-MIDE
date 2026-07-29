@@ -683,9 +683,34 @@ def arm_live_clock_engine(
     )
 
 
-def run_live(
+def record_ncra_float_diagnostic(client, stage2_rejections: list[dict]) -> None:
+    """Record NCRA's missing-float evidence without making it scan-fatal."""
+    ncra_lookup_failure = next((
+        rejection for rejection in stage2_rejections
+        if rejection.get("symbol") == "NCRA"
+        and rejection.get("reason") == "Free Float"
+        and rejection.get("result") == "Unavailable"
+    ), None)
+    if not ncra_lookup_failure:
+        return
+    try:
+        diagnostic = client.free_float_diagnostic("NCRA")
+        log("NCRA FREE FLOAT DIAGNOSTIC: " + json.dumps(
+            diagnostic, sort_keys=True, separators=(",", ":"), default=str
+        ))
+    except Exception as exc:
+        logging.getLogger(__name__).exception(
+            "NCRA free-float diagnostic failed; live scan continuing"
+        )
+        client.warnings.append(
+            f"NCRA free-float diagnostic unavailable; scan continued: {exc}"
+        )
+
+
+def _run_live_pipeline(
     scanner_version: str = "Decision Funnel 3.0",
     *,
+    status,
     client_factory=None,
     credential_checker=None,
 ):
@@ -702,8 +727,6 @@ def run_live(
     client_factory = client_factory or alpaca_module.AlpacaClient
     credential_checker = credential_checker or alpaca_module.credential_status
     client = client_factory(api_key, secret, feed=settings.feed, timeout=12)
-    with scan_runtime_slot:
-        status = st.status("Walter is scanning…", expanded=True)
     try:
         environment = credential_checker(client)
         status.write(f"Alpaca credentials accepted ({environment} environment)")
@@ -770,21 +793,10 @@ def run_live(
     eligible_identities, stage2_rejections, funnel_counts = stage2_filter(
         snapshot_identity_records(snapshots), policy
     )
-    ncra_lookup_failure = next((
-        rejection for rejection in stage2_rejections
-        if rejection.get("symbol") == "NCRA"
-        and rejection.get("reason") == "Free Float"
-        and rejection.get("result") == "Unavailable"
-    ), None)
-    if ncra_lookup_failure:
-        diagnostic = client.free_float_diagnostic("NCRA")
-        log("NCRA FREE FLOAT DIAGNOSTIC: " + json.dumps(
-            diagnostic, sort_keys=True, separators=(",", ":"), default=str
-        ))
-        raise AlpacaError(
-            "Stage 3 halted after completing the NCRA free-float diagnostic: "
-            + str(diagnostic.get("failure_reason") or "lookup unexpectedly succeeded")
-        )
+    # A missing float field is an expected provider-data limitation, not a
+    # reason to abort every scan containing NCRA.  Preserve the diagnostic
+    # evidence, but keep the symbol in the ordinary rejection path.
+    record_ncra_float_diagnostic(client, stage2_rejections)
     eligible_symbols = {record["symbol"] for record in eligible_identities}
     eligible_snapshots = {
         symbol: snapshot for symbol, snapshot in snapshots.items()
@@ -902,6 +914,46 @@ def run_live(
         list(client.warnings),
         dict(client.diagnostics),
     )
+
+
+def run_live(
+    scanner_version: str = "Decision Funnel 3.0",
+    *,
+    client_factory=None,
+    credential_checker=None,
+):
+    """Run and report the complete live pipeline without leaving a LIVE spinner.
+
+    This boundary deliberately covers status creation as well as every discovery,
+    market-data, analysis, and persistence stage.  Callers still receive the
+    original exception so the watchdog can retry it, while both the traceback and
+    terminal UI state are recorded for each failed attempt.
+    """
+    status = None
+    try:
+        with scan_runtime_slot:
+            status = st.status("Walter is scanning…", expanded=True)
+        return _run_live_pipeline(
+            scanner_version,
+            status=status,
+            client_factory=client_factory,
+            credential_checker=credential_checker,
+        )
+    except Exception as exc:
+        logging.getLogger(__name__).exception("Live scan pipeline failed")
+        log(f"Live scan pipeline failed: {type(exc).__name__}: {exc}")
+        if status is not None:
+            try:
+                status.update(
+                    label=f"Scan failed: {type(exc).__name__}: {exc}",
+                    state="error",
+                    expanded=True,
+                )
+            except Exception:
+                logging.getLogger(__name__).exception(
+                    "Could not update failed live-scan status"
+                )
+        raise
 
 
 should_scan = False
