@@ -163,6 +163,7 @@ class FreeFloatClient:
         except (OSError, sqlite3.Error):
             rows = {}
         ages = []
+        hits = 0
         for ticker in tickers:
             row = rows.get(ticker)
             if row:
@@ -172,6 +173,7 @@ class FreeFloatClient:
                     ttl = self.failure_ttl if error else self.cache_ttl
                     if age < ttl:
                         ages.append(age.total_seconds())
+                        hits += 1
                         if error:
                             self._cached_errors[ticker] = error
                         elif shares and shares > 0:
@@ -180,11 +182,22 @@ class FreeFloatClient:
                 except (TypeError, ValueError):
                     pass
             missing.append(ticker)
-        self.cache_hits = len(values)
-        self.cache_misses = len(missing)
-        self.requests_avoided = len(values) + len(self._cached_errors)
+        # A fresh cached failure is also a served lookup: it prevents another
+        # provider request just as a cached float does. Keep hits and avoided
+        # in lockstep so both counters describe cache-served lookups.
+        self.cache_hits += hits
+        self.cache_misses += len(missing)
+        self.requests_avoided += hits
         self.cache_age_seconds = max(ages) if ages else None
         return values, missing
+
+    def _reset_scan_diagnostics(self) -> None:
+        """Reset per-scan counters once, before any cache lookup occurs."""
+        self.requests_made = 0
+        self.cache_hits = 0
+        self.cache_misses = 0
+        self.requests_avoided = 0
+        self.cache_age_seconds = None
 
     def cache_diagnostics(self) -> FreeFloatCacheDiagnostics:
         """Return cache inventory without changing cache counters or fetching data."""
@@ -245,7 +258,7 @@ class FreeFloatClient:
     def lookup_many(self, symbols: Iterable[str]) -> tuple[dict[str, float], dict[str, str]]:
         """Return successful float-share values and per-symbol lookup errors."""
         # Diagnostics describe this scan, rather than the lifetime of this object.
-        self.requests_made = 0
+        self._reset_scan_diagnostics()
         tickers = list(
             dict.fromkeys(
                 str(symbol or "").strip().upper() for symbol in symbols if symbol
