@@ -109,7 +109,11 @@ from mide.decision_engine import (
 )
 memory_checkpoint("decision engine import", object_name="mide.decision_engine")
 from mide.free_float_inspector import inspect_free_float
-from mide.free_float import FreeFloatClient, enrich_snapshots_with_free_float
+from mide.free_float import (
+    FreeFloatClient,
+    YahooFinanceFloatProvider,
+    enrich_snapshots_with_free_float,
+)
 from mide.version import BUILD
 memory_checkpoint("remaining providers and application imports")
 
@@ -816,6 +820,18 @@ def _run_live_pipeline(
         client.diagnostics["free_float_provider_failures"] = len(float_errors)
         client.diagnostics["fmp_requests_this_scan"] = float_provider.requests_made
         client.diagnostics["fmp_float_cache_hits"] = float_provider.cache_hits
+        cache_diagnostics = float_provider.cache_diagnostics()
+        client.diagnostics["fmp_float_cache_misses"] = cache_diagnostics.cache_misses
+        client.diagnostics["fmp_float_cached_symbols"] = (
+            cache_diagnostics.cached_symbols
+        )
+        client.diagnostics["fmp_requests_avoided"] = cache_diagnostics.requests_avoided
+        client.diagnostics["fmp_float_cache_oldest_entry"] = (
+            cache_diagnostics.oldest_entry
+        )
+        client.diagnostics["fmp_float_cache_newest_entry"] = (
+            cache_diagnostics.newest_entry
+        )
         if float_errors:
             sample = ", ".join(sorted(float_errors)[:5])
             client.warnings.append(
@@ -829,6 +845,18 @@ def _run_live_pipeline(
         )
         client.diagnostics["fmp_requests_this_scan"] = 0
         client.diagnostics["fmp_float_cache_hits"] = 0
+        cache_diagnostics = FreeFloatClient("").cache_diagnostics()
+        client.diagnostics["fmp_float_cache_misses"] = 0
+        client.diagnostics["fmp_float_cached_symbols"] = (
+            cache_diagnostics.cached_symbols
+        )
+        client.diagnostics["fmp_requests_avoided"] = 0
+        client.diagnostics["fmp_float_cache_oldest_entry"] = (
+            cache_diagnostics.oldest_entry
+        )
+        client.diagnostics["fmp_float_cache_newest_entry"] = (
+            cache_diagnostics.newest_entry
+        )
     log(
         "FMP requests per scan: "
         f"before={client.diagnostics['fmp_requests_before_optimization']} "
@@ -1335,6 +1363,32 @@ with tabs[0]:
                 )
 
 with tabs[1]:
+    st.subheader("Free Float Cache")
+    persistent_cache = FreeFloatClient("").cache_diagnostics()
+    cache_metrics = {
+        "Cache Hits": scan_diagnostics.get("fmp_float_cache_hits", 0),
+        "Cache Misses": scan_diagnostics.get("fmp_float_cache_misses", 0),
+        "Cached Symbols": scan_diagnostics.get(
+            "fmp_float_cached_symbols", persistent_cache.cached_symbols
+        ),
+        "FMP Requests Made": scan_diagnostics.get("fmp_requests_this_scan", 0),
+        "FMP Requests Avoided": scan_diagnostics.get("fmp_requests_avoided", 0),
+        "Oldest Cache Entry": scan_diagnostics.get(
+            "fmp_float_cache_oldest_entry", persistent_cache.oldest_entry
+        ) or "—",
+        "Newest Cache Entry": scan_diagnostics.get(
+            "fmp_float_cache_newest_entry", persistent_cache.newest_entry
+        ) or "—",
+    }
+    st.caption(
+        "Request counters describe the most recent scan; inventory describes "
+        "today's persistent cache."
+    )
+    metric_columns = st.columns(3)
+    for index, (label, value) in enumerate(cache_metrics.items()):
+        metric_columns[index % 3].metric(label, value)
+
+    st.divider()
     st.subheader("Free Float Inspector")
     st.caption(
         "Temporary diagnostic: inspect the provider's raw float-related fields "
@@ -1362,18 +1416,28 @@ with tabs[1]:
                 },
                 "computed_free_float": None,
                 "computed_from": None,
+                "source": None,
+                "cache_status": "Cache was not checked because FMP_API_KEY is not configured.",
+                "cache_bypassed": False,
                 "error": "FMP_API_KEY is not configured.",
             }
         else:
             inspector_provider = FreeFloatClient(fmp_api_key, timeout=12)
             st.session_state.free_float_inspection = inspect_free_float(
-                inspector_provider, float_ticker
+                inspector_provider,
+                float_ticker,
+                YahooFinanceFloatProvider(timeout=12, max_workers=1),
             ).as_dict()
 
     float_result = st.session_state.free_float_inspection
     if float_result:
         st.markdown(f"**Ticker:** `{float_result['ticker'] or '—'}`")
         st.markdown(f"**Provider:** {float_result['provider']}")
+        st.markdown(f"**Source:** {float_result.get('source') or 'Unavailable'}")
+        if float_result.get("cache_status"):
+            st.info(float_result["cache_status"])
+        if float_result.get("cache_bypassed"):
+            st.warning("This live FMP request intentionally bypassed the cache.")
         request_label = "SUCCESS" if float_result["request_succeeded"] else "FAILED"
         (st.success if float_result["request_succeeded"] else st.error)(
             f"API Request: {request_label}"

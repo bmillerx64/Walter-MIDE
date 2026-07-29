@@ -88,6 +88,15 @@ def test_fmp_float_cache_is_reused_across_client_instances(tmp_path):
     assert second.requests_made == 0
     assert second.cache_hits == 1
 
+    diagnostics = second.cache_diagnostics()
+    assert diagnostics.cached_symbols == 1
+    assert diagnostics.cache_hits == 1
+    assert diagnostics.cache_misses == 0
+    assert diagnostics.requests_made == 0
+    assert diagnostics.requests_avoided == 1
+    assert diagnostics.oldest_entry is not None
+    assert diagnostics.newest_entry == diagnostics.oldest_entry
+
 
 def test_expired_fmp_float_cache_is_refreshed(tmp_path):
     cache_path = tmp_path / "float.json"

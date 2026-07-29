@@ -9,6 +9,7 @@ reference data before applying the identity gate.
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 import logging
 import os
@@ -32,6 +33,19 @@ class FreeFloatProvider(Protocol):
     def lookup_many(
         self, symbols: Iterable[str]
     ) -> tuple[dict[str, float], dict[str, str]]: ...
+
+
+@dataclass(frozen=True)
+class FreeFloatCacheDiagnostics:
+    """Read-only snapshot of the persistent FMP cache and request counters."""
+
+    cache_hits: int
+    cache_misses: int
+    cached_symbols: int
+    requests_made: int
+    requests_avoided: int
+    oldest_entry: str | None
+    newest_entry: str | None
 
 
 class FreeFloatClient:
@@ -151,6 +165,34 @@ class FreeFloatClient:
         self.requests_avoided = len(values) + len(self._cached_errors)
         self.cache_age_seconds = max(ages) if ages else None
         return values, missing
+
+    def cache_diagnostics(self) -> FreeFloatCacheDiagnostics:
+        """Return cache inventory without changing cache counters or fetching data."""
+        cached_symbols = 0
+        oldest_entry = None
+        newest_entry = None
+        try:
+            with self._connect() as connection:
+                row = connection.execute(
+                    "SELECT COUNT(DISTINCT ticker), MIN(retrieved_at), MAX(retrieved_at) "
+                    "FROM float_cache WHERE trading_date = ?",
+                    (self._trading_date().isoformat(),),
+                ).fetchone()
+            if row:
+                cached_symbols = int(row[0] or 0)
+                oldest_entry = row[1]
+                newest_entry = row[2]
+        except (OSError, sqlite3.Error):
+            logger.warning("Unable to inspect FMP float cache", exc_info=True)
+        return FreeFloatCacheDiagnostics(
+            cache_hits=self.cache_hits,
+            cache_misses=self.cache_misses,
+            cached_symbols=cached_symbols,
+            requests_made=self.requests_made,
+            requests_avoided=self.requests_avoided,
+            oldest_entry=oldest_entry,
+            newest_entry=newest_entry,
+        )
 
     def _lookup(self, symbol: str) -> tuple[str, float | None, str | None]:
         ticker = str(symbol).strip().upper()
