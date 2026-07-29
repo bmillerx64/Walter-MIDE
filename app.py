@@ -684,30 +684,6 @@ def arm_live_clock_engine(
     )
 
 
-def record_ncra_float_diagnostic(client, stage2_rejections: list[dict]) -> None:
-    """Record NCRA's missing-float evidence without making it scan-fatal."""
-    ncra_lookup_failure = next((
-        rejection for rejection in stage2_rejections
-        if rejection.get("symbol") == "NCRA"
-        and rejection.get("reason") == "Free Float"
-        and rejection.get("result") == "Unavailable"
-    ), None)
-    if not ncra_lookup_failure:
-        return
-    try:
-        diagnostic = client.free_float_diagnostic("NCRA")
-        log("NCRA FREE FLOAT DIAGNOSTIC: " + json.dumps(
-            diagnostic, sort_keys=True, separators=(",", ":"), default=str
-        ))
-    except Exception as exc:
-        logging.getLogger(__name__).exception(
-            "NCRA free-float diagnostic failed; live scan continuing"
-        )
-        client.warnings.append(
-            f"NCRA free-float diagnostic unavailable; scan continued: {exc}"
-        )
-
-
 def _run_live_pipeline(
     scanner_version: str = "Decision Funnel 3.0",
     *,
@@ -752,22 +728,6 @@ def _run_live_pipeline(
     status.write("2/5 Building discovery universe")
     seeds, reasons = build_seed_symbols(client, settings, news_items)
     progress.progress(0.24, text=f"{len(seeds)} symbols discovered")
-
-    # Keep raw, provider-specific evidence for a stable known ticker.  This
-    # makes an absent Free Float field visible instead of folding it into the
-    # aggregate lookup-failure counter later in Stage 2.
-    if hasattr(client, "free_float_probe"):
-        float_probe = client.free_float_probe("NCRA")
-    else:
-        float_probe = {
-            "provider": "Alpaca",
-            "ticker": "NCRA",
-            "request_succeeded": False,
-            "free_float_field_present": False,
-            "free_float_status": "UNKNOWN: deployed client lacks free_float_probe",
-        }
-    client.diagnostics["free_float_provider_probe"] = float_probe
-    log("Free Float provider evidence: " + json.dumps(float_probe, separators=(",", ":")))
 
     for key, value in client.diagnostics.items():
         log(f"Discovery diagnostic: {key}={value}")
@@ -832,10 +792,6 @@ def _run_live_pipeline(
     eligible_identities, stage2_rejections, funnel_counts = stage2_filter(
         snapshot_identity_records(snapshots), policy
     )
-    # A missing float field is an expected provider-data limitation, not a
-    # reason to abort every scan containing NCRA.  Preserve the diagnostic
-    # evidence, but keep the symbol in the ordinary rejection path.
-    record_ncra_float_diagnostic(client, stage2_rejections)
     eligible_symbols = {record["symbol"] for record in eligible_identities}
     eligible_snapshots = {
         symbol: snapshot for symbol, snapshot in snapshots.items()

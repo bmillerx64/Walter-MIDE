@@ -9,6 +9,7 @@ reference data before applying the identity gate.
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from threading import Lock
 from typing import Iterable
 
 import requests
@@ -103,11 +104,39 @@ class YahooFinanceFloatProvider:
     """
 
     BASE_URL = "https://query2.finance.yahoo.com"
+    COOKIE_URL = "https://fc.yahoo.com"
     provider_name = "Yahoo Finance defaultKeyStatistics"
 
     def __init__(self, timeout: int = 12, max_workers: int = 8):
         self.timeout = timeout
         self.max_workers = max_workers
+        self.session = requests.Session()
+        self.session.headers.update(
+            {"User-Agent": "Mozilla/5.0 (Walter-MIDE free-float lookup)"}
+        )
+        self._crumb: str | None = None
+        self._crumb_lock = Lock()
+
+    def _get_crumb(self) -> str:
+        """Establish Yahoo's cookie and CSRF crumb once for the whole batch."""
+        if self._crumb:
+            return self._crumb
+        with self._crumb_lock:
+            if self._crumb:
+                return self._crumb
+            # Yahoo's cookie bootstrap URL commonly returns a non-2xx landing
+            # response while still setting the session cookie, so only the
+            # subsequent crumb response determines whether setup succeeded.
+            self.session.get(self.COOKIE_URL, timeout=self.timeout)
+            crumb_response = self.session.get(
+                f"{self.BASE_URL}/v1/test/getcrumb", timeout=self.timeout
+            )
+            crumb_response.raise_for_status()
+            crumb = crumb_response.text.strip()
+            if not crumb:
+                raise ValueError("Yahoo Finance returned an empty request crumb")
+            self._crumb = crumb
+            return crumb
 
     @staticmethod
     def parse(payload: object) -> float | None:
@@ -128,10 +157,12 @@ class YahooFinanceFloatProvider:
 
     def lookup(self, symbol: str) -> float | None:
         ticker = str(symbol or "").strip().upper()
-        response = requests.get(
+        response = self.session.get(
             f"{self.BASE_URL}/v10/finance/quoteSummary/{ticker}",
-            params={"modules": "defaultKeyStatistics"},
-            headers={"User-Agent": "Mozilla/5.0 (Walter-MIDE free-float lookup)"},
+            params={
+                "modules": "defaultKeyStatistics",
+                "crumb": self._get_crumb(),
+            },
             timeout=self.timeout,
         )
         response.raise_for_status()
