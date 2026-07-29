@@ -1,4 +1,5 @@
 from datetime import datetime, timezone
+import json
 from unittest.mock import patch, Mock
 
 from mide.alpaca import AlpacaClient, credential_status
@@ -7,6 +8,8 @@ from mide.alpaca import AlpacaClient, credential_status
 def response(payload):
     r = Mock()
     r.status_code = 200
+    r.headers = {"content-type": "application/json"}
+    r.text = json.dumps(payload)
     r.json.return_value = payload
     return r
 
@@ -30,6 +33,39 @@ def test_bars_paginates_across_symbols():
         bars = client.bars(["AAA", "BBB"], datetime.now(timezone.utc))
     assert len(bars["AAA"]) == 1
     assert len(bars["BBB"]) == 1
+
+
+def test_free_float_diagnostic_captures_request_response_fields_and_reason():
+    client = AlpacaClient("key", "secret", feed="sip", timeout=12)
+    raw = {"latestTrade": {"p": 1.25}, "dailyBar": {"c": 1.2}}
+    mocked_response = response(raw)
+    mocked_response.request.url = (
+        "https://data.alpaca.markets/v2/stocks/NCRA/snapshot?feed=sip"
+    )
+
+    with patch("mide.alpaca.requests.get", return_value=mocked_response) as get:
+        diagnostic = client.free_float_diagnostic("ncra")
+
+    get.assert_called_once_with(
+        "https://data.alpaca.markets/v2/stocks/NCRA/snapshot",
+        headers=client.headers,
+        params={"feed": "sip"},
+        timeout=12,
+    )
+    assert diagnostic["request"]["headers"] == {
+        "APCA-API-KEY-ID": "<redacted>",
+        "APCA-API-SECRET-KEY": "<redacted>",
+    }
+    assert diagnostic["response"]["json"] == raw
+    assert set(diagnostic["parsed_fields"]) == {
+        "float_shares", "shares_float", "free_float", "float_millions"
+    }
+    assert diagnostic["fields_found"] == []
+    assert diagnostic["lookup_succeeded"] is False
+    assert diagnostic["failure_reason"] == (
+        "Alpaca snapshot response contains none of the supported free-float fields: "
+        "float_shares, shares_float, free_float, float_millions"
+    )
 
 def test_screener_limits_are_capped_at_50(monkeypatch):
     client = AlpacaClient("key", "secret", feed="sip")
