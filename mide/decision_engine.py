@@ -7,8 +7,12 @@ Every decision is represented as an ordered, serializable audit trail.
 from __future__ import annotations
 
 from dataclasses import dataclass
+import logging
 import re
 from typing import Iterable
+
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -33,6 +37,42 @@ def _number(record: dict, *keys: str) -> float | None:
 def _step(stage: int, category: str, result: str, *, passed=True, evidence=None):
     return {"stage": stage, "category": category, "result": result,
             "passed": passed, "evidence": list(evidence or [])}
+
+
+def _free_float_lookup(record: dict) -> tuple[float | None, str | None, str | None]:
+    """Return the normalized share count plus auditable lookup provenance."""
+    for key in ("float_shares", "shares_float", "free_float"):
+        shares = _number(record, key)
+        if shares is not None:
+            source = record.get("free_float_source") or record.get("float_source")
+            return shares, str(source or f"record.{key} (provider unspecified)"), None
+    millions = _number(record, "float_millions")
+    if millions is not None:
+        source = record.get("free_float_source") or record.get("float_source")
+        return (
+            millions * 1_000_000,
+            str(source or "record.float_millions (provider unspecified)"),
+            None,
+        )
+    return None, None, "No provider data"
+
+
+def _log_free_float_diagnostic(
+    symbol: str, price: float, shares: float | None, source: str | None,
+    reason: str | None, policy: IdentityPolicy,
+) -> None:
+    """Emit one scan-friendly diagnostic for every symbol that passes Price."""
+    lines = [f"Ticker: {symbol}", f"Price: PASS (${price:.2f})", "Free Float Lookup:"]
+    if shares is None:
+        lines.extend(["NULL", f"Reason: {reason or 'No provider data'}"])
+    else:
+        value = str(int(shares)) if shares.is_integer() else f"{shares:g}"
+        lines.extend([f"Value Returned: {value}", f"Source: {source}"])
+    lines.extend([
+        f"Threshold: {policy.max_free_float}",
+        f"Result: {'PASS' if shares is not None and shares <= policy.max_free_float else 'FAIL'}",
+    ])
+    logger.info("\n".join(lines))
 
 
 def identity_decision(record: dict, policy: IdentityPolicy) -> tuple[bool, list[dict]]:
@@ -63,10 +103,10 @@ def identity_decision(record: dict, policy: IdentityPolicy) -> tuple[bool, list[
         return False, audit
     audit.append(_step(2, "Price", "Passed", evidence=[f"${price:.2f}"]))
 
-    shares = _number(record, "float_shares", "shares_float", "free_float")
-    if shares is None:
-        millions = _number(record, "float_millions")
-        shares = millions * 1_000_000 if millions is not None else None
+    shares, float_source, lookup_reason = _free_float_lookup(record)
+    _log_free_float_diagnostic(
+        symbol, price, shares, float_source, lookup_reason, policy
+    )
     if shares is None or shares > policy.max_free_float:
         actual = "Unavailable" if shares is None else f"{shares / 1_000_000:.2f}M"
         audit.append(_step(2, "Free Float", "Exceeds limit" if shares else "Unavailable",

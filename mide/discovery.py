@@ -60,10 +60,18 @@ def snapshot_identity_records(snapshots):
         }
         for key in ("float_shares", "shares_float", "free_float", "float_millions"):
             value = snap.get(key)
+            location = "snapshot"
             if value is None:
                 value = reference.get(key)
+                location = "snapshot.reference"
             if value is not None:
                 record[key] = value
+                provider = reference.get("provider") or reference.get("source")
+                record["free_float_source"] = (
+                    f"{provider} ({location}.{key})" if provider
+                    else f"{location}.{key} (provider unspecified)"
+                )
+                break
         records.append(record)
     return records
 
