@@ -155,6 +155,28 @@ def test_cache_diagnostics_account_for_each_scan(tmp_path):
     assert second.requests_avoided == len(symbols)
 
 
+def test_reported_cache_metrics_match_requests_actually_avoided(tmp_path):
+    """A cache-served lookup reports one hit and one avoided FMP request."""
+    response = Mock()
+    response.raise_for_status.return_value = None
+    response.json.return_value = [{"symbol": "NCRA", "floatShares": 1_300_000}]
+    cache_path = tmp_path / "float.db"
+
+    with patch("mide.free_float.requests.get", return_value=response) as get:
+        FreeFloatClient("key", cache_path=cache_path).lookup_many(["NCRA"])
+        cached_client = FreeFloatClient("key", cache_path=cache_path)
+        values, errors = cached_client.lookup_many(["NCRA"])
+        reported = cached_client.cache_diagnostics()
+
+    assert values == {"NCRA": 1_300_000}
+    assert errors == {}
+    assert get.call_count == 1
+    assert reported.cache_hits == 1
+    assert reported.cache_misses == 0
+    assert reported.requests_made == 0
+    assert reported.requests_avoided == reported.cache_hits == 1
+
+
 def test_expired_fmp_float_cache_is_refreshed(tmp_path):
     cache_path = tmp_path / "float.json"
     old_now = datetime(2026, 7, 29, 13, tzinfo=timezone.utc)

@@ -819,9 +819,11 @@ def _run_live_pipeline(
         client.diagnostics["free_float_provider"] = "Financial Modeling Prep"
         client.diagnostics["free_float_enriched"] = float_count
         client.diagnostics["free_float_provider_failures"] = len(float_errors)
-        client.diagnostics["fmp_requests_this_scan"] = float_provider.requests_made
-        client.diagnostics["fmp_float_cache_hits"] = float_provider.cache_hits
         cache_diagnostics = cache_diagnostics_or_default(float_provider)
+        # Publish all cache counters from one immutable snapshot. Cache hits and
+        # avoided per-symbol FMP requests are the same event and must agree.
+        client.diagnostics["fmp_requests_this_scan"] = cache_diagnostics.requests_made
+        client.diagnostics["fmp_float_cache_hits"] = cache_diagnostics.cache_hits
         client.diagnostics["fmp_float_cache_misses"] = cache_diagnostics.cache_misses
         client.diagnostics["fmp_float_cached_symbols"] = (
             cache_diagnostics.cached_symbols
@@ -1384,6 +1386,10 @@ with tabs[1]:
     st.caption(
         "Request counters describe the most recent scan; inventory describes "
         "today's persistent cache."
+    )
+    st.caption(
+        "Cache Hits and FMP Requests Avoided both count per-symbol lookups served "
+        "from a fresh cache entry, including cached failures."
     )
     metric_columns = st.columns(3)
     for index, (label, value) in enumerate(cache_metrics.items()):
