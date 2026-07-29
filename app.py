@@ -69,6 +69,7 @@ from mide.runtime_evidence import (
     symbol_summary,
 )
 from mide.session_replay import build_session_replay
+from mide.timeframe_alignment import alignment_voice
 memory_checkpoint("runtime evidence imports")
 from mide.demo import demo_records
 from mide.escalation import (
@@ -283,6 +284,9 @@ def scan_alert_phrase(records: list[dict]) -> str:
                 f" Grade {record.get('quality_grade', 'Watch Only')}."
                 f" Score {int(record['quality_score'])}."
             )
+        alignment = alignment_voice(record)
+        if alignment:
+            phrase += f" {alignment}"
         return phrase
     entry_symbols = [
         r.get("symbol")
@@ -306,10 +310,12 @@ def scan_alert_phrase(records: list[dict]) -> str:
         ]
         if len(entry_records) == 1 and entry_records[0].get("quality_score") is not None:
             record = entry_records[0]
-            return (
+            phrase = (
                 f"{entry_symbols[0]}. Grade {record.get('quality_grade', 'Watch Only')}. "
                 f"Score {int(record['quality_score'])}."
             )
+            alignment = alignment_voice(record)
+            return f"{phrase} {alignment}" if alignment else phrase
         if len(entry_symbols) == 1:
             symbol_text = entry_symbols[0]
         else:
@@ -1686,6 +1692,17 @@ with tabs[1]:
                         f"{evidence.get('quality_grade')} · {evidence.get('quality_score')}/100",
                         help="Ranking only; scanner acceptance and rejection are unchanged.",
                     )
+                if evidence.get("alignment_score") is not None:
+                    st.metric(
+                        "Alignment Score",
+                        f"{evidence['alignment_score']}/3 · {evidence.get('alignment_label')}",
+                        help="Ranking only; scanner acceptance and thresholds are unchanged.",
+                    )
+                    for timeframe in ("30s", "1m", "5m"):
+                        aligned = (evidence.get("timeframe_alignment") or {}).get(
+                            timeframe, {}
+                        ).get("aligned", False)
+                        st.write(f"{timeframe}  {'✓' if aligned else '✗'}")
                 for decision in trace.get("events", []):
                     mark = "✅" if decision.get("passed") else "❌"
                     with st.expander(
@@ -1776,6 +1793,20 @@ with tabs[2]:
                         ),
                     )
                     middle.metric("SuperTrend", scan.get("supertrend_state") or "N/A")
+                    middle.metric(
+                        "Alignment Score",
+                        (
+                            f"{scan['alignment_score']}/3 · {scan.get('alignment_label')}"
+                            if scan.get("alignment_score") is not None
+                            else "N/A"
+                        ),
+                        help="Ranking only; replay does not re-evaluate qualification.",
+                    )
+                    for timeframe in ("30s", "1m", "5m"):
+                        aligned = (scan.get("timeframe_alignment") or {}).get(
+                            timeframe, {}
+                        ).get("aligned", False)
+                        middle.write(f"{timeframe}  {'✓' if aligned else '✗'}")
                     right.metric(
                         "VPI", scan.get("vpi") if scan.get("vpi") is not None else "N/A"
                     )

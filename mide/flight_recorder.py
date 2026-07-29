@@ -312,6 +312,10 @@ class FlightRecorder:
                 "relative_performance_since_open_pct": (record or {}).get(
                     "relative_performance_since_open_pct"
                 ),
+                "alignment_score": (record or {}).get("alignment_score"),
+                "alignment_total": (record or {}).get("alignment_total"),
+                "alignment_label": (record or {}).get("alignment_label"),
+                "timeframe_alignment": (record or {}).get("timeframe_alignment"),
                 "source_bar_timestamp": (record or {}).get(
                     "source_bar_timestamp",
                     (record or {}).get(

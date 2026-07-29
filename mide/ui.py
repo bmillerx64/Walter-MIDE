@@ -1777,6 +1777,24 @@ def trend_ladder_markup(record: dict) -> str:
     )
 
 
+def alignment_markup(record: dict) -> str:
+    """Render 30s/1m/5m confirmation and its ranking-only score."""
+    details = record.get("timeframe_alignment") or {}
+    if record.get("alignment_score") is None and not details:
+        return ""
+    steps = "".join(
+        f"<span class='trend-step {'trend-ok' if (details.get(label) or {}).get('aligned') else 'trend-bad'}'>"
+        f"{label} {'✓' if (details.get(label) or {}).get('aligned') else '✗'}</span>"
+        for label in ("30s", "1m", "5m")
+    )
+    score = int(record.get("alignment_score", 0) or 0)
+    label = html.escape(str(record.get("alignment_label") or "Countertrend"))
+    return (
+        f"<div class='trend-ladder'><span class='trend-condition'>Alignment {score}/3 · {label} · ranking only</span>"
+        f"{steps}</div>"
+    )
+
+
 def trigger_diagnostic_markup(record: dict) -> str:
     """Render Walter's YES/NO trigger decision and exact condition reasons."""
     diagnostic = record.get("trigger_diagnostics") or {}
@@ -1949,6 +1967,7 @@ def opportunity_card(r):
       <div class="action-box">{html.escape(action)}</div>
       <div class="context-heading">WHY</div><div class="why">{html.escape(why)}</div>
       <div class="why-summary"><div class="why-summary-title">Current Evidence</div><ul class="evidence-list">{evidence_markup}</ul></div>
+      {alignment_markup(r)}
       {trend_markup}
       <div class="freshness">NOW — evaluated {html.escape(evaluated)}</div>
     </div>
