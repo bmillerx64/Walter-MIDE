@@ -132,6 +132,53 @@ def test_bars_limit_is_capped_at_10000(monkeypatch):
     assert calls[0]["limit"] == 10_000
 
 
+def test_free_float_probe_logs_raw_alpaca_fields_and_explicitly_missing_float(monkeypatch):
+    client = AlpacaClient("key", "secret", feed="sip")
+    raw = {
+        "NCRA": {
+            "dailyBar": {"c": 1.23, "v": 456},
+            "latestTrade": {"p": 1.24},
+            "minuteBar": {"c": 1.24},
+            "prevDailyBar": {"c": 1.10},
+        }
+    }
+    calls = []
+
+    def fake_get(base, path, params=None, *, authenticated=True):
+        calls.append((base, path, dict(params or {})))
+        return raw
+
+    monkeypatch.setattr(client, "_get", fake_get)
+    evidence = client.free_float_probe("ncra")
+
+    assert calls == [(client.DATA, "/v2/stocks/snapshots", {"symbols": "NCRA", "feed": "sip"})]
+    assert evidence["provider"] == "Alpaca"
+    assert evidence["request_succeeded"] is True
+    assert evidence["raw_response"] == raw
+    assert evidence["json_fields"] == [
+        "dailyBar", "latestTrade", "minuteBar", "prevDailyBar"
+    ]
+    assert evidence["free_float_field_present"] is False
+    assert evidence["free_float_status"] == (
+        "MISSING: Alpaca snapshot supplied no Free Float field"
+    )
+
+
+def test_free_float_probe_distinguishes_request_failure_from_missing_field(monkeypatch):
+    client = AlpacaClient("key", "secret")
+
+    def fail(*args, **kwargs):
+        raise RuntimeError("network unavailable")
+
+    monkeypatch.setattr(client, "_get", fail)
+    evidence = client.free_float_probe("NCRA")
+
+    assert evidence["request_succeeded"] is False
+    assert evidence["raw_response"] is None
+    assert evidence["free_float_status"] == "UNKNOWN: request failed"
+    assert evidence["error"] == "network unavailable"
+
+
 def test_module_credential_status_supports_legacy_client_without_method():
     class LegacyClient:
         PAPER_TRADING = "paper-base"
