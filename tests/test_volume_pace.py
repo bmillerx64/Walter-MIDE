@@ -8,7 +8,12 @@ from mide.scanner_v2 import (
     VPI_MIN_PACE_RATIO,
     apply_scanner_v2,
 )
-from mide.volume_pace import clear_volume_profile_cache, volume_pace_metrics
+from mide.volume_pace import (
+    MAX_PROFILE_CACHE_ENTRIES,
+    _PROFILE_CACHE,
+    clear_volume_profile_cache,
+    volume_pace_metrics,
+)
 
 
 def _bars(day, volumes):
@@ -172,3 +177,16 @@ def test_current_minute_absent_from_profile_has_distinct_reason():
 def test_volume_pace_thresholds_are_unchanged():
     assert VPI_MIN_PACE_RATIO == 1.2
     assert VPI_MIN_ACCELERATION_RATIO == 1.2
+
+
+def test_volume_profile_cache_has_a_hard_lru_limit():
+    clear_volume_profile_cache()
+    history = _bars(datetime(2026, 7, 22), [1_000])
+    today = _bars(datetime(2026, 7, 23), [2_000])
+    frame = pd.concat([history, today])
+
+    for index in range(MAX_PROFILE_CACHE_ENTRIES + 5):
+        volume_pace_metrics(f"SYM{index}", frame)
+
+    assert len(_PROFILE_CACHE) == MAX_PROFILE_CACHE_ENTRIES
+    assert not any(key[0] == "SYM0" for key in _PROFILE_CACHE)

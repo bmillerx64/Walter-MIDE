@@ -47,6 +47,7 @@ class FreeFloatClient:
         *,
         cache_path: str | Path | None = None,
         cache_ttl: timedelta = timedelta(hours=24),
+        cache_max_entries: int = 512,
     ):
         self.api_key = str(api_key or "").strip()
         self.timeout = timeout
@@ -56,6 +57,7 @@ class FreeFloatClient:
             cache_path or os.getenv("FMP_FLOAT_CACHE_PATH") or default_path
         )
         self.cache_ttl = cache_ttl
+        self.cache_max_entries = max(1, int(cache_max_entries))
         self.requests_made = 0
         self.cache_hits = 0
         self._cache_lock = Lock()
@@ -63,9 +65,34 @@ class FreeFloatClient:
     def _read_cache(self) -> dict[str, dict]:
         try:
             payload = json.loads(self.cache_path.read_text())
-            return payload if isinstance(payload, dict) else {}
+            if not isinstance(payload, dict):
+                return {}
         except (OSError, ValueError):
             return {}
+
+        # A rotating discovery universe previously made this dictionary grow
+        # forever.  Every client then materialized the complete JSON object for
+        # every scan.  Keep only the newest useful entries; the cache is an
+        # optimization and must not become runtime history.
+        now = datetime.now(timezone.utc)
+        retained: list[tuple[datetime, str, dict]] = []
+        for ticker, entry in payload.items():
+            try:
+                retrieved_at = datetime.fromisoformat(str(entry["retrieved_at"]))
+                retrieved_at = retrieved_at.astimezone(timezone.utc)
+                shares = float(entry["float_shares"])
+            except (AttributeError, KeyError, TypeError, ValueError):
+                continue
+            if shares > 0 and now - retrieved_at < self.cache_ttl:
+                retained.append((retrieved_at, ticker, entry))
+        retained.sort(reverse=True)
+        cache = {
+            ticker: entry
+            for _, ticker, entry in retained[: self.cache_max_entries]
+        }
+        if len(cache) != len(payload):
+            self._write_cache(cache)
+        return cache
 
     def _write_cache(self, cache: dict[str, dict]) -> None:
         """Persist successful lookups atomically; cache failure never stops a scan."""
@@ -154,6 +181,14 @@ class FreeFloatClient:
                         "float_shares": values[ticker],
                         "retrieved_at": retrieved_at,
                     }
+            if len(cache) > self.cache_max_entries:
+                cache = dict(
+                    sorted(
+                        cache.items(),
+                        key=lambda item: item[1].get("retrieved_at", ""),
+                        reverse=True,
+                    )[: self.cache_max_entries]
+                )
             self._write_cache(cache)
         return values, errors
 
