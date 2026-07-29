@@ -60,3 +60,40 @@ def test_inspector_reports_pipeline_error_for_symbol():
 
     assert result.request_succeeded is False
     assert result.error == "RuntimeError: no provider value"
+
+
+def test_inspector_identifies_cache_and_live_fmp_sources():
+    class DiagnosticProvider(Provider):
+        provider_name = "Financial Modeling Prep"
+
+        def __init__(self, value, live):
+            super().__init__(value)
+            self.requests_made = 0
+            self.live = live
+
+        def lookup_many(self, symbols):
+            if self.live:
+                self.requests_made += 1
+            return super().lookup_many(symbols)
+
+    cached = inspect_free_float(DiagnosticProvider(1_000_000, False), "NCRA")
+    live = inspect_free_float(DiagnosticProvider(1_000_000, True), "NCRA")
+
+    assert cached.source == "Cache"
+    assert "Cache hit" in cached.cache_status
+    assert live.source == "FMP"
+    assert "cache was not bypassed" in live.cache_status
+    assert live.cache_bypassed is False
+
+
+def test_inspector_reports_yahoo_fallback_source():
+    result = inspect_free_float(
+        Provider(error=RuntimeError("FMP unavailable")),
+        "NCRA",
+        Provider(2_500_000),
+    )
+
+    assert result.request_succeeded is True
+    assert result.source == "Yahoo fallback"
+    assert result.computed_free_float == 2_500_000
+    assert "Yahoo fallback used" in result.cache_status
