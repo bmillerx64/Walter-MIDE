@@ -1,6 +1,5 @@
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from unittest.mock import Mock, patch
-import json
 
 from mide.free_float import FreeFloatClient, enrich_snapshots_with_free_float
 
@@ -26,11 +25,14 @@ def test_fmp_lookup_uses_float_shares_not_free_float_percentage(tmp_path, caplog
         params={"symbol": "NCRA", "apikey": "key"},
         timeout=12,
     )
-    assert caplog.messages == [
+    assert caplog.messages[0] == (
         "FMP request: "
         "url=https://financialmodelingprep.com/stable/shares-float "
         "ticker=NCRA FMP_API_KEY_found=True"
-    ]
+    )
+    assert caplog.messages[1].startswith(
+        "FMP float cache: hits=0 misses=1 requests_made=1 requests_avoided=0"
+    )
 
 
 def test_enrichment_adds_provider_reference_without_overwriting_existing_float():
@@ -89,17 +91,16 @@ def test_fmp_float_cache_is_reused_across_client_instances(tmp_path):
 
 def test_expired_fmp_float_cache_is_refreshed(tmp_path):
     cache_path = tmp_path / "float.json"
-    cache_path.write_text(json.dumps({
-        "NCRA": {
-            "float_shares": 900_000,
-            "retrieved_at": "2000-01-01T00:00:00+00:00",
-        }
-    }))
+    old_now = datetime(2026, 7, 29, 13, tzinfo=timezone.utc)
+    seed = FreeFloatClient("key", cache_path=cache_path)
+    seed._store([("NCRA", 900_000, None)], old_now)
     response = Mock()
     response.raise_for_status.return_value = None
     response.json.return_value = [{"symbol": "NCRA", "floatShares": 1_300_000}]
 
-    with patch("mide.free_float.requests.get", return_value=response) as get:
+    with patch("mide.free_float.requests.get", return_value=response) as get, patch.object(
+        FreeFloatClient, "_now", return_value=old_now + timedelta(hours=25)
+    ):
         client = FreeFloatClient("key", max_workers=1, cache_path=cache_path)
         values, errors = client.lookup_many(["NCRA"])
 
@@ -109,34 +110,51 @@ def test_expired_fmp_float_cache_is_refreshed(tmp_path):
     get.assert_called_once()
 
 
-def test_fmp_float_cache_discards_expired_and_bounds_rotating_symbols(tmp_path):
-    cache_path = tmp_path / "float.json"
-    cache_path.write_text(
-        json.dumps(
-            {
-                "EXPIRED": {
-                    "float_shares": 1,
-                    "retrieved_at": "2000-01-01T00:00:00+00:00",
-                },
-                **{
-                    f"S{index}": {
-                        "float_shares": index + 1,
-                        "retrieved_at": f"2026-07-29T12:{index:02d}:00+00:00",
-                    }
-                    for index in range(4)
-                },
-            }
-        )
+def test_fmp_failure_cache_prevents_retry_until_short_ttl_expires(tmp_path):
+    response = Mock()
+    response.raise_for_status.side_effect = RuntimeError("429 rate limit")
+    now = datetime(2026, 7, 29, 13, tzinfo=timezone.utc)
+    client = FreeFloatClient("key", max_workers=1, cache_path=tmp_path / "float.db")
+
+    with patch("mide.free_float.requests.get", return_value=response) as get, patch.object(
+        FreeFloatClient, "_now", return_value=now
+    ):
+        assert client.lookup_many(["NCRA"])[1] == {"NCRA": "429 rate limit"}
+    with patch("mide.free_float.requests.get", return_value=response) as get_again, patch.object(
+        FreeFloatClient, "_now", return_value=now + timedelta(minutes=5)
+    ):
+        assert client.lookup_many(["NCRA"])[1] == {"NCRA": "429 rate limit"}
+        get_again.assert_not_called()
+        assert client.requests_avoided == 1
+    with patch("mide.free_float.requests.get", return_value=response) as get_expired, patch.object(
+        FreeFloatClient, "_now", return_value=now + timedelta(minutes=11)
+    ):
+        client.lookup_many(["NCRA"])
+        get_expired.assert_called_once()
+
+
+def test_optional_bulk_preload_populates_daily_cache(tmp_path):
+    response = Mock()
+    response.raise_for_status.return_value = None
+    response.json.return_value = [
+        {"symbol": "NCRA", "floatShares": 1_300_000},
+        {"symbol": "OTHER", "floatShares": 2_000_000},
+    ]
+    cache_path = tmp_path / "float.db"
+
+    with patch("mide.free_float.requests.get", return_value=response) as get:
+        first = FreeFloatClient("key", cache_path=cache_path, preload_bulk=True)
+        assert first.lookup_many(["NCRA"])[0] == {"NCRA": 1_300_000}
+        second = FreeFloatClient("key", cache_path=cache_path)
+        assert second.lookup_many(["OTHER"])[0] == {"OTHER": 2_000_000}
+
+    get.assert_called_once_with(
+        "https://financialmodelingprep.com/stable/shares-float-all",
+        params={"apikey": "key"},
+        timeout=12,
     )
-
-    with patch("mide.free_float.datetime") as clock:
-        clock.now.return_value = datetime.fromisoformat("2026-07-29T13:00:00+00:00")
-        clock.fromisoformat.side_effect = datetime.fromisoformat
-        client = FreeFloatClient("key", cache_path=cache_path, cache_max_entries=2)
-        cache = client._read_cache()
-
-    assert list(cache) == ["S3", "S2"]
-    assert json.loads(cache_path.read_text()) == cache
+    assert second.requests_made == 0
+    assert second.cache_hits == 1
 from mide.alpaca import AlpacaClient
 from mide.discovery import snapshot_identity_records
 from mide.free_float import YahooFinanceFloatProvider
