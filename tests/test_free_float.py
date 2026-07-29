@@ -120,6 +120,41 @@ def test_fmp_float_cache_is_reused_across_client_instances(tmp_path):
     assert diagnostics.newest_entry == diagnostics.oldest_entry
 
 
+def test_cache_diagnostics_account_for_each_scan(tmp_path):
+    symbols = ["NCRA", "ABCD", "WXYZ"]
+    response = Mock()
+    response.raise_for_status.return_value = None
+    response.json.side_effect = [
+        [{"symbol": symbol, "floatShares": 1_000_000 + index}]
+        for index, symbol in enumerate(symbols)
+    ]
+    client = FreeFloatClient(
+        "key", max_workers=1, cache_path=tmp_path / "float.db"
+    )
+
+    with patch("mide.free_float.requests.get", return_value=response) as get:
+        assert client.lookup_many(symbols)[0] == {
+            symbol: 1_000_000 + index for index, symbol in enumerate(symbols)
+        }
+        first = client.cache_diagnostics()
+
+        assert first.cache_hits == 0
+        assert first.cache_misses == len(symbols)
+        assert first.requests_made == len(symbols)
+        assert first.requests_avoided == 0
+
+        assert client.lookup_many(symbols)[0] == {
+            symbol: 1_000_000 + index for index, symbol in enumerate(symbols)
+        }
+        second = client.cache_diagnostics()
+
+    assert get.call_count == len(symbols)
+    assert second.cache_hits == len(symbols)
+    assert second.cache_misses == 0
+    assert second.requests_made == 0
+    assert second.requests_avoided == len(symbols)
+
+
 def test_expired_fmp_float_cache_is_refreshed(tmp_path):
     cache_path = tmp_path / "float.json"
     old_now = datetime(2026, 7, 29, 13, tzinfo=timezone.utc)
