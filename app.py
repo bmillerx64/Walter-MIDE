@@ -93,6 +93,7 @@ from mide.decision_engine import (
     stage2_filter,
 )
 from mide.free_float_inspector import inspect_free_float
+from mide.free_float import FreeFloatClient, enrich_snapshots_with_free_float
 from mide.version import BUILD
 
 SYSTEM_DEFAULT_VOICE_ID = "__system_default__"
@@ -786,6 +787,31 @@ def _run_live_pipeline(
         done = min(i + len(batch), len(seeds))
         progress.progress(
             0.24 + 0.36 * (done / total), text=f"Snapshots {done}/{len(seeds)}"
+        )
+
+    # Alpaca's snapshot schema is limited to trades, quotes, and OHLCV bars; it
+    # does not include free-float fundamentals.  Enrich only the snapshots that
+    # need float data with the configured reference-data provider before Stage 2.
+    fmp_api_key = get_secret("FMP_API_KEY") or get_secret(
+        "FINANCIAL_MODELING_PREP_API_KEY"
+    )
+    if fmp_api_key:
+        float_count, float_errors = enrich_snapshots_with_free_float(
+            snapshots, FreeFloatClient(fmp_api_key, timeout=12)
+        )
+        client.diagnostics["free_float_provider"] = "Financial Modeling Prep"
+        client.diagnostics["free_float_enriched"] = float_count
+        client.diagnostics["free_float_provider_failures"] = len(float_errors)
+        if float_errors:
+            sample = ", ".join(sorted(float_errors)[:5])
+            client.warnings.append(
+                f"FMP free-float unavailable for {len(float_errors)} symbols"
+                f" (sample: {sample})"
+            )
+    else:
+        client.diagnostics["free_float_provider"] = "not configured"
+        client.warnings.append(
+            "FMP_API_KEY is not configured; Stage 2 free-float lookups cannot be enriched"
         )
 
     policy = IdentityPolicy(settings.min_price, settings.max_price,

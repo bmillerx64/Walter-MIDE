@@ -6,4 +6,5 @@
    ALPACA_API_KEY = "..."
    ALPACA_SECRET_KEY = "..."
    ALPACA_FEED = "sip"
+   FMP_API_KEY = "..."
 5. Reboot. Walter should render immediately; press Run live scan.

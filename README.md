@@ -1,7 +1,11 @@
 # Walter MIDE v1.0
 Clean Streamlit foundation preserving the v0.9.3 live SIP discovery, scoring and validation logic.
 
-Deploy `app.py` from the repository root. Add `ALPACA_API_KEY`, `ALPACA_SECRET_KEY`, and `ALPACA_FEED = "sip"` to Streamlit Secrets.
+Deploy `app.py` from the repository root. Add `ALPACA_API_KEY`,
+`ALPACA_SECRET_KEY`, `ALPACA_FEED = "sip"`, and `FMP_API_KEY` to Streamlit
+Secrets. Alpaca snapshots provide live trades, quotes, and bars but no
+free-float fundamental; Walter enriches Stage 2 with Financial Modeling Prep's
+Shares Float endpoint.
 
 ## Walter 2.19 — Structure Engine
 
