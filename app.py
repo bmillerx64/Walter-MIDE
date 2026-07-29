@@ -1289,12 +1289,13 @@ with tabs[1]:
         ).strip().upper()
         inspect_float = st.form_submit_button("Inspect free float")
     if inspect_float:
-        api_key = get_secret("ALPACA_API_KEY")
-        secret_key = get_secret("ALPACA_SECRET_KEY")
-        if not api_key or not secret_key:
+        fmp_api_key = get_secret("FMP_API_KEY") or get_secret(
+            "FINANCIAL_MODELING_PREP_API_KEY"
+        )
+        if not fmp_api_key:
             st.session_state.free_float_inspection = {
                 "ticker": float_ticker,
-                "provider": "Alpaca Market Data",
+                "provider": "Financial Modeling Prep",
                 "request_succeeded": False,
                 "returned_fields": {
                     "sharesOutstanding": None,
@@ -1304,14 +1305,12 @@ with tabs[1]:
                 },
                 "computed_free_float": None,
                 "computed_from": None,
-                "error": "Alpaca credentials are not configured.",
+                "error": "FMP_API_KEY is not configured.",
             }
         else:
-            inspector_client = AlpacaClient(
-                api_key, secret_key, feed=settings.feed, timeout=12
-            )
+            inspector_provider = FreeFloatClient(fmp_api_key, timeout=12)
             st.session_state.free_float_inspection = inspect_free_float(
-                inspector_client, float_ticker
+                inspector_provider, float_ticker
             ).as_dict()
 
     float_result = st.session_state.free_float_inspection

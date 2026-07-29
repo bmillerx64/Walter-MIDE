@@ -10,15 +10,26 @@ from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from threading import Lock
-from typing import Iterable
+from typing import Iterable, Protocol
 
 import requests
+
+
+class FreeFloatProvider(Protocol):
+    """Provider contract shared by free-float enrichment and diagnostics."""
+
+    provider_name: str
+
+    def lookup_many(
+        self, symbols: Iterable[str]
+    ) -> tuple[dict[str, float], dict[str, str]]: ...
 
 
 class FreeFloatClient:
     """Small adapter for FMP's stable Shares Float endpoint."""
 
     BASE_URL = "https://financialmodelingprep.com/stable"
+    provider_name = "Financial Modeling Prep"
 
     def __init__(self, api_key: str, timeout: int = 12, max_workers: int = 8):
         self.api_key = str(api_key or "").strip()
@@ -67,7 +78,7 @@ class FreeFloatClient:
 
 
 def enrich_snapshots_with_free_float(
-    snapshots: dict[str, dict], provider: FreeFloatClient
+    snapshots: dict[str, dict], provider: FreeFloatProvider
 ) -> tuple[int, dict[str, str]]:
     """Attach FMP float shares only where a snapshot does not already have it."""
     field_names = ("float_shares", "shares_float", "free_float", "float_millions")
