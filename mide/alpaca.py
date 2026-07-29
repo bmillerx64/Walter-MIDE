@@ -12,6 +12,7 @@ class AlpacaError(RuntimeError):
 
 
 class AlpacaClient:
+    provider_name = "Alpaca Market Data"
     DATA = "https://data.alpaca.markets"
     PAPER_TRADING = "https://paper-api.alpaca.markets"
     LIVE_TRADING = "https://api.alpaca.markets"

@@ -92,6 +92,7 @@ from mide.decision_engine import (
     IdentityPolicy,
     stage2_filter,
 )
+from mide.free_float_inspector import inspect_free_float
 from mide.version import BUILD
 
 SYSTEM_DEFAULT_VOICE_ID = "__system_default__"
@@ -441,6 +442,7 @@ session_defaults = {
     "api_warnings": [],
     "last_updated": None,
     "scan_diagnostics": {},
+    "free_float_inspection": None,
     "scan_in_progress": False,
     "last_scan_attempt": None,
     "scan_failure_count": 0,
@@ -1229,6 +1231,67 @@ with tabs[0]:
                 )
 
 with tabs[1]:
+    st.subheader("Free Float Inspector")
+    st.caption(
+        "Temporary diagnostic: inspect the provider's raw float-related fields "
+        "without affecting the scan or ranking logic."
+    )
+    with st.form("free_float_inspector"):
+        float_ticker = st.text_input(
+            "Ticker", placeholder="NCRA", key="free_float_inspector_ticker"
+        ).strip().upper()
+        inspect_float = st.form_submit_button("Inspect free float")
+    if inspect_float:
+        api_key = get_secret("ALPACA_API_KEY")
+        secret_key = get_secret("ALPACA_SECRET_KEY")
+        if not api_key or not secret_key:
+            st.session_state.free_float_inspection = {
+                "ticker": float_ticker,
+                "provider": "Alpaca Market Data",
+                "request_succeeded": False,
+                "returned_fields": {
+                    "sharesOutstanding": None,
+                    "floatShares": None,
+                    "freeFloat": None,
+                    "marketCap": None,
+                },
+                "computed_free_float": None,
+                "computed_from": None,
+                "error": "Alpaca credentials are not configured.",
+            }
+        else:
+            inspector_client = AlpacaClient(
+                api_key, secret_key, feed=settings.feed, timeout=12
+            )
+            st.session_state.free_float_inspection = inspect_free_float(
+                inspector_client, float_ticker
+            ).as_dict()
+
+    float_result = st.session_state.free_float_inspection
+    if float_result:
+        st.markdown(f"**Ticker:** `{float_result['ticker'] or '—'}`")
+        st.markdown(f"**Provider:** {float_result['provider']}")
+        request_label = "SUCCESS" if float_result["request_succeeded"] else "FAILED"
+        (st.success if float_result["request_succeeded"] else st.error)(
+            f"API Request: {request_label}"
+        )
+        st.markdown("**Returned fields:**")
+        for field, value in float_result["returned_fields"].items():
+            st.code(f"{field} = {'?' if value is None else value}", language=None)
+        computed = float_result["computed_free_float"]
+        st.markdown("**Computed Free Float:**")
+        st.code(f"{computed:,.0f}" if computed is not None else "Unavailable", language=None)
+        if float_result.get("computed_from"):
+            st.caption(f"Computed from {float_result['computed_from']}.")
+        if float_result.get("error"):
+            st.caption(float_result["error"])
+        elif computed is None:
+            st.info(
+                "The request succeeded, but the provider did not return a recognized "
+                "free-float field for this ticker."
+            )
+
+    st.divider()
     st.subheader("Reuters / Benzinga — last 90 minutes")
     recent_wire_news = scan_diagnostics.get("recent_wire_news", [])
     if recent_wire_news:
