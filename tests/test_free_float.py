@@ -1,7 +1,29 @@
 from datetime import datetime, timedelta, timezone
 from unittest.mock import Mock, patch
 
-from mide.free_float import FreeFloatClient, enrich_snapshots_with_free_float
+from mide.free_float import (
+    FreeFloatClient,
+    cache_diagnostics_or_default,
+    enrich_snapshots_with_free_float,
+)
+
+
+def test_diagnostics_fallback_keeps_page_safe_when_interface_is_unavailable():
+    diagnostics = cache_diagnostics_or_default(object())
+
+    assert diagnostics.cached_symbols == 0
+    assert diagnostics.oldest_entry is None
+    assert diagnostics.newest_entry is None
+
+
+def test_diagnostics_fallback_keeps_page_safe_when_inspection_fails():
+    provider = Mock()
+    provider.cache_diagnostics.side_effect = RuntimeError("cache unavailable")
+
+    diagnostics = cache_diagnostics_or_default(provider)
+
+    assert diagnostics.cached_symbols == 0
+    assert diagnostics.cache_hits == 0
 
 
 def test_fmp_lookup_uses_float_shares_not_free_float_percentage(tmp_path, caplog):

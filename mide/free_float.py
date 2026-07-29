@@ -48,6 +48,26 @@ class FreeFloatCacheDiagnostics:
     newest_entry: str | None
 
 
+def cache_diagnostics_or_default(provider: object) -> FreeFloatCacheDiagnostics:
+    """Return provider diagnostics, or an empty snapshot when unavailable.
+
+    Diagnostics are optional observability data and must never prevent Walter
+    from starting or rendering its Diagnostics page.  Keeping this fallback
+    outside the scanner also lets the UI tolerate an older or alternate
+    provider which does not implement ``cache_diagnostics``.
+    """
+    empty = FreeFloatCacheDiagnostics(0, 0, 0, 0, 0, None, None)
+    diagnostics = getattr(provider, "cache_diagnostics", None)
+    if not callable(diagnostics):
+        logger.warning("Free-float cache diagnostics are unavailable")
+        return empty
+    try:
+        return diagnostics()
+    except Exception:
+        logger.warning("Unable to read free-float cache diagnostics", exc_info=True)
+        return empty
+
+
 class FreeFloatClient:
     """FMP adapter backed by a daily, persistent SQLite cache.
 
