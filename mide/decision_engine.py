@@ -125,7 +125,16 @@ def stage2_filter(records: Iterable[dict], policy: IdentityPolicy | None = None)
     policy = policy or IdentityPolicy()
     accepted: list[dict] = []
     rejected: list[dict] = []
-    counts = {"universe": 0, "tradability": 0, "price": 0, "free_float": 0}
+    counts = {
+        "universe": 0,
+        "tradability": 0,
+        "price": 0,
+        "free_float": 0,
+        "free_float_evaluated": 0,
+        "free_float_failed": 0,
+        "free_float_lookup_failures": 0,
+        "free_float_actual_failures": 0,
+    }
     for source in records:
         counts["universe"] += 1
         passed, audit = identity_decision(source, policy)
@@ -134,6 +143,7 @@ def stage2_filter(records: Iterable[dict], policy: IdentityPolicy | None = None)
             counts["tradability"] += 1
         if categories.get("Price"):
             counts["price"] += 1
+            counts["free_float_evaluated"] += 1
         if categories.get("Free Float"):
             counts["free_float"] += 1
         if passed:
@@ -149,6 +159,11 @@ def stage2_filter(records: Iterable[dict], policy: IdentityPolicy | None = None)
             "evidence": list(failure.get("evidence") or []),
         }
         if failure["category"] == "Free Float":
+            counts["free_float_failed"] += 1
+            if failure["result"] == "Unavailable":
+                counts["free_float_lookup_failures"] += 1
+            else:
+                counts["free_float_actual_failures"] += 1
             evidence = diagnostic["evidence"]
             diagnostic["free_float"] = evidence[0].removeprefix("Actual: ")
             diagnostic["maximum"] = evidence[1].removeprefix("Limit: ")

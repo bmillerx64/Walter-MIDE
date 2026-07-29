@@ -86,8 +86,28 @@ def test_stage_two_failure_never_reaches_stage_three_candidates():
         "tradability": 2,
         "price": 2,
         "free_float": 1,
+        "free_float_evaluated": 2,
+        "free_float_failed": 1,
+        "free_float_lookup_failures": 0,
+        "free_float_actual_failures": 1,
         "stage_3_analysis": 1,
     }
+
+
+def test_stage_two_distinguishes_float_lookup_and_actual_failures():
+    accepted, diagnostics, counts = stage2_filter([
+        record(symbol="PASS"),
+        record(symbol="LOOKUP", float_shares=None),
+        record(symbol="TOOBIG", float_shares=9_000_000),
+    ])
+
+    assert [item["symbol"] for item in accepted] == ["PASS"]
+    assert [item["result"] for item in diagnostics] == ["Unavailable", "Exceeds limit"]
+    assert counts["free_float_evaluated"] == 3
+    assert counts["free_float"] == 1
+    assert counts["free_float_failed"] == 2
+    assert counts["free_float_lookup_failures"] == 1
+    assert counts["free_float_actual_failures"] == 1
 
 
 def test_behavior_categories_are_independent_and_catalyst_is_not_scored():
