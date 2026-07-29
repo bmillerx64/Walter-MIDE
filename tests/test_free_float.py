@@ -4,14 +4,16 @@ import json
 from mide.free_float import FreeFloatClient, enrich_snapshots_with_free_float
 
 
-def test_fmp_lookup_uses_float_shares_not_free_float_percentage(tmp_path):
+def test_fmp_lookup_uses_float_shares_not_free_float_percentage(tmp_path, caplog):
     response = Mock()
     response.raise_for_status.return_value = None
     response.json.return_value = [{
         "symbol": "NCRA", "freeFloat": 62.4, "floatShares": 1_300_000
     }]
 
-    with patch("mide.free_float.requests.get", return_value=response) as get:
+    with caplog.at_level("INFO", logger="mide.free_float"), patch(
+        "mide.free_float.requests.get", return_value=response
+    ) as get:
         values, errors = FreeFloatClient(
             "key", max_workers=1, cache_path=tmp_path / "float.json"
         ).lookup_many(["ncra"])
@@ -23,6 +25,11 @@ def test_fmp_lookup_uses_float_shares_not_free_float_percentage(tmp_path):
         params={"symbol": "NCRA", "apikey": "key"},
         timeout=12,
     )
+    assert caplog.messages == [
+        "FMP request: "
+        "url=https://financialmodelingprep.com/stable/shares-float "
+        "ticker=NCRA FMP_API_KEY_found=True"
+    ]
 
 
 def test_enrichment_adds_provider_reference_without_overwriting_existing_float():

@@ -11,12 +11,16 @@ from __future__ import annotations
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta, timezone
 import json
+import logging
 import os
 from pathlib import Path
 from threading import Lock
 from typing import Iterable, Protocol
 
 import requests
+
+
+logger = logging.getLogger(__name__)
 
 
 class FreeFloatProvider(Protocol):
@@ -96,11 +100,18 @@ class FreeFloatClient:
 
     def _lookup(self, symbol: str) -> tuple[str, float | None, str | None]:
         ticker = str(symbol).strip().upper()
+        url = f"{self.BASE_URL}/shares-float"
         try:
             with self._cache_lock:
                 self.requests_made += 1
+            logger.info(
+                "FMP request: url=%s ticker=%s FMP_API_KEY_found=%s",
+                url,
+                ticker,
+                bool(self.api_key),
+            )
             response = requests.get(
-                f"{self.BASE_URL}/shares-float",
+                url,
                 params={"symbol": ticker, "apikey": self.api_key},
                 timeout=self.timeout,
             )
