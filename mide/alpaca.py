@@ -12,6 +12,7 @@ class AlpacaError(RuntimeError):
 
 
 class AlpacaClient:
+    provider_name = "Alpaca Market Data"
     DATA = "https://data.alpaca.markets"
     PAPER_TRADING = "https://paper-api.alpaca.markets"
     LIVE_TRADING = "https://api.alpaca.markets"
@@ -181,6 +182,15 @@ class AlpacaClient:
                 return {}
             midpoint = len(cleaned) // 2
             return {**self.snapshots(cleaned[:midpoint]), **self.snapshots(cleaned[midpoint:])}
+
+    def stock_snapshot(self, symbol: str) -> dict:
+        """Return a single raw stock snapshot, allowing diagnostic errors to surface."""
+        ticker = str(symbol or "").strip().upper()
+        return self._get(
+            self.DATA,
+            f"/v2/stocks/{ticker}/snapshot",
+            {"feed": self.feed},
+        )
 
     def bars(self, symbols: Iterable[str], start: datetime, timeframe="1Min", limit=10000):
         cleaned = []
