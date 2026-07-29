@@ -1,11 +1,10 @@
 """Free-float reference data from Financial Modeling Prep.
 
 Alpaca stock snapshots contain market data (trades, quotes, and bars), not
-company share-structure fundamentals.  Stage 2 therefore obtains float shares
+company share-structure fundamentals. Stage 2 therefore obtains float shares
 from FMP's dedicated shares-float endpoint and attaches it to the snapshot's
 reference data before applying the identity gate.
 """
-"""Free-float reference data independent of Alpaca's market snapshots."""
 
 from __future__ import annotations
 
@@ -46,9 +45,11 @@ class FreeFloatClient:
 
     def lookup_many(self, symbols: Iterable[str]) -> tuple[dict[str, float], dict[str, str]]:
         """Return successful float-share values and per-symbol lookup errors."""
-        tickers = list(dict.fromkeys(
-            str(symbol or "").strip().upper() for symbol in symbols if symbol
-        ))
+        tickers = list(
+            dict.fromkeys(
+                str(symbol or "").strip().upper() for symbol in symbols if symbol
+            )
+        )
         values: dict[str, float] = {}
         errors: dict[str, str] = {}
         if not self.api_key or not tickers:
@@ -72,8 +73,10 @@ def enrich_snapshots_with_free_float(
     missing = []
     for symbol, snapshot in snapshots.items():
         reference = snapshot.get("reference") or {}
-        if not any(snapshot.get(key) is not None or reference.get(key) is not None
-                   for key in field_names):
+        if not any(
+            snapshot.get(key) is not None or reference.get(key) is not None
+            for key in field_names
+        ):
             missing.append(symbol)
 
     values, errors = provider.lookup_many(missing)
@@ -88,11 +91,13 @@ def enrich_snapshots_with_free_float(
         reference["float_shares"] = shares
         reference["provider"] = "Financial Modeling Prep"
     return len(values), errors
+
+
 class YahooFinanceFloatProvider:
     """Fetch Yahoo Finance's ``defaultKeyStatistics.floatShares`` value.
 
     Alpaca stock snapshots are a market-data response (trades, quotes and bars),
-    not a fundamentals response.  Keeping this adapter separate prevents us from
+    not a fundamentals response. Keeping this adapter separate prevents us from
     pretending a missing field in a successful Alpaca snapshot is a failed
     snapshot request.
     """
