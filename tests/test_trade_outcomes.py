@@ -1,6 +1,40 @@
+from pathlib import Path
+import subprocess
+import sys
+
 import pytest
 
 from mide.trade_outcomes import OUTCOME_LABELS, TradeOutcomeStore
+
+
+def test_ui_loads_with_empty_legacy_flight_recorder(tmp_path):
+    """A cached recorder from before Trade Outcomes must not break the tab."""
+    repo_path = Path(__file__).parents[1]
+    app_path = str(repo_path / "app.py")
+    script = f"""
+from streamlit.testing.v1 import AppTest
+from mide import flight_recorder
+
+CurrentRecorder = flight_recorder.FlightRecorder
+class EmptyLegacyFlightRecorder(CurrentRecorder):
+    def __init__(self):
+        super().__init__({str(tmp_path / 'flight_recorder.jsonl')!r})
+        del self.outcomes
+
+flight_recorder.FlightRecorder = EmptyLegacyFlightRecorder
+app = AppTest.from_file({app_path!r}, default_timeout=20).run()
+if app.exception:
+    raise AssertionError([exception.value for exception in app.exception])
+"""
+    completed = subprocess.run(
+        [sys.executable, "-c", script],
+        cwd=repo_path,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+
+    assert completed.returncode == 0, completed.stdout + completed.stderr
 
 
 def test_register_mark_and_persist_complete_trade_outcome(tmp_path):
