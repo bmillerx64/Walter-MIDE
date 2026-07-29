@@ -87,17 +87,34 @@ def test_alpaca_fallback_enriches_snapshot_with_auditable_source(monkeypatch):
 
 
 def test_yahoo_lookup_uses_quote_summary_statistics_schema():
+    cookie_response = Mock()
+    crumb_response = Mock(text="request-crumb\n")
     response = Mock()
     response.json.return_value = {"quoteSummary": {"result": [
         {"defaultKeyStatistics": {"floatShares": {"raw": 2_000_000}}}
     ]}}
-    with patch("mide.free_float.requests.get", return_value=response) as get:
-        assert YahooFinanceFloatProvider(timeout=7).lookup("ncra") == 2_000_000
-
-    get.assert_called_once_with(
-        "https://query2.finance.yahoo.com/v10/finance/quoteSummary/NCRA",
-        params={"modules": "defaultKeyStatistics"},
-        headers={"User-Agent": "Mozilla/5.0 (Walter-MIDE free-float lookup)"},
-        timeout=7,
+    provider = YahooFinanceFloatProvider(timeout=7, max_workers=1)
+    provider.session.get = Mock(
+        side_effect=[cookie_response, crumb_response, response, response]
     )
-    response.raise_for_status.assert_called_once_with()
+
+    assert provider.lookup("ncra") == 2_000_000
+    assert isinstance(provider.lookup_many(["NCRA"])[0]["NCRA"], float)
+
+    assert provider.session.get.call_args_list[0].args == ("https://fc.yahoo.com",)
+    assert provider.session.get.call_args_list[1].args == (
+        "https://query2.finance.yahoo.com/v1/test/getcrumb",
+    )
+    assert provider.session.get.call_args_list[2].args == (
+        "https://query2.finance.yahoo.com/v10/finance/quoteSummary/NCRA",
+    )
+    assert provider.session.get.call_args_list[2].kwargs["params"] == {
+        "modules": "defaultKeyStatistics",
+        "crumb": "request-crumb",
+    }
+    assert provider.session.get.call_args_list[3].kwargs["params"]["crumb"] == (
+        "request-crumb"
+    )
+    cookie_response.raise_for_status.assert_not_called()
+    crumb_response.raise_for_status.assert_called_once_with()
+    assert response.raise_for_status.call_count == 2
