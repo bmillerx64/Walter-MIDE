@@ -112,6 +112,7 @@ from mide.free_float_inspector import inspect_free_float
 from mide.free_float import (
     FreeFloatClient,
     YahooFinanceFloatProvider,
+    cache_diagnostics_or_default,
     enrich_snapshots_with_free_float,
 )
 from mide.version import BUILD
@@ -820,7 +821,7 @@ def _run_live_pipeline(
         client.diagnostics["free_float_provider_failures"] = len(float_errors)
         client.diagnostics["fmp_requests_this_scan"] = float_provider.requests_made
         client.diagnostics["fmp_float_cache_hits"] = float_provider.cache_hits
-        cache_diagnostics = float_provider.cache_diagnostics()
+        cache_diagnostics = cache_diagnostics_or_default(float_provider)
         client.diagnostics["fmp_float_cache_misses"] = cache_diagnostics.cache_misses
         client.diagnostics["fmp_float_cached_symbols"] = (
             cache_diagnostics.cached_symbols
@@ -845,7 +846,7 @@ def _run_live_pipeline(
         )
         client.diagnostics["fmp_requests_this_scan"] = 0
         client.diagnostics["fmp_float_cache_hits"] = 0
-        cache_diagnostics = FreeFloatClient("").cache_diagnostics()
+        cache_diagnostics = cache_diagnostics_or_default(FreeFloatClient(""))
         client.diagnostics["fmp_float_cache_misses"] = 0
         client.diagnostics["fmp_float_cached_symbols"] = (
             cache_diagnostics.cached_symbols
@@ -1364,7 +1365,7 @@ with tabs[0]:
 
 with tabs[1]:
     st.subheader("Free Float Cache")
-    persistent_cache = FreeFloatClient("").cache_diagnostics()
+    persistent_cache = cache_diagnostics_or_default(FreeFloatClient(""))
     cache_metrics = {
         "Cache Hits": scan_diagnostics.get("fmp_float_cache_hits", 0),
         "Cache Misses": scan_diagnostics.get("fmp_float_cache_misses", 0),
