@@ -39,6 +39,31 @@ def test_float_limit_is_strict_and_auditable():
     assert "Limit: 3.50M" in rejected["decision_funnel"][-1]["evidence"]
 
 
+def test_free_float_diagnostic_logs_value_source_threshold_and_result(caplog):
+    caplog.set_level("INFO", logger="mide.decision_engine")
+
+    evaluate([record(symbol="NCRA", float_shares=1_300_000,
+                     free_float_source="Polygon reference")])
+
+    assert "Ticker: NCRA" in caplog.text
+    assert "Price: PASS ($1.25)" in caplog.text
+    assert "Value Returned: 1300000" in caplog.text
+    assert "Source: Polygon reference" in caplog.text
+    assert "Threshold: 3500000" in caplog.text
+    assert "Result: PASS" in caplog.text
+
+
+def test_free_float_diagnostic_logs_null_reason(caplog):
+    caplog.set_level("INFO", logger="mide.decision_engine")
+
+    evaluate([record(symbol="NCRA", float_shares=None)])
+
+    assert "Ticker: NCRA" in caplog.text
+    assert "Free Float Lookup:\nNULL" in caplog.text
+    assert "Reason: No provider data" in caplog.text
+    assert "Result: FAIL" in caplog.text
+
+
 def test_stage_two_failure_never_reaches_stage_three_candidates():
     accepted, diagnostics, counts = stage2_filter([
         record(symbol="BDTX", float_shares=56_670_000),
