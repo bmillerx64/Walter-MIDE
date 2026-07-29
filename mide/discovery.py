@@ -312,6 +312,17 @@ def analyze_candidates(client, candidates, news_index, discovery_reasons):
         x["symbol"] for x in candidates[:80] if is_valid_us_symbol(x.get("symbol"))
     ]
     raw = client.bars(symbols, start=start, timeframe="1Min", limit=10_000)
+    from mide.relative_strength import benchmark_for, relative_strength_metrics
+
+    benchmark_symbols = sorted({benchmark_for(item) for item in candidates[:80]})
+    try:
+        benchmark_raw = client.bars(
+            benchmark_symbols, start=start, timeframe="1Min", limit=10_000
+        )
+    except Exception as exc:
+        benchmark_raw = {}
+        if hasattr(client, "warnings"):
+            client.warnings.append(f"Relative-strength benchmarks unavailable: {exc}")
     output = []
 
     for item in candidates[:80]:
@@ -324,6 +335,15 @@ def analyze_candidates(client, candidates, news_index, discovery_reasons):
         session = frame[frame.index.date == latest_date].copy()
         if len(session) < 12:
             session = frame.tail(150).copy()
+
+        benchmark_symbol = benchmark_for(item)
+        benchmark_frame = client.bars_frame(benchmark_raw.get(benchmark_symbol, []))
+        benchmark_session = benchmark_frame[
+            benchmark_frame.index.date == latest_date
+        ].copy()
+        if len(benchmark_session) < 2:
+            benchmark_session = benchmark_frame.tail(150).copy()
+        rs_metrics = relative_strength_metrics(session, benchmark_session)
 
         price = float(session["close"].iloc[-1])
         vw = float(session_vwap(session).iloc[-1])
@@ -481,6 +501,8 @@ def analyze_candidates(client, candidates, news_index, discovery_reasons):
                 "vwap_reclaimed_last_10m": reclaimed_10m,
                 "supertrend_flipped_last_10m": bool(st_flip),
                 "crossed_vwap_and_supertrend": bool(reclaimed_10m and st_bull),
+                "relative_strength_benchmark": benchmark_symbol,
+                **rs_metrics,
                 **surge_metrics,
             }
         )

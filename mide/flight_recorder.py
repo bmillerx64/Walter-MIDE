@@ -292,6 +292,21 @@ class FlightRecorder:
                 "conviction_score": (record or {}).get(
                     "conviction_v2_score", (record or {}).get("conviction_score")
                 ),
+                "relative_strength_score": (record or {}).get(
+                    "relative_strength_score"
+                ),
+                "relative_strength_benchmark": (record or {}).get(
+                    "relative_strength_benchmark"
+                ),
+                "relative_performance_5m_pct": (record or {}).get(
+                    "relative_performance_5m_pct"
+                ),
+                "relative_performance_15m_pct": (record or {}).get(
+                    "relative_performance_15m_pct"
+                ),
+                "relative_performance_since_open_pct": (record or {}).get(
+                    "relative_performance_since_open_pct"
+                ),
                 "source_bar_timestamp": (record or {}).get(
                     "source_bar_timestamp",
                     (record or {}).get(

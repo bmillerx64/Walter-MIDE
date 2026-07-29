@@ -135,6 +135,7 @@ def _compress_scans(scans: list[dict]) -> list[dict]:
         signature = (
             scan["state"],
             scan["recommendation"],
+            scan.get("relative_strength_score"),
             tuple(
                 (item["category"], item["reason"])
                 for item in scan["promotion_blockers"]
@@ -217,6 +218,10 @@ def build_session_replay(bundle: dict) -> dict:
                         record.get("legacy_volume_acceleration"),
                     ),
                 ),
+                "relative_strength_score": record.get("relative_strength_score"),
+                "relative_strength_benchmark": record.get(
+                    "relative_strength_benchmark"
+                ),
                 "recommendation": _recommendation(record),
                 "trigger_diagnostics": record.get("trigger_diagnostics") or {},
                 "promotion_blockers": _promotion_blockers(record),
@@ -254,6 +259,12 @@ def build_session_replay(bundle: dict) -> dict:
                     "vpi": candidate.get("volume_pace_ratio"),
                     "volume_acceleration": candidate.get(
                         "acceleration_ratio", candidate.get("volume_acceleration")
+                    ),
+                    "relative_strength_score": candidate.get(
+                        "relative_strength_score"
+                    ),
+                    "relative_strength_benchmark": candidate.get(
+                        "relative_strength_benchmark"
                     ),
                     "recommendation": _recommendation(candidate),
                     "promotion_blockers": _promotion_blockers(candidate),
