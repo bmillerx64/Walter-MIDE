@@ -58,6 +58,8 @@ def snapshot_identity_records(snapshots):
             "asset_status": snap.get("asset_status") or snap.get("status", "active"),
             "price": float(trade.get("p") or daily.get("c") or 0),
         }
+        if snap.get("free_float_source"):
+            record["free_float_source"] = snap["free_float_source"]
         for key in ("float_shares", "shares_float", "free_float", "float_millions"):
             value = snap.get(key)
             location = "snapshot"
@@ -67,7 +69,7 @@ def snapshot_identity_records(snapshots):
             if value is not None:
                 record[key] = value
                 provider = reference.get("provider") or reference.get("source")
-                record["free_float_source"] = (
+                record["free_float_source"] = snap.get("free_float_source") or (
                     f"{provider} ({location}.{key})" if provider
                     else f"{location}.{key} (provider unspecified)"
                 )
@@ -185,6 +187,8 @@ def prefilter_snapshots(snapshots, settings):
                 value = (snap.get("reference") or {}).get(key)
             if value is not None:
                 candidate[key] = value
+                if snap.get("free_float_source"):
+                    candidate["free_float_source"] = snap["free_float_source"]
         selected.append(candidate)
     return sorted(
         selected, key=lambda x: (x["pct_change"], x["dollar_volume"]), reverse=True

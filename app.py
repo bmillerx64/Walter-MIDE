@@ -816,6 +816,19 @@ def _run_live_pipeline(
 
     policy = IdentityPolicy(settings.min_price, settings.max_price,
                             settings.max_free_float, settings.include_etfs)
+    # Alpaca snapshots intentionally contain real-time market fields, not
+    # fundamental share statistics.  Ask the fallback only for symbols which
+    # have already passed the price range so the provider is not needlessly
+    # queried for the whole discovery universe.
+    price_qualified = [
+        record["symbol"] for record in snapshot_identity_records(snapshots)
+        if policy.min_price <= record["price"] <= policy.max_price
+    ]
+    if hasattr(client, "enrich_free_float"):
+        try:
+            client.enrich_free_float(snapshots, price_qualified)
+        except Exception as exc:
+            client.warnings.append(f"Free-float fallback unavailable; scan continued: {exc}")
     eligible_identities, stage2_rejections, funnel_counts = stage2_filter(
         snapshot_identity_records(snapshots), policy
     )

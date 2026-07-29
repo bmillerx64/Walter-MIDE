@@ -6,6 +6,8 @@ import io
 import requests
 import pandas as pd
 
+from .free_float import YahooFinanceFloatProvider
+
 
 class AlpacaError(RuntimeError):
     pass
@@ -182,6 +184,46 @@ class AlpacaClient:
                 return {}
             midpoint = len(cleaned) // 2
             return {**self.snapshots(cleaned[:midpoint]), **self.snapshots(cleaned[midpoint:])}
+
+    def enrich_free_float(self, snapshots: dict, symbols: Iterable[str]) -> dict:
+        """Add missing free float from a fundamentals provider, in place.
+
+        Alpaca's v2 snapshot schema supplies ``latestTrade``, ``latestQuote``,
+        ``minuteBar``, ``dailyBar`` and ``prevDailyBar``; it does not supply
+        shares outstanding or free float.  Yahoo's quote-summary fundamentals
+        endpoint is therefore the fallback rather than treating every valid
+        Alpaca snapshot as a lookup failure.
+        """
+        wanted = [
+            symbol for symbol in symbols
+            if isinstance(snapshots.get(symbol), dict)
+            and not any(
+                snapshots[symbol].get(key) is not None
+                or (snapshots[symbol].get("reference") or {}).get(key) is not None
+                for key in ("float_shares", "shares_float", "free_float", "float_millions")
+            )
+        ]
+        if not wanted:
+            return snapshots
+        # Fundamental lookups are supplemental; cap their latency so a slow
+        # fallback cannot stall the live market-data scan.
+        provider = YahooFinanceFloatProvider(timeout=min(self.timeout, 5), max_workers=24)
+        values, errors = provider.lookup_many(wanted)
+        for symbol, shares in values.items():
+            snapshots[symbol]["float_shares"] = shares
+            snapshots[symbol]["free_float_source"] = (
+                "Yahoo Finance defaultKeyStatistics.floatShares.raw"
+            )
+        self.diagnostics["free_float_fallback_requested"] = len(wanted)
+        self.diagnostics["free_float_fallback_resolved"] = len(values)
+        self.diagnostics["free_float_fallback_failed"] = len(errors)
+        if errors:
+            sample = "; ".join(f"{key}: {value}" for key, value in list(errors.items())[:3])
+            self.warnings.append(
+                f"Free-float fallback unresolved for {len(errors)}/{len(wanted)} symbols"
+                + (f" ({sample})" if sample else "")
+            )
+        return snapshots
 
     def free_float_probe(self, symbol: str = "NCRA") -> dict[str, object]:
         """Return raw snapshot evidence distinguishing missing data from failure."""
