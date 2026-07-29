@@ -366,6 +366,10 @@ def test_mission_control_header_tells_the_complete_funnel_story():
             "tradability": 712,
             "price": 184,
             "free_float": 14,
+            "free_float_evaluated": 184,
+            "free_float_failed": 170,
+            "free_float_lookup_failures": 137,
+            "free_float_actual_failures": 33,
             "stage_3_analysis": 14,
             "monitored": 3,
             "entry_ready": 1,
@@ -373,8 +377,9 @@ def test_mission_control_header_tells_the_complete_funnel_story():
     )
 
     assert (
-        "Universe: 737 → Tradability: 712 → Price: 184 → Free Float: 14 → "
-        "Stage 3 Analysis: 14 → Monitored: 3 → Entry Ready: 1"
+        "Universe: 737 → Tradability: 712 → Price Survivors: 184 ↓ Free Float: 14 "
+        "(184 evaluated) · 14 passed · 170 failed · Lookup failures: 137 · "
+        "Actual failures: 33 → Stage 3 Analysis: 14 → Monitored: 3 → Entry Ready: 1"
     ) in markup
     assert "Stage Summary" in markup
 

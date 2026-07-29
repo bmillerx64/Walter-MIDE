@@ -409,14 +409,30 @@ def mission_control_header_markup(
     if funnel_counts:
         labels = (
             ("universe", "Universe"), ("tradability", "Tradability"),
-            ("price", "Price"), ("free_float", "Free Float"),
             ("stage_3_analysis", "Stage 3 Analysis"), ("monitored", "Monitored"),
             ("entry_ready", "Entry Ready"),
         )
-        funnel = "<div class='small'><b>Stage Summary</b><br>" + " → ".join(
+        before_float = " → ".join(
             f"{label}: {int(funnel_counts[key])}"
-            for key, label in labels if key in funnel_counts
-        ) + "</div>"
+            for key, label in labels[:2] if key in funnel_counts
+        )
+        after_float = " → ".join(
+            f"{label}: {int(funnel_counts[key])}"
+            for key, label in labels[2:] if key in funnel_counts
+        )
+        price_survivors = int(funnel_counts.get("price", 0))
+        evaluated = int(funnel_counts.get("free_float_evaluated", price_survivors))
+        passed = int(funnel_counts.get("free_float", 0))
+        failed = int(funnel_counts.get("free_float_failed", max(0, evaluated - passed)))
+        lookup_failures = int(funnel_counts.get("free_float_lookup_failures", 0))
+        actual_failures = int(funnel_counts.get("free_float_actual_failures", max(0, failed - lookup_failures)))
+        float_summary = (
+            f"Price Survivors: {price_survivors} ↓ Free Float: {passed} "
+            f"({evaluated} evaluated) · {passed} passed · {failed} failed · "
+            f"Lookup failures: {lookup_failures} · Actual failures: {actual_failures}"
+        )
+        parts = [part for part in (before_float, float_summary, after_float) if part]
+        funnel = "<div class='small'><b>Stage Summary</b><br>" + " → ".join(parts) + "</div>"
     return (
         "<div class='control-header'><div class='control-heading'><div>"
         "<div class='control-title'>🛰 Walter • MIDE Radar</div>"
