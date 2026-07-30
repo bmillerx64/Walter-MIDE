@@ -399,9 +399,51 @@ def test_mission_control_separates_extended_symbols_into_ignore():
     )
 
     assert mission["primary"]["symbol"] == "FOCUS"
-    assert [(item["symbol"], item["status"]) for item in mission["ignored"]] == [
-        ("CHASE", "Too extended")
-    ]
+    assert mission["secondary"]["symbol"] == "CHASE"
+    assert mission["secondary"]["status"] == "Too extended"
+    assert mission["ignored"] == []
+
+
+def test_mission_control_uses_best_qualified_candidates_when_none_earn_attention():
+    mission = walter_mission_control(
+        [
+            sample_record(
+                symbol="BEST", candidate_status="Weakening", participation_score=84
+            ),
+            sample_record(
+                symbol="NEXT", candidate_status="Weakening", participation_score=52
+            ),
+        ]
+    )
+
+    assert mission["primary"]["symbol"] == "BEST"
+    assert mission["secondary"]["symbol"] == "NEXT"
+    assert mission["ignored"] == []
+
+
+def test_mission_control_is_empty_only_without_qualified_candidates():
+    mission = walter_mission_control(
+        [sample_record(symbol="REJECT", qualified_for_watch=False)]
+    )
+
+    assert mission == {"primary": None, "secondary": None, "ignored": []}
+
+
+def test_mission_render_warns_when_selected_candidates_are_not_entry_ready(monkeypatch):
+    rendered = []
+    monkeypatch.setattr(
+        ui.st,
+        "markdown",
+        lambda body, **_kwargs: rendered.append(body),
+    )
+
+    ui.render_walter_mission_control(
+        [sample_record(symbol="BEST", candidate_status="Weakening")]
+    )
+
+    assert "No entry-ready setups. Continue monitoring." in rendered[0]
+    assert "BEST" in rendered[0]
+    assert any(label in rendered[0] for label in ("BUILDING", "WATCH", "EARLY"))
 
 
 def test_mission_control_header_contains_compact_operational_status():
@@ -481,7 +523,7 @@ def test_ignore_today_explains_non_actionable_quality():
         ]
     )
 
-    assert mission["ignored"][0]["status"] == "Low participation"
+    assert mission["primary"]["status"] == "Low participation"
 
 
 def test_entry_window_shows_checklist_estimate_and_direction():

@@ -122,6 +122,7 @@ def inject_css():
     @keyframes feed-arrival {from{background:rgba(96,165,250,.16);transform:translateY(-3px)}to{background:transparent;transform:none}}
     @media (prefers-reduced-motion:reduce){.feed-event{animation:none}}
     .mission-title {font-size:1.25rem;font-weight:950;color:#f8fafc;margin-bottom:13px}
+    .mission-monitoring {margin:-3px 0 13px;padding:9px 12px;border:1px solid #ca8a04;border-radius:8px;background:#302707;color:#fde68a;font-size:.9rem;font-weight:900}
     .mission-grid {display:grid;grid-template-columns:minmax(280px,1.35fr) minmax(240px,1fr);gap:12px}
     .mission-target {background:#0c121a;border:1px solid #273548;border-left:6px solid var(--mission-color);border-radius:10px;padding:13px 15px}
     .mission-role {font-size:.68rem;letter-spacing:.13em;text-transform:uppercase;color:#aab7c7;font-weight:950}
@@ -1458,16 +1459,21 @@ def walter_mission_control(records: list[dict]) -> dict:
             ignored.append(item)
         else:
             candidates.append(item)
-    band_rank = {"trade_soon": 3, "watch_closely": 2, "background": 1}
-    candidates.sort(
+    # Every record reaching this function has already qualified for the visible
+    # watch workflow. Keep the existing mission bands and score ranking, but let
+    # a lower-attention band fill an otherwise empty Primary/Secondary slot.
+    band_rank = {"trade_soon": 3, "watch_closely": 2, "background": 1, "ignore": 0}
+    ranked = candidates + ignored
+    ranked.sort(
         key=lambda item: (band_rank[item["band"]], item["confidence"], item["symbol"]),
         reverse=True,
     )
-    ignored.sort(key=lambda item: (item["confidence"], item["symbol"]), reverse=True)
+    selected = ranked[:2]
+    selected_ids = {id(item) for item in selected}
     return {
-        "primary": candidates[0] if candidates else None,
-        "secondary": candidates[1] if len(candidates) > 1 else None,
-        "ignored": ignored,
+        "primary": selected[0] if selected else None,
+        "secondary": selected[1] if len(selected) > 1 else None,
+        "ignored": [item for item in ignored if id(item) not in selected_ids],
     }
 
 
@@ -1484,6 +1490,13 @@ def _mission_target_markup(item: dict, role: str, primary: dict | None = None) -
     )
     _, band_color = MISSION_BANDS[presentation_band]
     conviction_label, color = _mission_conviction_label(item["confidence"])
+    if item["band"] != "trade_soon":
+        if item["confidence"] >= 75:
+            conviction_label, color = "🟡 BUILDING", "#facc15"
+        elif item["confidence"] >= 60:
+            conviction_label, color = "🔵 WATCH", "#60a5fa"
+        else:
+            conviction_label, color = "🔵 EARLY", "#60a5fa"
     window = (
         "Now"
         if remaining == 0
@@ -1540,6 +1553,12 @@ def render_walter_mission_control(records: list[dict]) -> None:
             unsafe_allow_html=True,
         )
         return
+    selected = [mission["primary"], mission["secondary"]]
+    monitoring_markup = ""
+    if not any(item and item["band"] == "trade_soon" for item in selected):
+        monitoring_markup = (
+            "<div class='mission-monitoring'>No entry-ready setups. Continue monitoring.</div>"
+        )
     targets = _mission_target_markup(mission["primary"], "Primary target")
     if mission["secondary"]:
         targets += _mission_target_markup(
@@ -1556,7 +1575,7 @@ def render_walter_mission_control(records: list[dict]) -> None:
             f"<div class='mission-ignore'><b>IGNORE TODAY</b> · {names}</div>"
         )
     st.markdown(
-        f"<div class='mission-shell'><div class='mission-title'>🎯 TODAY'S MISSION</div><div class='mission-grid'>{targets}</div>{ignore_markup}</div>",
+        f"<div class='mission-shell'><div class='mission-title'>🎯 TODAY'S MISSION</div>{monitoring_markup}<div class='mission-grid'>{targets}</div>{ignore_markup}</div>",
         unsafe_allow_html=True,
     )
 
