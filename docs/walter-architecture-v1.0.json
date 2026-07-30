@@ -1,0 +1,21 @@
+{
+  "name": "Walter Architecture",
+  "version": "1.0",
+  "status": "authoritative",
+  "stages": [
+    {"number": 1, "name": "Universe Construction", "may_add_symbols": true},
+    {"number": 2, "name": "Price Gate", "may_add_symbols": false},
+    {"number": 3, "name": "Validity Gate", "may_add_symbols": false, "halts_are_valid": true},
+    {"number": 4, "name": "Free-Float Gate", "may_add_symbols": false},
+    {"number": 5, "name": "Catalyst Assessment", "may_add_symbols": false, "retrieval_phases": 1},
+    {"number": 6, "name": "Participation Assessment", "may_add_symbols": false},
+    {"number": 7, "name": "Expansion Assessment", "may_add_symbols": false},
+    {"number": 8, "name": "Mission Ranking and Publication", "may_add_symbols": false, "membership_change": false, "persist_before_publish": true}
+  ],
+  "terminal_outcomes": ["Rejected", "Qualified and Ranked", "Technical Failure"],
+  "policy_parameters": ["min_price", "max_price", "max_free_float"],
+  "prohibitions": [
+    "hidden_candidate_cap", "silent_disappearance", "repeated_gate",
+    "downstream_override", "alternate_pipeline", "news_symbol_discovery"
+  ]
+}
