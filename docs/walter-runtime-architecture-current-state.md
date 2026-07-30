@@ -1,4 +1,12 @@
-# Change 2.2B — Participation Architecture Audit
+# Walter Runtime Architecture (Current State)
+
+> **Document status:** This document describes Walter's current runtime
+> implementation as it exists today. It is a descriptive audit, not the target
+> architecture, a design specification, or the project's constitution. The planned
+> **Walter Architecture v1.0 (Target State)** will define that separate, normative
+> constitution; the runtime may be aligned to it in later work.
+
+## Change 2.2B — Participation architecture audit
 
 ## Scope and method
 
