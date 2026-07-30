@@ -44,6 +44,12 @@ from mide.config import Settings
 from mide.alpaca import AlpacaClient, AlpacaError, credential_status
 memory_checkpoint("providers import", object_name="mide.alpaca")
 from mide.news import index_news, recent_wire_news_log
+from mide.news_provider import (
+    AlpacaNewsProvider,
+    NewsService,
+    symbol_news_evidence,
+    ticker_inspection,
+)
 from mide.discovery import (
     analyze_candidates,
     build_seed_symbols,
@@ -794,10 +800,11 @@ def _run_live_pipeline(
 
     log("Stage 1/5: fetching news")
     status.write("1/5 Fetching recent news")
+    news_service = NewsService([AlpacaNewsProvider(client)])
     try:
-        news_items = client.news(
-            datetime.now(timezone.utc) - timedelta(days=3), limit=200
-        )
+        # Increment from the persisted cursor. Alpaca remains a temporary fallback
+        # until official TipRanks terms and credentials are confirmed.
+        news_items = news_service.fetch()
     except Exception as exc:
         client.warnings.append(f"News unavailable; scan continued: {exc}")
         news_items = []
@@ -806,6 +813,19 @@ def _run_live_pipeline(
     log("Stage 2/5: building discovery universe")
     status.write("2/5 Building discovery universe")
     seeds, reasons = build_seed_symbols(client, settings, news_items)
+    # A global feed can be crowded out. Query every current discovery/mission
+    # symbol directly and merge it with the incremental cache.
+    try:
+        news_items = news_service.fetch(symbols=seeds, force_lookback=True)
+        for symbol in symbol_news_evidence(news_items):
+            if symbol not in reasons:
+                seeds.append(symbol)
+            reasons.setdefault(symbol, []).append("recent news")
+        seeds = sorted(set(seeds))
+    except Exception as exc:
+        client.warnings.append(f"Targeted news unavailable; scan continued: {exc}")
+    client.diagnostics["news_coverage"] = dict(news_service.metrics)
+    client.diagnostics["news_evidence"] = symbol_news_evidence(news_items)
     progress.progress(0.24, text=f"{len(seeds)} symbols discovered")
 
     for key, value in client.diagnostics.items():
@@ -992,6 +1012,33 @@ def _run_live_pipeline(
         prefilter_rejections=prefilter_rejections,
         timestamp=rejection_timestamp,
     )
+    coverage = client.diagnostics.get("news_coverage", {})
+    coverage["symbols_seeded_from_news"] = sum(
+        "recent news" in set(symbol_reasons) for symbol_reasons in reasons.values()
+    )
+    coverage["symbols_rejected_downstream"] = [
+        {
+            "symbol": item.get("symbol"),
+            "reason": item.get("reason") or item.get("rejection_reason") or "unspecified",
+        }
+        for item in client.diagnostics["rejected_candidates"]
+        if "recent news" in set(reasons.get(item.get("symbol"), []))
+    ]
+    client.diagnostics["news_coverage"] = coverage
+    client.diagnostics["news_ticker_inspections"] = {
+        symbol: ticker_inspection(
+            symbol,
+            news_items=news_items,
+            provider=coverage.get("active_provider", "None"),
+            discovery_reasons=reasons,
+            stage2_rejections=stage2_rejections,
+            prefilter_rejections=prefilter_rejections,
+            candidates=candidates,
+            analyzed=analyzed_records,
+            records=records,
+        )
+        for symbol in symbol_news_evidence(news_items)
+    }
     wire_news_log = recent_wire_news_log(
         news_items,
         snapshots=snapshots,
@@ -1568,6 +1615,51 @@ if active_tab == "Diagnostics":
                 "The request succeeded, but the provider did not return a recognized "
                 "free-float field for this ticker."
             )
+
+    st.divider()
+    st.subheader("News Coverage")
+    news_coverage = scan_diagnostics.get("news_coverage", {})
+    if news_coverage:
+        coverage_labels = {
+            "active_provider": "Active provider",
+            "last_successful_fetch": "Last successful fetch",
+            "requests_made": "Requests made",
+            "articles_received": "Articles received",
+            "unique_symbols_discovered": "Unique symbols discovered",
+            "provider_failures": "Provider failures",
+            "articles_without_symbols": "Articles with no symbol tags",
+            "symbols_seeded_from_news": "Symbols seeded from news",
+        }
+        st.dataframe(
+            [
+                {"Metric": label, "Value": news_coverage.get(key, "—")}
+                for key, label in coverage_labels.items()
+            ],
+            width="stretch",
+            hide_index=True,
+        )
+        downstream = news_coverage.get("symbols_rejected_downstream") or []
+        if downstream:
+            st.caption("News-seeded symbols rejected downstream (exact reason)")
+            st.dataframe(downstream, width="stretch", hide_index=True)
+        with st.expander("Ticker news inspector", expanded=False):
+            news_inspect_symbol = st.text_input(
+                "Did Walter receive news for ticker?",
+                value="CYCU",
+                key="news_coverage_inspector_symbol",
+            ).strip().upper()
+            inspection = (scan_diagnostics.get("news_ticker_inspections") or {}).get(
+                news_inspect_symbol
+            )
+            if inspection:
+                st.json(inspection)
+            else:
+                st.info(
+                    f"No provider-tagged article or pipeline trace was recorded for "
+                    f"{news_inspect_symbol or 'that ticker'} in this scan."
+                )
+    else:
+        st.info("No news-provider coverage diagnostics are available for this scan.")
 
     st.divider()
     st.subheader("Reuters / Benzinga — last 90 minutes")
