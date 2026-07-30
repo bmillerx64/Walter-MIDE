@@ -45,12 +45,14 @@ def test_free_float_diagnostic_logs_value_source_threshold_and_result(caplog):
     evaluate([record(symbol="NCRA", float_shares=1_300_000,
                      free_float_source="Polygon reference")])
 
-    assert "Ticker: NCRA" in caplog.text
+    assert "Symbol: NCRA" in caplog.text
     assert "Price: PASS ($1.25)" in caplog.text
-    assert "Value Returned: 1300000" in caplog.text
-    assert "Source: Polygon reference" in caplog.text
-    assert "Threshold: 3500000" in caplog.text
-    assert "Result: PASS" in caplog.text
+    assert "Provider field: float_shares" in caplog.text
+    assert "Raw provider value: 1300000" in caplog.text
+    assert "Normalized value: 1300000" in caplog.text
+    assert "MAX_FREE_FLOAT: 3500000" in caplog.text
+    assert "Decision: PASS" in caplog.text
+    assert "Provider source: Polygon reference" in caplog.text
 
 
 def test_free_float_diagnostic_logs_null_reason(caplog):
@@ -58,10 +60,32 @@ def test_free_float_diagnostic_logs_null_reason(caplog):
 
     evaluate([record(symbol="NCRA", float_shares=None)])
 
-    assert "Ticker: NCRA" in caplog.text
-    assert "Free Float Lookup:\nNULL" in caplog.text
-    assert "Reason: No provider data" in caplog.text
-    assert "Result: FAIL" in caplog.text
+    assert "Symbol: NCRA" in caplog.text
+    assert "Provider field: NONE" in caplog.text
+    assert "Raw provider value: NULL" in caplog.text
+    assert "Normalized value: NULL" in caplog.text
+    assert "Lookup reason: No provider data" in caplog.text
+    assert "Decision: FAIL" in caplog.text
+
+
+def test_float_millions_diagnostic_preserves_raw_value_and_logs_conversion(caplog):
+    caplog.set_level("INFO", logger="mide.decision_engine")
+
+    result = evaluate([
+        record(symbol="MILL", float_shares=None, float_millions="2.5")
+    ])[0]
+
+    assert "Provider field: float_millions" in caplog.text
+    assert "Raw provider value: 2.5" in caplog.text
+    assert "Normalized value: 2500000" in caplog.text
+    float_step = next(
+        step for step in result["decision_funnel"] if step["category"] == "Free Float"
+    )
+    assert "Provider field: float_millions" in float_step["evidence"]
+    assert "Raw provider value: 2.5" in float_step["evidence"]
+    assert "Normalized value: 2500000" in float_step["evidence"]
+    assert "MAX_FREE_FLOAT: 3500000" in float_step["evidence"]
+    assert "Decision: PASS" in float_step["evidence"]
 
 
 def test_stage_two_failure_never_reaches_stage_three_candidates():
@@ -77,7 +101,13 @@ def test_stage_two_failure_never_reaches_stage_three_candidates():
         "stage": "Stage 2",
         "reason": "Free Float",
         "result": "Exceeds limit",
-        "evidence": ["Actual: 56.67M", "Limit: 3.50M"],
+        "evidence": [
+            "Actual: 56.67M", "Limit: 3.50M",
+            "Provider field: float_shares", "Raw provider value: 56670000",
+            "Normalized value: 56670000", "MAX_FREE_FLOAT: 3500000",
+            "Decision: FAIL",
+            "Provider source: record.float_shares (provider unspecified)",
+        ],
         "free_float": "56.67M",
         "maximum": "3.50M",
     }]

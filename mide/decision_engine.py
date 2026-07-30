@@ -39,39 +39,78 @@ def _step(stage: int, category: str, result: str, *, passed=True, evidence=None)
             "passed": passed, "evidence": list(evidence or [])}
 
 
-def _free_float_lookup(record: dict) -> tuple[float | None, str | None, str | None]:
+def _free_float_lookup(
+    record: dict,
+) -> tuple[float | None, str | None, object | None, str | None, str | None]:
     """Return the normalized share count plus auditable lookup provenance."""
     for key in ("float_shares", "shares_float", "free_float"):
         shares = _number(record, key)
         if shares is not None:
             source = record.get("free_float_source") or record.get("float_source")
-            return shares, str(source or f"record.{key} (provider unspecified)"), None
+            return (
+                shares,
+                key,
+                record.get(key),
+                str(source or f"record.{key} (provider unspecified)"),
+                None,
+            )
     millions = _number(record, "float_millions")
     if millions is not None:
         source = record.get("free_float_source") or record.get("float_source")
         return (
             millions * 1_000_000,
+            "float_millions",
+            record.get("float_millions"),
             str(source or "record.float_millions (provider unspecified)"),
             None,
         )
-    return None, None, "No provider data"
+    return None, None, None, None, "No provider data"
+
+
+def _display_number(value: object | None) -> str:
+    """Render diagnostic numbers without changing or re-parsing provider data."""
+    if isinstance(value, float) and value.is_integer():
+        return str(int(value))
+    return "NULL" if value is None else str(value)
+
+
+def _free_float_evidence(
+    shares: float | None,
+    field: str | None,
+    raw_value: object | None,
+    source: str | None,
+    reason: str | None,
+    policy: IdentityPolicy,
+) -> list[str]:
+    decision = (
+        "PASS"
+        if shares is not None and shares <= policy.max_free_float
+        else "FAIL"
+    )
+    normalized = _display_number(shares)
+    return [
+        f"Provider field: {field or 'NONE'}",
+        f"Raw provider value: {_display_number(raw_value)}",
+        f"Normalized value: {normalized}",
+        f"MAX_FREE_FLOAT: {policy.max_free_float}",
+        f"Decision: {decision}",
+        f"Provider source: {source or 'unspecified'}",
+        *([f"Lookup reason: {reason}"] if reason else []),
+    ]
 
 
 def _log_free_float_diagnostic(
-    symbol: str, price: float, shares: float | None, source: str | None,
-    reason: str | None, policy: IdentityPolicy,
+    symbol: str, price: float, shares: float | None, field: str | None,
+    raw_value: object | None, source: str | None, reason: str | None,
+    policy: IdentityPolicy,
 ) -> None:
     """Emit one scan-friendly diagnostic for every symbol that passes Price."""
-    lines = [f"Ticker: {symbol}", f"Price: PASS (${price:.2f})", "Free Float Lookup:"]
-    if shares is None:
-        lines.extend(["NULL", f"Reason: {reason or 'No provider data'}"])
-    else:
-        value = str(int(shares)) if shares.is_integer() else f"{shares:g}"
-        lines.extend([f"Value Returned: {value}", f"Source: {source}"])
-    lines.extend([
-        f"Threshold: {policy.max_free_float}",
-        f"Result: {'PASS' if shares is not None and shares <= policy.max_free_float else 'FAIL'}",
-    ])
+    lines = [
+        f"Symbol: {symbol}",
+        f"Price: PASS (${price:.2f})",
+        "Free Float Lookup:",
+        *_free_float_evidence(shares, field, raw_value, source, reason, policy),
+    ]
     logger.info("\n".join(lines))
 
 
@@ -108,16 +147,39 @@ def identity_decision(
     if not evaluate_float:
         return True, audit
 
-    shares, float_source, lookup_reason = _free_float_lookup(record)
+    shares, float_field, raw_float, float_source, lookup_reason = _free_float_lookup(
+        record
+    )
     _log_free_float_diagnostic(
-        symbol, price, shares, float_source, lookup_reason, policy
+        symbol,
+        price,
+        shares,
+        float_field,
+        raw_float,
+        float_source,
+        lookup_reason,
+        policy,
+    )
+    diagnostic_evidence = _free_float_evidence(
+        shares, float_field, raw_float, float_source, lookup_reason, policy
     )
     if shares is None or shares > policy.max_free_float:
         actual = "Unavailable" if shares is None else f"{shares / 1_000_000:.2f}M"
-        audit.append(_step(2, "Free Float", "Exceeds limit" if shares else "Unavailable",
-                           passed=False, evidence=[f"Actual: {actual}", f"Limit: {policy.max_free_float / 1_000_000:.2f}M"]))
+        audit.append(_step(
+            2,
+            "Free Float",
+            "Exceeds limit" if shares else "Unavailable",
+            passed=False,
+            evidence=[
+                f"Actual: {actual}",
+                f"Limit: {policy.max_free_float / 1_000_000:.2f}M",
+                *diagnostic_evidence,
+            ],
+        ))
         return False, audit
-    audit.append(_step(2, "Free Float", "Passed", evidence=[f"{shares / 1_000_000:.2f}M"]))
+    audit.append(_step(2, "Free Float", "Passed", evidence=[
+        f"{shares / 1_000_000:.2f}M", *diagnostic_evidence
+    ]))
     return True, audit
 
 
