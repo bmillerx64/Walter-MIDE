@@ -1,0 +1,38 @@
+{
+  "symbol": "CYCU",
+  "snapshot": {
+    "latestTrade": {"p": 2.45},
+    "latestQuote": {"bp": 2.44, "ap": 2.46},
+    "dailyBar": {"c": 2.45, "h": 2.60, "v": 3200000},
+    "prevDailyBar": {"c": 2.10, "v": 800000},
+    "float_shares": 8500000,
+    "tradable": true,
+    "halted": false,
+    "asset_type": "stock",
+    "exchange": "NASDAQ",
+    "asset_status": "active"
+  },
+  "bars_available": true,
+  "articles": [
+    {
+      "id": "cycu-contract-1",
+      "headline": "Cycurion awarded material multi-year government contract",
+      "created_at": "2026-07-30T13:05:00Z",
+      "updated_at": "2026-07-30T13:06:00Z",
+      "symbols": ["CYCU"],
+      "source": "Business Wire",
+      "url": "https://example.invalid/cycu/1",
+      "provider": "Fixture"
+    },
+    {
+      "id": "cycu-contract-2",
+      "headline": "Government contract award confirmed for Cycurion",
+      "created_at": "2026-07-30T13:12:00Z",
+      "updated_at": null,
+      "symbols": ["CYCU"],
+      "source": "Reuters",
+      "url": "https://example.invalid/cycu/2",
+      "provider": "Fixture"
+    }
+  ]
+}

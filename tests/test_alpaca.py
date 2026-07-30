@@ -25,6 +25,19 @@ def test_news_paginates_and_never_requests_over_50():
     assert get.call_args_list[1].kwargs["params"]["limit"] == 25
 
 
+def test_news_supports_structured_ticker_targeting_and_incremental_order():
+    client = AlpacaClient("k", "s", feed="sip")
+    with patch("mide.alpaca.requests.get", return_value=response({"news": []})) as get:
+        client.news(
+            datetime.now(timezone.utc),
+            limit=50,
+            symbols=["cycu", "CYCU", "test"],
+            sort="asc",
+        )
+    assert get.call_args.kwargs["params"]["symbols"] == "CYCU,TEST"
+    assert get.call_args.kwargs["params"]["sort"] == "asc"
+
+
 def test_bars_paginates_across_symbols():
     client = AlpacaClient("k", "s", feed="sip")
     first = {"bars": {"AAA": [{"t": "2026-01-01T00:00:00Z"}]}, "next_page_token": "next"}

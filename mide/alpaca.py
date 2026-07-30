@@ -145,7 +145,14 @@ class AlpacaClient:
             self.warnings.append(f"Most-actives unavailable: {exc}")
             return []
 
-    def news(self, start: datetime, limit: int = 200):
+    def news(
+        self,
+        start: datetime,
+        limit: int = 200,
+        *,
+        symbols: Iterable[str] | None = None,
+        sort: str = "desc",
+    ):
         wanted = max(0, int(limit))
         if wanted == 0:
             return []
@@ -155,9 +162,14 @@ class AlpacaClient:
             params = {
                 "start": start.astimezone(timezone.utc).isoformat(),
                 "limit": self._request_limit(wanted - len(items), self.NEWS_MAX_LIMIT),
-                "sort": "desc",
+                "sort": sort if sort in {"asc", "desc"} else "desc",
                 "include_content": "false",
             }
+            cleaned_symbols = sorted(
+                {str(symbol).strip().upper() for symbol in symbols or [] if str(symbol).strip()}
+            )
+            if cleaned_symbols:
+                params["symbols"] = ",".join(cleaned_symbols)
             if page_token:
                 params["page_token"] = page_token
             payload = self._get(self.DATA, "/v1beta1/news", params)
