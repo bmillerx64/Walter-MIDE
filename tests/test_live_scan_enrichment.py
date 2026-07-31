@@ -219,15 +219,21 @@ def test_run_live_logs_entire_pipeline_failure_and_closes_status(monkeypatch, ca
         lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("stage exploded")),
     )
 
-    with caplog.at_level(logging.ERROR), pytest.raises(RuntimeError, match="stage exploded"):
-        run_live()
+    with caplog.at_level(logging.ERROR):
+        result = run_live()
 
     assert "Live scan pipeline failed" in caplog.text
     assert "Traceback" in caplog.text
+    assert result[:3] == ([], 0, 0)
+    assert result[4]["provider_failures"][0]["recovery_action"].startswith("return an empty")
     assert updates == [{
         "label": "Scan failed: RuntimeError: stage exploded",
         "state": "error",
         "expanded": True,
+    }, {
+        "label": "Scan complete with recovery: RuntimeError",
+        "state": "complete",
+        "expanded": False,
     }]
 
 

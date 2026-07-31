@@ -4,7 +4,9 @@ from typing import Iterable
 import csv
 import io
 import requests
+from requests.exceptions import ConnectionError as RequestsConnectionError, Timeout
 from .startup_memory import checkpoint as memory_checkpoint
+from .resilience import retry_transient
 
 memory_checkpoint("HTTP provider dependency import", object_name="requests")
 
@@ -44,12 +46,20 @@ class AlpacaClient:
         }
 
     def _get(self, base: str, path: str, params=None, *, authenticated: bool = True):
-        response = requests.get(
-            base + path,
-            headers=self.headers if authenticated else {},
-            params=params or {},
-            timeout=self.timeout,
-        )
+        def request():
+            try:
+                return requests.get(
+                    base + path,
+                    headers=self.headers if authenticated else {},
+                    params=params or {},
+                    timeout=self.timeout,
+                )
+            except Timeout as exc:
+                raise TimeoutError(str(exc)) from exc
+            except RequestsConnectionError as exc:
+                raise ConnectionError(str(exc)) from exc
+
+        response = retry_transient(request)
         if response.status_code >= 400:
             body = response.text[:400].replace("\n", " ")
             raise AlpacaError(f"{response.status_code} from {path}: {body}")

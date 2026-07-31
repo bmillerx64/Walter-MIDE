@@ -50,6 +50,7 @@ from mide.news_provider import (
     symbol_news_evidence,
     ticker_inspection,
 )
+from mide.resilience import record_provider_failure
 from mide.discovery import (
     analyze_candidates,
     build_seed_symbols,
@@ -791,8 +792,17 @@ def _run_live_pipeline(
     client_factory = client_factory or alpaca_module.AlpacaClient
     credential_checker = credential_checker or alpaca_module.credential_status
     client = client_factory(api_key, secret, feed=settings.feed, timeout=12)
-    environment = credential_checker(client)
-    status.write(f"Alpaca credentials accepted ({environment} environment)")
+    # Account validation is useful evidence, not permission for one provider to
+    # terminate the scan. Public/fallback discovery may still produce a universe.
+    try:
+        environment = credential_checker(client)
+        status.write(f"Alpaca credentials accepted ({environment} environment)")
+    except Exception as exc:
+        record_provider_failure(
+            client.diagnostics, provider="Alpaca", operation="credential check",
+            exception=exc, recovery_action="continue with available public discovery sources",
+        )
+        client.warnings.append(f"Alpaca credential check unavailable: {exc}")
     with scan_runtime_slot:
         progress = st.progress(0, text="Starting Walter Architecture")
 
@@ -815,7 +825,15 @@ def _run_live_pipeline(
     def discover():
         # Catalyst retrieval deliberately does not happen here. Discovery sources
         # alone establish the immutable membership of this scan.
-        seeds, reasons = build_seed_symbols(client, settings, [])
+        try:
+            seeds, reasons = build_seed_symbols(client, settings, [])
+        except Exception as exc:
+            record_provider_failure(
+                client.diagnostics, provider="Alpaca", operation="universe discovery",
+                exception=exc, recovery_action="complete scan with an empty universe",
+            )
+            client.warnings.append(f"Universe discovery unavailable: {exc}")
+            seeds, reasons = [], {}
         state["seeds"], state["reasons"] = seeds, reasons
         snapshots = {}
         for offset in range(0, len(seeds), settings.batch_size):
@@ -824,12 +842,18 @@ def _run_live_pipeline(
                 snapshots.update(client.snapshots(batch))
             except Exception as exc:
                 client.warnings.append(f"Snapshot batch unavailable: {exc}")
+                record_provider_failure(
+                    client.diagnostics, provider="Alpaca", operation="market data snapshots",
+                    exception=exc, affected_symbols=batch,
+                    recovery_action="retain symbols as Technical Failure candidates and continue",
+                )
         state["snapshots"] = snapshots
         records = snapshot_identity_records(snapshots)
         by_symbol = {item["symbol"]: item for item in records}
         # Symbols whose snapshot failed remain accountable as unusable data.
         return [by_symbol.get(symbol, {
             "symbol": symbol, "price": None, "data_usable": False,
+            "technical_failure": "Market data snapshot unavailable",
         }) for symbol in seeds]
 
     def catalyst(records):
@@ -842,6 +866,9 @@ def _run_live_pipeline(
             news_items = []
         state["news"] = news_items
         client.diagnostics["news_coverage"] = dict(service.metrics)
+        client.diagnostics.setdefault("provider_failures", []).extend(
+            service.metrics.get("provider_failure_diagnostics", [])
+        )
         client.diagnostics["news_evidence"] = symbol_news_evidence(news_items)
         indexed = index_news(news_items)
         decisions = {}
@@ -870,17 +897,39 @@ def _run_live_pipeline(
         )
         if fmp_key:
             provider = FreeFloatClient(fmp_key, timeout=12)
-            _count, errors = enrich_snapshots_with_free_float(selected, provider)
+            try:
+                _count, errors = enrich_snapshots_with_free_float(selected, provider)
+            except Exception as exc:
+                errors = {symbol: str(exc) for symbol in symbols}
+                record_provider_failure(
+                    client.diagnostics, provider="Financial Modeling Prep",
+                    operation="free-float lookup", exception=exc,
+                    affected_symbols=symbols,
+                    recovery_action="fall back to the next free-float provider",
+                )
             client.diagnostics["free_float_provider"] = "Financial Modeling Prep"
             if errors:
                 client.warnings.append(
                     f"FMP free-float unavailable for {len(errors)} symbols"
                 )
+                for symbol, error in errors.items():
+                    record_provider_failure(
+                        client.diagnostics, provider="Financial Modeling Prep",
+                        operation="free-float lookup", exception=RuntimeError(error),
+                        affected_symbols=[symbol],
+                        recovery_action="fall back to Yahoo Finance; preserve snapshot data",
+                    )
         if hasattr(client, "enrich_free_float"):
             try:
                 client.enrich_free_float(state["snapshots"], symbols)
             except Exception as exc:
                 client.warnings.append(f"Free-float fallback unavailable: {exc}")
+                record_provider_failure(
+                    client.diagnostics, provider="Yahoo Finance",
+                    operation="free-float fallback", exception=exc,
+                    affected_symbols=symbols,
+                    recovery_action="skip unavailable enrichment and preserve snapshot data",
+                )
         refreshed = {
             item["symbol"]: item
             for item in snapshot_identity_records(state["snapshots"])
@@ -970,6 +1019,11 @@ def _run_live_pipeline(
         stage_observer=lambda number, _name, candidates: announce(
             number, f"{len(candidates)} candidates" if number > 1 else ""
         ),
+        failure_observer=lambda stage, symbol, exc: record_provider_failure(
+            client.diagnostics, provider="Walter candidate processing",
+            operation=stage, exception=exc, affected_symbols=[symbol],
+            recovery_action="mark only the affected candidate Technical Failure and continue",
+        ),
     )
     ledger = architecture.run()
     ranked = state["ranked"]
@@ -1005,9 +1059,9 @@ def run_live(
     """Run and report the complete live pipeline without leaving a LIVE spinner.
 
     This boundary deliberately covers status creation as well as every discovery,
-    market-data, analysis, and persistence stage.  Callers still receive the
-    original exception so the watchdog can retry it, while both the traceback and
-    terminal UI state are recorded for each failed attempt.
+    market-data, analysis, and persistence stage. It records the traceback and
+    returns a completed degraded result so no unexpected exception can terminate
+    the runtime.
     """
     status = None
     try:
@@ -1036,7 +1090,22 @@ def run_live(
                 logging.getLogger(__name__).exception(
                     "Could not update failed live-scan status"
                 )
-        raise
+        # This is the final containment boundary. A UI, persistence, malformed
+        # response, or unexpected candidate error must never take Walter down.
+        diagnostics = {"provider_failures": []}
+        record_provider_failure(
+            diagnostics, provider="Walter Runtime", operation="live scan",
+            exception=exc, recovery_action="return an empty completed scan and retry next cycle",
+        )
+        if status is not None:
+            try:
+                status.update(
+                    label=f"Scan complete with recovery: {type(exc).__name__}",
+                    state="complete", expanded=False,
+                )
+            except Exception:
+                pass
+        return [], 0, 0, [f"Recovered live scan failure: {exc}"], diagnostics
 
 
 should_scan = False
