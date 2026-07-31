@@ -114,6 +114,8 @@ from mide.session_controls import (
 from mide.completed_scan import (
     CompletedScan,
     completed_scan_for_view,
+    publish_scan_result,
+    scan_context,
     store_completed_scan,
 )
 memory_checkpoint("providers import", object_name="mide.webull_live")
@@ -617,18 +619,10 @@ system_status_panel.caption("Webull startup: " + " · ".join(webull_startup_diag
 memory_checkpoint("dashboard container initialization", object_name="Streamlit DeltaGenerators")
 
 session_defaults = {
-    "completed_scan": None,
-    "records": [],
     "walter_candidate_ledger": WalterCandidateLedger(),
-    "source_label": "No scan has been run",
-    "api_warnings": [],
-    "last_updated": None,
-    "scan_diagnostics": {},
     "free_float_inspection": None,
     "last_scan_attempt": None,
     "scan_failure_count": 0,
-    "symbols_sampled": 0,
-    "prefilter_count": 0,
     "last_escalation_alert": "",
     "active_early_setup_symbols": set(),
     "opportunity_feed_snapshot": {},
@@ -644,6 +638,7 @@ session_defaults = {
 for key, default in session_defaults.items():
     if key not in st.session_state:
         st.session_state[key] = default
+runtime_context = scan_context(st.session_state)
 memory_checkpoint("session cache initialization", object_name="st.session_state")
 memory_profile("startup", session_state=st.session_state)
 persisted_alert_voice()
@@ -931,10 +926,11 @@ def _run_live_pipeline(
         app_secret = resolved["WEBULL_APP_SECRET"].value
         if not app_key or not app_secret:
             raise RuntimeError("Webull credentials are not configured in Streamlit Secrets/environment.")
-        client = st.session_state.get("webull_live_provider")
+        context = scan_context(st.session_state)
+        client = context.provider_instance
         if not isinstance(client, LiveWebullProvider):
             client = LiveWebullProvider(app_key, app_secret)
-            st.session_state.webull_live_provider = client
+            context.provider_instance = client
         logging.getLogger(__name__).warning(
             "Walter market-data provider: WEBULL (no Alpaca imports or fallback)"
         )
@@ -1326,6 +1322,8 @@ def _run_live_pipeline(
 
     def publish(records):
         state["ranked"] = records
+        # Transitional identity alias for integrations invoked during the scan;
+        # it is the exact pipeline list, never a second result container.
         st.session_state.records = records
 
     architecture = WalterArchitectureV1(
@@ -1349,6 +1347,7 @@ def _run_live_pipeline(
         ledger=st.session_state.walter_candidate_ledger,
         after_price_gate=retrieve_market_data,
     )
+    scan_context(st.session_state).pipeline = architecture
     ledger = architecture.run()
     ranked = state["ranked"]
     # Entry readiness is an observational view of the already-completed
@@ -1427,15 +1426,6 @@ def _run_live_pipeline(
     if isinstance(client, LiveWebullProvider):
         client.diagnostics["active_pipeline_sources"] = client.pipeline_sources()
     log("Timing summary: " + json.dumps(timing_summary, separators=(",", ":")))
-    st.session_state.symbols_sampled = len(state["seeds"])
-    st.session_state.prefilter_count = len(state["candidates"])
-    st.session_state.source_label = (
-        f"Live {settings.feed.upper()} · {len(state['seeds'])} symbols sampled · "
-        f"{len(ranked)} Walter-qualified"
-    )
-    st.session_state.api_warnings = list(client.warnings)
-    st.session_state.scan_diagnostics = dict(client.diagnostics)
-    st.session_state.last_updated = datetime.now().astimezone()
     progress.progress(1.0, text="Walter Architecture complete")
     status.update(label=f"Scan complete: {len(ranked)} ranked records",
                   state="complete", expanded=False)
@@ -1501,6 +1491,7 @@ def run_live(
                 )
             except Exception:
                 pass
+        diagnostics["scan_completed"] = False
         return [], 0, 0, [f"Recovered live scan failure: {exc}"], diagnostics
 
 
@@ -1520,9 +1511,10 @@ else:
         and live_possible
         and not st.session_state.scan_in_progress
         and (
-            st.session_state.last_updated is None
+            completed_scan_for_view(st.session_state, "scheduler") is None
             or (
-                datetime.now().astimezone() - st.session_state.last_updated
+                datetime.now().astimezone()
+                - completed_scan_for_view(st.session_state, "scheduler").completed_at
             ).total_seconds()
             >= settings.refresh_seconds
         )
@@ -1540,21 +1532,25 @@ if mode.startswith("Live ") and should_scan and not st.session_state[STOP_REQUES
         records, universe_count, prefiltered, warnings, diagnostics = watchdog.run(
             lambda: run_live(scanner_version, provider_name=selected_provider), before_retry=repair_mide_module_links
         )
-        completed_at = datetime.now().astimezone()
-        store_completed_scan(st.session_state, CompletedScan(
-            provider=selected_provider,
-            records=records,
-            diagnostics=diagnostics,
-            warnings=warnings,
-            symbols_sampled=universe_count,
-            prefilter_count=prefiltered,
-            completed_at=completed_at,
-            source_label=(
-                f"Live {selected_provider} · {universe_count} symbols sampled · "
-                f"{prefiltered} prefiltered"
-            ),
-        ))
-        st.session_state.scan_failure_count = 0
+        if diagnostics.get("scan_completed", True):
+            completed_at = datetime.now().astimezone()
+            publish_scan_result(st.session_state, CompletedScan(
+                provider=selected_provider,
+                records=records,
+                diagnostics=diagnostics,
+                warnings=warnings,
+                symbols_sampled=universe_count,
+                prefilter_count=prefiltered,
+                completed_at=completed_at,
+                source_label=(
+                    f"Live {selected_provider} · {universe_count} symbols sampled · "
+                    f"{prefiltered} prefiltered"
+                ),
+            ))
+            st.session_state.scan_failure_count = 0
+        else:
+            st.session_state.scan_failure_count += 1
+            st.warning("Scan retry failed; the last completed scan remains displayed.")
     except ScanAlreadyRunning as exc:
         log(f"Scan deferred: {exc}")
         st.info("Another Walter session is scanning. This session will retry automatically.")
@@ -1620,8 +1616,8 @@ with mission_header_slot:
             live=mode.startswith("Live "),
             market_phase=clock.phase,
             market_time=clock.time_text,
-            symbols_sampled=st.session_state.symbols_sampled,
-            prefilter_count=st.session_state.prefilter_count,
+            symbols_sampled=completed_scan.symbols_sampled if completed_scan else 0,
+            prefilter_count=completed_scan.prefilter_count if completed_scan else 0,
             candidate_count=len(actionable_records),
             focus_count=focus_count,
             escalation_count=escalation_count,
@@ -1673,10 +1669,10 @@ with system_status_panel:
         unsafe_allow_html=True,
     )
     status_columns = st.columns(3)
-    status_columns[0].metric("Symbols Sampled", st.session_state.symbols_sampled)
-    status_columns[1].metric("Prefiltered", st.session_state.prefilter_count)
+    status_columns[0].metric("Symbols Sampled", completed_scan.symbols_sampled if completed_scan else 0)
+    status_columns[1].metric("Prefiltered", completed_scan.prefilter_count if completed_scan else 0)
     status_columns[2].metric("Ranked", len(records))
-    st.caption(st.session_state.source_label)
+    st.caption(completed_scan.source_label if completed_scan else "No scan has been run")
     if updated:
         st.success(f"Scan Complete · {len(records)} ranked records")
         st.progress(1.0, text="Progress: complete")
@@ -2583,8 +2579,10 @@ if active_tab == "Trade Outcomes":
         st.caption("At least five completed trades in a cohort are needed for a recommendation.")
 
 if active_tab == "What changed":
+    view_scan = completed_scan_for_view(st.session_state, "What changed")
+    changed_records = view_scan.records if view_scan else []
     for record in sorted(
-        records, key=lambda r: abs(r.get("velocity", 0)), reverse=True
+        changed_records, key=lambda r: abs(r.get("velocity", 0)), reverse=True
     )[:15]:
         direction = "strengthened" if record.get("velocity", 0) > 0 else "weakened"
         st.markdown(
@@ -2595,17 +2593,19 @@ if active_tab == "What changed":
 
 if active_tab == "Data validation":
     view_scan = completed_scan_for_view(st.session_state, "Data validation")
+    validation_records = view_scan.records if view_scan else []
+    validation_warnings = view_scan.warnings if view_scan else []
     c1, c2, c3, c4 = st.columns(4)
     c1.metric(
         "Completed provider", view_scan.provider if view_scan else "No completed scan"
     )
-    c2.metric("Ranked records", len(records))
+    c2.metric("Ranked records", len(validation_records))
     c3.metric(
         "Nonzero dominance",
-        sum(r.get("market_dominance_score", 0) > 0 for r in records),
+        sum(r.get("market_dominance_score", 0) > 0 for r in validation_records),
     )
-    c4.metric("API warnings", len(api_warnings))
-    for warning in api_warnings:
+    c4.metric("API warnings", len(validation_warnings))
+    for warning in validation_warnings:
         st.warning(warning)
 
 if active_tab == "Method":
