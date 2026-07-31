@@ -2,7 +2,8 @@ import json
 import time
 
 from mide.market_data import EventType, MarketEvent
-from mide.webull_live import LiveWebullProvider, WebullBootstrap, live_data_modes
+from mide.webull_live import (LiveWebullProvider, WebullBootstrap,
+                              WebullOpenAPIClient, live_data_modes)
 
 
 class Fallback:
@@ -26,6 +27,12 @@ class Bootstrap:
     def obtain(self):
         return {"host": "stream.test", "port": 443, "username": "user", "password": "token",
                 "client_id": "walter", "topic_template": "quotes/{symbol}"}
+
+
+class Rest:
+    def snapshots(self, symbols):
+        return {symbol: {"latestTrade": {"p": 10.0}, "dailyBar": {"v": 50}}
+                for symbol in symbols}
 
 
 class Stream:
@@ -53,7 +60,7 @@ def test_provider_selection_includes_webull_and_prefers_configured_provider():
 
 def test_webull_stream_cache_overlays_alpaca_fallback():
     provider = LiveWebullProvider("key", "secret", fallback=Fallback(),
-                                  bootstrap=Bootstrap(), stream_class=Stream)
+                                  bootstrap=Bootstrap(), rest_client=Rest(), stream_class=Stream)
     prices = provider.latest_trades(["AAA"])
     snapshots = provider.snapshots(["AAA"])
 
@@ -72,14 +79,65 @@ def test_webull_initialization_failure_retains_alpaca_data_and_reports_error():
 
     fallback = Fallback()
     provider = LiveWebullProvider("key", "secret", fallback=fallback,
-                                  bootstrap=BrokenBootstrap(), stream_class=Stream)
+                                  bootstrap=BrokenBootstrap(), rest_client=Rest(), stream_class=Stream)
 
-    assert provider.latest_trades(["AAA"]) == {"AAA": 1.0}
+    assert provider.latest_trades(["AAA"]) == {"AAA": 10.0}
     diagnostics = provider.diagnostics["webull_stream"]
     assert diagnostics["authentication_status"] == "failed"
     assert diagnostics["stream_connection_status"] == "error"
     assert diagnostics["subscription_failures"] == ["RuntimeError: denied"]
-    assert "using Alpaca fallback" in fallback.warnings[-1]
+    assert "cached Webull snapshot retained" in fallback.warnings[-1]
+
+
+def test_snapshot_is_complete_before_stream_starts_and_no_alpaca_prices_are_polled():
+    order = []
+
+    class OrderedRest:
+        def snapshots(self, symbols):
+            order.append(("snapshot", tuple(symbols)))
+            return Rest().snapshots(symbols)
+
+    class OrderedStream(Stream):
+        def connect(self):
+            order.append(("stream",))
+
+    fallback = Fallback()
+    fallback.latest_trades = lambda symbols: (_ for _ in ()).throw(AssertionError("Alpaca polled"))
+    provider = LiveWebullProvider("key", "secret", fallback=fallback,
+        bootstrap=Bootstrap(), rest_client=OrderedRest(), stream_class=OrderedStream)
+
+    assert provider.initialize_quotes(["AAA", "BBB"]) == {"AAA": 12.5, "BBB": 12.5}
+    assert order[0][0] == "snapshot"
+    assert order[1][0] == "stream"
+    diagnostics = provider.diagnostics["webull_stream"]
+    assert diagnostics["symbols_missing_prices"] == 0
+    assert provider.diagnostics["market_data_sources"] == {
+        "universe_provider": "Alpaca active tradable assets",
+        "snapshot_provider": "Webull OpenAPI",
+        "streaming_provider": "Webull OpenAPI",
+    }
+
+
+def test_official_snapshot_client_signs_request_and_normalizes_quotes():
+    captured = {}
+
+    class Response:
+        def raise_for_status(self): pass
+        def json(self):
+            return {"data": [{"symbol": "AAA", "last_price": "7.25", "volume": 99}]}
+
+    class Session:
+        @staticmethod
+        def get(url, **kwargs):
+            captured.update(url=url, **kwargs)
+            return Response()
+
+    snapshots = WebullOpenAPIClient("app-key", "secret", base_url="https://example.test",
+                                    session=Session).snapshots(["AAA"])
+    assert snapshots["AAA"]["latestTrade"]["p"] == 7.25
+    assert "symbols=AAA" in captured["url"]
+    assert captured["headers"]["x-app-key"] == "app-key"
+    assert "secret" not in json.dumps(captured)
 
 
 def test_bootstrap_never_places_secret_in_request(monkeypatch):
