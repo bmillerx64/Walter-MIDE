@@ -22,6 +22,63 @@ STAGES = (
 TERMINAL_OUTCOMES = {"Rejected", "Qualified and Ranked", "Technical Failure"}
 
 
+class WalterCandidateLedger:
+    """Session-long candidate identity and ranking history.
+
+    The architecture owns mutations of these records.  Callers may keep one ledger
+    across live scans without carrying forward stale scanner snapshots themselves.
+    """
+
+    def __init__(self) -> None:
+        self.records: dict[str, dict] = {}
+        self.scan_number = 0
+
+
+def _number(record: Mapping[str, object], *keys: str) -> float:
+    for key in keys:
+        try:
+            if record.get(key) is not None:
+                return float(record[key])
+        except (TypeError, ValueError):
+            pass
+    return 0.0
+
+
+def _ranking_evidence(record: Mapping[str, object]) -> dict[str, object]:
+    """Capture the four live dimensions used to explain ranking movement."""
+    status = str(record.get("candidate_status") or record.get("status") or "")
+    return {
+        "conviction": _number(record, "conviction_score", "scanner_v2_score", "opportunity_score"),
+        "participation": _number(record, "participation_surge_score", "participation_score"),
+        "expansion": _number(record, "expansion_score", "confluence_score", "momentum_quality_score"),
+        "entry_readiness": bool(record.get("qualified_for_entry", status.lower() == "entry ready")),
+        "vwap_reclaimed": str(record.get("vwap_relation") or "").lower() == "above",
+        "supertrend_bullish": bool(record.get("supertrend_bullish")),
+        "volume_expansion": _number(record, "volume_expansion", "volume_acceleration", "volume_ratio"),
+        "catalyst_age_minutes": _number(record, "catalyst_age_minutes", "news_age_minutes"),
+    }
+
+
+def _movement_reasons(previous: Mapping[str, object], current: Mapping[str, object]) -> list[str]:
+    reasons = []
+    if current["participation"] > previous["participation"]:
+        reasons.append("increased participation")
+    elif current["participation"] < previous["participation"]:
+        reasons.append("weakening participation")
+    if current["vwap_reclaimed"] and not previous["vwap_reclaimed"]:
+        reasons.append("VWAP reclaim")
+    elif previous["vwap_reclaimed"] and not current["vwap_reclaimed"]:
+        reasons.append("failed reclaim")
+    if current["supertrend_bullish"] != previous["supertrend_bullish"]:
+        reasons.append("SuperTrend flip")
+    if current["volume_expansion"] > previous["volume_expansion"]:
+        reasons.append("volume expansion")
+    if (current["catalyst_age_minutes"] > previous["catalyst_age_minutes"]
+            and current["catalyst_age_minutes"] >= 60):
+        reasons.append("stale catalyst")
+    return reasons
+
+
 @dataclass(frozen=True)
 class ArchitecturePolicy:
     """Configurable gate policy; values are deliberately not architecture constants."""
@@ -75,6 +132,7 @@ class WalterArchitectureV1:
         failure_observer: Callable[[str, str, BaseException], None] | None = None,
         clock: Callable[[], datetime] | None = None,
         timer: Callable[[], float] | None = None,
+        ledger: WalterCandidateLedger | None = None,
     ) -> None:
         self._runtime_dispatch = runtime_dispatch
         if runtime_dispatch is not None:
@@ -105,7 +163,8 @@ class WalterArchitectureV1:
         self.clock = clock or (lambda: datetime.now(timezone.utc))
         self.timer = timer or perf_counter
         self.trace: list[dict] = []
-        self._ledger: dict[str, dict] = {}
+        self.candidate_ledger = ledger or WalterCandidateLedger()
+        self._ledger = self.candidate_ledger.records
         self.operational_summary: dict[str, object] = {}
 
     @classmethod
@@ -284,20 +343,49 @@ class WalterArchitectureV1:
         if runtime_dispatch is not None:
             return runtime_dispatch()
 
+        # A run is one complete live scan. Trace counts therefore remain an
+        # eight-stage proof of ordering rather than accumulating across scans.
+        self.trace = []
+        self.candidate_ledger.scan_number += 1
+        scan_number = self.candidate_ledger.scan_number
+        scan_timestamp = self._timestamp()
+        audit_starts = {
+            symbol: len(record.get("architecture_audit", []))
+            for symbol, record in self._ledger.items()
+        }
         universe_started = self.timer()
         self.stage_observer and self.stage_observer(1, STAGES[0], [])
         discovered = list(self.discover())
+        current_symbols: set[str] = set()
+        current_order: list[str] = []
         for source in discovered:
             symbol = self._symbol(source)
             if not symbol:
                 raise ArchitectureViolation("Universe candidate has no symbol")
+            if symbol not in current_symbols:
+                current_order.append(symbol)
+            current_symbols.add(symbol)
             if symbol not in self._ledger:
                 record = dict(
                     source, symbol=symbol, candidate_id=symbol,
-                    architecture_audit=[],
+                    architecture_audit=[], ranking_history=[],
                 )
                 self._ledger[symbol] = record
-        candidates = list(self._ledger.values())
+                audit_starts[symbol] = 0
+            else:
+                # Merge the newest market evidence into the authoritative object;
+                # never replace it (UI/store references and candidate_id stay stable).
+                record = self._ledger[symbol]
+                protected = {
+                    "candidate_id": record["candidate_id"],
+                    "architecture_audit": record["architecture_audit"],
+                    "ranking_history": record.setdefault("ranking_history", []),
+                }
+                record.update(source, symbol=symbol)
+                record.update(protected)
+            for key in ("terminal_outcome", "terminal_stage", "terminal_category", "terminal_reason", "mission_rank"):
+                self._ledger[symbol].pop(key, None)
+        candidates = [self._ledger[symbol] for symbol in current_order]
         for record in candidates:
             provenance = {
                 key: record[key] for key in ("provider", "source", "sources", "discovery_reasons")
@@ -351,12 +439,53 @@ class WalterArchitectureV1:
                 reason="Expansion-qualified candidate ranked",
                 evidence={"mission_rank": position},
             )
+        qualified_symbols = set(after)
+        for symbol in current_symbols:
+            record = self._ledger[symbol]
+            evidence = _ranking_evidence(record)
+            history = record.setdefault("ranking_history", [])
+            prior = history[-1] if history else None
+            previous_evidence = prior.get("evidence", {}) if prior else {}
+            delta = evidence["conviction"] - previous_evidence.get("conviction", evidence["conviction"])
+            record["conviction_change"] = round(delta, 3)
+            record["conviction_trend"] = "↑" if delta > 0 else "↓" if delta < 0 else "→"
+            reasons = _movement_reasons(previous_evidence, evidence) if prior else []
+            previous_rank = prior.get("rank") if prior else None
+            rank_now = record.get("mission_rank") if symbol in qualified_symbols else None
+            if prior and previous_rank != rank_now and not reasons:
+                reasons.append("relative ranking changed")
+            record["ranking_move_reasons"] = reasons
+            history.append({
+                "scan": scan_number, "timestamp": scan_timestamp, "rank": rank_now,
+                "qualified": symbol in qualified_symbols, "previous_rank": previous_rank,
+                "conviction_change": round(delta, 3), "conviction_trend": record["conviction_trend"],
+                "reasons": list(reasons), "evidence": evidence,
+            })
+        # Candidates no longer present remain in history, but cannot leak into
+        # Today's Mission from an earlier scan.
+        for symbol, record in self._ledger.items():
+            if symbol not in current_symbols:
+                record.pop("mission_rank", None)
+                self._terminal(record, "Rejected", STAGES[0], "Universe", "Not present in current live universe")
+                history = record.setdefault("ranking_history", [])
+                previous_rank = history[-1].get("rank") if history else None
+                record["ranking_move_reasons"] = ["removed from live universe"]
+                history.append({
+                    "scan": scan_number, "timestamp": scan_timestamp, "rank": None,
+                    "qualified": False, "previous_rank": previous_rank,
+                    "conviction_change": 0.0, "conviction_trend": "→",
+                    "reasons": ["removed from live universe"],
+                    "evidence": _ranking_evidence(record),
+                })
         self._record_trace(
             STAGES[7], len(candidates), len(ranked), started_at=ranking_started,
         )
         results = list(self._ledger.values())
-        for record in results:
-            audited = {entry["stage"] for entry in record["architecture_audit"]}
+        for record in (self._ledger[symbol] for symbol in current_order):
+            audited = {
+                entry["stage"]
+                for entry in record["architecture_audit"][audit_starts[record["symbol"]]:]
+            }
             for stage in STAGES:
                 if stage not in audited:
                     self._audit(
