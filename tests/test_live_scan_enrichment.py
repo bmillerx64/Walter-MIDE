@@ -7,6 +7,7 @@ import pytest
 from app import (
     ALERT_VOICE_SESSION_KEY,
     alert_voice_for_session,
+    price_gate_savings_metrics,
     run_live,
 )
 from mide.memory import MemoryStore
@@ -41,6 +42,39 @@ class DummyClient:
             }
             for symbol in symbols
         }
+
+
+def test_price_gate_savings_quantifies_symbols_batches_and_observed_time():
+    metrics = price_gate_savings_metrics(
+        universe_count=420,
+        survivor_count=90,
+        batch_size=150,
+        price_elapsed_ms=40,
+        snapshot_elapsed_ms=120,
+    )
+
+    assert metrics == {
+        "price_gate_input_symbols": 420,
+        "snapshot_symbols_requested": 90,
+        "snapshot_symbols_avoided": 330,
+        "snapshot_symbol_reduction_pct": 78.57,
+        "baseline_snapshot_batches": 3,
+        "actual_snapshot_batches": 1,
+        "snapshot_batches_avoided": 2,
+        "price_endpoint_elapsed_ms": 40.0,
+        "observed_survivor_snapshot_elapsed_ms": 120.0,
+        "estimated_gross_snapshot_time_avoided_ms": 240.0,
+        "estimated_net_time_saved_ms": 200.0,
+    }
+
+
+def test_price_gate_savings_does_not_invent_timing_without_snapshot_sample():
+    metrics = price_gate_savings_metrics(300, 0, 150, 25, 0)
+
+    assert metrics["snapshot_symbols_avoided"] == 300
+    assert metrics["snapshot_batches_avoided"] == 2
+    assert metrics["estimated_gross_snapshot_time_avoided_ms"] is None
+    assert metrics["estimated_net_time_saved_ms"] is None
 
 
 def test_run_live_enrichment_path_passes_previous_state(monkeypatch, tmp_path):

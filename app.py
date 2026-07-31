@@ -10,6 +10,7 @@ import importlib
 import inspect
 import json
 import logging
+import math
 import platform
 import sys
 from time import perf_counter
@@ -17,6 +18,52 @@ memory_checkpoint("app.py standard-library imports")
 
 import streamlit as st
 memory_checkpoint("streamlit import", object_name="streamlit module graph")
+
+
+def price_gate_savings_metrics(
+    universe_count: int,
+    survivor_count: int,
+    batch_size: int,
+    price_elapsed_ms: float,
+    snapshot_elapsed_ms: float,
+) -> dict[str, int | float | None]:
+    """Quantify the exact request reduction and an observed-time estimate.
+
+    Alpaca accepts symbol batches for both endpoints, so elapsed snapshot time is
+    extrapolated by batch count rather than by symbol.  The estimate is omitted
+    when no survivor snapshot batch exists from which to derive a duration.
+    """
+    batch_size = max(1, int(batch_size))
+    universe_count = max(0, int(universe_count))
+    survivor_count = max(0, min(int(survivor_count), universe_count))
+    baseline_batches = math.ceil(universe_count / batch_size)
+    actual_batches = math.ceil(survivor_count / batch_size)
+    avoided_batches = baseline_batches - actual_batches
+    avoided_symbols = universe_count - survivor_count
+    estimated_gross_ms = None
+    estimated_net_ms = None
+    if actual_batches and avoided_batches:
+        per_batch_ms = float(snapshot_elapsed_ms) / actual_batches
+        estimated_gross_ms = round(per_batch_ms * avoided_batches, 3)
+        estimated_net_ms = round(estimated_gross_ms - float(price_elapsed_ms), 3)
+    elif avoided_batches == 0:
+        estimated_gross_ms = 0.0
+        estimated_net_ms = round(-float(price_elapsed_ms), 3)
+    return {
+        "price_gate_input_symbols": universe_count,
+        "snapshot_symbols_requested": survivor_count,
+        "snapshot_symbols_avoided": avoided_symbols,
+        "snapshot_symbol_reduction_pct": round(
+            avoided_symbols / universe_count * 100, 2
+        ) if universe_count else 0.0,
+        "baseline_snapshot_batches": baseline_batches,
+        "actual_snapshot_batches": actual_batches,
+        "snapshot_batches_avoided": avoided_batches,
+        "price_endpoint_elapsed_ms": round(float(price_elapsed_ms), 3),
+        "observed_survivor_snapshot_elapsed_ms": round(float(snapshot_elapsed_ms), 3),
+        "estimated_gross_snapshot_time_avoided_ms": estimated_gross_ms,
+        "estimated_net_time_saved_ms": estimated_net_ms,
+    }
 
 
 def repair_mide_module_links() -> None:
@@ -940,12 +987,17 @@ def _run_live_pipeline(
                 record.update(update)
             else:
                 record.update(snapshot_status="unavailable", data_usable=False)
+        snapshot_elapsed_ms = round((perf_counter() - started) * 1000, 3)
         state["market_data_timing"] = {
             "stage": "Market Data Retrieval", "input_count": len(symbols),
             "output_count": len(snapshots),
-            "elapsed_ms": round((perf_counter() - started) * 1000, 3),
+            "elapsed_ms": snapshot_elapsed_ms,
             "percentage_reduction": round((1 - len(symbols) / len(state["seeds"])) * 100, 2)
             if state["seeds"] else 0.0,
+            **price_gate_savings_metrics(
+                len(state["seeds"]), len(symbols), settings.batch_size,
+                state["price_elapsed_ms"], snapshot_elapsed_ms,
+            ),
         }
 
     def catalyst(records):
