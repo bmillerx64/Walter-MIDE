@@ -7,6 +7,7 @@ memory_checkpoint("app.py bootstrap")
 from datetime import datetime, timezone, timedelta
 import html
 import importlib
+import inspect
 import json
 import logging
 import platform
@@ -54,9 +55,11 @@ from mide.resilience import record_provider_failure
 from mide.discovery import (
     analyze_candidates,
     build_seed_symbols,
+    is_valid_us_symbol,
     prefilter_snapshots,
     snapshot_identity_records,
 )
+from mide.universe_diagnostics import UniverseVerification
 memory_checkpoint("discovery import", object_name="mide.discovery")
 from mide.scanner_v2 import (
     apply_scanner_v2,
@@ -813,6 +816,9 @@ def _run_live_pipeline(
 
     state = {"seeds": [], "reasons": {}, "snapshots": {}, "news": [],
              "candidates": [], "analyzed": [], "ranked": []}
+    universe_verification = UniverseVerification(
+        client, feed=settings.feed, market_session=market_phase()
+    )
     history = get_store()
     previous = history.latest_by_symbol()
     policy = ArchitecturePolicy(
@@ -831,7 +837,13 @@ def _run_live_pipeline(
         # Catalyst retrieval deliberately does not happen here. Discovery sources
         # alone establish the immutable membership of this scan.
         try:
-            seeds, reasons = build_seed_symbols(client, settings, [])
+            discovery_parameters = inspect.signature(build_seed_symbols).parameters
+            if "universe_verification" in discovery_parameters:
+                seeds, reasons = build_seed_symbols(
+                    client, settings, [], universe_verification=universe_verification
+                )
+            else:  # Test/deployment compatibility for an injected legacy callable.
+                seeds, reasons = build_seed_symbols(client, settings, [])
         except Exception as exc:
             record_provider_failure(
                 client.diagnostics, provider="Alpaca", operation="universe discovery",
@@ -853,6 +865,33 @@ def _run_live_pipeline(
                     recovery_action="retain symbols as Technical Failure candidates and continue",
                 )
         state["snapshots"] = snapshots
+        observed_valid = {
+            row["symbol"] for row in universe_verification._observations
+            if is_valid_us_symbol(row["symbol"])
+        }
+        not_selected = sorted(observed_valid - set(seeds))
+        snapshot_failures = sorted(set(seeds) - set(snapshots))
+        transitions = [{
+            "transition_function_name": "broad-market eligibility and rotating slice",
+            "input_count": len(observed_valid), "output_count": len(seeds),
+            "removed_count": len(not_selected),
+            "exact_reason_categories": ["outside configured rotating broad-market slice"],
+            "affected_symbols_grouped_by_reason": {
+                "outside configured rotating broad-market slice": not_selected
+            },
+        }, {
+            "transition_function_name": "snapshot batch retrieval before Price Gate",
+            "input_count": len(seeds), "output_count": len(seeds) - len(snapshot_failures),
+            "removed_count": len(snapshot_failures),
+            "exact_reason_categories": ["market data snapshot unavailable"],
+            "affected_symbols_grouped_by_reason": {
+                "market data snapshot unavailable": snapshot_failures
+            },
+        }]
+        universe_verification.finish(
+            seeds, transitions=transitions,
+            entered_price_gate=set(seeds) - set(snapshot_failures),
+        )
         records = snapshot_identity_records(snapshots)
         by_symbol = {item["symbol"]: item for item in records}
         # Symbols whose snapshot failed remain accountable as unusable data.
@@ -1054,6 +1093,7 @@ def _run_live_pipeline(
         },
         "operational_health": operational,
         "verification": architecture.verification_report,
+        "universe_verification": universe_verification.report,
     }
     st.session_state.symbols_sampled = len(state["seeds"])
     st.session_state.prefilter_count = len(state["candidates"])
@@ -1525,6 +1565,39 @@ if active_tab == "Radar":
                     radar_table(sorted_records), width="stretch", hide_index=True
                 )
 if active_tab == "Diagnostics":
+    st.subheader("Universe Construction Verification")
+    universe_report = (
+        (scan_diagnostics.get("walter_architecture") or {}).get("universe_verification")
+        if isinstance(scan_diagnostics, dict) else None
+    ) or {}
+    if universe_report:
+        status_value = universe_report.get("status", "FAIL")
+        (st.success if status_value == "PASS" else st.error)(
+            f"Universe verification: {status_value}"
+        )
+        metadata = universe_report.get("scan_metadata", {})
+        st.caption(
+            f"Provider/source flow: {', '.join(metadata.get('provider_names', []))} · "
+            f"Feed: {metadata.get('configured_data_feed', '—')} · "
+            f"Session: {metadata.get('market_session', '—')}"
+        )
+        st.markdown("**Source counts**")
+        st.dataframe(universe_report.get("sources", []), use_container_width=True,
+                     hide_index=True)
+        st.markdown("**Merge counts**")
+        st.json(universe_report.get("merge_accounting", {}))
+        st.markdown("**Pre-Price Gate removals**")
+        st.json(universe_report.get("pre_price_transitions", []))
+        losses = universe_report.get("unexplained_losses", [])
+        st.markdown(f"**Unexplained losses:** {len(losses)}")
+        if losses:
+            st.code("\n".join(losses))
+        with st.expander("Symbol-level universe path", expanded=False):
+            st.dataframe(universe_report.get("symbols", []), use_container_width=True,
+                         hide_index=True)
+    else:
+        st.caption("Universe verification appears after a live scan.")
+
     st.subheader("Mission Candidate Outcomes")
     outcome_diagnostics = MissionOutcomeStore().diagnostics()
     outcome_columns = st.columns(4)
