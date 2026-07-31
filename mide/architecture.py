@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Callable, Iterable, Mapping, Protocol
+from typing import Any, Callable, Iterable, Mapping, Protocol
 
 
 STAGES = (
@@ -55,15 +55,31 @@ class WalterArchitectureV1:
     def __init__(
         self,
         *,
-        policy: ArchitecturePolicy,
-        discover: Callable[[], Iterable[dict]],
-        catalyst: Stage,
-        participation: Stage,
-        expansion: Stage,
-        rank: Ranker,
-        store: ResultStore,
-        publish: Publisher,
+        policy: ArchitecturePolicy | None = None,
+        discover: Callable[[], Iterable[dict]] | None = None,
+        catalyst: Stage | None = None,
+        participation: Stage | None = None,
+        expansion: Stage | None = None,
+        rank: Ranker | None = None,
+        store: ResultStore | None = None,
+        publish: Publisher | None = None,
+        runtime_dispatch: Callable[[], Any] | None = None,
     ) -> None:
+        self._runtime_dispatch = runtime_dispatch
+        if runtime_dispatch is not None:
+            return
+        components = (
+            policy,
+            discover,
+            catalyst,
+            participation,
+            expansion,
+            rank,
+            store,
+            publish,
+        )
+        if any(value is None for value in components):
+            raise TypeError("Walter architecture requires a complete pipeline")
         self.policy = policy
         self.discover = discover
         self.catalyst = catalyst
@@ -74,6 +90,11 @@ class WalterArchitectureV1:
         self.publish = publish
         self.trace: list[dict] = []
         self._ledger: dict[str, dict] = {}
+
+    @classmethod
+    def for_runtime(cls, dispatch: Callable[[], Any]) -> "WalterArchitectureV1":
+        """Create the production entry point around the unchanged live scanner."""
+        return cls(runtime_dispatch=dispatch)
 
     @staticmethod
     def _symbol(record: Mapping[str, object]) -> str:
@@ -169,7 +190,11 @@ class WalterArchitectureV1:
             result[symbol] = Decision(passed, "Free Float", reason)
         return result
 
-    def run(self) -> list[dict]:
+    def run(self) -> Any:
+        runtime_dispatch = self._runtime_dispatch
+        if runtime_dispatch is not None:
+            return runtime_dispatch()
+
         discovered = list(self.discover())
         for source in discovered:
             symbol = self._symbol(source)
@@ -205,7 +230,14 @@ class WalterArchitectureV1:
         return results
 
 
-SCANNER_IMPLEMENTATIONS = {"Walter Architecture v1.0": WalterArchitectureV1}
+SCANNER_IMPLEMENTATIONS = {
+    "Walter Architecture v1.0": WalterArchitectureV1,
+    # Existing programmatic callers retain their selections while the live UI
+    # now names the authoritative architecture. All selections resolve here.
+    "Decision Funnel 3.0": WalterArchitectureV1,
+    "Scanner V1 (classic screener)": WalterArchitectureV1,
+    "Scanner V2 (adaptive momentum)": WalterArchitectureV1,
+}
 
 
 def scanner_implementation(selection: str):

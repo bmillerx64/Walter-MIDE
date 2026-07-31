@@ -106,6 +106,7 @@ from mide.decision_engine import (
     identity_decision,
     stage2_filter,
 )
+from mide.architecture import scanner_implementation
 memory_checkpoint("decision engine import", object_name="mide.decision_engine")
 from mide.free_float_inspector import inspect_free_float
 from mide.free_float import (
@@ -557,7 +558,7 @@ with st.sidebar:
         "Data mode", ["Live Alpaca", "Demo"], index=0 if live_possible else 1
     )
     st.caption(f"Decision Funnel v{BUILD.version} · {BUILD.git_sha}")
-    scanner_version = "Decision Funnel 3.0"
+    scanner_version = "Walter Architecture v1.0"
     auto_refresh = st.toggle(
         "Auto live scan every 60 seconds", value=True, disabled=(mode != "Live Alpaca")
     )
@@ -1123,7 +1124,7 @@ def _run_live_pipeline(
 
 
 def run_live(
-    scanner_version: str = "Decision Funnel 3.0",
+    scanner_version: str = "Walter Architecture v1.0",
     *,
     client_factory=None,
     credential_checker=None,
@@ -1139,12 +1140,15 @@ def run_live(
     try:
         with scan_runtime_slot:
             status = st.status("Walter is scanning…", expanded=True)
-        return _run_live_pipeline(
-            scanner_version,
-            status=status,
-            client_factory=client_factory,
-            credential_checker=credential_checker,
+        architecture = scanner_implementation(scanner_version).for_runtime(
+            lambda: _run_live_pipeline(
+                scanner_version,
+                status=status,
+                client_factory=client_factory,
+                credential_checker=credential_checker,
+            )
         )
+        return architecture.run()
     except Exception as exc:
         logging.getLogger(__name__).exception("Live scan pipeline failed")
         log(f"Live scan pipeline failed: {type(exc).__name__}: {exc}")
