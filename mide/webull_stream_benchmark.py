@@ -161,7 +161,7 @@ class PahoWebullStream:
 
     def __init__(self, on_event: Callable[[MarketEvent], None], *, host: str, port: int,
                  username: str, password: str, topic_template: str, client_id: str,
-                 parser: Callable[[bytes], Quote]):
+                 parser: Callable[[bytes], Quote], on_disconnect: Callable[[], None] | None = None):
         try:
             import paho.mqtt.client as mqtt
         except ImportError as exc:
@@ -175,6 +175,8 @@ class PahoWebullStream:
         self._client.tls_set()
         self._client.on_connect = self._handle_connect
         self._client.on_message = self._handle_message
+        self._disconnect_callback = on_disconnect
+        self._client.on_disconnect = self._handle_disconnect
 
     def _handle_connect(self, client, userdata, flags, reason_code, properties) -> None:
         if reason_code == 0:
@@ -185,6 +187,11 @@ class PahoWebullStream:
         self._on_event(MarketEvent("Webull OpenAPI", EventType.TRADE, quote.symbol,
             quote.source_timestamp_ms, {"price": quote.price, "volume": quote.volume,
             "bid": quote.bid, "ask": quote.ask}, quote.sequence, len(message.payload)))
+
+    def _handle_disconnect(self, client, userdata, disconnect_flags, reason_code, properties) -> None:
+        self._connected.clear()
+        if self._disconnect_callback:
+            self._disconnect_callback()
 
     def connect(self) -> None:
         self._client.connect(self._host, self._port, keepalive=30)

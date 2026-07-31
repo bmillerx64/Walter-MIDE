@@ -728,14 +728,20 @@ with st.sidebar:
         )
         st.write(f"Voice currently selected: {selected_voice}")
         stream_diagnostics = st.session_state.get("scan_diagnostics", {}).get("webull_stream", {})
+        source_diagnostics = st.session_state.get("scan_diagnostics", {}).get("market_data_sources", {})
         st.write(f"Selected provider: {selected_provider}")
         if selected_provider == "WEBULL":
+            st.write(f"Universe Provider: {source_diagnostics.get('universe_provider', 'N/A')}")
+            st.write(f"Snapshot Provider: {source_diagnostics.get('snapshot_provider', 'N/A')}")
+            st.write(f"Streaming Provider: {source_diagnostics.get('streaming_provider', 'N/A')}")
             st.write(f"Webull authentication: {stream_diagnostics.get('authentication_status', 'pending')}")
             st.write(f"Stream connection: {stream_diagnostics.get('stream_connection_status', 'disconnected')}")
             st.write(f"Subscribed symbols: {stream_diagnostics.get('subscribed_symbols', 0)}")
-            st.write(f"Cached symbols: {stream_diagnostics.get('cached_symbols', 0)}")
-            st.write(f"Messages received: {stream_diagnostics.get('messages_received', 0)}")
-            st.write(f"Last message: {stream_diagnostics.get('last_message_timestamp') or 'N/A'}")
+            st.write(f"Cached Symbols: {stream_diagnostics.get('cached_symbols', 0)}")
+            st.write(f"Symbols Missing Prices: {stream_diagnostics.get('symbols_missing_prices', 0)}")
+            st.write(f"Stream Messages Received: {stream_diagnostics.get('messages_received', 0)}")
+            st.write(f"Last Stream Timestamp: {stream_diagnostics.get('last_message_timestamp') or 'N/A'}")
+            st.write(f"Stream Disconnect Count: {stream_diagnostics.get('disconnect_count', 0)}")
             st.write(f"Stream latency: {stream_diagnostics.get('stream_latency_ms') or 'N/A'} ms")
             failures = stream_diagnostics.get("subscription_failures", [])
             st.write(f"Subscription failures/errors: {len(failures)}")
@@ -904,9 +910,17 @@ def _run_live_pipeline(
             st.session_state.webull_live_provider = client
         else:
             # Keep one connection/cache across Streamlit reruns while refreshing
-            # the REST fallback used for discovery and unavailable stream fields.
+            # the explicitly labeled Alpaca universe/news/history provider.
+            persistent = dict(client.diagnostics.get("webull_stream", {}))
+            sources = dict(client.diagnostics.get("market_data_sources", {}))
             client.fallback = alpaca_client
-        logging.getLogger(__name__).warning("Walter live market-data provider: WEBULL (ALPACA fallback enabled)")
+            client.warnings = alpaca_client.warnings
+            client.diagnostics = alpaca_client.diagnostics
+            client.diagnostics["webull_stream"] = persistent
+            client.diagnostics["market_data_sources"] = sources
+        logging.getLogger(__name__).warning(
+            "Walter providers: universe=ALPACA, snapshots=WEBULL, streaming=WEBULL"
+        )
     else:
         client = alpaca_client
         client.diagnostics["selected_provider"] = "ALPACA"
@@ -969,10 +983,24 @@ def _run_live_pipeline(
         state["seeds"], state["reasons"] = seeds, reasons
         price_started = perf_counter()
         prices = {}
+        if isinstance(client, LiveWebullProvider):
+            # Complete the Webull REST snapshot before Price Gate begins. The
+            # provider starts its persistent stream only after this returns.
+            try:
+                prices = client.initialize_quotes(seeds, batch_size=settings.batch_size)
+            except Exception as exc:
+                client.warnings.append(f"Webull initial snapshot unavailable: {exc}")
+                record_provider_failure(
+                    client.diagnostics, provider="Webull OpenAPI", operation="initial quote snapshot",
+                    exception=exc, affected_symbols=seeds,
+                    recovery_action="reject only symbols lacking Webull cached prices",
+                )
         for offset in range(0, len(seeds), settings.batch_size):
             batch = seeds[offset:offset + settings.batch_size]
             try:
-                if hasattr(client, "latest_trades"):
+                if isinstance(client, LiveWebullProvider):
+                    prices.update(client.latest_trades(batch, initialize=False))
+                elif hasattr(client, "latest_trades"):
                     prices.update(client.latest_trades(batch))
                 else:  # Compatibility for injected providers during migration.
                     minimal = client.snapshots(batch)
@@ -982,7 +1010,7 @@ def _run_live_pipeline(
             except Exception as exc:
                 client.warnings.append(f"Price batch unavailable: {exc}")
                 record_provider_failure(
-                    client.diagnostics, provider="Alpaca", operation="latest prices",
+                    client.diagnostics, provider=("Webull OpenAPI" if isinstance(client, LiveWebullProvider) else "Alpaca"), operation="latest prices",
                     exception=exc, affected_symbols=batch,
                     recovery_action="reject symbols with unavailable price evidence",
                 )
@@ -1003,7 +1031,8 @@ def _run_live_pipeline(
         )
         # Membership and provenance are fixed before Price Gate. Missing price
         # evidence produces an explicit gate decision and never changes Stage 0.
-        provider = getattr(client, "provider_name", client.__class__.__name__)
+        provider = (client.diagnostics.get("market_data_sources", {}).get("universe_provider")
+                    or getattr(client, "provider_name", client.__class__.__name__))
         universe_records = []
         for symbol in seeds:
             record = {"symbol": symbol, "price": prices.get(symbol)}
@@ -1026,7 +1055,7 @@ def _run_live_pipeline(
             except Exception as exc:
                 client.warnings.append(f"Snapshot batch unavailable: {exc}")
                 record_provider_failure(
-                    client.diagnostics, provider="Alpaca", operation="market data snapshots",
+                    client.diagnostics, provider=("Webull OpenAPI cache" if isinstance(client, LiveWebullProvider) else "Alpaca"), operation="market data snapshots",
                     exception=exc, affected_symbols=batch,
                     recovery_action="retain symbols with unusable data evidence",
                 )

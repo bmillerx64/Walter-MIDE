@@ -1,8 +1,8 @@
-"""Production Webull streaming cache used by Walter's live scan path.
+"""Production Webull snapshot-and-stream cache used by Walter's live scan path.
 
-The adapter intentionally composes the existing Alpaca provider: Alpaca remains
-the discovery/news and REST fallback while fresh Webull events replace its
-price, quote, and volume fields.
+Alpaca is currently the explicit symbol master and news/history provider.  All
+live quote fields, however, are seeded from Webull OpenAPI before the Price Gate
+and are subsequently refreshed only by Webull streaming events.
 """
 
 from __future__ import annotations
@@ -30,6 +30,8 @@ from .webull_stream_benchmark import PahoWebullStream, Quote
 
 LOGGER = logging.getLogger(__name__)
 DEFAULT_BOOTSTRAP_URL = "https://api.webull.com/api/market-data/streaming/token"
+DEFAULT_OPENAPI_URL = "https://api.webull.com"
+DEFAULT_SNAPSHOT_PATH = "/market-data/quotes"
 DEFAULT_TOPIC = "market-data/{symbol}"
 
 
@@ -118,15 +120,70 @@ class WebullBootstrap:
         return normalized
 
 
+class WebullOpenAPIClient:
+    """Small signed client for the official Webull bulk snapshot operation."""
+
+    def __init__(self, app_key: str, app_secret: str, *, base_url=DEFAULT_OPENAPI_URL,
+                 snapshot_path=DEFAULT_SNAPSHOT_PATH, session=requests, timeout: int = 15):
+        self.app_key, self._secret = app_key, app_secret
+        self.base_url, self.snapshot_path = base_url.rstrip("/"), snapshot_path
+        self.session, self.timeout = session, timeout
+
+    def _headers(self, method: str, path: str, query: str) -> dict[str, str]:
+        timestamp, nonce = str(int(time.time() * 1000)), uuid.uuid4().hex
+        canonical = f"{method}\n{path}\n{timestamp}\n{nonce}\n{query}"
+        signature = hmac.new(self._secret.encode(), canonical.encode(), hashlib.sha256).hexdigest()
+        return {"x-app-key": self.app_key, "x-timestamp": timestamp, "x-nonce": nonce,
+                "x-signature": signature, "accept": "application/json"}
+
+    def snapshots(self, symbols: Iterable[str]) -> dict[str, dict]:
+        wanted = [str(symbol).strip().upper() for symbol in symbols if str(symbol).strip()]
+        if not wanted:
+            return {}
+        # The endpoint accepts a comma-delimited ticker list. Keep the exact
+        # encoded query in the signature so credentials never enter the URL.
+        params = {"symbols": ",".join(wanted)}
+        prepared = requests.Request("GET", self.base_url + self.snapshot_path,
+                                    params=params).prepare()
+        query = urlparse(prepared.url).query
+        response = self.session.get(prepared.url, headers=self._headers(
+            "GET", self.snapshot_path, query), timeout=self.timeout)
+        response.raise_for_status()
+        body = response.json()
+        rows = body.get("data", body) if isinstance(body, dict) else body
+        if isinstance(rows, dict):
+            rows = rows.get("quotes") or rows.get("items") or rows
+        if isinstance(rows, dict):
+            rows = [{**value, "symbol": key} for key, value in rows.items()]
+        normalized = {}
+        for row in rows or []:
+            symbol = str(row.get("symbol") or row.get("ticker") or row.get("ticker_symbol") or "").upper()
+            price = _number(row.get("price") or row.get("last_price") or row.get("close"))
+            if not symbol or price is None:
+                continue
+            normalized[symbol] = {
+                "latestTrade": {"p": price, "t": row.get("timestamp") or row.get("time")},
+                "latestQuote": {"bp": _number(row.get("bid") or row.get("bid_price")),
+                                "ap": _number(row.get("ask") or row.get("ask_price"))},
+                "dailyBar": {"c": price, "v": _number(row.get("volume") or row.get("total_volume")),
+                             "h": _number(row.get("high")), "l": _number(row.get("low"))},
+                "prevDailyBar": {"c": _number(row.get("prev_close") or row.get("previous_close")),
+                                 "v": _number(row.get("prev_volume"))},
+                "market_data_provider": "Webull OpenAPI snapshot cache",
+            }
+        return normalized
+
+
 class LiveWebullProvider(WebullProvider):
-    """Streaming-first provider with an Alpaca provider as a safe fallback."""
+    """Webull-only quote cache, seeded by REST and refreshed by streaming."""
 
     provider_name = "Webull OpenAPI"
 
     def __init__(self, app_key: str, app_secret: str, *, fallback, bootstrap=None,
-                 stream_class=PahoWebullStream):
+                 rest_client=None, stream_class=PahoWebullStream):
         self.fallback = fallback
         self.cache: dict[str, CachedMarketData] = {}
+        self._snapshot_cache: dict[str, dict] = {}
         self._lock = Lock()
         self._subscription = None
         self._subscribed: set[str] = set()
@@ -140,9 +197,17 @@ class LiveWebullProvider(WebullProvider):
             "stream_connection_status": "disconnected", "subscribed_symbols": 0,
             "cached_symbols": 0, "messages_received": 0, "last_message_timestamp": None,
             "stream_latency_ms": None, "subscription_failures": [],
+            "disconnect_count": 0, "symbols_missing_prices": 0,
+        }
+        self.diagnostics["market_data_sources"] = {
+            "universe_provider": "Alpaca active tradable assets",
+            "snapshot_provider": "Webull OpenAPI",
+            "streaming_provider": "Webull OpenAPI",
         }
         bootstrap_url = os.getenv("WEBULL_STREAM_BOOTSTRAP_URL", DEFAULT_BOOTSTRAP_URL)
         self._bootstrap = bootstrap or WebullBootstrap(app_key, app_secret, url=bootstrap_url)
+        self._snapshot_client = rest_client or WebullOpenAPIClient(
+            app_key, app_secret, base_url=os.getenv("WEBULL_OPENAPI_URL", DEFAULT_OPENAPI_URL))
         super().__init__(stream_factory=self._stream_factory)
 
     def __getattr__(self, name):
@@ -161,7 +226,12 @@ class LiveWebullProvider(WebullProvider):
         return self._stream_class(receive, host=self._broker["host"], port=self._broker["port"],
             username=self._broker["username"], password=self._broker["password"],
             client_id=self._broker["client_id"], topic_template=self._broker["topic_template"],
-            parser=parser)
+            parser=parser, on_disconnect=self._on_disconnect)
+
+    def _on_disconnect(self) -> None:
+        d = self.diagnostics["webull_stream"]
+        d["disconnect_count"] += 1
+        d["stream_connection_status"] = "disconnected"
 
     def _on_event(self, event: MarketEvent) -> None:
         now_ms = time.time_ns() // 1_000_000
@@ -177,6 +247,7 @@ class LiveWebullProvider(WebullProvider):
             self._latencies.append(latency)
             d = self.diagnostics["webull_stream"]
             d["cached_symbols"] = len(self.cache)
+            d["symbols_missing_prices"] = len(self._subscribed - set(self.cache))
             d["messages_received"] += 1
             d["last_message_timestamp"] = datetime.fromtimestamp(now_ms / 1000, timezone.utc).isoformat()
             d["stream_latency_ms"] = round(sum(self._latencies) / len(self._latencies), 2)
@@ -199,23 +270,56 @@ class LiveWebullProvider(WebullProvider):
             d["authentication_status"] = "failed" if self._broker is None else d["authentication_status"]
             d["stream_connection_status"] = "error"
             d["subscription_failures"].append(f"{type(exc).__name__}: {exc}")
-            self.warnings.append(f"Webull stream unavailable; using Alpaca fallback: {exc}")
-            LOGGER.error("WEBULL stream initialization failed; using ALPACA fallback: %s", exc)
+            self.warnings.append(f"Webull stream unavailable; cached Webull snapshot retained: {exc}")
+            LOGGER.error("WEBULL stream initialization failed; cached snapshot retained: %s", exc)
 
-    def latest_trades(self, symbols: Iterable[str]) -> dict[str, float]:
+    def initialize_quotes(self, symbols: Iterable[str], *, batch_size: int = 200) -> dict[str, float]:
+        """Synchronously seed every available price, then immediately stream it."""
+        wanted = list(dict.fromkeys(str(s).strip().upper() for s in symbols if str(s).strip()))
+        for offset in range(0, len(wanted), batch_size):
+            batch = wanted[offset:offset + batch_size]
+            snapshots = self._snapshot_client.snapshots(batch)
+            now_ms = time.time_ns() // 1_000_000
+            with self._lock:
+                for symbol, snapshot in snapshots.items():
+                    trade, daily, quote = (snapshot.get("latestTrade") or {},
+                        snapshot.get("dailyBar") or {}, snapshot.get("latestQuote") or {})
+                    price = _number(trade.get("p") or daily.get("c"))
+                    if price is None:
+                        continue
+                    self._snapshot_cache[symbol] = dict(snapshot)
+                    timestamp = trade.get("t") or now_ms
+                    try:
+                        timestamp = int(timestamp)
+                    except (TypeError, ValueError):
+                        timestamp = now_ms
+                    if timestamp > 10_000_000_000_000:
+                        timestamp //= 1_000_000
+                    self.cache[symbol] = CachedMarketData(price, _number(daily.get("v")),
+                        _number(quote.get("bp")), _number(quote.get("ap")), timestamp, now_ms)
+        d = self.diagnostics["webull_stream"]
+        d["cached_symbols"] = len(self.cache)
+        d["symbols_missing_prices"] = len(set(wanted) - set(self.cache))
+        # Snapshot completion is a hard ordering boundary before subscription.
+        self.ensure_stream(wanted)
+        return self.latest_trades(wanted, initialize=False)
+
+    def latest_trades(self, symbols: Iterable[str], *, initialize: bool = True) -> dict[str, float]:
         symbols = list(symbols)
-        self.ensure_stream(symbols)
-        fallback = self.fallback.latest_trades(symbols)
+        if initialize and any(symbol not in self.cache for symbol in symbols):
+            return self.initialize_quotes(symbols)
         with self._lock:
-            fallback.update({symbol: self.cache[symbol].price for symbol in symbols if symbol in self.cache})
-        return fallback
+            return {symbol: self.cache[symbol].price for symbol in symbols if symbol in self.cache}
 
     trades = latest_trades
 
     def snapshots(self, symbols: Iterable[str]) -> dict:
         symbols = list(symbols)
-        self.ensure_stream(symbols)
-        snapshots = self.fallback.snapshots(symbols)
+        if any(symbol not in self.cache for symbol in symbols):
+            self.initialize_quotes(symbols)
+        with self._lock:
+            snapshots = {symbol: dict(self._snapshot_cache.get(symbol, {}))
+                         for symbol in symbols if symbol in self.cache}
         with self._lock:
             cached = {symbol: self.cache.get(symbol) for symbol in symbols}
         for symbol, live in cached.items():
