@@ -109,6 +109,7 @@ from mide.architecture import (
     ArchitecturePolicy,
     Decision,
     STAGES as WALTER_STAGES,
+    WalterCandidateLedger,
     WalterArchitectureV1,
     scanner_implementation,
 )
@@ -525,6 +526,7 @@ memory_checkpoint("dashboard container initialization", object_name="Streamlit D
 
 session_defaults = {
     "records": [],
+    "walter_candidate_ledger": WalterCandidateLedger(),
     "source_label": "No scan has been run",
     "api_warnings": [],
     "last_updated": None,
@@ -1024,6 +1026,7 @@ def _run_live_pipeline(
             operation=stage, exception=exc, affected_symbols=[symbol],
             recovery_action="mark only the affected candidate Technical Failure and continue",
         ),
+        ledger=st.session_state.walter_candidate_ledger,
     )
     ledger = architecture.run()
     ranked = state["ranked"]

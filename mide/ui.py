@@ -1445,6 +1445,8 @@ def walter_mission_control(records: list[dict]) -> dict:
         item = {
             "symbol": str(record.get("symbol") or "").upper(),
             "confidence": hot_list_priority_score(record),
+            "conviction_trend": record.get("conviction_trend", "→"),
+            "ranking_move_reasons": list(record.get("ranking_move_reasons") or []),
             "band": band,
             "status": _mission_status(record, band, conditions),
             "conditions": conditions,
@@ -1525,7 +1527,7 @@ def _mission_target_markup(item: dict, role: str, primary: dict | None = None) -
     return (
         f"<div class='mission-target{' entry-window-pulse' if just_opened else ''}' style='--mission-color:{color}'>"
         f"<div class='mission-role'>{role}</div><div class='mission-symbol'>{html.escape(item['symbol'])}</div>"
-        f"<div class='mission-band' style='color:{band_color}'>CONVICTION</div><div class='mission-window-status'>{conviction_label}</div>"
+        f"<div class='mission-band' style='color:{band_color}'>CONVICTION {html.escape(item['conviction_trend'])}</div><div class='mission-window-status'>{conviction_label}</div>"
         f"<div class='opportunity-meter'><div class='opportunity-meter-top'><span class='opportunity-meter-label'>Conviction Meter</span><span class='opportunity-meter-value'>{item['confidence']}% <small class='{delta_class}'>{direction} {delta:+d}</small></span></div>"
         f"<div class='opportunity-meter-track' role='progressbar' aria-label='Conviction meter' aria-valuemin='0' aria-valuemax='100' aria-valuenow='{item['confidence']}'><div class='opportunity-meter-fill' style='--opportunity:{item['confidence']}%'></div></div></div>"
         + _trade_readiness_markup(item)
