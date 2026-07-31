@@ -97,6 +97,26 @@ def test_screener_limits_are_capped_at_50(monkeypatch):
     assert calls[1][1]["top"] == 50
 
 
+def test_latest_trades_retrieves_only_price_evidence(monkeypatch):
+    client = AlpacaClient("key", "secret", feed="iex")
+    calls = []
+
+    def fake_get(base, path, params=None):
+        calls.append((path, params))
+        return {"trades": {"KEEP": {"p": 1.25}, "DROP": {"p": 8.0}}}
+
+    monkeypatch.setattr(client, "_get", fake_get)
+
+    assert client.latest_trades(["keep", "DROP", "keep"]) == {
+        "KEEP": 1.25,
+        "DROP": 8.0,
+    }
+    assert calls == [(
+        "/v2/stocks/trades/latest",
+        {"symbols": "DROP,KEEP", "feed": "iex"},
+    )]
+
+
 def test_credential_status_checks_paper_before_live_and_records_diagnostics(monkeypatch):
     client = AlpacaClient(" key ", " secret ", feed="sip")
     calls = []

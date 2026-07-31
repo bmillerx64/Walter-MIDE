@@ -213,6 +213,34 @@ class AlpacaClient:
             midpoint = len(cleaned) // 2
             return {**self.snapshots(cleaned[:midpoint]), **self.snapshots(cleaned[midpoint:])}
 
+    def latest_trades(self, symbols: Iterable[str]) -> dict[str, float]:
+        """Return the minimal price evidence needed by the early price gate."""
+        cleaned = sorted({str(value or "").strip().upper() for value in symbols})
+        cleaned = [symbol for symbol in cleaned if symbol and ":" not in symbol]
+        if not cleaned:
+            return {}
+        try:
+            payload = self._get(
+                self.DATA, "/v2/stocks/trades/latest",
+                {"symbols": ",".join(cleaned), "feed": self.feed},
+            )
+        except AlpacaError:
+            if len(cleaned) == 1:
+                return {}
+            midpoint = len(cleaned) // 2
+            return {
+                **self.latest_trades(cleaned[:midpoint]),
+                **self.latest_trades(cleaned[midpoint:]),
+            }
+        trades = payload.get("trades", payload) if isinstance(payload, dict) else {}
+        prices = {}
+        for symbol, trade in trades.items():
+            try:
+                prices[str(symbol).upper()] = float((trade or {}).get("p"))
+            except (TypeError, ValueError):
+                continue
+        return prices
+
     def enrich_free_float(self, snapshots: dict, symbols: Iterable[str]) -> dict:
         """Add missing free float from a fundamentals provider, in place.
 

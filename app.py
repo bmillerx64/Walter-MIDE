@@ -12,6 +12,7 @@ import json
 import logging
 import platform
 import sys
+from time import perf_counter
 memory_checkpoint("app.py standard-library imports")
 
 import streamlit as st
@@ -790,6 +791,7 @@ def _run_live_pipeline(
     credential_checker=None,
 ):
     """Execute the live scan through the single Walter Architecture pipeline."""
+    scan_started = perf_counter()
     api_key = get_secret("ALPACA_API_KEY")
     secret = get_secret("ALPACA_SECRET_KEY")
     if not api_key or not secret:
@@ -836,14 +838,28 @@ def _run_live_pipeline(
     def discover():
         # Catalyst retrieval deliberately does not happen here. Discovery sources
         # alone establish the immutable membership of this scan.
+        # Callable identity keeps injected/test discovery providers isolated while
+        # the stable production callable still reuses one universe all session.
+        cache_key = (
+            f"{datetime.now().astimezone().date().isoformat()}:{settings.feed}:"
+            f"{id(build_seed_symbols)}"
+        )
+        cached = st.session_state.get("walter_session_universe_cache", {})
+        universe_started = perf_counter()
         try:
-            discovery_parameters = inspect.signature(build_seed_symbols).parameters
-            if "universe_verification" in discovery_parameters:
-                seeds, reasons = build_seed_symbols(
-                    client, settings, [], universe_verification=universe_verification
-                )
-            else:  # Test/deployment compatibility for an injected legacy callable.
-                seeds, reasons = build_seed_symbols(client, settings, [])
+            cached_entry = cached.get(cache_key)
+            if cached_entry:
+                seeds, reasons = cached_entry["seeds"], cached_entry["reasons"]
+            else:
+                discovery_parameters = inspect.signature(build_seed_symbols).parameters
+                if "universe_verification" in discovery_parameters:
+                    seeds, reasons = build_seed_symbols(
+                        client, settings, [], universe_verification=universe_verification
+                    )
+                else:  # Test/deployment compatibility for an injected legacy callable.
+                    seeds, reasons = build_seed_symbols(client, settings, [])
+                cached = {cache_key: {"seeds": list(seeds), "reasons": dict(reasons)}}
+                st.session_state.walter_session_universe_cache = cached
         except Exception as exc:
             record_provider_failure(
                 client.diagnostics, provider="Alpaca", operation="universe discovery",
@@ -851,45 +867,48 @@ def _run_live_pipeline(
             )
             client.warnings.append(f"Universe discovery unavailable: {exc}")
             seeds, reasons = [], {}
+        state["universe_elapsed_ms"] = round((perf_counter() - universe_started) * 1000, 3)
         state["seeds"], state["reasons"] = seeds, reasons
-        snapshots = {}
+        price_started = perf_counter()
+        prices = {}
         for offset in range(0, len(seeds), settings.batch_size):
             batch = seeds[offset:offset + settings.batch_size]
             try:
-                snapshots.update(client.snapshots(batch))
+                if hasattr(client, "latest_trades"):
+                    prices.update(client.latest_trades(batch))
+                else:  # Compatibility for injected providers during migration.
+                    minimal = client.snapshots(batch)
+                    for symbol, snap in minimal.items():
+                        trade, daily = snap.get("latestTrade") or {}, snap.get("dailyBar") or {}
+                        prices[symbol] = float(trade.get("p") or daily.get("c") or 0)
             except Exception as exc:
-                client.warnings.append(f"Snapshot batch unavailable: {exc}")
+                client.warnings.append(f"Price batch unavailable: {exc}")
                 record_provider_failure(
-                    client.diagnostics, provider="Alpaca", operation="market data snapshots",
+                    client.diagnostics, provider="Alpaca", operation="latest prices",
                     exception=exc, affected_symbols=batch,
-                    recovery_action="retain symbols as Technical Failure candidates and continue",
+                    recovery_action="reject symbols with unavailable price evidence",
                 )
-        state["snapshots"] = snapshots
-        snapshot_failures = sorted(set(seeds) - set(snapshots))
+        price_failures = sorted(set(seeds) - set(prices))
+        state["price_elapsed_ms"] = round((perf_counter() - price_started) * 1000, 3)
         transitions = [{
-            "transition_function_name": "snapshot batch retrieval before Price Gate",
+            "transition_function_name": "minimal price retrieval for Price Gate",
             "input_count": len(seeds), "output_count": len(seeds),
             "removed_count": 0,
-            "exact_reason_categories": ["market data snapshot unavailable"],
+            "exact_reason_categories": ["price unavailable"],
             "affected_symbols_grouped_by_reason": {
-                "market data snapshot unavailable": snapshot_failures
+                "price unavailable": price_failures
             },
         }]
         universe_verification.finish(
             seeds, transitions=transitions,
             entered_price_gate=set(seeds),
         )
-        records = snapshot_identity_records(snapshots)
-        by_symbol = {item["symbol"]: item for item in records}
-        # Membership and provenance are fixed before Price Gate. Snapshot data is
-        # optional evidence, never permission to omit an identity.
+        # Membership and provenance are fixed before Price Gate. Missing price
+        # evidence produces an explicit gate decision and never changes Stage 0.
         provider = getattr(client, "provider_name", client.__class__.__name__)
         universe_records = []
         for symbol in seeds:
-            record = by_symbol.get(symbol, {
-                "symbol": symbol, "price": None, "snapshot_status": "unavailable",
-                "data_usable": False,
-            })
+            record = {"symbol": symbol, "price": prices.get(symbol)}
             record.update(
                 provider=provider,
                 sources=list(reasons.get(symbol, [])),
@@ -897,6 +916,37 @@ def _run_live_pipeline(
             )
             universe_records.append(record)
         return universe_records
+
+    def retrieve_market_data(records):
+        started = perf_counter()
+        symbols = [item["symbol"] for item in records]
+        snapshots = {}
+        for offset in range(0, len(symbols), settings.batch_size):
+            batch = symbols[offset:offset + settings.batch_size]
+            try:
+                snapshots.update(client.snapshots(batch))
+            except Exception as exc:
+                client.warnings.append(f"Snapshot batch unavailable: {exc}")
+                record_provider_failure(
+                    client.diagnostics, provider="Alpaca", operation="market data snapshots",
+                    exception=exc, affected_symbols=batch,
+                    recovery_action="retain symbols with unusable data evidence",
+                )
+        state["snapshots"] = snapshots
+        refreshed = {item["symbol"]: item for item in snapshot_identity_records(snapshots)}
+        for record in records:
+            update = refreshed.get(record["symbol"])
+            if update:
+                record.update(update)
+            else:
+                record.update(snapshot_status="unavailable", data_usable=False)
+        state["market_data_timing"] = {
+            "stage": "Market Data Retrieval", "input_count": len(symbols),
+            "output_count": len(snapshots),
+            "elapsed_ms": round((perf_counter() - started) * 1000, 3),
+            "percentage_reduction": round((1 - len(symbols) / len(state["seeds"])) * 100, 2)
+            if state["seeds"] else 0.0,
+        }
 
     def catalyst(records):
         service = NewsService([AlpacaNewsProvider(client)])
@@ -1067,6 +1117,7 @@ def _run_live_pipeline(
             recovery_action="mark only the affected candidate Technical Failure and continue",
         ),
         ledger=st.session_state.walter_candidate_ledger,
+        after_price_gate=retrieve_market_data,
     )
     ledger = architecture.run()
     ranked = state["ranked"]
@@ -1093,6 +1144,32 @@ def _run_live_pipeline(
         "verification": architecture.verification_report,
         "universe_verification": universe_verification.report,
     }
+    timing_summary = []
+    for item in architecture.trace:
+        elapsed_ms = item["execution_time_ms"]
+        if item["stage"] == "Universe Construction":
+            elapsed_ms = state["universe_elapsed_ms"]
+        elif item["stage"] == "Price Gate":
+            elapsed_ms = state["price_elapsed_ms"] + item["execution_time_ms"]
+        timing_summary.append({
+            "stage": item["stage"], "input_count": item["input_count"],
+            "output_count": item["output_count"], "elapsed_ms": round(elapsed_ms, 3),
+            "percentage_reduction": round(
+                (1 - item["output_count"] / item["input_count"]) * 100, 2
+            ) if item["input_count"] else 0.0,
+        })
+        if item["stage"] == "Price Gate":
+            timing_summary.append(state["market_data_timing"])
+    timing_summary.append({
+        "stage": "Total Scan", "input_count": len(state["seeds"]),
+        "output_count": len(ranked),
+        "elapsed_ms": round((perf_counter() - scan_started) * 1000, 3),
+        "percentage_reduction": round(
+            (1 - len(ranked) / len(state["seeds"])) * 100, 2
+        ) if state["seeds"] else 0.0,
+    })
+    client.diagnostics["pipeline_timing_summary"] = timing_summary
+    log("Timing summary: " + json.dumps(timing_summary, separators=(",", ":")))
     st.session_state.symbols_sampled = len(state["seeds"])
     st.session_state.prefilter_count = len(state["candidates"])
     st.session_state.source_label = (

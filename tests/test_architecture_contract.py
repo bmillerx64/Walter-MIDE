@@ -173,6 +173,23 @@ def test_assessments_only_receive_preceding_output_and_catalyst_runs_once():
     ]
 
 
+def test_market_data_hook_receives_only_price_gate_survivors():
+    retrieved = []
+    architecture, _, _ = pipeline([
+        {"symbol": "KEEP", "price": 1, "free_float": 1},
+        {"symbol": "DROP", "price": 8, "free_float": 1},
+    ])
+    architecture.after_price_gate = lambda records: retrieved.extend(
+        item["symbol"] for item in records
+    )
+
+    results = architecture.run()
+
+    assert retrieved == ["KEEP"]
+    assert next(item for item in results if item["symbol"] == "DROP")["terminal_stage"] == "Price Gate"
+    assert [item["stage"] for item in architecture.trace] == list(STAGES)
+
+
 def test_rejection_and_technical_failure_have_stage_category_and_reason():
     records = [
         {"symbol": "BAD", "price": None, "free_float": 1},

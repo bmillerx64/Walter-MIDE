@@ -132,6 +132,7 @@ class WalterArchitectureV1:
         failure_observer: Callable[[str, str, BaseException], None] | None = None,
         clock: Callable[[], datetime] | None = None,
         timer: Callable[[], float] | None = None,
+        after_price_gate: Callable[[list[dict]], None] | None = None,
         ledger: WalterCandidateLedger | None = None,
     ) -> None:
         self._runtime_dispatch = runtime_dispatch
@@ -162,6 +163,7 @@ class WalterArchitectureV1:
         self.failure_observer = failure_observer
         self.clock = clock or (lambda: datetime.now(timezone.utc))
         self.timer = timer or perf_counter
+        self.after_price_gate = after_price_gate
         self.trace: list[dict] = []
         self.purity_observations: list[dict] = []
         self.candidate_ledger = ledger or WalterCandidateLedger()
@@ -424,6 +426,12 @@ class WalterArchitectureV1:
         ):
             self.stage_observer and self.stage_observer(number, stage, candidates)
             candidates = self._assess(stage, candidates, operation)
+            # Runtime adapters may hydrate the survivors after the cheap price
+            # decision.  This deliberately sits between Price and Validity so
+            # the eight-stage architecture and every decision predicate remain
+            # unchanged.
+            if number == 2 and self.after_price_gate:
+                self.after_price_gate(candidates)
 
         ranking_started = self.timer()
         self.stage_observer and self.stage_observer(8, STAGES[7], candidates)
