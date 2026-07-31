@@ -412,23 +412,11 @@ class WalterArchitectureV1:
                 reason="Normalized symbol admitted by Universe Construction",
                 evidence={"normalized_symbol": record["symbol"]}, provenance=provenance,
             )
-            if record.get("technical_failure"):
-                self._terminal(
-                    record, "Technical Failure", STAGES[0], "Provider data",
-                    str(record["technical_failure"]),
-                )
-        universe_failures = sum(
-            item.get("terminal_outcome") == "Technical Failure" for item in candidates
-        )
         self._record_trace(
-            STAGES[0], len(discovered), len(candidates) - universe_failures,
+            STAGES[0], len(discovered), len(candidates),
             started_at=universe_started,
-            technical_failures=universe_failures,
+            technical_failures=0,
         )
-        candidates = [
-            record for record in candidates
-            if record.get("terminal_outcome") != "Technical Failure"
-        ]
         for number, stage, operation in (
             (2, STAGES[1], self._price), (3, STAGES[2], self._validity),
             (4, STAGES[3], self.free_float), (5, STAGES[4], self.catalyst),

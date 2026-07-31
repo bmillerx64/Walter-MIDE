@@ -106,6 +106,9 @@ class UniverseVerification:
             "symbols_shared_by_multiple_sources": sorted(s for s, v in sources_by_symbol.items() if len(v) > 1),
             "final_universe_membership": sorted(final), "final_universe_count": len(final),
         }
+        self.report["malformed_identifiers"] = [
+            {"raw_identifier": row["raw"], "source": row["source"]} for row in invalid
+        ]
         documented = set()
         for transition in transitions:
             row = dict(transition)
@@ -114,7 +117,9 @@ class UniverseVerification:
             self.report["pre_price_transitions"].append(row)
         # Invalid observations have no valid normalized symbol and are accounted
         # separately. Every valid provider symbol must be admitted or transitioned.
-        unexplained = sorted((raw_unique - final - documented) | (final - raw_unique))
+        # Universe Construction is non-filtering: documenting a transition does
+        # not make removal of a valid provider symbol acceptable.
+        unexplained = sorted((raw_unique - final) | (final - raw_unique))
         entered = final if entered_price_gate is None else set(entered_price_gate)
         reason_by_symbol = {
             symbol: reason for transition in self.report["pre_price_transitions"]
@@ -132,7 +137,7 @@ class UniverseVerification:
         self.report["contract_check"] = {
             "raw_unique_symbols": len(raw_unique), "final_universe_membership": len(final),
             "documented_removals_before_price_gate": len((raw_unique - final) & documented),
-            "equation_holds": not unexplained,
+            "equation_holds": raw_unique == final,
         }
         self.report["unexplained_losses"] = unexplained
         self.report["status"] = "PASS" if not unexplained else "FAIL"

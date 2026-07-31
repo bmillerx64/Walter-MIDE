@@ -865,24 +865,11 @@ def _run_live_pipeline(
                     recovery_action="retain symbols as Technical Failure candidates and continue",
                 )
         state["snapshots"] = snapshots
-        observed_valid = {
-            row["symbol"] for row in universe_verification._observations
-            if is_valid_us_symbol(row["symbol"])
-        }
-        not_selected = sorted(observed_valid - set(seeds))
         snapshot_failures = sorted(set(seeds) - set(snapshots))
         transitions = [{
-            "transition_function_name": "broad-market eligibility and rotating slice",
-            "input_count": len(observed_valid), "output_count": len(seeds),
-            "removed_count": len(not_selected),
-            "exact_reason_categories": ["outside configured rotating broad-market slice"],
-            "affected_symbols_grouped_by_reason": {
-                "outside configured rotating broad-market slice": not_selected
-            },
-        }, {
             "transition_function_name": "snapshot batch retrieval before Price Gate",
-            "input_count": len(seeds), "output_count": len(seeds) - len(snapshot_failures),
-            "removed_count": len(snapshot_failures),
+            "input_count": len(seeds), "output_count": len(seeds),
+            "removed_count": 0,
             "exact_reason_categories": ["market data snapshot unavailable"],
             "affected_symbols_grouped_by_reason": {
                 "market data snapshot unavailable": snapshot_failures
@@ -890,15 +877,26 @@ def _run_live_pipeline(
         }]
         universe_verification.finish(
             seeds, transitions=transitions,
-            entered_price_gate=set(seeds) - set(snapshot_failures),
+            entered_price_gate=set(seeds),
         )
         records = snapshot_identity_records(snapshots)
         by_symbol = {item["symbol"]: item for item in records}
-        # Symbols whose snapshot failed remain accountable as unusable data.
-        return [by_symbol.get(symbol, {
-            "symbol": symbol, "price": None, "data_usable": False,
-            "technical_failure": "Market data snapshot unavailable",
-        }) for symbol in seeds]
+        # Membership and provenance are fixed before Price Gate. Snapshot data is
+        # optional evidence, never permission to omit an identity.
+        provider = getattr(client, "provider_name", client.__class__.__name__)
+        universe_records = []
+        for symbol in seeds:
+            record = by_symbol.get(symbol, {
+                "symbol": symbol, "price": None, "snapshot_status": "unavailable",
+                "data_usable": False,
+            })
+            record.update(
+                provider=provider,
+                sources=list(reasons.get(symbol, [])),
+                discovery_reasons=list(reasons.get(symbol, [])),
+            )
+            universe_records.append(record)
+        return universe_records
 
     def catalyst(records):
         service = NewsService([AlpacaNewsProvider(client)])
@@ -1565,7 +1563,7 @@ if active_tab == "Radar":
                     radar_table(sorted_records), width="stretch", hide_index=True
                 )
 if active_tab == "Diagnostics":
-    st.subheader("Universe Construction Verification")
+    st.subheader("Universe Definition")
     universe_report = (
         (scan_diagnostics.get("walter_architecture") or {}).get("universe_verification")
         if isinstance(scan_diagnostics, dict) else None
@@ -1586,7 +1584,7 @@ if active_tab == "Diagnostics":
                      hide_index=True)
         st.markdown("**Merge counts**")
         st.json(universe_report.get("merge_accounting", {}))
-        st.markdown("**Pre-Price Gate removals**")
+        st.markdown("**Snapshot availability (non-filtering)**")
         st.json(universe_report.get("pre_price_transitions", []))
         losses = universe_report.get("unexplained_losses", [])
         st.markdown(f"**Unexplained losses:** {len(losses)}")
@@ -1595,6 +1593,15 @@ if active_tab == "Diagnostics":
         with st.expander("Symbol-level universe path", expanded=False):
             st.dataframe(universe_report.get("symbols", []), use_container_width=True,
                          hide_index=True)
+        st.download_button(
+            "Download source provenance",
+            data=json.dumps({
+                "symbols": universe_report.get("symbols", []),
+                "malformed_identifiers": universe_report.get("malformed_identifiers", []),
+            }, indent=2, default=str),
+            file_name="universe-source-provenance.json",
+            mime="application/json",
+        )
     else:
         st.caption("Universe verification appears after a live scan.")
 

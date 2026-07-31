@@ -8,23 +8,18 @@ class Client:
     warnings = []
 
 
-def test_source_merge_duplicate_and_membership_accounting_is_read_only():
+def test_source_merge_requires_complete_membership_and_preserves_provenance():
     source = [{"symbol": " aaa "}, {"symbol": "AAA"}, {"symbol": "BBB"}, {"symbol": ""}]
     before = deepcopy(source)
     verification = UniverseVerification(Client(), feed="iex")
     returned = verification.call("Market movers", "movers", {"top": 50}, lambda: source)
-    report = verification.finish(["AAA"], transitions=[{
-        "transition_function_name": "rotating slice", "input_count": 2,
-        "output_count": 1, "removed_count": 1,
-        "exact_reason_categories": ["outside slice"],
-        "affected_symbols_grouped_by_reason": {"outside slice": ["BBB"]},
-    }], entered_price_gate={"AAA"})
+    report = verification.finish(["AAA", "BBB"], entered_price_gate={"AAA", "BBB"})
 
     assert returned == before == source
     assert report["sources"][0]["raw_objects_returned"] == 4
     assert report["sources"][0]["raw_unique_symbols_returned"] == 2
     assert report["sources"][0]["duplicate_symbols_within_source"] == 1
-    assert report["merge_accounting"]["final_universe_membership"] == ["AAA"]
+    assert report["merge_accounting"]["final_universe_membership"] == ["AAA", "BBB"]
     assert report["merge_accounting"]["invalid_or_blank_symbols_removed"] == 1
     assert report["status"] == "PASS"
 
@@ -45,11 +40,21 @@ def test_snapshot_transition_documents_price_gate_non_entry():
                       lambda: [{"symbol": "GOOD"}, {"symbol": "NO_DATA"}])
     report = verification.finish(["GOOD", "NO_DATA"], transitions=[{
         "transition_function_name": "snapshot retrieval", "input_count": 2,
-        "output_count": 1, "removed_count": 1,
+        "output_count": 2, "removed_count": 0,
         "exact_reason_categories": ["snapshot unavailable"],
         "affected_symbols_grouped_by_reason": {"snapshot unavailable": ["NO_DATA"]},
-    }], entered_price_gate={"GOOD"})
+    }], entered_price_gate={"GOOD", "NO_DATA"})
     paths = {row["normalized_symbol"]: row for row in report["symbols"]}
     assert paths["NO_DATA"]["admitted_to_universe"]
-    assert not paths["NO_DATA"]["entered_price_gate"]
+    assert paths["NO_DATA"]["entered_price_gate"]
     assert paths["NO_DATA"]["removal_reason"] == "snapshot unavailable"
+
+
+def test_documented_transition_cannot_excuse_filtering_valid_symbol():
+    verification = UniverseVerification(Client(), feed="iex")
+    verification.call("Market movers", "movers", {}, lambda: [{"symbol": "LOST"}])
+    report = verification.finish([], transitions=[{
+        "affected_symbols_grouped_by_reason": {"sampled out": ["LOST"]},
+    }])
+    assert report["status"] == "FAIL"
+    assert not report["contract_check"]["equation_holds"]
