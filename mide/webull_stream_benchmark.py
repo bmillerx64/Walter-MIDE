@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import sys
 import resource
 import time
 from dataclasses import asdict, dataclass
@@ -20,6 +21,7 @@ from typing import Callable, Iterable
 
 from .market_data import EventType, MarketDataProvider, MarketEvent
 from .market_data_providers import WebullProvider
+from .credentials import credential_diagnostics, load_credentials
 
 
 @dataclass(frozen=True)
@@ -205,7 +207,10 @@ def main() -> int:
     args = parser.parse_args()
     required = ("WEBULL_MQTT_HOST", "WEBULL_MQTT_USERNAME", "WEBULL_MQTT_PASSWORD",
                 "WEBULL_MQTT_CLIENT_ID", "WEBULL_MQTT_TOPIC_TEMPLATE")
-    missing = [name for name in required if not os.getenv(name)]
+    credentials = load_credentials(required)
+    for diagnostic in credential_diagnostics(credentials):
+        print(f"Webull credential startup check: {diagnostic}", file=sys.stderr)
+    missing = [name for name, credential in credentials.items() if not credential.present]
     if missing:
         parser.error("missing OpenAPI bootstrap values: " + ", ".join(missing))
 
@@ -216,10 +221,10 @@ def main() -> int:
 
     def factory(callback):
         def stream_factory(receive):
-            return PahoWebullStream(receive, host=os.environ["WEBULL_MQTT_HOST"],
-            port=int(os.getenv("WEBULL_MQTT_PORT", "443")), username=os.environ["WEBULL_MQTT_USERNAME"],
-            password=os.environ["WEBULL_MQTT_PASSWORD"], client_id=os.environ["WEBULL_MQTT_CLIENT_ID"],
-            topic_template=os.environ["WEBULL_MQTT_TOPIC_TEMPLATE"], parser=parse_quote)
+            return PahoWebullStream(receive, host=credentials["WEBULL_MQTT_HOST"].value,
+            port=int(os.getenv("WEBULL_MQTT_PORT", "443")), username=credentials["WEBULL_MQTT_USERNAME"].value,
+            password=credentials["WEBULL_MQTT_PASSWORD"].value, client_id=credentials["WEBULL_MQTT_CLIENT_ID"].value,
+            topic_template=credentials["WEBULL_MQTT_TOPIC_TEMPLATE"].value, parser=parse_quote)
         return WebullProvider(stream_factory=stream_factory)
 
     benchmark = StreamBenchmark(factory, args.symbols.read_text().splitlines(), duration_seconds=args.duration)
