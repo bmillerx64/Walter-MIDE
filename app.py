@@ -113,6 +113,7 @@ from mide.architecture import (
     WalterArchitectureV1,
     scanner_implementation,
 )
+from mide.mission_outcomes import MissionOutcomeStore
 memory_checkpoint("decision engine import", object_name="mide.decision_engine")
 from mide.free_float_inspector import inspect_free_float
 from mide.free_float import (
@@ -1030,6 +1031,15 @@ def _run_live_pipeline(
     )
     ledger = architecture.run()
     ranked = state["ranked"]
+    # Outcome measurement is strictly downstream of publication and receives
+    # detached snapshots, never the authoritative candidate objects.
+    try:
+        MissionOutcomeStore().process_scan(
+            [dict(record) for record in ranked],
+            timestamp=datetime.now(timezone.utc),
+        )
+    except (OSError, ValueError, TypeError) as exc:
+        client.warnings.append(f"Mission outcome measurement unavailable: {exc}")
     operational = dict(architecture.operational_summary)
     operational["provider_failures"] = len(
         client.diagnostics.get("provider_failures", [])
@@ -1476,6 +1486,21 @@ if active_tab == "Radar":
                     radar_table(sorted_records), width="stretch", hide_index=True
                 )
 if active_tab == "Diagnostics":
+    st.subheader("Mission Candidate Outcomes")
+    outcome_diagnostics = MissionOutcomeStore().diagnostics()
+    outcome_columns = st.columns(4)
+    for column, (label, value) in zip(
+        outcome_columns,
+        (
+            ("Tracking", outcome_diagnostics["candidates_being_tracked"]),
+            ("Completed", outcome_diagnostics["completed_outcomes"]),
+            ("Unresolved", outcome_diagnostics["unresolved_outcomes"]),
+            ("Missing data", outcome_diagnostics["missing_data_events"]),
+        ),
+    ):
+        column.metric(label, value)
+    st.caption("Measurement only; these records do not feed ranking or qualification.")
+
     st.subheader("Candidate Ledger Decision Explanations")
     ledger_explanations = [
         {
