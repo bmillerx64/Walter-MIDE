@@ -1,11 +1,13 @@
 # Walter MIDE v1.0
 Clean Streamlit foundation preserving the v0.9.3 live SIP discovery, scoring and validation logic.
 
-Deploy `app.py` from the repository root. Add `ALPACA_API_KEY`,
-`ALPACA_SECRET_KEY`, `ALPACA_FEED = "sip"`, and `FMP_API_KEY` to Streamlit
-Secrets. Alpaca snapshots provide live trades, quotes, and bars but no
-free-float fundamental; Walter enriches Stage 2 with Financial Modeling Prep's
-Shares Float endpoint.
+Deploy `app.py` from the repository root. Add `WEBULL_APP_KEY`,
+`WEBULL_APP_SECRET`, and optionally `FMP_API_KEY` to Streamlit Secrets. Official
+Webull OpenAPI rankings, snapshots, streaming quotes, and history bars provide
+Walter's complete live market-data path. Webull provides no raw article feed, so
+news is isolated behind an optional separately licensed provider abstraction.
+Walter can optionally enrich free-float fundamentals with Financial Modeling
+Prep's Shares Float endpoint; this is not a market-data dependency.
 
 Webull credentials use this precedence: Streamlit Secrets, environment
 variables, then a local `.env`. The `.env` fallback is disabled unless
@@ -16,10 +18,8 @@ Status** report only whether each credential is present and where it was found;
 they never print credential values. Do not commit `.env` or credentials.
 
 Choose **Live Webull** in the sidebar to keep one authenticated Webull stream
-and in-memory quote cache across Streamlit reruns. Walter overlays streamed
-price, quote, and volume fields on its existing production snapshots; Alpaca
-continues to supply discovery, news, unavailable fields, and the explicit
-fallback path. **Diagnostics** reports authentication/connection state,
+and in-memory quote cache across Streamlit reruns. No Alpaca module or client is
+loaded on this path. **Diagnostics** reports authentication/connection state,
 subscriptions, cache coverage, message count, last message, latency, and
 subscription errors. Deployments whose approved OpenAPI application uses a
 regional streaming bootstrap may set `WEBULL_STREAM_BOOTSTRAP_URL`; this value

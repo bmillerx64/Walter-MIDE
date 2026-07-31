@@ -1,7 +1,8 @@
 # Webull OpenAPI capability audit
 
 **Audit date:** 2026-07-30  
-**Decision:** Phase 2B — Webull discovery plus a separately licensed raw-news provider.
+**Decision:** Webull is Walter's sole live market-data provider. Raw article news
+remains an optional, separately licensed provider capability.
 
 ## Scope and source policy
 
@@ -59,9 +60,14 @@ Benzinga documents a credentialed commercial news API, including ticker-filterab
 
 ## Implementation decision
 
-* Keep Alpaca's official news API as a temporary, failure-isolated fallback.
-* Remove the fixed global-200 dependency by persisting an updated-time cursor, caching/deduplicating articles, and querying the current discovery set by ticker.
+* Use Webull stock rankings for the live scan universe, Webull snapshots and
+  streaming for quotes, and Webull history bars for VWAP and volume evidence.
+* Do not import, instantiate, or call Alpaca from a Live Webull scan.
+* Keep raw news behind `NewsProvider`. Live Webull uses an explicit unavailable
+  provider because News Summary is not an article feed; TipRanks or Benzinga is
+  the clearly identified remaining optional external dependency.
 * Preserve every structured article-symbol association and every article per symbol.
 * Never infer a ticker from ordinary headline text.
 * Keep TipRanks and Benzinga inactive until credentials and permitted usage are confirmed.
-* Add Webull discovery only when application credentials and market-data entitlement are available; no unofficial substitute is acceptable.
+* Use only official Webull operations and require application credentials and
+  market-data entitlement; no unofficial substitute is acceptable.

@@ -131,6 +131,18 @@ class CredentialPendingNewsProvider(NewsProvider):
         raise RuntimeError(f"{self.name} is not activated: official credentials and permitted usage are required")
 
 
+class UnavailableNewsProvider(NewsProvider):
+    """Explicit provider seam when the selected market-data API has no news feed."""
+
+    def __init__(self, name: str, reason: str):
+        self.name, self.reason = name, reason
+
+    def fetch(self, *, since: datetime, symbols: Iterable[str] = ()) -> list[NewsArticle]:
+        # An empty result keeps scanning operational without silently contacting
+        # another market-data vendor. Diagnostics retain the missing capability.
+        return []
+
+
 class NewsService:
     """Incremental cache, deduplication, metrics, and safe provider fallback."""
 

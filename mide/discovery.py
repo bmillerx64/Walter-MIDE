@@ -20,7 +20,6 @@ from .volume_pace import volume_pace_metrics
 from .scoring import Evidence, score
 from .flight_recorder import prefilter_decision
 from .timeframe_alignment import alignment_summary
-from .alpaca import common_stock_asset
 
 # Fourteen calendar days reliably covers at least five completed U.S. trading
 # sessions across weekends and ordinary exchange holidays.
@@ -96,19 +95,25 @@ def build_seed_symbols(client, settings, news_items, *, universe_verification=No
     # sources. They can provide downstream evidence but cannot add membership.
     client.diagnostics["news_symbols"] = 0
 
-    # Alpaca Asset metadata is the sole source of universe membership.
+    # Universe membership is supplied by the selected provider's normalized
+    # asset/ranking operation.
     try:
-        assets = (call("Alpaca active tradable assets", "assets",
+        provider_name = getattr(client, "provider_name", "Alpaca")
+        assets = (call(f"{provider_name} tradable universe", "assets",
                        {"status": "active", "asset_class": "us_equity"}, client.assets)
                   if call else client.assets())
         eligible_assets = [
             str(item.get("symbol") or "").strip().upper()
             for item in assets
-            if common_stock_asset(item)
+            if item.get("tradable", True)
+            and str(item.get("status", "active")).lower() == "active"
+            and not item.get("otc", False)
+            and not any(word in str(item.get("name", "")).lower()
+                        for word in ("warrant", "right", "unit", "preferred", "depositary"))
         ]
-        source = "Alpaca assets"
+        source = "Alpaca assets" if provider_name == "Alpaca" else f"{provider_name} universe"
     except Exception as exc:
-        client.warnings.append(f"Alpaca asset universe unavailable: {exc}")
+        client.warnings.append(f"Provider universe unavailable: {exc}")
         eligible_assets = []
         source = "none"
 
@@ -481,7 +486,7 @@ def analyze_candidates(client, candidates, news_index, discovery_reasons):
                     if price and st_value
                     else 999.0
                 ),
-                "vwap_bar_timeframe_source": "Alpaca 1Min current-session bars (same bars as primary SuperTrend)",
+                "vwap_bar_timeframe_source": f"{getattr(client, 'provider_name', 'market data provider')} 1Min current-session bars",
                 "expected_volume_by_time": round(vpi.expected_volume),
                 "volume_pace_ratio": round(vpi.volume_pace_ratio, 2),
                 "five_minute_volume": round(vpi.recent_5m_volume),

@@ -95,15 +95,14 @@ memory_checkpoint("mide package repair")
 
 from mide.config import Settings
 from mide.credentials import WEBULL_CREDENTIAL_NAMES, credential_diagnostics, load_credentials
-from mide.alpaca import AlpacaError
 from mide.market_data import MarketDataProvider
-from mide.market_data_providers import AlpacaProvider
 from mide.webull_live import LiveWebullProvider, live_data_modes
-memory_checkpoint("providers import", object_name="mide.alpaca")
+memory_checkpoint("providers import", object_name="mide.webull_live")
 from mide.news import index_news, recent_wire_news_log
 from mide.news_provider import (
     MarketDataNewsProvider,
     NewsService,
+    UnavailableNewsProvider,
     symbol_news_evidence,
     ticker_inspection,
 )
@@ -888,28 +887,7 @@ def _run_live_pipeline(
 ):
     """Execute the live scan through the single Walter Architecture pipeline."""
     scan_started = perf_counter()
-    api_key = get_secret("ALPACA_API_KEY")
-    secret = get_secret("ALPACA_SECRET_KEY")
-    if provider_name.upper() != "WEBULL" and (not api_key or not secret):
-        raise AlpacaError("Alpaca credentials are not configured in Streamlit Secrets.")
-
     repair_mide_module_links()
-    alpaca_module = importlib.import_module("mide.alpaca")
-    client_factory = client_factory or AlpacaProvider
-    credential_checker = credential_checker or alpaca_module.credential_status
-    log_startup("authenticating")
-    alpaca_client: MarketDataProvider = client_factory(api_key, secret, feed=settings.feed, timeout=8)
-    # Account validation is useful evidence, not permission for one provider to
-    # terminate the scan. Public/fallback discovery may still produce a universe.
-    try:
-        environment = credential_checker(alpaca_client)
-        status.write(f"Alpaca credentials accepted ({environment} environment)")
-    except Exception as exc:
-        record_provider_failure(
-            alpaca_client.diagnostics, provider="Alpaca", operation="credential check",
-            exception=exc, recovery_action="continue with available public discovery sources",
-        )
-        alpaca_client.warnings.append(f"Alpaca credential check unavailable: {exc}")
     if provider_name.upper() == "WEBULL":
         log_startup("initializing Webull provider")
         resolved = load_credentials(WEBULL_CREDENTIAL_NAMES, secrets=secrets_mapping())
@@ -919,23 +897,31 @@ def _run_live_pipeline(
             raise RuntimeError("Webull credentials are not configured in Streamlit Secrets/environment.")
         client = st.session_state.get("webull_live_provider")
         if not isinstance(client, LiveWebullProvider):
-            client = LiveWebullProvider(app_key, app_secret, fallback=alpaca_client)
+            client = LiveWebullProvider(app_key, app_secret)
             st.session_state.webull_live_provider = client
-        else:
-            # Keep one connection/cache across Streamlit reruns while refreshing
-            # the explicitly labeled Alpaca universe/news/history provider.
-            persistent = dict(client.diagnostics.get("webull_stream", {}))
-            sources = dict(client.diagnostics.get("market_data_sources", {}))
-            client.fallback = alpaca_client
-            client.warnings = alpaca_client.warnings
-            client.diagnostics = alpaca_client.diagnostics
-            client.diagnostics["webull_stream"] = persistent
-            client.diagnostics["market_data_sources"] = sources
         logging.getLogger(__name__).warning(
-            "Walter providers: universe=ALPACA, snapshots=WEBULL, streaming=WEBULL"
+            "Walter market-data provider: WEBULL (no Alpaca imports or fallback)"
         )
     else:
-        client = alpaca_client
+        api_key = get_secret("ALPACA_API_KEY")
+        secret = get_secret("ALPACA_SECRET_KEY")
+        if not api_key or not secret:
+            raise RuntimeError("Alpaca credentials are not configured in Streamlit Secrets.")
+        # Legacy mode is isolated behind lazy imports so selecting Live Webull
+        # cannot import or instantiate an Alpaca client.
+        alpaca_module = importlib.import_module("mide.alpaca")
+        provider_module = importlib.import_module("mide.market_data_providers")
+        client_factory = client_factory or provider_module.AlpacaProvider
+        credential_checker = credential_checker or alpaca_module.credential_status
+        client: MarketDataProvider = client_factory(api_key, secret, feed=settings.feed, timeout=8)
+        try:
+            environment = credential_checker(client)
+            status.write(f"Alpaca credentials accepted ({environment} environment)")
+        except Exception as exc:
+            record_provider_failure(client.diagnostics, provider="Alpaca",
+                operation="credential check", exception=exc,
+                recovery_action="continue with available discovery sources")
+            client.warnings.append(f"Alpaca credential check unavailable: {exc}")
         client.diagnostics["selected_provider"] = "ALPACA"
         logging.getLogger(__name__).warning("Walter live market-data provider: ALPACA")
     with scan_runtime_slot:
@@ -1105,7 +1091,15 @@ def _run_live_pipeline(
         }
 
     def catalyst(records):
-        service = NewsService([MarketDataNewsProvider(client)])
+        news_provider = (
+            UnavailableNewsProvider(
+                "Webull raw news unavailable",
+                "Webull OpenAPI exposes summaries, not ticker-level articles; configure a separately licensed NewsProvider for catalysts",
+            )
+            if isinstance(client, LiveWebullProvider)
+            else MarketDataNewsProvider(client)
+        )
+        service = NewsService([news_provider])
         symbols = [item["symbol"] for item in records]
         try:
             news_items = service.fetch(symbols=symbols, force_lookback=True)
