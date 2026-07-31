@@ -89,6 +89,7 @@ from mide.architecture import (
     WalterArchitectureV1,
     scanner_implementation,
 )
+from mide.operational_validation import validate_runtime
 
 
 class Store:
@@ -288,3 +289,58 @@ def test_persisted_ledger_precedes_and_exclusively_controls_publication():
     }
     assert {id(item) for item in published} == expected
     assert {item["symbol"] for item in published} == {"QUALIFIED"}
+    assert architecture.operational_summary["publication_integrity_verified"] is True
+    assert architecture.operational_summary["symbols_published"] == 1
+
+
+def test_operational_metrics_cover_timing_counts_rejections_and_failures():
+    ticks = iter(range(100))
+    records = [
+        {"symbol": "GOOD", "price": 1, "free_float": 1},
+        {"symbol": "REJECT", "price": 10, "free_float": 1},
+    ]
+    architecture, _, _ = pipeline(records)
+    architecture.timer = lambda: next(ticks)
+
+    architecture.run()
+
+    assert len(architecture.trace) == 8
+    assert all(stage["execution_time_ms"] == 1000 for stage in architecture.trace)
+    assert all(
+        {"input_count", "output_count", "rejection_count", "technical_failure_count"}
+        <= set(stage) for stage in architecture.trace
+    )
+    assert architecture.operational_summary["symbols_rejected_by_stage"] == {
+        "Price Gate": 1
+    }
+
+
+def test_validation_framework_rejects_growth_disappearance_and_publication_drift():
+    ledger = [{
+        "symbol": "A", "candidate_id": "A", "terminal_outcome": "Qualified and Ranked",
+        "mission_rank": 1,
+    }]
+    stages = [
+        {"stage": name, "output_count": 1, "input_count": 1}
+        for name in STAGES
+    ]
+    assert validate_runtime(
+        ledger=ledger, published=ledger, stages=stages, persistence_completed=True,
+    )["healthy"] is True
+
+    growing = [dict(stage) for stage in stages]
+    growing[3]["output_count"] = 2
+    with pytest.raises(ArchitectureViolation, match="membership increased"):
+        validate_runtime(
+            ledger=ledger, published=ledger, stages=growing,
+            persistence_completed=True,
+        )
+    with pytest.raises(ArchitectureViolation, match="does not match"):
+        validate_runtime(
+            ledger=ledger, published=[], stages=stages, persistence_completed=True,
+        )
+    with pytest.raises(ArchitectureViolation, match="Persistence"):
+        validate_runtime(
+            ledger=ledger, published=ledger, stages=stages,
+            persistence_completed=False,
+        )

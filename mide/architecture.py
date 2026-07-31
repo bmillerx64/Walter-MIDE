@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 import re
+from time import perf_counter
 from typing import Any, Callable, Iterable, Mapping, Protocol
 
 
@@ -73,6 +74,7 @@ class WalterArchitectureV1:
         stage_observer: Callable[[int, str, list[dict]], None] | None = None,
         failure_observer: Callable[[str, str, BaseException], None] | None = None,
         clock: Callable[[], datetime] | None = None,
+        timer: Callable[[], float] | None = None,
     ) -> None:
         self._runtime_dispatch = runtime_dispatch
         if runtime_dispatch is not None:
@@ -101,8 +103,10 @@ class WalterArchitectureV1:
         self.stage_observer = stage_observer
         self.failure_observer = failure_observer
         self.clock = clock or (lambda: datetime.now(timezone.utc))
+        self.timer = timer or perf_counter
         self.trace: list[dict] = []
         self._ledger: dict[str, dict] = {}
+        self.operational_summary: dict[str, object] = {}
 
     @classmethod
     def for_runtime(cls, dispatch: Callable[[], Any]) -> "WalterArchitectureV1":
@@ -141,16 +145,23 @@ class WalterArchitectureV1:
             "timestamp": self._timestamp(),
         })
 
-    def _record_trace(self, stage: str, input_count: int, output_count: int) -> None:
+    def _record_trace(
+        self, stage: str, input_count: int, output_count: int, *,
+        started_at: float, technical_failures: int = 0,
+    ) -> None:
         self.trace.append({
             "number": len(self.trace) + 1,
             "stage": stage,
             "executions": 1,
             "input_count": input_count,
             "output_count": output_count,
+            "rejection_count": max(0, input_count - output_count - technical_failures),
+            "technical_failure_count": technical_failures,
+            "execution_time_ms": round((self.timer() - started_at) * 1000, 3),
         })
 
     def _assess(self, stage: str, candidates: list[dict], operation: Stage) -> list[dict]:
+        started_at = self.timer()
         symbols = [self._symbol(item) for item in candidates]
         try:
             decisions = operation([dict(item) for item in candidates])
@@ -202,7 +213,13 @@ class WalterArchitectureV1:
                 output.append(item)
             else:
                 self._terminal(item, "Rejected", stage, decision.category, decision.reason)
-        self._record_trace(stage, len(candidates), len(output))
+        failures = sum(
+            item.get("terminal_outcome") == "Technical Failure" for item in candidates
+        )
+        self._record_trace(
+            stage, len(candidates), len(output), started_at=started_at,
+            technical_failures=failures,
+        )
         return output
 
     def _price(self, candidates: list[dict]) -> Mapping[str, Decision]:
@@ -267,6 +284,7 @@ class WalterArchitectureV1:
         if runtime_dispatch is not None:
             return runtime_dispatch()
 
+        universe_started = self.timer()
         self.stage_observer and self.stage_observer(1, STAGES[0], [])
         discovered = list(self.discover())
         for source in discovered:
@@ -295,7 +313,13 @@ class WalterArchitectureV1:
                     record, "Technical Failure", STAGES[0], "Provider data",
                     str(record["technical_failure"]),
                 )
-        self._record_trace(STAGES[0], len(discovered), len(candidates))
+        universe_failures = sum(
+            item.get("terminal_outcome") == "Technical Failure" for item in candidates
+        )
+        self._record_trace(
+            STAGES[0], len(discovered), len(candidates), started_at=universe_started,
+            technical_failures=universe_failures,
+        )
         candidates = [
             record for record in candidates
             if record.get("terminal_outcome") != "Technical Failure"
@@ -308,6 +332,7 @@ class WalterArchitectureV1:
             self.stage_observer and self.stage_observer(number, stage, candidates)
             candidates = self._assess(stage, candidates, operation)
 
+        ranking_started = self.timer()
         self.stage_observer and self.stage_observer(8, STAGES[7], candidates)
         ranked = self.rank([dict(item) for item in candidates])
         before = [self._symbol(item) for item in candidates]
@@ -326,7 +351,9 @@ class WalterArchitectureV1:
                 reason="Expansion-qualified candidate ranked",
                 evidence={"mission_rank": position},
             )
-        self._record_trace(STAGES[7], len(candidates), len(ranked))
+        self._record_trace(
+            STAGES[7], len(candidates), len(ranked), started_at=ranking_started,
+        )
         results = list(self._ledger.values())
         for record in results:
             audited = {entry["stage"] for entry in record["architecture_audit"]}
@@ -348,6 +375,12 @@ class WalterArchitectureV1:
             key=lambda item: item["mission_rank"],
         )
         self.publish(published)
+        from mide.operational_validation import validate_runtime
+
+        self.operational_summary = validate_runtime(
+            ledger=results, published=published, stages=self.trace,
+            persistence_completed=True,
+        )
         return results
 
 
