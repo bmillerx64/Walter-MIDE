@@ -111,6 +111,11 @@ from mide.session_controls import (
     select_data_mode,
     update_auto_scan,
 )
+from mide.completed_scan import (
+    CompletedScan,
+    completed_scan_for_view,
+    store_completed_scan,
+)
 memory_checkpoint("providers import", object_name="mide.webull_live")
 from mide.news import index_news, recent_wire_news_log
 from mide.news_provider import (
@@ -612,6 +617,7 @@ system_status_panel.caption("Webull startup: " + " · ".join(webull_startup_diag
 memory_checkpoint("dashboard container initialization", object_name="Streamlit DeltaGenerators")
 
 session_defaults = {
+    "completed_scan": None,
     "records": [],
     "walter_candidate_ledger": WalterCandidateLedger(),
     "source_label": "No scan has been run",
@@ -752,10 +758,14 @@ with st.sidebar:
             f"Active voice identifier: {st.session_state.get(ACTIVE_VOICE_SESSION_KEY, SYSTEM_DEFAULT_VOICE_ID)}"
         )
         st.write(f"Voice currently selected: {selected_voice}")
-        stream_diagnostics = st.session_state.get("scan_diagnostics", {}).get("webull_stream", {})
+        sidebar_scan = completed_scan_for_view(st.session_state, "Diagnostics")
+        sidebar_diagnostics = sidebar_scan.diagnostics if sidebar_scan else {}
+        stream_diagnostics = sidebar_diagnostics.get("webull_stream", {})
+        completed_provider = sidebar_scan.provider if sidebar_scan else None
         st.write(f"Selected provider: {selected_provider}")
-        if selected_provider == "WEBULL":
-            actual_sources = st.session_state.get("scan_diagnostics", {}).get("active_pipeline_sources", [])
+        st.write(f"Completed scan provider: {completed_provider or 'No completed scan'}")
+        if completed_provider == "WEBULL":
+            actual_sources = sidebar_scan.pipeline_sources
             st.write("Actual Live Webull pipeline providers and endpoints")
             if actual_sources:
                 st.dataframe(actual_sources, use_container_width=True, hide_index=True)
@@ -1497,12 +1507,12 @@ def run_live(
 should_scan = False
 
 if use_demo or mode == "Demo":
-    st.session_state.records = evaluate_decision_funnel(demo_records())
-    st.session_state.symbols_sampled = len(st.session_state.records)
-    st.session_state.prefilter_count = len(st.session_state.records)
-    st.session_state.source_label = "Demonstration data"
-    st.session_state.api_warnings = []
-    st.session_state.last_updated = datetime.now().astimezone()
+    demo_result = evaluate_decision_funnel(demo_records())
+    store_completed_scan(st.session_state, CompletedScan(
+        provider=None, records=demo_result, diagnostics={}, warnings=[],
+        symbols_sampled=len(demo_result), prefilter_count=len(demo_result),
+        completed_at=datetime.now().astimezone(), source_label="Demonstration data",
+    ))
 else:
     due = (
         mode.startswith("Live ")
@@ -1530,13 +1540,20 @@ if mode.startswith("Live ") and should_scan and not st.session_state[STOP_REQUES
         records, universe_count, prefiltered, warnings, diagnostics = watchdog.run(
             lambda: run_live(scanner_version, provider_name=selected_provider), before_retry=repair_mide_module_links
         )
-        st.session_state.records = records
-        st.session_state.symbols_sampled = universe_count
-        st.session_state.prefilter_count = prefiltered
-        st.session_state.source_label = f"Live {selected_provider} · {universe_count} symbols sampled · {prefiltered} prefiltered"
-        st.session_state.api_warnings = warnings
-        st.session_state.scan_diagnostics = diagnostics
-        st.session_state.last_updated = datetime.now().astimezone()
+        completed_at = datetime.now().astimezone()
+        store_completed_scan(st.session_state, CompletedScan(
+            provider=selected_provider,
+            records=records,
+            diagnostics=diagnostics,
+            warnings=warnings,
+            symbols_sampled=universe_count,
+            prefilter_count=prefiltered,
+            completed_at=completed_at,
+            source_label=(
+                f"Live {selected_provider} · {universe_count} symbols sampled · "
+                f"{prefiltered} prefiltered"
+            ),
+        ))
         st.session_state.scan_failure_count = 0
     except ScanAlreadyRunning as exc:
         log(f"Scan deferred: {exc}")
@@ -1551,10 +1568,11 @@ if mode.startswith("Live ") and should_scan and not st.session_state[STOP_REQUES
     finally:
         finish_scan(st.session_state)
 
-records = st.session_state.records
-api_warnings = st.session_state.api_warnings
-scan_diagnostics = st.session_state.scan_diagnostics
-updated = st.session_state.last_updated
+completed_scan = completed_scan_for_view(st.session_state, "Radar")
+records = completed_scan.records if completed_scan else []
+api_warnings = completed_scan.warnings if completed_scan else []
+scan_diagnostics = completed_scan.diagnostics if completed_scan else {}
+updated = completed_scan.completed_at if completed_scan else None
 current_rejections = scan_diagnostics.get("rejected_candidates", [])
 if current_rejections:
     signature = tuple(
@@ -1877,6 +1895,7 @@ active_tab = st.radio(
     help="Diagnostic views are loaded only when selected to keep memory bounded.",
 )
 if active_tab == "Radar":
+    view_scan = completed_scan_for_view(st.session_state, "Radar")
     if not display_records:
         st.success("No stock currently deserves elevated attention.")
     else:
@@ -1905,11 +1924,14 @@ if active_tab == "Radar":
                     radar_table(sorted_records), width="stretch", hide_index=True
                 )
 if active_tab == "Diagnostics":
+    view_scan = completed_scan_for_view(st.session_state, "Diagnostics")
     active_sources = (
-        scan_diagnostics.get("active_pipeline_sources", [])
-        if isinstance(scan_diagnostics, dict) else []
+        view_scan.pipeline_sources if view_scan else []
     )
     st.subheader("Active Pipeline Data Sources")
+    st.write(
+        f"Completed scan provider: **{view_scan.provider if view_scan else 'No completed scan'}**"
+    )
     st.caption(
         "Runtime provider and endpoint paths for the selected Live Webull scan; "
         "Alpaca usage is called out explicitly rather than hidden behind the selection label."
@@ -2342,12 +2364,18 @@ if active_tab == "Diagnostics":
                         st.json(decision.get("thresholds", {}))
 
 if active_tab == "Session Replay":
+    view_scan = completed_scan_for_view(st.session_state, "Session Replay")
     build_session_replay = importlib.import_module("mide.session_replay").build_session_replay
     st.subheader("Runtime Session Replay")
     st.caption(
         "A read-only reconstruction from Candidate History and Flight Recorder files. "
         "Replay never changes scanner behavior, qualification, or scoring."
     )
+    if view_scan:
+        st.caption(
+            f"Current completed scan: {view_scan.provider or 'Demo'} · "
+            f"{view_scan.completed_at.isoformat()}"
+        )
     replay_symbol = (
         st.text_input(
             "Ticker to replay",
@@ -2498,6 +2526,7 @@ if active_tab == "Session Replay":
             )
 
 if active_tab == "Trade Outcomes":
+    view_scan = completed_scan_for_view(st.session_state, "Trade Outcomes")
     OUTCOME_LABELS = importlib.import_module("mide.trade_outcomes").OUTCOME_LABELS
     st.subheader("Trade Outcome Feedback")
     st.caption(
@@ -2565,8 +2594,11 @@ if active_tab == "What changed":
         )
 
 if active_tab == "Data validation":
+    view_scan = completed_scan_for_view(st.session_state, "Data validation")
     c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Configured feed", settings.feed.upper())
+    c1.metric(
+        "Completed provider", view_scan.provider if view_scan else "No completed scan"
+    )
     c2.metric("Ranked records", len(records))
     c3.metric(
         "Nonzero dominance",
