@@ -90,6 +90,7 @@ repair_mide_module_links()
 memory_checkpoint("mide package repair")
 
 from mide.config import Settings
+from mide.credentials import WEBULL_CREDENTIAL_NAMES, credential_diagnostics, load_credentials
 from mide.alpaca import AlpacaError
 from mide.market_data import MarketDataProvider
 from mide.market_data_providers import AlpacaProvider
@@ -578,6 +579,13 @@ opportunity_feed_slot = st.empty()
 escalation_engine_slot = st.empty()
 system_status_panel = st.expander("System Status", expanded=False)
 scan_runtime_slot = system_status_panel.container()
+webull_credentials = load_credentials(
+    WEBULL_CREDENTIAL_NAMES, secrets=secrets_mapping()
+)
+webull_startup_diagnostics = credential_diagnostics(webull_credentials)
+for diagnostic in webull_startup_diagnostics:
+    logging.getLogger(__name__).info("Webull credential startup check: %s", diagnostic)
+system_status_panel.caption("Webull startup: " + " · ".join(webull_startup_diagnostics))
 memory_checkpoint("dashboard container initialization", object_name="Streamlit DeltaGenerators")
 
 session_defaults = {

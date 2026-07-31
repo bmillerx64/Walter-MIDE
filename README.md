@@ -7,6 +7,14 @@ Secrets. Alpaca snapshots provide live trades, quotes, and bars but no
 free-float fundamental; Walter enriches Stage 2 with Financial Modeling Prep's
 Shares Float endpoint.
 
+Webull credentials use this precedence: Streamlit Secrets, environment
+variables, then a local `.env`. The `.env` fallback is disabled unless
+`WALTER_ENV=development` (or `dev`/`local`) is explicitly set, so Streamlit
+Cloud never depends on a local file. Configure `WEBULL_APP_KEY` and
+`WEBULL_APP_SECRET` in Streamlit Secrets. Startup diagnostics in **System
+Status** report only whether each credential is present and where it was found;
+they never print credential values. Do not commit `.env` or credentials.
+
 ## Walter 2.19 — Structure Engine
 
 Walter now ranks the charts a trader should stop and open. The Structure Score
