@@ -196,8 +196,10 @@ class PahoWebullStream:
     def connect(self) -> None:
         self._client.connect(self._host, self._port, keepalive=30)
         self._client.loop_start()
-        if not self._connected.wait(15):
-            raise TimeoutError("Webull MQTT authentication did not complete within 15 seconds")
+        if not self._connected.wait(8):
+            self._client.disconnect()
+            self._client.loop_stop()
+            raise TimeoutError("Webull MQTT authentication did not complete within 8 seconds")
 
     def subscribe(self, symbols: list[str]) -> None:
         for symbol in symbols:

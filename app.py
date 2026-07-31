@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+from mide.startup import instrument_startup, log_startup, startup_step
+
+log_startup("entering app.py")
+
 from mide.startup_memory import checkpoint as memory_checkpoint
 
 memory_checkpoint("app.py bootstrap")
@@ -391,8 +395,9 @@ def scan_alert_phrase(records: list[dict]) -> str:
     return ""
 
 
-st.set_page_config(page_title="Walter • MIDE Radar", page_icon="🛰", layout="wide")
-inject_css()
+with startup_step("rendering Streamlit UI"):
+    st.set_page_config(page_title="Walter • MIDE Radar", page_icon="🛰", layout="wide")
+    inject_css()
 memory_checkpoint("Streamlit page initialization", object_name="page config and CSS")
 
 
@@ -569,7 +574,8 @@ def secrets_mapping() -> dict:
         return {}
 
 
-settings = Settings.from_mapping(secrets_mapping())
+with startup_step("loading secrets"):
+    settings = Settings.from_mapping(secrets_mapping())
 memory_checkpoint("settings initialization", object_name="Settings")
 
 mission_header_slot = st.empty()
@@ -580,9 +586,10 @@ opportunity_feed_slot = st.empty()
 escalation_engine_slot = st.empty()
 system_status_panel = st.expander("System Status", expanded=False)
 scan_runtime_slot = system_status_panel.container()
-webull_credentials = load_credentials(
-    WEBULL_CREDENTIAL_NAMES, secrets=secrets_mapping()
-)
+with startup_step("loading Webull secrets"):
+    webull_credentials = load_credentials(
+        WEBULL_CREDENTIAL_NAMES, secrets=secrets_mapping()
+    )
 webull_startup_diagnostics = credential_diagnostics(webull_credentials)
 for diagnostic in webull_startup_diagnostics:
     logging.getLogger(__name__).info("Webull credential startup check: %s", diagnostic)
@@ -886,7 +893,8 @@ def _run_live_pipeline(
     alpaca_module = importlib.import_module("mide.alpaca")
     client_factory = client_factory or AlpacaProvider
     credential_checker = credential_checker or alpaca_module.credential_status
-    alpaca_client: MarketDataProvider = client_factory(api_key, secret, feed=settings.feed, timeout=12)
+    log_startup("authenticating")
+    alpaca_client: MarketDataProvider = client_factory(api_key, secret, feed=settings.feed, timeout=8)
     # Account validation is useful evidence, not permission for one provider to
     # terminate the scan. Public/fallback discovery may still produce a universe.
     try:
@@ -899,6 +907,7 @@ def _run_live_pipeline(
         )
         alpaca_client.warnings.append(f"Alpaca credential check unavailable: {exc}")
     if provider_name.upper() == "WEBULL":
+        log_startup("initializing Webull provider")
         resolved = load_credentials(WEBULL_CREDENTIAL_NAMES, secrets=secrets_mapping())
         app_key = resolved["WEBULL_APP_KEY"].value
         app_secret = resolved["WEBULL_APP_SECRET"].value
@@ -947,6 +956,7 @@ def _run_live_pipeline(
         status.write(message)
         progress.progress((number - 1) / 8, text=message)
 
+    @instrument_startup("loading universe")
     def discover():
         # Catalyst retrieval deliberately does not happen here. Discovery sources
         # alone establish the immutable membership of this scan.
@@ -1345,7 +1355,8 @@ def run_live(
                 provider_name=provider_name,
             )
         )
-        return architecture.run()
+        with startup_step("beginning scanner"):
+            return architecture.run()
     except Exception as exc:
         logging.getLogger(__name__).exception("Live scan pipeline failed")
         log(f"Live scan pipeline failed: {type(exc).__name__}: {exc}")

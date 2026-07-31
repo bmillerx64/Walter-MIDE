@@ -8,6 +8,7 @@ and are subsequently refreshed only by Webull streaming events.
 from __future__ import annotations
 
 from collections import deque
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
 from dataclasses import dataclass
 from datetime import datetime, timezone
 import hashlib
@@ -26,6 +27,7 @@ import requests
 from .market_data import EventType, MarketEvent
 from .market_data_providers import WebullProvider
 from .webull_stream_benchmark import PahoWebullStream, Quote
+from .startup import log_startup
 
 
 LOGGER = logging.getLogger(__name__)
@@ -33,6 +35,8 @@ DEFAULT_BOOTSTRAP_URL = "https://api.webull.com/api/market-data/streaming/token"
 DEFAULT_OPENAPI_URL = "https://api.webull.com"
 DEFAULT_SNAPSHOT_PATH = "/market-data/quotes"
 DEFAULT_TOPIC = "market-data/{symbol}"
+NETWORK_TIMEOUT_SECONDS = 8
+_NETWORK_EXECUTOR = ThreadPoolExecutor(max_workers=4, thread_name_prefix="walter-network")
 
 
 def live_data_modes(*, alpaca_configured: bool, webull_configured: bool) -> tuple[list[str], int]:
@@ -85,11 +89,12 @@ class WebullBootstrap:
     """Obtain short-lived MQTT credentials with an OpenAPI-signed request."""
 
     def __init__(self, app_key: str, app_secret: str, *, url: str = DEFAULT_BOOTSTRAP_URL,
-                 session=requests, timeout: int = 15):
+                 session=requests, timeout: int = NETWORK_TIMEOUT_SECONDS):
         self.app_key, self._secret, self.url = app_key, app_secret, url
         self.session, self.timeout = session, timeout
 
     def obtain(self) -> dict:
+        log_startup("obtaining stream credentials")
         timestamp = str(int(time.time() * 1000))
         nonce = uuid.uuid4().hex
         path = urlparse(self.url).path
@@ -124,7 +129,8 @@ class WebullOpenAPIClient:
     """Small signed client for the official Webull bulk snapshot operation."""
 
     def __init__(self, app_key: str, app_secret: str, *, base_url=DEFAULT_OPENAPI_URL,
-                 snapshot_path=DEFAULT_SNAPSHOT_PATH, session=requests, timeout: int = 15):
+                 snapshot_path=DEFAULT_SNAPSHOT_PATH, session=requests,
+                 timeout: int = NETWORK_TIMEOUT_SECONDS):
         self.app_key, self._secret = app_key, app_secret
         self.base_url, self.snapshot_path = base_url.rstrip("/"), snapshot_path
         self.session, self.timeout = session, timeout
@@ -260,6 +266,7 @@ class LiveWebullProvider(WebullProvider):
         d = self.diagnostics["webull_stream"]
         try:
             if self._subscription is None:
+                log_startup("opening MQTT/WebSocket")
                 self._subscription = self.subscribe(new, (EventType.QUOTE, EventType.TRADE), self._on_event)
                 d["stream_connection_status"] = "connected"
             else:
@@ -278,7 +285,15 @@ class LiveWebullProvider(WebullProvider):
         wanted = list(dict.fromkeys(str(s).strip().upper() for s in symbols if str(s).strip()))
         for offset in range(0, len(wanted), batch_size):
             batch = wanted[offset:offset + batch_size]
-            snapshots = self._snapshot_client.snapshots(batch)
+            # Every Webull socket is opened by a network worker. The Streamlit
+            # script has already rendered its shell before a scan can reach here.
+            future = _NETWORK_EXECUTOR.submit(self._snapshot_client.snapshots, batch)
+            try:
+                snapshots = future.result(timeout=NETWORK_TIMEOUT_SECONDS)
+            except FutureTimeoutError:
+                future.cancel()
+                LOGGER.error("Webull snapshot timed out after %ss", NETWORK_TIMEOUT_SECONDS)
+                snapshots = {}
             now_ms = time.time_ns() // 1_000_000
             with self._lock:
                 for symbol, snapshot in snapshots.items():
@@ -301,7 +316,16 @@ class LiveWebullProvider(WebullProvider):
         d["cached_symbols"] = len(self.cache)
         d["symbols_missing_prices"] = len(set(wanted) - set(self.cache))
         # Snapshot completion is a hard ordering boundary before subscription.
-        self.ensure_stream(wanted)
+        stream_future = _NETWORK_EXECUTOR.submit(self.ensure_stream, wanted)
+        try:
+            stream_future.result(timeout=NETWORK_TIMEOUT_SECONDS)
+        except FutureTimeoutError:
+            stream_future.cancel()
+            message = f"Webull stream initialization timed out after {NETWORK_TIMEOUT_SECONDS}s"
+            self.diagnostics["webull_stream"]["stream_connection_status"] = "error"
+            self.diagnostics["webull_stream"]["subscription_failures"].append(message)
+            self.warnings.append(message)
+            LOGGER.error(message)
         return self.latest_trades(wanted, initialize=False)
 
     def latest_trades(self, symbols: Iterable[str], *, initialize: bool = True) -> dict[str, float]:
