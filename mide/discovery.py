@@ -20,6 +20,7 @@ from .volume_pace import volume_pace_metrics
 from .scoring import Evidence, score
 from .flight_recorder import prefilter_decision
 from .timeframe_alignment import alignment_summary
+from .alpaca import common_stock_asset
 
 # Fourteen calendar days reliably covers at least five completed U.S. trading
 # sessions across weekends and ordinary exchange holidays.
@@ -91,22 +92,11 @@ def build_seed_symbols(client, settings, news_items, *, universe_verification=No
                 why[symbol].append(reason)
 
     call = universe_verification.call if universe_verification else None
-    movers = (call("Market movers", "movers", {"top": 50}, lambda: client.movers(50))
-              if call else client.movers(50))
-    for item in movers:
-        add(item.get("symbol"), "market mover")
-
-    actives = (call("Most active stocks", "most_actives", {"top": 100, "by": "volume"},
-                    lambda: client.most_actives(100)) if call else client.most_actives(100))
-    for item in actives:
-        add(item.get("symbol"), "most active")
-
-    # News is evidence for candidates already admitted by Universe Construction.
-    # It must never expand the universe, even when callers provide prefetched news.
+    # News, movers, public directories, and most-actives are not universe
+    # sources. They can provide downstream evidence but cannot add membership.
     client.diagnostics["news_symbols"] = 0
 
-    # The provider-defined active/tradable equity universe is admitted in full.
-    # A public directory is used only when the Alpaca asset endpoint is unavailable.
+    # Alpaca Asset metadata is the sole source of universe membership.
     try:
         assets = (call("Alpaca active tradable assets", "assets",
                        {"status": "active", "asset_class": "us_equity"}, client.assets)
@@ -114,20 +104,13 @@ def build_seed_symbols(client, settings, news_items, *, universe_verification=No
         eligible_assets = [
             str(item.get("symbol") or "").strip().upper()
             for item in assets
-            if item.get("tradable") and item.get("status") == "active"
+            if common_stock_asset(item)
         ]
         source = "Alpaca assets"
     except Exception as exc:
         client.warnings.append(f"Alpaca asset universe unavailable: {exc}")
-        try:
-            eligible_assets = (call("Nasdaq Trader symbol directory", "public_symbol_fallback", {},
-                                    client.public_symbol_fallback)
-                               if call else client.public_symbol_fallback())
-            source = "Nasdaq Trader fallback"
-        except Exception as fallback_exc:
-            eligible_assets = []
-            source = "none"
-            client.warnings.append(f"Broad-market fallback unavailable: {fallback_exc}")
+        eligible_assets = []
+        source = "none"
 
     eligible_assets = [s for s in eligible_assets if is_valid_us_symbol(s)]
     client.diagnostics["broad_source"] = source

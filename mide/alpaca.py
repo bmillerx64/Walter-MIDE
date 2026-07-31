@@ -3,6 +3,7 @@ from datetime import datetime, timezone
 from typing import Iterable
 import csv
 import io
+import re
 import requests
 from requests.exceptions import ConnectionError as RequestsConnectionError, Timeout
 from .startup_memory import checkpoint as memory_checkpoint
@@ -19,6 +20,35 @@ memory_checkpoint("free-float fallback import", object_name="YahooFinanceFloatPr
 
 class AlpacaError(RuntimeError):
     pass
+
+
+# Alpaca does not expose a dedicated security-type field on Asset.  Its `name`
+# field is nevertheless authoritative asset metadata and identifies the listed
+# instrument.  Keep this deliberately independent of symbol conventions: suffix
+# spelling is neither consistent across exchanges nor a security classification.
+_NON_COMMON_EQUITY_NAME = re.compile(
+    r"\b(?:"
+    r"preferred(?:\s+(?:stock|share)s?)?|"
+    r"warrants?|rights?|units?|"
+    r"depositary|depository|"
+    r"exchange[ -]traded|ETFs?|ETNs?|"
+    r"funds?|notes?|bonds?|debentures?|"
+    r"limited partnerships?|beneficial interest"
+    r")\b",
+    re.IGNORECASE,
+)
+
+
+def common_stock_asset(item: dict) -> bool:
+    """Return whether Alpaca Asset metadata describes an eligible common stock."""
+    asset_class = item.get("class") or item.get("asset_class")
+    name = str(item.get("name") or "")
+    return bool(
+        item.get("tradable") is True
+        and item.get("status") == "active"
+        and asset_class == "us_equity"
+        and not _NON_COMMON_EQUITY_NAME.search(name)
+    )
 
 
 class AlpacaClient:
@@ -82,19 +112,21 @@ class AlpacaClient:
                 if not isinstance(data, list):
                     raise AlpacaError(f"Unexpected assets response type: {type(data).__name__}")
                 filtered = []
+                rejected_instrument_type = 0
                 for item in data:
                     symbol = str(item.get("symbol") or "").strip().upper()
-                    asset_class = item.get("class") or item.get("asset_class")
-                    if not symbol or not item.get("tradable") or item.get("status") != "active":
+                    if not symbol:
                         continue
-                    if asset_class and asset_class != "us_equity":
-                        continue
-                    if symbol.endswith((".W", ".U", ".R")):
+                    if not common_stock_asset(item):
+                        name = str(item.get("name") or "")
+                        if _NON_COMMON_EQUITY_NAME.search(name):
+                            rejected_instrument_type += 1
                         continue
                     filtered.append(item)
                 self.diagnostics["assets_endpoint"] = label
                 self.diagnostics["assets_raw"] = len(data)
                 self.diagnostics["assets_eligible"] = len(filtered)
+                self.diagnostics["assets_non_common_rejected"] = rejected_instrument_type
                 if filtered:
                     return filtered
                 errors.append(f"{label}: endpoint returned {len(data)} assets but 0 eligible")

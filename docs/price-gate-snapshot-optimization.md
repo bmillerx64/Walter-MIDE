@@ -33,3 +33,17 @@ avoided is 240 ms and estimated net time saved is **200 ms**.
 These values are emitted per scan rather than treated as a fixed benchmark; real
 latency varies with feed entitlement, network conditions, response size, retries, and
 the number of survivors.
+
+## Universe boundary
+
+The Price Gate input is the reduced Alpaca Asset universe, not a union with movers,
+most-actives, news symbols, or a public symbol directory. Each member must have
+`tradable=true`, `status=active`, and `class=us_equity`. Preferred shares, warrants,
+rights, units, depositary instruments, exchange-traded products, funds, debt, and
+partnership instruments are rejected from Alpaca's asset `name` metadata; symbol
+suffixes are not used as a proxy for instrument type.
+
+The live per-scan diagnostics report the confirmed membership as `final_seed_count`
+and `broad_eligible`. `pipeline_timing_summary` reports the measured Universe
+Construction time, Price Gate time, and complete scan time, so the production scan
+itself supplies the benchmark for its current network, feed, and market session.
