@@ -71,6 +71,7 @@ class AlpacaNewsProvider(NewsProvider):
         self.client = client
         self.page_budget = page_budget
         self.request_count = 0
+        self.provider_label = "Alpaca"
 
     def fetch(self, *, since: datetime, symbols: Iterable[str] = ()) -> list[NewsArticle]:
         wanted = sorted(set(symbols))
@@ -101,8 +102,23 @@ class AlpacaNewsProvider(NewsProvider):
             symbols=symbols,
             source=str(item.get("source") or item.get("author") or "Unknown").strip(),
             url=item.get("url") or None,
-            provider="Alpaca",
+            provider=self.provider_label,
         )
+
+
+class MarketDataNewsProvider(AlpacaNewsProvider):
+    """Normalize news obtained through the provider-neutral market-data seam."""
+
+    def __init__(self, provider, *, page_budget: int = 20):
+        super().__init__(provider, page_budget=page_budget)
+        self.provider_label = getattr(provider, "provider_name", provider.__class__.__name__)
+        self.name = f"{self.provider_label} news"
+
+    def fetch(self, *, since: datetime, symbols: Iterable[str] = ()) -> list[NewsArticle]:
+        # Provider implementations own vendor paging and request limits.
+        raw = self.client.news(since, limit=self.page_budget * 50,
+                               symbols=sorted(set(symbols)) or None, sort="asc")
+        return [article for item in raw if (article := self._normalize(item))]
 
 
 class CredentialPendingNewsProvider(NewsProvider):

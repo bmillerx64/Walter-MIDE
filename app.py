@@ -90,11 +90,13 @@ repair_mide_module_links()
 memory_checkpoint("mide package repair")
 
 from mide.config import Settings
-from mide.alpaca import AlpacaClient, AlpacaError, credential_status
+from mide.alpaca import AlpacaError
+from mide.market_data import MarketDataProvider
+from mide.market_data_providers import AlpacaProvider
 memory_checkpoint("providers import", object_name="mide.alpaca")
 from mide.news import index_news, recent_wire_news_log
 from mide.news_provider import (
-    AlpacaNewsProvider,
+    MarketDataNewsProvider,
     NewsService,
     symbol_news_evidence,
     ticker_inspection,
@@ -846,9 +848,9 @@ def _run_live_pipeline(
 
     repair_mide_module_links()
     alpaca_module = importlib.import_module("mide.alpaca")
-    client_factory = client_factory or alpaca_module.AlpacaClient
+    client_factory = client_factory or AlpacaProvider
     credential_checker = credential_checker or alpaca_module.credential_status
-    client = client_factory(api_key, secret, feed=settings.feed, timeout=12)
+    client: MarketDataProvider = client_factory(api_key, secret, feed=settings.feed, timeout=12)
     # Account validation is useful evidence, not permission for one provider to
     # terminate the scan. Public/fallback discovery may still produce a universe.
     try:
@@ -1001,7 +1003,7 @@ def _run_live_pipeline(
         }
 
     def catalyst(records):
-        service = NewsService([AlpacaNewsProvider(client)])
+        service = NewsService([MarketDataNewsProvider(client)])
         symbols = [item["symbol"] for item in records]
         try:
             news_items = service.fetch(symbols=symbols, force_lookback=True)
