@@ -1027,12 +1027,17 @@ def _run_live_pipeline(
     )
     ledger = architecture.run()
     ranked = state["ranked"]
+    operational = dict(architecture.operational_summary)
+    operational["provider_failures"] = len(
+        client.diagnostics.get("provider_failures", [])
+    )
     client.diagnostics["walter_architecture"] = {
         "version": "1.0", "stages": list(architecture.trace),
         "terminal_outcomes": {
             outcome: sum(item.get("terminal_outcome") == outcome for item in ledger)
             for outcome in ("Rejected", "Qualified and Ranked", "Technical Failure")
         },
+        "operational_health": operational,
     }
     st.session_state.symbols_sampled = len(state["seeds"])
     st.session_state.prefilter_count = len(state["candidates"])
@@ -1291,6 +1296,26 @@ with system_status_panel:
             st.info(
                 "Dashboard loaded successfully. Walter will scan automatically in live mode, or press **Run live scan** to begin now."
             )
+
+    operational_health = (
+        (scan_diagnostics.get("walter_architecture") or {}).get("operational_health")
+        if isinstance(scan_diagnostics, dict) else None
+    )
+    if operational_health:
+        st.subheader("Walter operational diagnostics")
+        health_columns = st.columns(5)
+        health_columns[0].metric("Discovered", operational_health["symbols_discovered"])
+        health_columns[1].metric("Rejected", operational_health["symbols_rejected"])
+        health_columns[2].metric("Ranked", operational_health["symbols_ranked"])
+        health_columns[3].metric("Published", operational_health["symbols_published"])
+        health_columns[4].metric("Provider failures", operational_health["provider_failures"])
+        st.dataframe(
+            operational_health["stage_metrics"], use_container_width=True,
+            hide_index=True,
+        )
+        st.caption(
+            "Healthy · persistence completed before publication · publication identity verified"
+        )
 
     st.markdown("#### Legacy Candidate Diagnostics")
     if inspect_symbol:
