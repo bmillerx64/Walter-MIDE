@@ -31,6 +31,9 @@ class Quote:
     source_timestamp_ms: int
     sequence: int | None = None
     wire_bytes: int = 0
+    volume: float | None = None
+    bid: float | None = None
+    ask: float | None = None
 
 
 @dataclass
@@ -180,7 +183,8 @@ class PahoWebullStream:
     def _handle_message(self, client, userdata, message) -> None:
         quote = self._parser(message.payload)
         self._on_event(MarketEvent("Webull OpenAPI", EventType.TRADE, quote.symbol,
-            quote.source_timestamp_ms, {"price": quote.price}, quote.sequence, len(message.payload)))
+            quote.source_timestamp_ms, {"price": quote.price, "volume": quote.volume,
+            "bid": quote.bid, "ask": quote.ask}, quote.sequence, len(message.payload)))
 
     def connect(self) -> None:
         self._client.connect(self._host, self._port, keepalive=30)

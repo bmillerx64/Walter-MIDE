@@ -15,6 +15,16 @@ Cloud never depends on a local file. Configure `WEBULL_APP_KEY` and
 Status** report only whether each credential is present and where it was found;
 they never print credential values. Do not commit `.env` or credentials.
 
+Choose **Live Webull** in the sidebar to keep one authenticated Webull stream
+and in-memory quote cache across Streamlit reruns. Walter overlays streamed
+price, quote, and volume fields on its existing production snapshots; Alpaca
+continues to supply discovery, news, unavailable fields, and the explicit
+fallback path. **Diagnostics** reports authentication/connection state,
+subscriptions, cache coverage, message count, last message, latency, and
+subscription errors. Deployments whose approved OpenAPI application uses a
+regional streaming bootstrap may set `WEBULL_STREAM_BOOTSTRAP_URL`; this value
+is an endpoint, never a credential.
+
 ## Walter 2.19 — Structure Engine
 
 Walter now ranks the charts a trader should stop and open. The Structure Score

@@ -94,6 +94,7 @@ from mide.credentials import WEBULL_CREDENTIAL_NAMES, credential_diagnostics, lo
 from mide.alpaca import AlpacaError
 from mide.market_data import MarketDataProvider
 from mide.market_data_providers import AlpacaProvider
+from mide.webull_live import LiveWebullProvider, live_data_modes
 memory_checkpoint("providers import", object_name="mide.alpaca")
 from mide.news import index_news, recent_wire_news_log
 from mide.news_provider import (
@@ -607,6 +608,7 @@ session_defaults = {
     "opportunity_feed_events": [],
     "rejected_candidate_history": [],
     "rejection_diagnostics_signature": (),
+    "selected_live_provider": "ALPACA",
     ALERT_VOICE_SESSION_KEY: SYSTEM_DEFAULT_VOICE_ID,
     DAVID_AVAILABLE_SESSION_KEY: False,
     ACTIVE_VOICE_SESSION_KEY: SYSTEM_DEFAULT_VOICE_ID,
@@ -622,16 +624,21 @@ persisted_alert_voice()
 
 with st.sidebar:
     st.header("Control")
-    live_possible = bool(get_secret("ALPACA_API_KEY")) and bool(
+    alpaca_possible = bool(get_secret("ALPACA_API_KEY")) and bool(
         get_secret("ALPACA_SECRET_KEY")
     )
-    mode = st.radio(
-        "Data mode", ["Live Alpaca", "Demo"], index=0 if live_possible else 1
+    webull_possible = all(credential.present for credential in webull_credentials.values())
+    live_possible = alpaca_possible or webull_possible
+    data_modes, default_mode = live_data_modes(
+        alpaca_configured=alpaca_possible, webull_configured=webull_possible
     )
+    mode = st.radio("Data mode", data_modes, index=default_mode)
+    selected_provider = "WEBULL" if mode == "Live Webull" else "ALPACA"
+    st.session_state.selected_live_provider = selected_provider
     st.caption(f"Decision Funnel v{BUILD.version} · {BUILD.git_sha}")
     scanner_version = "Walter Architecture v1.0"
     auto_refresh = st.toggle(
-        "Auto live scan every 60 seconds", value=True, disabled=(mode != "Live Alpaca")
+        "Auto live scan every 60 seconds", value=True, disabled=not mode.startswith("Live ")
     )
     alerts = st.toggle("Audible watch/advance alerts", value=True)
     david_available = david_available_from_query()
@@ -720,6 +727,20 @@ with st.sidebar:
             f"Active voice identifier: {st.session_state.get(ACTIVE_VOICE_SESSION_KEY, SYSTEM_DEFAULT_VOICE_ID)}"
         )
         st.write(f"Voice currently selected: {selected_voice}")
+        stream_diagnostics = st.session_state.get("scan_diagnostics", {}).get("webull_stream", {})
+        st.write(f"Selected provider: {selected_provider}")
+        if selected_provider == "WEBULL":
+            st.write(f"Webull authentication: {stream_diagnostics.get('authentication_status', 'pending')}")
+            st.write(f"Stream connection: {stream_diagnostics.get('stream_connection_status', 'disconnected')}")
+            st.write(f"Subscribed symbols: {stream_diagnostics.get('subscribed_symbols', 0)}")
+            st.write(f"Cached symbols: {stream_diagnostics.get('cached_symbols', 0)}")
+            st.write(f"Messages received: {stream_diagnostics.get('messages_received', 0)}")
+            st.write(f"Last message: {stream_diagnostics.get('last_message_timestamp') or 'N/A'}")
+            st.write(f"Stream latency: {stream_diagnostics.get('stream_latency_ms') or 'N/A'} ms")
+            failures = stream_diagnostics.get("subscription_failures", [])
+            st.write(f"Subscription failures/errors: {len(failures)}")
+            if failures:
+                st.warning(" · ".join(failures[-3:]))
     st.subheader("Session backups")
     st.caption(
         "Download both files before refreshing, restarting, or deploying Walter."
@@ -742,7 +763,7 @@ with st.sidebar:
         "Run live scan",
         type="primary",
         use_container_width=True,
-        disabled=(mode != "Live Alpaca"),
+        disabled=not mode.startswith("Live "),
     )
     use_demo = st.button("Load demo data", use_container_width=True)
     st.divider()
@@ -846,30 +867,50 @@ def _run_live_pipeline(
     status,
     client_factory=None,
     credential_checker=None,
+    provider_name: str = "ALPACA",
 ):
     """Execute the live scan through the single Walter Architecture pipeline."""
     scan_started = perf_counter()
     api_key = get_secret("ALPACA_API_KEY")
     secret = get_secret("ALPACA_SECRET_KEY")
-    if not api_key or not secret:
+    if provider_name.upper() != "WEBULL" and (not api_key or not secret):
         raise AlpacaError("Alpaca credentials are not configured in Streamlit Secrets.")
 
     repair_mide_module_links()
     alpaca_module = importlib.import_module("mide.alpaca")
     client_factory = client_factory or AlpacaProvider
     credential_checker = credential_checker or alpaca_module.credential_status
-    client: MarketDataProvider = client_factory(api_key, secret, feed=settings.feed, timeout=12)
+    alpaca_client: MarketDataProvider = client_factory(api_key, secret, feed=settings.feed, timeout=12)
     # Account validation is useful evidence, not permission for one provider to
     # terminate the scan. Public/fallback discovery may still produce a universe.
     try:
-        environment = credential_checker(client)
+        environment = credential_checker(alpaca_client)
         status.write(f"Alpaca credentials accepted ({environment} environment)")
     except Exception as exc:
         record_provider_failure(
-            client.diagnostics, provider="Alpaca", operation="credential check",
+            alpaca_client.diagnostics, provider="Alpaca", operation="credential check",
             exception=exc, recovery_action="continue with available public discovery sources",
         )
-        client.warnings.append(f"Alpaca credential check unavailable: {exc}")
+        alpaca_client.warnings.append(f"Alpaca credential check unavailable: {exc}")
+    if provider_name.upper() == "WEBULL":
+        resolved = load_credentials(WEBULL_CREDENTIAL_NAMES, secrets=secrets_mapping())
+        app_key = resolved["WEBULL_APP_KEY"].value
+        app_secret = resolved["WEBULL_APP_SECRET"].value
+        if not app_key or not app_secret:
+            raise RuntimeError("Webull credentials are not configured in Streamlit Secrets/environment.")
+        client = st.session_state.get("webull_live_provider")
+        if not isinstance(client, LiveWebullProvider):
+            client = LiveWebullProvider(app_key, app_secret, fallback=alpaca_client)
+            st.session_state.webull_live_provider = client
+        else:
+            # Keep one connection/cache across Streamlit reruns while refreshing
+            # the REST fallback used for discovery and unavailable stream fields.
+            client.fallback = alpaca_client
+        logging.getLogger(__name__).warning("Walter live market-data provider: WEBULL (ALPACA fallback enabled)")
+    else:
+        client = alpaca_client
+        client.diagnostics["selected_provider"] = "ALPACA"
+        logging.getLogger(__name__).warning("Walter live market-data provider: ALPACA")
     with scan_runtime_slot:
         progress = st.progress(0, text="Starting Walter Architecture")
 
@@ -899,7 +940,7 @@ def _run_live_pipeline(
         # the stable production callable still reuses one universe all session.
         cache_key = (
             f"{datetime.now().astimezone().date().isoformat()}:{settings.feed}:"
-            f"{id(build_seed_symbols)}"
+            f"{provider_name.upper()}:{id(build_seed_symbols)}"
         )
         cached = st.session_state.get("walter_session_universe_cache", {})
         universe_started = perf_counter()
@@ -1253,6 +1294,7 @@ def run_live(
     *,
     client_factory=None,
     credential_checker=None,
+    provider_name: str = "ALPACA",
 ):
     """Run and report the complete live pipeline without leaving a LIVE spinner.
 
@@ -1271,6 +1313,7 @@ def run_live(
                 status=status,
                 client_factory=client_factory,
                 credential_checker=credential_checker,
+                provider_name=provider_name,
             )
         )
         return architecture.run()
@@ -1317,7 +1360,7 @@ if use_demo or mode == "Demo":
     st.session_state.last_updated = datetime.now().astimezone()
 else:
     due = (
-        mode == "Live Alpaca"
+        mode.startswith("Live ")
         and auto_refresh
         and live_possible
         and not st.session_state.scan_in_progress
@@ -1331,7 +1374,7 @@ else:
     )
     should_scan = run_scan or due
 
-if mode == "Live Alpaca" and should_scan:
+if mode.startswith("Live ") and should_scan:
     st.session_state.last_scan_attempt = datetime.now().astimezone()
     try:
         st.session_state.scan_in_progress = True
@@ -1340,12 +1383,12 @@ if mode == "Live Alpaca" and should_scan:
         repair_mide_module_links()
         watchdog = importlib.import_module("mide.watchdog").PROCESS_SCAN_WATCHDOG
         records, universe_count, prefiltered, warnings, diagnostics = watchdog.run(
-            lambda: run_live(scanner_version), before_retry=repair_mide_module_links
+            lambda: run_live(scanner_version, provider_name=selected_provider), before_retry=repair_mide_module_links
         )
         st.session_state.records = records
         st.session_state.symbols_sampled = universe_count
         st.session_state.prefilter_count = prefiltered
-        st.session_state.source_label = f"Live {settings.feed.upper()} · {universe_count} symbols sampled · {prefiltered} prefiltered"
+        st.session_state.source_label = f"Live {selected_provider} · {universe_count} symbols sampled · {prefiltered} prefiltered"
         st.session_state.api_warnings = warnings
         st.session_state.scan_diagnostics = diagnostics
         st.session_state.last_updated = datetime.now().astimezone()
@@ -1405,13 +1448,13 @@ escalation_count = sum(
 )
 auto_scan = (
     f"Every {settings.refresh_seconds} sec"
-    if mode == "Live Alpaca" and auto_refresh
+    if mode.startswith("Live ") and auto_refresh
     else "Disabled"
 )
 with mission_header_slot:
     st.markdown(
         mission_control_header_markup(
-            live=mode == "Live Alpaca",
+            live=mode.startswith("Live "),
             market_phase=clock.phase,
             market_time=clock.time_text,
             symbols_sampled=st.session_state.symbols_sampled,
@@ -1451,7 +1494,7 @@ with opportunity_feed_slot:
     render_live_opportunity_feed(st.session_state.opportunity_feed_events)
 
 arm_live_clock_engine(
-    mode == "Live Alpaca" and auto_refresh and live_possible,
+    mode.startswith("Live ") and auto_refresh and live_possible,
     settings.refresh_seconds,
     updated,
     st.session_state.last_scan_attempt,
