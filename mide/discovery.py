@@ -87,7 +87,8 @@ def build_seed_symbols(client, settings, news_items, *, universe_verification=No
         symbol = str(symbol or "").strip().upper()
         if is_valid_us_symbol(symbol):
             symbols.add(symbol)
-            why.setdefault(symbol, []).append(reason)
+            if reason not in why.setdefault(symbol, []):
+                why[symbol].append(reason)
 
     call = universe_verification.call if universe_verification else None
     movers = (call("Market movers", "movers", {"top": 50}, lambda: client.movers(50))
@@ -104,8 +105,8 @@ def build_seed_symbols(client, settings, news_items, *, universe_verification=No
     # It must never expand the universe, even when callers provide prefetched news.
     client.diagnostics["news_symbols"] = 0
 
-    # Add a rotating broad-market slice. Alpaca is preferred; a public symbol
-    # directory is used only when the trading asset endpoint is unavailable.
+    # The provider-defined active/tradable equity universe is admitted in full.
+    # A public directory is used only when the Alpaca asset endpoint is unavailable.
     try:
         assets = (call("Alpaca active tradable assets", "assets",
                        {"status": "active", "asset_class": "us_equity"}, client.assets)
@@ -132,15 +133,8 @@ def build_seed_symbols(client, settings, news_items, *, universe_verification=No
     client.diagnostics["broad_source"] = source
     client.diagnostics["broad_eligible"] = len(eligible_assets)
 
-    if eligible_assets:
-        minute_bucket = int(datetime.now(timezone.utc).timestamp() // 60)
-        window = min(settings.max_seed_symbols, len(eligible_assets))
-        start_index = (minute_bucket * window) % len(eligible_assets)
-        rotated = (eligible_assets[start_index:] + eligible_assets[:start_index])[
-            :window
-        ]
-        for symbol in rotated:
-            add(symbol, "broad market sweep")
+    for symbol in eligible_assets:
+        add(symbol, source)
 
     client.diagnostics["final_seed_count"] = len(symbols)
     return sorted(symbols), why

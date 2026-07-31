@@ -63,11 +63,23 @@ class DiscoveryClient:
 
 
 class Settings:
-    max_seed_symbols = 100
+    max_seed_symbols = 1
 
 
 def fixture():
     return json.loads(FIXTURE.read_text())
+
+
+def test_universe_uses_every_asset_without_rotation_or_batch_limit():
+    client = DiscoveryClient()
+    client.assets = lambda: [
+        {"symbol": "ZZZ", "tradable": True, "status": "active"},
+        {"symbol": "AAA", "tradable": True, "status": "active"},
+    ]
+    first, provenance = build_seed_symbols(client, Settings(), [])
+    second, _ = build_seed_symbols(client, Settings(), [])
+    assert first == second == ["AAA", "ZZZ"]
+    assert provenance == {"AAA": ["Alpaca assets"], "ZZZ": ["Alpaca assets"]}
 
 
 def test_cycu_targeted_news_is_not_lost_when_global_batch_is_full(tmp_path):

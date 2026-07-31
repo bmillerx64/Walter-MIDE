@@ -315,6 +315,24 @@ def test_operational_metrics_cover_timing_counts_rejections_and_failures():
     }
 
 
+def test_missing_snapshot_identity_reaches_price_gate_before_rejection():
+    observed = {}
+    architecture, _, _ = pipeline([{
+        "symbol": "NO_DATA", "price": None, "snapshot_status": "unavailable",
+        "data_usable": False,
+    }])
+    architecture.stage_observer = lambda number, stage, records: observed.setdefault(
+        stage, [record["symbol"] for record in records]
+    )
+
+    architecture.run()
+
+    assert observed["Price Gate"] == ["NO_DATA"]
+    record = architecture.candidate_ledger.records["NO_DATA"]
+    assert record["terminal_stage"] == "Price Gate"
+    assert record["terminal_reason"] == "Usable price unavailable"
+
+
 def test_validation_framework_rejects_growth_disappearance_and_publication_drift():
     ledger = [{
         "symbol": "A", "candidate_id": "A", "terminal_outcome": "Qualified and Ranked",
