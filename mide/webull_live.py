@@ -1,9 +1,4 @@
-"""Production Webull snapshot-and-stream cache used by Walter's live scan path.
-
-Alpaca is currently the explicit symbol master and news/history provider.  All
-live quote fields, however, are seeded from Webull OpenAPI before the Price Gate
-and are subsequently refreshed only by Webull streaming events.
-"""
+"""Production, Webull-only market-data provider used by Walter's live scan."""
 
 from __future__ import annotations
 
@@ -34,6 +29,8 @@ LOGGER = logging.getLogger(__name__)
 DEFAULT_BOOTSTRAP_URL = "https://api.webull.com/api/market-data/streaming/token"
 DEFAULT_OPENAPI_URL = "https://api.webull.com"
 DEFAULT_SNAPSHOT_PATH = "/market-data/quotes"
+DEFAULT_RANKING_PATH = "/market-data/stock-rank/list"
+DEFAULT_BARS_PATH = "/market-data/history"
 DEFAULT_TOPIC = "market-data/{symbol}"
 NETWORK_TIMEOUT_SECONDS = 8
 _NETWORK_EXECUTOR = ThreadPoolExecutor(max_workers=4, thread_name_prefix="walter-network")
@@ -126,7 +123,7 @@ class WebullBootstrap:
 
 
 class WebullOpenAPIClient:
-    """Small signed client for the official Webull bulk snapshot operation."""
+    """Signed adapter for official Webull quote, ranking, and history operations."""
 
     def __init__(self, app_key: str, app_secret: str, *, base_url=DEFAULT_OPENAPI_URL,
                  snapshot_path=DEFAULT_SNAPSHOT_PATH, session=requests,
@@ -179,15 +176,76 @@ class WebullOpenAPIClient:
             }
         return normalized
 
+    def _get(self, path: str, params: dict) -> object:
+        prepared = requests.Request("GET", self.base_url + path, params=params).prepare()
+        query = urlparse(prepared.url).query
+        response = self.session.get(prepared.url, headers=self._headers("GET", path, query),
+                                    timeout=self.timeout)
+        response.raise_for_status()
+        body = response.json()
+        return body.get("data", body) if isinstance(body, dict) else body
+
+    @staticmethod
+    def _rows(value: object) -> list[dict]:
+        if isinstance(value, list):
+            return [row for row in value if isinstance(row, dict)]
+        if isinstance(value, dict):
+            for key in ("items", "list", "rows", "rankings", "bars"):
+                if isinstance(value.get(key), list):
+                    return [row for row in value[key] if isinstance(row, dict)]
+        return []
+
+    def assets(self) -> list[dict]:
+        """Build the scan universe from Webull's official stock rankings.
+
+        OpenAPI has no full symbol-master operation. Combining gainers, losers,
+        volume, and turnover rankings is the documented Webull discovery
+        equivalent and intentionally yields a scan universe, not an exchange list.
+        """
+        found: dict[str, dict] = {}
+        for rank_type in ("GAIN", "DECLINE", "VOLUME", "TURNOVER"):
+            payload = self._get(DEFAULT_RANKING_PATH, {
+                "market": "US", "rank_type": rank_type, "page_size": 200,
+            })
+            for row in self._rows(payload):
+                symbol = str(row.get("symbol") or row.get("ticker_symbol") or
+                             row.get("ticker") or "").strip().upper()
+                if symbol:
+                    found[symbol] = {"symbol": symbol, "status": "active",
+                                     "tradable": True, "class": "us_equity",
+                                     "source": f"Webull {rank_type} ranking"}
+        return sorted(found.values(), key=lambda row: row["symbol"])
+
+    def bars(self, symbols: Iterable[str], *, start: datetime, timeframe="1Min",
+             limit=10_000, **kwargs) -> dict[str, list[dict]]:
+        output: dict[str, list[dict]] = {}
+        interval = {"1Min": "m1", "30Sec": "s30"}.get(timeframe, timeframe)
+        for symbol in symbols:
+            payload = self._get(DEFAULT_BARS_PATH, {
+                "symbol": symbol, "interval": interval,
+                "start_time": start.isoformat(), "count": min(int(limit), 10_000),
+            })
+            rows = []
+            for item in self._rows(payload):
+                rows.append({
+                    "t": item.get("timestamp") or item.get("time") or item.get("t"),
+                    "o": _number(item.get("open") or item.get("o")),
+                    "h": _number(item.get("high") or item.get("h")),
+                    "l": _number(item.get("low") or item.get("l")),
+                    "c": _number(item.get("close") or item.get("c")),
+                    "v": _number(item.get("volume") or item.get("v")),
+                })
+            output[str(symbol).upper()] = rows
+        return output
+
 
 class LiveWebullProvider(WebullProvider):
     """Webull-only quote cache, seeded by REST and refreshed by streaming."""
 
     provider_name = "Webull OpenAPI"
 
-    def __init__(self, app_key: str, app_secret: str, *, fallback, bootstrap=None,
+    def __init__(self, app_key: str, app_secret: str, *, fallback=None, bootstrap=None,
                  rest_client=None, stream_class=PahoWebullStream):
-        self.fallback = fallback
         self.cache: dict[str, CachedMarketData] = {}
         self._snapshot_cache: dict[str, dict] = {}
         self._lock = Lock()
@@ -196,8 +254,10 @@ class LiveWebullProvider(WebullProvider):
         self._latencies = deque(maxlen=1000)
         self._stream_class = stream_class
         self._broker = None
-        self.warnings = fallback.warnings
-        self.diagnostics = fallback.diagnostics
+        if fallback is not None:
+            raise ValueError("Live Webull is Webull-only; fallback providers are forbidden")
+        self.warnings: list[str] = []
+        self.diagnostics: dict = {}
         self.diagnostics["webull_stream"] = {
             "selected_provider": "WEBULL", "authentication_status": "pending",
             "stream_connection_status": "disconnected", "subscribed_symbols": 0,
@@ -206,7 +266,7 @@ class LiveWebullProvider(WebullProvider):
             "disconnect_count": 0, "symbols_missing_prices": 0,
         }
         self.diagnostics["market_data_sources"] = {
-            "universe_provider": "Alpaca active tradable assets",
+            "universe_provider": "Webull OpenAPI stock rankings",
             "snapshot_provider": "Webull OpenAPI",
             "streaming_provider": "Webull OpenAPI",
         }
@@ -217,31 +277,18 @@ class LiveWebullProvider(WebullProvider):
         super().__init__(stream_factory=self._stream_factory)
 
     def pipeline_sources(self) -> list[dict[str, str]]:
-        """Describe the providers Walter actually invokes in Live Webull mode.
-
-        This is deliberately derived from the configured clients instead of from
-        UI labels.  In particular, ``__getattr__`` delegates history/bars and the
-        explicit ``news`` method delegates news to the Alpaca fallback.
-        """
-        fallback = self.fallback
-        data_url = getattr(fallback, "DATA", "https://data.alpaca.markets")
-        asset_environment = fallback.diagnostics.get("assets_endpoint")
-        asset_base = {
-            "paper": getattr(fallback, "PAPER_TRADING", "https://paper-api.alpaca.markets"),
-            "live": getattr(fallback, "LIVE_TRADING", "https://api.alpaca.markets"),
-        }.get(asset_environment, "paper, then live Alpaca Trading API")
+        """Describe every provider invoked by Live Webull mode."""
         snapshot_base = getattr(self._snapshot_client, "base_url", DEFAULT_OPENAPI_URL)
         snapshot_path = getattr(self._snapshot_client, "snapshot_path", DEFAULT_SNAPSHOT_PATH)
         bootstrap_url = getattr(self._bootstrap, "url", DEFAULT_BOOTSTRAP_URL)
         topic = (self._broker or {}).get("topic_template", DEFAULT_TOPIC)
-        feed = getattr(fallback, "feed", "iex")
         return [
             {
                 "Stage": "Universe (tradable symbol list)",
-                "Actual provider": "Alpaca Trading API",
-                "Endpoint / operation": f"GET {asset_base}/v2/assets?status=active&asset_class=us_equity",
-                "Code path": "app._run_live_pipeline.<locals>.discover → discovery.build_seed_symbols → LiveWebullProvider.__getattr__ → AlpacaClient.assets",
-                "Alpaca used": "Yes",
+                "Actual provider": "Webull OpenAPI rankings",
+                "Endpoint / operation": f"GET {snapshot_base}{DEFAULT_RANKING_PATH}",
+                "Code path": "build_seed_symbols → LiveWebullProvider.assets → WebullOpenAPIClient.assets",
+                "Alpaca used": "No",
             },
             {
                 "Stage": "Quote / snapshot retrieval",
@@ -259,29 +306,46 @@ class LiveWebullProvider(WebullProvider):
             },
             {
                 "Stage": "News",
-                "Actual provider": "Alpaca Market Data API",
-                "Endpoint / operation": f"GET {data_url}/v1beta1/news",
-                "Code path": "app._run_live_pipeline.<locals>.catalyst → NewsService.fetch → MarketDataNewsProvider.fetch → LiveWebullProvider.news → AlpacaClient.news",
-                "Alpaca used": "Yes",
+                "Actual provider": "None (provider abstraction)",
+                "Endpoint / operation": "Webull OpenAPI has News Summary but no raw article feed; no external call",
+                "Code path": "NewsService → UnavailableNewsProvider",
+                "Alpaca used": "No",
             },
             {
                 "Stage": "VWAP / volume calculations",
-                "Actual provider": "Alpaca Market Data bars + Walter local calculations",
-                "Endpoint / operation": f"GET {data_url}/v2/stocks/bars (feed={feed}; 1Min/30Sec); session_vwap and volume metrics run locally",
-                "Code path": "app._run_live_pipeline.<locals>.participation → discovery.analyze_candidates → LiveWebullProvider.__getattr__ → AlpacaClient.bars; then indicators.session_vwap / volume_pace.volume_pace_metrics",
-                "Alpaca used": "Yes",
+                "Actual provider": "Webull OpenAPI history + Walter local calculations",
+                "Endpoint / operation": f"GET {snapshot_base}{DEFAULT_BARS_PATH}; session_vwap and volume metrics run locally",
+                "Code path": "analyze_candidates → LiveWebullProvider.bars → WebullOpenAPIClient.bars",
+                "Alpaca used": "No",
             },
             {
                 "Stage": "Scanning / filtering",
                 "Actual provider": "Walter local pipeline (using the inputs above)",
                 "Endpoint / operation": "No provider endpoint; in-process gates, scoring, ranking, and filtering",
                 "Code path": "WalterArchitectureV1.run → discovery.prefilter_snapshots / analyze_candidates → scanner_v2 and scoring → trader_priority_sort_key",
-                "Alpaca used": "Indirectly (universe, news, and bar-derived evidence)",
+                "Alpaca used": "No",
             },
         ]
 
-    def __getattr__(self, name):
-        return getattr(self.fallback, name)
+    def assets(self):
+        return self._snapshot_client.assets()
+
+    def bars(self, symbols, **kwargs):
+        return self._snapshot_client.bars(symbols, **kwargs)
+
+    @staticmethod
+    def bars_frame(rows):
+        import pandas as pd
+        frame = pd.DataFrame(rows)
+        if frame.empty:
+            return frame
+        frame = frame.rename(columns={"t": "timestamp", "o": "open", "h": "high",
+                                      "l": "low", "c": "close", "v": "volume"})
+        frame["timestamp"] = pd.to_datetime(frame["timestamp"], utc=True)
+        return frame.set_index("timestamp").sort_index()
+
+    def news(self, *args, **kwargs):
+        return []
 
     def _stream_factory(self, receive: Callable[[MarketEvent], None]):
         self._broker = self._bootstrap.obtain()
@@ -424,6 +488,3 @@ class LiveWebullProvider(WebullProvider):
                     "bp": live.bid, "ap": live.ask}
             snapshot["market_data_provider"] = "Webull OpenAPI streaming cache"
         return snapshots
-
-    def news(self, *args, **kwargs):
-        return self.fallback.news(*args, **kwargs)

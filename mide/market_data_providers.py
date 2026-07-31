@@ -9,7 +9,6 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Callable, Iterable
 
-from .alpaca import AlpacaClient
 from .market_data import EventHandler, EventType, MarketDataProvider, MarketEvent, Subscription
 
 
@@ -27,11 +26,16 @@ class _UnsupportedSubscription(Subscription):
 class AlpacaProvider(MarketDataProvider):
     """Backward-compatible fallback around the proven Alpaca REST client."""
 
-    provider_name = AlpacaClient.provider_name
+    provider_name = "Alpaca Market Data"
 
     def __init__(self, api_key: str | None = None, secret_key: str | None = None,
-                 *, client: AlpacaClient | None = None, **kwargs):
-        self.client = client or AlpacaClient(api_key or "", secret_key or "", **kwargs)
+                 *, client=None, **kwargs):
+        # Deliberately lazy: importing Walter's provider boundary must never
+        # import or instantiate Alpaca during a Live Webull run.
+        if client is None:
+            from .alpaca import AlpacaClient
+            client = AlpacaClient(api_key or "", secret_key or "", **kwargs)
+        self.client = client
 
     def __getattr__(self, name):
         # Discovery, bars, diagnostics, and free-float APIs remain operational

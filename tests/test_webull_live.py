@@ -58,8 +58,8 @@ def test_provider_selection_includes_webull_and_prefers_configured_provider():
     assert live_data_modes(alpaca_configured=False, webull_configured=False)[1] == 2
 
 
-def test_webull_stream_cache_overlays_alpaca_fallback():
-    provider = LiveWebullProvider("key", "secret", fallback=Fallback(),
+def test_webull_stream_cache_is_webull_only():
+    provider = LiveWebullProvider("key", "secret",
                                   bootstrap=Bootstrap(), rest_client=Rest(), stream_class=Stream)
     prices = provider.latest_trades(["AAA"])
     snapshots = provider.snapshots(["AAA"])
@@ -72,13 +72,12 @@ def test_webull_stream_cache_overlays_alpaca_fallback():
     assert provider.diagnostics["webull_stream"]["cached_symbols"] == 1
 
 
-def test_webull_initialization_failure_retains_alpaca_data_and_reports_error():
+def test_webull_initialization_failure_retains_webull_snapshot_and_reports_error():
     class BrokenBootstrap:
         def obtain(self):
             raise RuntimeError("denied")
 
-    fallback = Fallback()
-    provider = LiveWebullProvider("key", "secret", fallback=fallback,
+    provider = LiveWebullProvider("key", "secret",
                                   bootstrap=BrokenBootstrap(), rest_client=Rest(), stream_class=Stream)
 
     assert provider.latest_trades(["AAA"]) == {"AAA": 10.0}
@@ -86,7 +85,7 @@ def test_webull_initialization_failure_retains_alpaca_data_and_reports_error():
     assert diagnostics["authentication_status"] == "failed"
     assert diagnostics["stream_connection_status"] == "error"
     assert diagnostics["subscription_failures"] == ["RuntimeError: denied"]
-    assert "cached Webull snapshot retained" in fallback.warnings[-1]
+    assert "cached Webull snapshot retained" in provider.warnings[-1]
 
 
 def test_snapshot_is_complete_before_stream_starts_and_no_alpaca_prices_are_polled():
@@ -101,9 +100,7 @@ def test_snapshot_is_complete_before_stream_starts_and_no_alpaca_prices_are_poll
         def connect(self):
             order.append(("stream",))
 
-    fallback = Fallback()
-    fallback.latest_trades = lambda symbols: (_ for _ in ()).throw(AssertionError("Alpaca polled"))
-    provider = LiveWebullProvider("key", "secret", fallback=fallback,
+    provider = LiveWebullProvider("key", "secret",
         bootstrap=Bootstrap(), rest_client=OrderedRest(), stream_class=OrderedStream)
 
     assert provider.initialize_quotes(["AAA", "BBB"]) == {"AAA": 12.5, "BBB": 12.5}
@@ -112,20 +109,20 @@ def test_snapshot_is_complete_before_stream_starts_and_no_alpaca_prices_are_poll
     diagnostics = provider.diagnostics["webull_stream"]
     assert diagnostics["symbols_missing_prices"] == 0
     assert provider.diagnostics["market_data_sources"] == {
-        "universe_provider": "Alpaca active tradable assets",
+        "universe_provider": "Webull OpenAPI stock rankings",
         "snapshot_provider": "Webull OpenAPI",
         "streaming_provider": "Webull OpenAPI",
     }
 
     sources = {row["Stage"]: row for row in provider.pipeline_sources()}
-    assert sources["Universe (tradable symbol list)"]["Actual provider"] == "Alpaca Trading API"
-    assert "/v2/assets" in sources["Universe (tradable symbol list)"]["Endpoint / operation"]
+    assert sources["Universe (tradable symbol list)"]["Actual provider"] == "Webull OpenAPI rankings"
+    assert "/market-data/stock-rank/list" in sources["Universe (tradable symbol list)"]["Endpoint / operation"]
     assert sources["Quote / snapshot retrieval"]["Actual provider"] == "Webull OpenAPI"
     assert "/market-data/quotes" in sources["Quote / snapshot retrieval"]["Endpoint / operation"]
-    assert sources["News"]["Alpaca used"] == "Yes"
-    assert "/v1beta1/news" in sources["News"]["Endpoint / operation"]
-    assert sources["VWAP / volume calculations"]["Alpaca used"] == "Yes"
-    assert "/v2/stocks/bars" in sources["VWAP / volume calculations"]["Endpoint / operation"]
+    assert sources["News"]["Alpaca used"] == "No"
+    assert "no raw article feed" in sources["News"]["Endpoint / operation"]
+    assert sources["VWAP / volume calculations"]["Alpaca used"] == "No"
+    assert "/market-data/history" in sources["VWAP / volume calculations"]["Endpoint / operation"]
     assert sources["Scanning / filtering"]["Endpoint / operation"].startswith("No provider endpoint")
 
 
@@ -172,3 +169,36 @@ def test_bootstrap_never_places_secret_in_request(monkeypatch):
     assert "top-secret" not in serialized
     assert captured["headers"]["x-app-key"] == "app-key"
     assert result["password"] == "p"
+
+
+def test_live_webull_scan_guard_forbids_alpaca_import_or_api_call(monkeypatch):
+    """Regression guard for the complete Live Webull market-data path."""
+    import builtins
+    from datetime import datetime, timezone
+
+    real_import = builtins.__import__
+    calls = []
+
+    def guarded_import(name, *args, **kwargs):
+        if name == "mide.alpaca" or name.endswith(".alpaca"):
+            raise AssertionError("Live Webull attempted to import Alpaca")
+        return real_import(name, *args, **kwargs)
+
+    class CompleteRest(Rest):
+        def assets(self):
+            calls.append("webull-universe")
+            return [{"symbol": "AAA", "tradable": True}]
+
+        def bars(self, symbols, **kwargs):
+            calls.append("webull-bars")
+            return {symbol: [] for symbol in symbols}
+
+    monkeypatch.setattr(builtins, "__import__", guarded_import)
+    provider = LiveWebullProvider("key", "secret", bootstrap=Bootstrap(),
+                                  rest_client=CompleteRest(), stream_class=Stream)
+    assert provider.assets()[0]["symbol"] == "AAA"
+    assert provider.initialize_quotes(["AAA"]) == {"AAA": 12.5}
+    assert provider.bars(["AAA"], start=datetime.now(timezone.utc))["AAA"] == []
+    assert provider.news(datetime.now(timezone.utc)) == []
+    assert calls == ["webull-universe", "webull-bars"]
+    assert all(row["Alpaca used"] == "No" for row in provider.pipeline_sources())
