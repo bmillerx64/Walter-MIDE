@@ -97,6 +97,20 @@ from mide.config import Settings
 from mide.credentials import WEBULL_CREDENTIAL_NAMES, credential_diagnostics, load_credentials
 from mide.market_data import MarketDataProvider
 from mide.webull_live import LiveWebullProvider, live_data_modes
+from mide.session_controls import (
+    AUTO_SCAN_KEY,
+    DATA_MODE_KEY,
+    PROVIDER_KEY,
+    SCAN_REQUESTED_KEY,
+    STOP_REQUESTED_KEY,
+    begin_scheduled_scan,
+    finish_scan,
+    initialize_session_controls,
+    request_scan,
+    request_stop,
+    select_data_mode,
+    update_auto_scan,
+)
 memory_checkpoint("providers import", object_name="mide.webull_live")
 from mide.news import index_news, recent_wire_news_log
 from mide.news_provider import (
@@ -605,7 +619,6 @@ session_defaults = {
     "last_updated": None,
     "scan_diagnostics": {},
     "free_float_inspection": None,
-    "scan_in_progress": False,
     "last_scan_attempt": None,
     "scan_failure_count": 0,
     "symbols_sampled": 0,
@@ -616,7 +629,6 @@ session_defaults = {
     "opportunity_feed_events": [],
     "rejected_candidate_history": [],
     "rejection_diagnostics_signature": (),
-    "selected_live_provider": "ALPACA",
     ALERT_VOICE_SESSION_KEY: SYSTEM_DEFAULT_VOICE_ID,
     DAVID_AVAILABLE_SESSION_KEY: False,
     ACTIVE_VOICE_SESSION_KEY: SYSTEM_DEFAULT_VOICE_ID,
@@ -640,13 +652,18 @@ with st.sidebar:
     data_modes, default_mode = live_data_modes(
         alpaca_configured=alpaca_possible, webull_configured=webull_possible
     )
-    mode = st.radio("Data mode", data_modes, index=default_mode)
-    selected_provider = "WEBULL" if mode == "Live Webull" else "ALPACA"
-    st.session_state.selected_live_provider = selected_provider
+    initialize_session_controls(st.session_state, default_mode=data_modes[default_mode])
+    mode = st.radio(
+        "Data mode", data_modes, key=DATA_MODE_KEY,
+        on_change=select_data_mode, args=(st.session_state,),
+    )
+    selected_provider = st.session_state[PROVIDER_KEY]
     st.caption(f"Decision Funnel v{BUILD.version} · {BUILD.git_sha}")
     scanner_version = "Walter Architecture v1.0"
     auto_refresh = st.toggle(
-        "Auto live scan every 60 seconds", value=True, disabled=not mode.startswith("Live ")
+        "Auto live scan every 60 seconds", key=AUTO_SCAN_KEY,
+        disabled=not mode.startswith("Live "),
+        on_change=update_auto_scan, args=(st.session_state,),
     )
     alerts = st.toggle("Audible watch/advance alerts", value=True)
     david_available = david_available_from_query()
@@ -779,7 +796,16 @@ with st.sidebar:
         "Run live scan",
         type="primary",
         use_container_width=True,
-        disabled=not mode.startswith("Live "),
+        disabled=not mode.startswith("Live ") or st.session_state.scan_in_progress,
+        on_click=request_scan,
+        args=(st.session_state,),
+    )
+    st.button(
+        "Stop scan",
+        use_container_width=True,
+        disabled=not st.session_state.scan_in_progress,
+        on_click=request_stop,
+        args=(st.session_state,),
     )
     use_demo = st.button("Load demo data", use_container_width=True)
     st.divider()
@@ -1491,12 +1517,12 @@ else:
             >= settings.refresh_seconds
         )
     )
-    should_scan = run_scan or due
+    should_scan = st.session_state[SCAN_REQUESTED_KEY] or due
 
-if mode.startswith("Live ") and should_scan:
+if mode.startswith("Live ") and should_scan and not st.session_state[STOP_REQUESTED_KEY]:
     st.session_state.last_scan_attempt = datetime.now().astimezone()
     try:
-        st.session_state.scan_in_progress = True
+        begin_scheduled_scan(st.session_state)
         # Resolve the watchdog dynamically: a deployment may have replaced the
         # module while this Streamlit session still holds older app globals.
         repair_mide_module_links()
@@ -1523,7 +1549,7 @@ if mode.startswith("Live ") and should_scan:
             "Walter remains online and will retry automatically with backoff."
         )
     finally:
-        st.session_state.scan_in_progress = False
+        finish_scan(st.session_state)
 
 records = st.session_state.records
 api_warnings = st.session_state.api_warnings
