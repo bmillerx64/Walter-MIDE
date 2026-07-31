@@ -95,6 +95,7 @@ from mide.ui import (
     decision_funnel_markup,
     market_session_quality_markup,
     walter_mission_control,
+    render_calibration_dashboard,
 )
 memory_checkpoint("UI import", object_name="mide.ui")
 from mide.live_opportunity_feed import update_opportunity_feed
@@ -1500,6 +1501,7 @@ if active_tab == "Diagnostics":
     ):
         column.metric(label, value)
     st.caption("Measurement only; these records do not feed ranking or qualification.")
+    render_calibration_dashboard(MissionOutcomeStore().analytics().dashboard())
 
     st.subheader("Candidate Ledger Decision Explanations")
     ledger_explanations = [
