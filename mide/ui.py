@@ -153,6 +153,7 @@ def inject_css():
     .mission-reason{color:#dcfce7;font-size:.88rem;font-weight:850;line-height:1.35}
     .mission-check{color:#f8fafc;font-size:.90rem;font-weight:850;line-height:1.4}
     .mission-why-not{margin-top:9px;padding-top:8px;border-top:1px solid #273548;color:#cbd5e1;font-size:.86rem;font-weight:800}.mission-why-not b{display:block;color:#fca5a5;font-size:.68rem;letter-spacing:.12em;margin-bottom:3px}
+    .decision-narrative{margin-top:10px;padding:10px 11px;border:1px solid #334155;border-radius:8px;background:#101827;color:#e2e8f0;font-size:.84rem;line-height:1.45}.decision-narrative b{display:block;color:#93c5fd;font-size:.68rem;letter-spacing:.1em;margin-bottom:4px}
     .mission-condition-met{display:inline-block;color:#86efac;font-size:.84rem;font-weight:900;margin-top:8px;animation:condition-flash 1.35s ease-out 1}
     .entry-window-open{margin:10px 0 5px;padding:11px 12px;text-align:center;border:1px solid #4ade80;border-radius:8px;background:#064e3b;color:#dcfce7;font-size:1.15rem;font-weight:950;letter-spacing:.11em}
     .entry-window-pulse{animation:entry-window-pulse 2s ease-out 1}
@@ -1524,6 +1525,25 @@ def _mission_target_markup(item: dict, role: str, primary: dict | None = None) -
         and bool(previous)
         and _mission_band(previous, _mission_conditions(previous)) != "trade_soon"
     )
+    explanation = item["record"].get("decision_explanation") or {}
+    narrative = str(explanation.get("decision_narrative") or "No ledger explanation recorded.")
+    positive = "; ".join(explanation.get("strongest_positive_factors") or []) or "None recorded."
+    negative = "; ".join(explanation.get("strongest_negative_factors") or []) or "None recorded."
+    details = [
+        f"Strongest positives: {positive}", f"Strongest negatives: {negative}",
+        f"Catalyst: {explanation.get('catalyst_summary')}",
+        f"Participation: {explanation.get('participation_summary')}",
+        f"Expansion: {explanation.get('expansion_summary')}",
+        f"Conviction trend: {explanation.get('conviction_trend')}",
+        f"Entry readiness: {explanation.get('entry_readiness_summary')}",
+        explanation.get("ranking_change_explanation"), explanation.get("why_not_number_one"),
+    ]
+    explanation_markup = (
+        "<div class='decision-narrative'><b>DECISION NARRATIVE</b>"
+        + html.escape(narrative)
+        + "<br>" + "<br>".join(html.escape(str(value)) for value in details if value)
+        + "</div>"
+    )
     return (
         f"<div class='mission-target{' entry-window-pulse' if just_opened else ''}' style='--mission-color:{color}'>"
         f"<div class='mission-role'>{role}</div><div class='mission-symbol'>{html.escape(item['symbol'])}</div>"
@@ -1542,6 +1562,7 @@ def _mission_target_markup(item: dict, role: str, primary: dict | None = None) -
             if primary is not None
             else ""
         )
+        + explanation_markup
         + f"<div class='mission-meta'>Estimated: <b>{window}</b></div></div>"
     )
 

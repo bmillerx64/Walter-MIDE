@@ -1476,6 +1476,21 @@ if active_tab == "Radar":
                     radar_table(sorted_records), width="stretch", hide_index=True
                 )
 if active_tab == "Diagnostics":
+    st.subheader("Candidate Ledger Decision Explanations")
+    ledger_explanations = [
+        {
+            "Symbol": record.get("symbol"),
+            "Rank": record.get("mission_rank"),
+            "Outcome": record.get("terminal_outcome"),
+            **(record.get("decision_explanation") or {}),
+        }
+        for record in st.session_state.walter_candidate_ledger.records.values()
+    ]
+    if ledger_explanations:
+        st.dataframe(ledger_explanations, use_container_width=True, hide_index=True)
+    else:
+        st.caption("Decision explanations appear after Walter completes a scan.")
+
     runtime_evidence = importlib.import_module("mide.runtime_evidence")
     current_scan_export = runtime_evidence.current_scan_export
     json_bytes = runtime_evidence.json_bytes

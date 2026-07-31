@@ -493,6 +493,9 @@ class WalterArchitectureV1:
                         decision="Not evaluated",
                         reason=f"Candidate already terminated at {record['terminal_stage']}",
                     )
+        from mide.decision_narrative import attach_decision_narratives
+
+        attach_decision_narratives(results)
         if any(item.get("terminal_outcome") not in TERMINAL_OUTCOMES for item in results):
             raise ArchitectureViolation("Every discovered candidate requires a terminal outcome")
         self.store.persist(results)
