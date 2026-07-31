@@ -10,6 +10,8 @@ from typing import Iterable
 import json
 import re
 
+from .resilience import record_provider_failure
+
 
 UTC = timezone.utc
 DEFAULT_STATE_PATH = Path("data/news_provider_state.json")
@@ -185,9 +187,18 @@ class NewsService:
             started = perf_counter()
             try:
                 fresh = provider.fetch(since=since, symbols=requested_symbols)
+                if not isinstance(fresh, list) or any(
+                    not isinstance(article, NewsArticle) for article in fresh
+                ):
+                    raise ValueError("provider returned malformed news response")
             except Exception as exc:
                 self.metrics["provider_failures"] += 1
                 self.metrics.setdefault("failure_details", []).append(f"{provider.name}: {exc}")
+                record_provider_failure(
+                    self.metrics, provider=provider.name, operation="fetch news",
+                    exception=exc, affected_symbols=requested_symbols,
+                    recovery_action="try next provider; preserve cached news",
+                )
                 continue
             finally:
                 self.metrics["requests_made"] += max(1, int(getattr(provider, "request_count", 1)))

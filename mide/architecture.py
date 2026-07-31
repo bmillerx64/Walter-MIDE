@@ -71,6 +71,7 @@ class WalterArchitectureV1:
         publish: Publisher | None = None,
         runtime_dispatch: Callable[[], Any] | None = None,
         stage_observer: Callable[[int, str, list[dict]], None] | None = None,
+        failure_observer: Callable[[str, str, BaseException], None] | None = None,
         clock: Callable[[], datetime] | None = None,
     ) -> None:
         self._runtime_dispatch = runtime_dispatch
@@ -98,6 +99,7 @@ class WalterArchitectureV1:
         self.store = store
         self.publish = publish
         self.stage_observer = stage_observer
+        self.failure_observer = failure_observer
         self.clock = clock or (lambda: datetime.now(timezone.utc))
         self.trace: list[dict] = []
         self._ledger: dict[str, dict] = {}
@@ -166,6 +168,8 @@ class WalterArchitectureV1:
                         )
                     decisions[symbol] = one[symbol]
                 except Exception as candidate_exc:
+                    if self.failure_observer:
+                        self.failure_observer(stage, symbol, candidate_exc)
                     self._terminal(
                         item, "Technical Failure", stage, "Stage execution",
                         f"{type(candidate_exc).__name__}: {candidate_exc}",
@@ -286,7 +290,16 @@ class WalterArchitectureV1:
                 reason="Normalized symbol admitted by Universe Construction",
                 evidence={"normalized_symbol": record["symbol"]}, provenance=provenance,
             )
+            if record.get("technical_failure"):
+                self._terminal(
+                    record, "Technical Failure", STAGES[0], "Provider data",
+                    str(record["technical_failure"]),
+                )
         self._record_trace(STAGES[0], len(discovered), len(candidates))
+        candidates = [
+            record for record in candidates
+            if record.get("terminal_outcome") != "Technical Failure"
+        ]
         for number, stage, operation in (
             (2, STAGES[1], self._price), (3, STAGES[2], self._validity),
             (4, STAGES[3], self.free_float), (5, STAGES[4], self.catalyst),
