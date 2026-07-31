@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import re
 from typing import Any, Callable, Iterable, Mapping, Protocol
 
 
@@ -26,6 +27,7 @@ class ArchitecturePolicy:
     min_price: float
     max_price: float
     max_free_float: int
+    include_etfs: bool = False
 
 
 @dataclass(frozen=True)
@@ -60,10 +62,12 @@ class WalterArchitectureV1:
         catalyst: Stage | None = None,
         participation: Stage | None = None,
         expansion: Stage | None = None,
+        free_float: Stage | None = None,
         rank: Ranker | None = None,
         store: ResultStore | None = None,
         publish: Publisher | None = None,
         runtime_dispatch: Callable[[], Any] | None = None,
+        stage_observer: Callable[[int, str, list[dict]], None] | None = None,
     ) -> None:
         self._runtime_dispatch = runtime_dispatch
         if runtime_dispatch is not None:
@@ -85,9 +89,11 @@ class WalterArchitectureV1:
         self.catalyst = catalyst
         self.participation = participation
         self.expansion = expansion
+        self.free_float = free_float or self._float
         self.rank = rank
         self.store = store
         self.publish = publish
+        self.stage_observer = stage_observer
         self.trace: list[dict] = []
         self._ledger: dict[str, dict] = {}
 
@@ -154,13 +160,12 @@ class WalterArchitectureV1:
                 price = float(item["price"])
                 passed = self.policy.min_price <= price <= self.policy.max_price
                 reason = "Price within configured range" if passed else "Price outside configured range"
-            except (KeyError, TypeError, ValueError):
+            except (KeyError, StopIteration, TypeError, ValueError):
                 passed, reason = False, "Usable price unavailable"
             result[symbol] = Decision(passed, "Price", reason)
         return result
 
-    @staticmethod
-    def _validity(candidates: list[dict]) -> Mapping[str, Decision]:
+    def _validity(self, candidates: list[dict]) -> Mapping[str, Decision]:
         result = {}
         for item in candidates:
             symbol = WalterArchitectureV1._symbol(item)
@@ -169,10 +174,20 @@ class WalterArchitectureV1:
             valid_data = bool(item.get("data_usable", True))
             legal = bool(item.get("legally_tradable", item.get("tradable", True)))
             operational = bool(item.get("operationally_tradable", True))
-            passed = valid_data and legal and operational
+            asset_type = str(item.get("asset_type") or item.get("type") or "").lower()
+            symbol = self._symbol(item)
+            supported_security = not (
+                asset_type in {"warrant", "right", "unit"}
+                or (asset_type in {"etf", "fund"} and not self.policy.include_etfs)
+                or bool(re.search(r"(?:\.|-)?[WRU]$", symbol))
+                or str(item.get("exchange") or "").upper() == "OTC"
+                or str(item.get("asset_status") or "active").lower() != "active"
+            )
+            passed = valid_data and legal and operational and supported_security
             failures = [name for ok, name in (
                 (valid_data, "unusable data"), (legal, "legally non-tradable"),
                 (operational, "operationally non-tradable"),
+                (supported_security, "unsupported security type or status"),
             ) if not ok]
             result[symbol] = Decision(passed, "Validity", "Valid security" if passed else "; ".join(failures))
         return result
@@ -182,10 +197,14 @@ class WalterArchitectureV1:
         for item in candidates:
             symbol = self._symbol(item)
             try:
-                value = float(item["free_float"])
+                value = next(
+                    float(item[key])
+                    for key in ("free_float", "float_shares", "shares_float")
+                    if item.get(key) is not None
+                )
                 passed = value <= self.policy.max_free_float
                 reason = "Free float within configured limit" if passed else "Free float exceeds configured limit"
-            except (KeyError, TypeError, ValueError):
+            except (KeyError, StopIteration, TypeError, ValueError):
                 passed, reason = False, "Usable free-float value unavailable"
             result[symbol] = Decision(passed, "Free Float", reason)
         return result
@@ -195,6 +214,7 @@ class WalterArchitectureV1:
         if runtime_dispatch is not None:
             return runtime_dispatch()
 
+        self.stage_observer and self.stage_observer(1, STAGES[0], [])
         discovered = list(self.discover())
         for source in discovered:
             symbol = self._symbol(source)
@@ -205,13 +225,15 @@ class WalterArchitectureV1:
                 self._ledger[symbol] = record
         candidates = list(self._ledger.values())
         self._record_trace(STAGES[0], len(discovered), len(candidates))
-        candidates = self._assess(STAGES[1], candidates, self._price)
-        candidates = self._assess(STAGES[2], candidates, self._validity)
-        candidates = self._assess(STAGES[3], candidates, self._float)
-        candidates = self._assess(STAGES[4], candidates, self.catalyst)
-        candidates = self._assess(STAGES[5], candidates, self.participation)
-        candidates = self._assess(STAGES[6], candidates, self.expansion)
+        for number, stage, operation in (
+            (2, STAGES[1], self._price), (3, STAGES[2], self._validity),
+            (4, STAGES[3], self.free_float), (5, STAGES[4], self.catalyst),
+            (6, STAGES[5], self.participation), (7, STAGES[6], self.expansion),
+        ):
+            self.stage_observer and self.stage_observer(number, stage, candidates)
+            candidates = self._assess(stage, candidates, operation)
 
+        self.stage_observer and self.stage_observer(8, STAGES[7], candidates)
         ranked = self.rank([dict(item) for item in candidates])
         before = [self._symbol(item) for item in candidates]
         after = [self._symbol(item) for item in ranked]
@@ -226,7 +248,10 @@ class WalterArchitectureV1:
         if any(item.get("terminal_outcome") not in TERMINAL_OUTCOMES for item in results):
             raise ArchitectureViolation("Every discovered candidate requires a terminal outcome")
         self.store.persist(results)
-        self.publish(ranked)
+        # Publish the authoritative ledger objects in ranking order so the UI
+        # receives the terminal outcome, complete audit, and mission rank that
+        # were persisted—not the ranker's detached working copies.
+        self.publish([self._ledger[symbol] for symbol in after])
         return results
 
 

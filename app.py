@@ -64,7 +64,7 @@ from mide.scanner_v2 import (
 )
 memory_checkpoint("scanner import", object_name="mide.scanner_v2")
 from mide.memory import MemoryStore
-from mide.flight_recorder import FlightRecorder, prefilter_decision
+from mide.flight_recorder import FlightRecorder
 memory_checkpoint("cache stores import", object_name="MemoryStore, FlightRecorder")
 from mide.memory_profile import compact_previous_record, profile as memory_profile, release_temporaries
 from mide.timeframe_alignment import alignment_voice
@@ -102,11 +102,15 @@ from mide.time_service import format_eastern_time, market_clock, market_phase_at
 from mide.watchdog import ScanAlreadyRunning
 from mide.decision_engine import (
     evaluate as evaluate_decision_funnel,
-    IdentityPolicy,
-    identity_decision,
-    stage2_filter,
+    behavioral_decision,
 )
-from mide.architecture import scanner_implementation
+from mide.architecture import (
+    ArchitecturePolicy,
+    Decision,
+    STAGES as WALTER_STAGES,
+    WalterArchitectureV1,
+    scanner_implementation,
+)
 memory_checkpoint("decision engine import", object_name="mide.decision_engine")
 from mide.free_float_inspector import inspect_free_float
 from mide.free_float import (
@@ -770,357 +774,226 @@ def arm_live_clock_engine(
 
 
 def _run_live_pipeline(
-    scanner_version: str = "Decision Funnel 3.0",
+    scanner_version: str = "Walter Architecture v1.0",
     *,
     status,
     client_factory=None,
     credential_checker=None,
 ):
+    """Execute the live scan through the single Walter Architecture pipeline."""
     api_key = get_secret("ALPACA_API_KEY")
     secret = get_secret("ALPACA_SECRET_KEY")
     if not api_key or not secret:
         raise AlpacaError("Alpaca credentials are not configured in Streamlit Secrets.")
 
-    # Resolve deployment-sensitive classes/functions for every attempt. A retry
-    # therefore gets a fresh client and cannot retain a class detached during a
-    # Streamlit/GitHub hot reload.
     repair_mide_module_links()
     alpaca_module = importlib.import_module("mide.alpaca")
     client_factory = client_factory or alpaca_module.AlpacaClient
     credential_checker = credential_checker or alpaca_module.credential_status
     client = client_factory(api_key, secret, feed=settings.feed, timeout=12)
-    memory_checkpoint("market provider initialization", object_name=type(client).__name__)
-    try:
-        environment = credential_checker(client)
-        status.write(f"Alpaca credentials accepted ({environment} environment)")
-        log(f"Credentials accepted by Alpaca {environment} environment")
-    except Exception as exc:
-        raise AlpacaError(str(exc)) from exc
+    environment = credential_checker(client)
+    status.write(f"Alpaca credentials accepted ({environment} environment)")
     with scan_runtime_slot:
-        progress = st.progress(0, text="Starting")
+        progress = st.progress(0, text="Starting Walter Architecture")
 
-    log("Stage 1/5: fetching news")
-    status.write("1/5 Fetching recent news")
-    news_service = NewsService([AlpacaNewsProvider(client)])
-    try:
-        # Increment from the persisted cursor. Alpaca remains a temporary fallback
-        # until official TipRanks terms and credentials are confirmed.
-        news_items = news_service.fetch()
-    except Exception as exc:
-        client.warnings.append(f"News unavailable; scan continued: {exc}")
-        news_items = []
-    progress.progress(0.12, text="News loaded")
+    state = {"seeds": [], "reasons": {}, "snapshots": {}, "news": [],
+             "candidates": [], "analyzed": [], "ranked": []}
+    history = get_store()
+    previous = history.latest_by_symbol()
+    policy = ArchitecturePolicy(
+        settings.min_price, settings.max_price, settings.max_free_float,
+        settings.include_etfs,
+    )
 
-    log("Stage 2/5: building discovery universe")
-    status.write("2/5 Building discovery universe")
-    seeds, reasons = build_seed_symbols(client, settings, news_items)
-    # A global feed can be crowded out. Query every current discovery/mission
-    # symbol directly and merge it with the incremental cache.
-    try:
-        news_items = news_service.fetch(symbols=seeds, force_lookback=True)
-        for symbol in symbol_news_evidence(news_items):
-            if symbol not in reasons:
-                seeds.append(symbol)
-            reasons.setdefault(symbol, []).append("recent news")
-        seeds = sorted(set(seeds))
-    except Exception as exc:
-        client.warnings.append(f"Targeted news unavailable; scan continued: {exc}")
-    client.diagnostics["news_coverage"] = dict(news_service.metrics)
-    client.diagnostics["news_evidence"] = symbol_news_evidence(news_items)
-    progress.progress(0.24, text=f"{len(seeds)} symbols discovered")
+    def announce(number, detail=""):
+        name = WALTER_STAGES[number - 1]
+        message = f"{number}/8 {name}" + (f": {detail}" if detail else "")
+        log(message)
+        status.write(message)
+        progress.progress((number - 1) / 8, text=message)
 
-    for key, value in client.diagnostics.items():
-        log(f"Discovery diagnostic: {key}={value}")
-    for warning in client.warnings:
-        log(f"Warning: {warning}")
+    def discover():
+        # Catalyst retrieval deliberately does not happen here. Discovery sources
+        # alone establish the immutable membership of this scan.
+        seeds, reasons = build_seed_symbols(client, settings, [])
+        state["seeds"], state["reasons"] = seeds, reasons
+        snapshots = {}
+        for offset in range(0, len(seeds), settings.batch_size):
+            batch = seeds[offset:offset + settings.batch_size]
+            try:
+                snapshots.update(client.snapshots(batch))
+            except Exception as exc:
+                client.warnings.append(f"Snapshot batch unavailable: {exc}")
+        state["snapshots"] = snapshots
+        records = snapshot_identity_records(snapshots)
+        by_symbol = {item["symbol"]: item for item in records}
+        # Symbols whose snapshot failed remain accountable as unusable data.
+        return [by_symbol.get(symbol, {
+            "symbol": symbol, "price": None, "data_usable": False,
+        }) for symbol in seeds]
 
-    log(f"Stage 3/5: fetching snapshots for {len(seeds)} symbols")
-    status.write(f"3/5 Fetching snapshots for {len(seeds)} symbols")
-    snapshots = {}
-    total = max(1, len(seeds))
-    for i in range(0, len(seeds), settings.batch_size):
-        batch = seeds[i : i + settings.batch_size]
+    def catalyst(records):
+        service = NewsService([AlpacaNewsProvider(client)])
+        symbols = [item["symbol"] for item in records]
         try:
-            snapshots.update(client.snapshots(batch))
+            news_items = service.fetch(symbols=symbols, force_lookback=True)
         except Exception as exc:
-            client.warnings.append(f"Snapshot batch skipped: {exc}")
-        done = min(i + len(batch), len(seeds))
-        progress.progress(
-            0.24 + 0.36 * (done / total), text=f"Snapshots {done}/{len(seeds)}"
-        )
-
-    policy = IdentityPolicy(settings.min_price, settings.max_price,
-                            settings.max_free_float, settings.include_etfs)
-    identity_records = snapshot_identity_records(snapshots)
-    # Run every local, inexpensive gate before requesting fundamentals. The
-    # authoritative Stage 2 gate below remains unchanged; this only narrows the
-    # symbols sent to FMP and the fallback provider.
-    cheap_gate_snapshots = {
-        record["symbol"]: snapshots[record["symbol"]]
-        for record in identity_records
-        if identity_decision(record, policy, evaluate_float=False)[0]
-    }
-    inexpensive_candidates = {
-        candidate["symbol"]
-        for candidate in prefilter_snapshots(cheap_gate_snapshots, settings)
-    }
-    float_snapshots = {
-        symbol: snapshots[symbol] for symbol in inexpensive_candidates
-    }
-
-    fmp_api_key = get_secret("FMP_API_KEY") or get_secret(
-        "FINANCIAL_MODELING_PREP_API_KEY"
-    )
-    missing_before = sum(
-        not any(
-            record.get(key) is not None
-            for key in ("float_shares", "shares_float", "free_float", "float_millions")
-        )
-        for record in identity_records
-    )
-    client.diagnostics["fmp_requests_before_optimization"] = missing_before
-    if fmp_api_key:
-        float_provider = FreeFloatClient(fmp_api_key, timeout=12)
-        memory_checkpoint("free-float provider initialization", object_name="FreeFloatClient")
-        float_count, float_errors = enrich_snapshots_with_free_float(
-            float_snapshots, float_provider
-        )
-        client.diagnostics["free_float_provider"] = "Financial Modeling Prep"
-        client.diagnostics["free_float_enriched"] = float_count
-        client.diagnostics["free_float_provider_failures"] = len(float_errors)
-        cache_diagnostics = cache_diagnostics_or_default(float_provider)
-        # Publish all cache counters from one immutable snapshot. Cache hits and
-        # avoided per-symbol FMP requests are the same event and must agree.
-        client.diagnostics["fmp_requests_this_scan"] = cache_diagnostics.requests_made
-        client.diagnostics["fmp_float_cache_hits"] = cache_diagnostics.cache_hits
-        client.diagnostics["fmp_float_cache_misses"] = cache_diagnostics.cache_misses
-        client.diagnostics["fmp_float_cached_symbols"] = (
-            cache_diagnostics.cached_symbols
-        )
-        client.diagnostics["fmp_requests_avoided"] = cache_diagnostics.requests_avoided
-        client.diagnostics["fmp_float_cache_oldest_entry"] = (
-            cache_diagnostics.oldest_entry
-        )
-        client.diagnostics["fmp_float_cache_newest_entry"] = (
-            cache_diagnostics.newest_entry
-        )
-        if float_errors:
-            sample = ", ".join(sorted(float_errors)[:5])
-            client.warnings.append(
-                f"FMP free-float unavailable for {len(float_errors)} symbols"
-                f" (sample: {sample})"
+            client.warnings.append(f"News unavailable; scan continued: {exc}")
+            news_items = []
+        state["news"] = news_items
+        client.diagnostics["news_coverage"] = dict(service.metrics)
+        client.diagnostics["news_evidence"] = symbol_news_evidence(news_items)
+        indexed = index_news(news_items)
+        decisions = {}
+        for item in records:
+            symbol = item["symbol"]
+            news = indexed.get(symbol)
+            updates = {"discovery_reasons": state["reasons"].get(symbol, [])}
+            if news:
+                updates.update(headline=news.get("headline", ""),
+                               catalyst_score=news.get("catalyst_score", 0),
+                               news_flags=news.get("flags", []))
+            decisions[symbol] = Decision(
+                True, "Catalyst", "Catalyst evidence assessed" if news else "No catalyst found",
+                updates,
             )
-    else:
-        client.diagnostics["free_float_provider"] = "not configured"
-        client.warnings.append(
-            "FMP_API_KEY is not configured; Stage 2 free-float lookups cannot be enriched"
-        )
-        client.diagnostics["fmp_requests_this_scan"] = 0
-        client.diagnostics["fmp_float_cache_hits"] = 0
-        cache_diagnostics = cache_diagnostics_or_default(FreeFloatClient(""))
-        client.diagnostics["fmp_float_cache_misses"] = 0
-        client.diagnostics["fmp_float_cached_symbols"] = (
-            cache_diagnostics.cached_symbols
-        )
-        client.diagnostics["fmp_requests_avoided"] = 0
-        client.diagnostics["fmp_float_cache_oldest_entry"] = (
-            cache_diagnostics.oldest_entry
-        )
-        client.diagnostics["fmp_float_cache_newest_entry"] = (
-            cache_diagnostics.newest_entry
-        )
-    log(
-        "FMP requests per scan: "
-        f"before={client.diagnostics['fmp_requests_before_optimization']} "
-        f"after={client.diagnostics['fmp_requests_this_scan']} "
-        f"cache_hits={client.diagnostics['fmp_float_cache_hits']}"
-    )
+        return decisions
 
-    # Alpaca snapshots intentionally contain real-time market fields, not
-    # fundamental share statistics.  Ask the fallback only for symbols which
-    # have already passed the price range so the provider is not needlessly
-    # queried for the whole discovery universe.
-    price_qualified = sorted(inexpensive_candidates)
-    if hasattr(client, "enrich_free_float"):
-        try:
-            client.enrich_free_float(snapshots, price_qualified)
-        except Exception as exc:
-            client.warnings.append(f"Free-float fallback unavailable; scan continued: {exc}")
-    eligible_identities, stage2_rejections, funnel_counts = stage2_filter(
-        snapshot_identity_records(snapshots), policy
-    )
-    eligible_symbols = {record["symbol"] for record in eligible_identities}
-    eligible_snapshots = {
-        symbol: snapshot for symbol, snapshot in snapshots.items()
-        if symbol in eligible_symbols
-    }
-    log("Stage 4/5: applying Stage 2 and prefiltering")
-    status.write("4/5 Applying tradability, price, and free-float gates")
-    candidates = [
-        candidate
-        for candidate in prefilter_snapshots(eligible_snapshots, settings)
-        if candidate.get("symbol") in eligible_symbols
-    ]
-    # Capture failures from the unchanged prefilter as diagnostics. These symbols
-    # passed the authoritative Stage 2 identity gate but otherwise disappeared
-    # before Stage 3, which made a symbol-level rejection audit incomplete.
-    candidate_symbols = {candidate.get("symbol") for candidate in candidates}
-    prefilter_rejections = [
-        decision
-        for symbol, snapshot in eligible_snapshots.items()
-        if symbol not in candidate_symbols
-        for decision in [prefilter_decision(symbol, snapshot, settings)]
-        if not decision["passed"]
-    ]
-    progress.progress(0.68, text=f"{len(candidates)} Stage 2-qualified candidates")
-
-    # A candidate can reach analysis only through the authoritative gate above.
-    stage3_candidates = candidates
-    funnel_counts["stage_3_analysis"] = len(stage3_candidates)
-    client.diagnostics["stage_2_rejections"] = stage2_rejections
-    client.diagnostics["funnel_counts"] = funnel_counts
-    log(
-        "Decision funnel: "
-        + " -> ".join(f"{name}={count}" for name, count in funnel_counts.items())
-    )
-
-    log("Stage 5/5: analyzing bars and scoring")
-    status.write(
-        f"5/5 Analyzing {len(stage3_candidates)} free-float-qualified symbols"
-    )
-    records = analyze_candidates(client, stage3_candidates, index_news(news_items), reasons)
-    analyzed_records = records
-    store = get_store()
-    previous = store.latest_by_symbol()
-    records = store.enrich_velocity(records, previous=previous)
-    records = evaluate_decision_funnel(records, policy)
-    funnel_counts["stage_3_analysis"] = len(records)
-    funnel_counts["monitored"] = sum(
-        record.get("final_decision") == "Attention Earned" for record in records
-    )
-    funnel_counts["entry_ready"] = sum(
-        record.get("candidate_status") == "Entry Ready" for record in records
-    )
-    client.diagnostics["decision_funnel"] = {
-        "universe": len(records),
-        "eligible": sum(record["eligible"] for record in records),
-        "rejected": sum(record["final_decision"] == "Rejected" for record in records),
-    }
-    rejection_timestamp = datetime.now().astimezone().isoformat(timespec="seconds")
-    client.diagnostics["rejected_candidates"] = rejection_diagnostics(
-        records,
-        stage2_rejections,
-        prefilter_rejections=prefilter_rejections,
-        timestamp=rejection_timestamp,
-    )
-    coverage = client.diagnostics.get("news_coverage", {})
-    coverage["symbols_seeded_from_news"] = sum(
-        "recent news" in set(symbol_reasons) for symbol_reasons in reasons.values()
-    )
-    coverage["symbols_rejected_downstream"] = [
-        {
-            "symbol": item.get("symbol"),
-            "reason": item.get("reason") or item.get("rejection_reason") or "unspecified",
+    def free_float(records):
+        symbols = [item["symbol"] for item in records]
+        selected = {
+            symbol: state["snapshots"][symbol]
+            for symbol in symbols if symbol in state["snapshots"]
         }
-        for item in client.diagnostics["rejected_candidates"]
-        if "recent news" in set(reasons.get(item.get("symbol"), []))
-    ]
-    client.diagnostics["news_coverage"] = coverage
-    client.diagnostics["news_ticker_inspections"] = {
-        symbol: ticker_inspection(
-            symbol,
-            news_items=news_items,
-            provider=coverage.get("active_provider", "None"),
-            discovery_reasons=reasons,
-            stage2_rejections=stage2_rejections,
-            prefilter_rejections=prefilter_rejections,
-            candidates=candidates,
-            analyzed=analyzed_records,
-            records=records,
+        fmp_key = get_secret("FMP_API_KEY") or get_secret(
+            "FINANCIAL_MODELING_PREP_API_KEY"
         )
-        for symbol in symbol_news_evidence(news_items)
-    }
-    wire_news_log = recent_wire_news_log(
-        news_items,
-        snapshots=snapshots,
-        analyzed=analyzed_records,
-        records=records,
-        settings=settings,
-    )
-    for item in wire_news_log:
-        log("Recent wire news: " + json.dumps(item, separators=(",", ":")))
-    client.diagnostics["recent_wire_news"] = wire_news_log
+        if fmp_key:
+            provider = FreeFloatClient(fmp_key, timeout=12)
+            _count, errors = enrich_snapshots_with_free_float(selected, provider)
+            client.diagnostics["free_float_provider"] = "Financial Modeling Prep"
+            if errors:
+                client.warnings.append(
+                    f"FMP free-float unavailable for {len(errors)} symbols"
+                )
+        if hasattr(client, "enrich_free_float"):
+            try:
+                client.enrich_free_float(state["snapshots"], symbols)
+            except Exception as exc:
+                client.warnings.append(f"Free-float fallback unavailable: {exc}")
+        refreshed = {
+            item["symbol"]: item
+            for item in snapshot_identity_records(state["snapshots"])
+        }
+        decisions = {}
+        for item in records:
+            symbol = item["symbol"]
+            update = refreshed.get(symbol, {})
+            value = next((update.get(key) for key in (
+                "free_float", "float_shares", "shares_float"
+            ) if update.get(key) is not None), None)
+            try:
+                passed = float(value) <= policy.max_free_float
+            except (TypeError, ValueError):
+                passed = False
+            reason = (
+                "Free float within configured limit" if passed else
+                "Usable free-float value unavailable" if value is None else
+                "Free float exceeds configured limit"
+            )
+            decisions[symbol] = Decision(passed, "Free Float", reason, update)
+        return decisions
 
-    # Commit the completed scan to the UI before best-effort persistence.  A
-    # recorder or history write must never leave the previous scan displayed.
-    st.session_state.records = records
-    st.session_state.symbols_sampled = len(seeds)
-    st.session_state.prefilter_count = len(candidates)
+    def participation(records):
+        symbols = {item["symbol"] for item in records}
+        eligible_snapshots = {
+            symbol: snap for symbol, snap in state["snapshots"].items()
+            if symbol in symbols
+        }
+        candidates = prefilter_snapshots(eligible_snapshots, settings)
+        candidate_by_symbol = {item["symbol"]: item for item in candidates}
+        analyzed = analyze_candidates(
+            client, candidates, index_news(state["news"]), state["reasons"]
+        )
+        analyzed = history.enrich_velocity(analyzed, previous=previous)
+        analyzed_by_symbol = {item["symbol"]: item for item in analyzed}
+        state["candidates"], state["analyzed"] = candidates, analyzed
+        result = {}
+        for item in records:
+            symbol = item["symbol"]
+            if symbol not in candidate_by_symbol:
+                result[symbol] = Decision(False, "Participation", "Market participation prefilter not satisfied")
+            elif symbol not in analyzed_by_symbol:
+                result[symbol] = Decision(False, "Participation", "Insufficient intraday data for assessment")
+            else:
+                analyzed_record = analyzed_by_symbol[symbol]
+                result[symbol] = Decision(True, "Participation", "Participation evidence measured", analyzed_record)
+        return result
+
+    def expansion(records):
+        result = {}
+        for item in records:
+            advanced, audit, confluence = behavioral_decision(item)
+            result[item["symbol"]] = Decision(
+                advanced, "Expansion", f"Confluence {confluence}",
+                {"decision_funnel": audit, "confluence_score": confluence,
+                 "eligible": True,
+                 "final_decision": "Attention Earned" if advanced else "Rejected",
+                 "candidate_status": item.get("candidate_status", "Entry Ready") if advanced else "Removed",
+                 "scanner_version": "Walter Architecture v1.0"},
+            )
+        return result
+
+    class RuntimeStore:
+        def persist(self, results):
+            # The complete ledger, including rejected candidates, is durable before
+            # Mission Publication makes qualified records visible.
+            history.append(results)
+
+    def rank(records):
+        return sorted(records, key=trader_priority_sort_key)
+
+    def publish(records):
+        state["ranked"] = records
+        st.session_state.records = records
+
+    architecture = WalterArchitectureV1(
+        policy=policy,
+        discover=discover,
+        catalyst=catalyst,
+        participation=participation,
+        expansion=expansion,
+        free_float=free_float,
+        rank=rank,
+        store=RuntimeStore(),
+        publish=publish,
+        stage_observer=lambda number, _name, candidates: announce(
+            number, f"{len(candidates)} candidates" if number > 1 else ""
+        ),
+    )
+    ledger = architecture.run()
+    ranked = state["ranked"]
+    client.diagnostics["walter_architecture"] = {
+        "version": "1.0", "stages": list(architecture.trace),
+        "terminal_outcomes": {
+            outcome: sum(item.get("terminal_outcome") == outcome for item in ledger)
+            for outcome in ("Rejected", "Qualified and Ranked", "Technical Failure")
+        },
+    }
+    st.session_state.symbols_sampled = len(state["seeds"])
+    st.session_state.prefilter_count = len(state["candidates"])
     st.session_state.source_label = (
-        f"Live {settings.feed.upper()} · {len(seeds)} symbols sampled · "
-        f"{len(candidates)} prefiltered"
+        f"Live {settings.feed.upper()} · {len(state['seeds'])} symbols sampled · "
+        f"{len(ranked)} Walter-qualified"
     )
     st.session_state.api_warnings = list(client.warnings)
     st.session_state.scan_diagnostics = dict(client.diagnostics)
     st.session_state.last_updated = datetime.now().astimezone()
-
-    flight_scan = record_scan_safely(
-        get_flight_recorder(),
-        seeds=seeds,
-        discovery_reasons=reasons,
-        snapshots=snapshots,
-        candidates=candidates,
-        analyzed=analyzed_records,
-        records=records,
-        settings=settings,
-        scanner_v2=False,
-        recent_news_log=wire_news_log,
-    )
-    if flight_scan is not None:
-        client.diagnostics["flight_recorder"] = {
-            "scan_id": flight_scan["scan_id"],
-            "timestamp": flight_scan["timestamp"],
-            "funnel": flight_scan["funnel"],
-        }
-    else:
-        client.diagnostics["flight_recorder_error"] = "write failed; scan continued"
-    try:
-        store.append(records)
-    except Exception as exc:
-        logging.getLogger(__name__).exception("Scan history write failed")
-        log(
-            "Scan history write failed; dashboard updated: "
-            f"{type(exc).__name__}: {exc}"
-        )
-    # Preserve the immediately previous evidence only for the display layer. This
-    # is attached after persistence so it cannot affect Scanner V2 or compound in
-    # candidate history across refreshes.
-    for record in records:
-        record["opportunity_pulse_previous"] = compact_previous_record(
-            previous.get(record["symbol"])
-        )
-    result = (
-        records, len(seeds), len(candidates), list(client.warnings),
-        dict(client.diagnostics),
-    )
-    memory_profile(
-        "scan complete", session_state=st.session_state,
-        structures={"ranked_records": records, "scan_diagnostics": client.diagnostics},
-    )
-    # Persistence and ranking are complete. These potentially large provider payloads
-    # must not survive into Streamlit's next rerun.
-    release_temporaries(
-        snapshots, cheap_gate_snapshots, float_snapshots, eligible_snapshots,
-        identity_records, candidates, analyzed_records, news_items, previous,
-    )
-    progress.progress(1.0, text="Scan complete")
-    status.update(
-        label=f"Scan complete: {len(records)} ranked records",
-        state="complete",
-        expanded=False,
-    )
-    log(f"Complete: {len(records)} ranked records")
-    return result
+    progress.progress(1.0, text="Walter Architecture complete")
+    status.update(label=f"Scan complete: {len(ranked)} ranked records",
+                  state="complete", expanded=False)
+    return (ranked, len(state["seeds"]), len(state["candidates"]),
+            list(client.warnings), dict(client.diagnostics))
 
 
 def run_live(

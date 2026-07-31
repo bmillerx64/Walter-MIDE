@@ -112,13 +112,16 @@ def test_run_live_enrichment_path_passes_previous_state(monkeypatch, tmp_path):
     assert records[0]["previous_score"] == 42
     assert records[0]["velocity"] == 13
     assert records[0]["status_changed"] is True
-    assert records[0]["scanner_version"] == "Decision Funnel 3.0"
-    assert records[0]["current_stage"] == "Stage 2"
-    assert records[0]["candidate_status"] == "Removed"
-    assert records[0]["final_decision"] == "Rejected"
-    assert records[0]["rejection_reason"] == "Price: Outside permitted range"
+    assert records[0]["scanner_version"] == "Walter Architecture v1.0"
+    assert records[0]["terminal_outcome"] == "Qualified and Ranked"
+    assert records[0]["mission_rank"] == 1
+    assert [stage["stage"] for stage in diagnostics["walter_architecture"]["stages"]] == [
+        "Universe Construction", "Price Gate", "Validity Gate", "Free-Float Gate",
+        "Catalyst Assessment", "Participation Assessment", "Expansion Assessment",
+        "Mission Ranking and Publication",
+    ]
     assert __import__("app").st.session_state.records is records
-    assert diagnostics["flight_recorder_error"] == "write failed; scan continued"
+    assert "flight_recorder_error" not in diagnostics
     persisted = [json.loads(line) for line in history_path.read_text().splitlines()]
     assert persisted[-1]["symbol"] == records[0]["symbol"]
     assert persisted[-1]["velocity"] == records[0]["velocity"]
@@ -180,13 +183,13 @@ def test_run_live_scanner_v1_enrichment_path_accepts_previous_state(
 
     assert seed_count == 1
     assert candidate_count == 1
-    assert records[0]["scanner_version"] == "Decision Funnel 3.0"
+    assert records[0]["scanner_version"] == "Walter Architecture v1.0"
     assert records[0]["previous_score"] == 50
     assert records[0]["velocity"] == 11
     assert records[0]["status_changed"] is True
     persisted = [json.loads(line) for line in history_path.read_text().splitlines()]
     assert persisted[-1]["symbol"] == records[0]["symbol"]
-    assert persisted[-1]["scanner_version"] == "Decision Funnel 3.0"
+    assert persisted[-1]["scanner_version"] == "Walter Architecture v1.0"
     assert persisted[-1]["velocity"] == records[0]["velocity"]
 
 

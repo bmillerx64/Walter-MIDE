@@ -81,8 +81,10 @@ def test_cycu_targeted_news_is_not_lost_when_global_batch_is_full(tmp_path):
     items = service.fetch(symbols=["CYCU"], force_lookback=True)
     seeds, reasons = build_seed_symbols(DiscoveryClient(), Settings(), items)
 
-    assert "CYCU" in seeds
-    assert "recent news" in reasons["CYCU"]
+    # Catalyst retrieval is downstream evidence and cannot introduce CYCU into
+    # the universe when no approved discovery source selected it.
+    assert "CYCU" not in seeds
+    assert "CYCU" not in reasons
     assert len(symbol_news_evidence(items)["CYCU"]["articles"]) == 2
     assert symbol_news_evidence(items)["CYCU"]["distinct_source_count"] == 2
     assert provider.calls[-1][1] == ["CYCU"]

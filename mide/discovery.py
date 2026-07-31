@@ -97,14 +97,9 @@ def build_seed_symbols(client, settings, news_items):
     for item in actives:
         add(item.get("symbol"), "most active")
 
-    news_symbol_count = 0
-    for item in news_items:
-        for symbol in item.get("symbols", []) or []:
-            before = len(symbols)
-            add(symbol, "recent news")
-            news_symbol_count += int(len(symbols) > before)
-
-    client.diagnostics["news_symbols"] = news_symbol_count
+    # News is evidence for candidates already admitted by Universe Construction.
+    # It must never expand the universe, even when callers provide prefetched news.
+    client.diagnostics["news_symbols"] = 0
 
     # Add a rotating broad-market slice. Alpaca is preferred; a public symbol
     # directory is used only when the trading asset endpoint is unavailable.
@@ -310,7 +305,7 @@ def analyze_candidates(client, candidates, news_index, discovery_reasons):
         return []
     start = datetime.now(timezone.utc) - timedelta(days=VOLUME_PROFILE_LOOKBACK_DAYS)
     symbols = [
-        x["symbol"] for x in candidates[:80] if is_valid_us_symbol(x.get("symbol"))
+        x["symbol"] for x in candidates if is_valid_us_symbol(x.get("symbol"))
     ]
     raw = client.bars(symbols, start=start, timeframe="1Min", limit=10_000)
     try:
@@ -321,7 +316,7 @@ def analyze_candidates(client, candidates, news_index, discovery_reasons):
             client.warnings.append(f"30-second trend confirmation unavailable: {exc}")
     from mide.relative_strength import benchmark_for, relative_strength_metrics
 
-    benchmark_symbols = sorted({benchmark_for(item) for item in candidates[:80]})
+    benchmark_symbols = sorted({benchmark_for(item) for item in candidates})
     try:
         benchmark_raw = client.bars(
             benchmark_symbols, start=start, timeframe="1Min", limit=10_000
@@ -332,7 +327,7 @@ def analyze_candidates(client, candidates, news_index, discovery_reasons):
             client.warnings.append(f"Relative-strength benchmarks unavailable: {exc}")
     output = []
 
-    for item in candidates[:80]:
+    for item in candidates:
         symbol = item["symbol"]
         frame = client.bars_frame(raw.get(symbol, []))
         if len(frame) < 20:

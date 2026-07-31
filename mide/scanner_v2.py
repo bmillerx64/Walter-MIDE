@@ -1632,6 +1632,19 @@ def classify_state(
         return "Removed"
     if trigger_diagnostics(record, prior, scan_time)["passed"]:
         return "Entry Ready"
+    chart_preparing = (
+        str(record.get("vwap_relation") or "").lower() == "above"
+        and (
+            record.get("supertrend_30s_flip")
+            or any(
+                detail.get("near_supertrend_flip")
+                or detail.get("very_close_to_flipping")
+                for detail in (record.get("timeframes") or {}).values()
+            )
+        )
+    )
+    if prior_state == "Strengthening" and chart_preparing:
+        return "Strengthening"
     if (
         prior
         and score
