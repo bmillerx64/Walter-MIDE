@@ -10,6 +10,7 @@ from app import (
     run_live,
 )
 from mide.memory import MemoryStore
+from mide.architecture import WalterArchitectureV1
 
 
 class DummyStatus:
@@ -225,3 +226,21 @@ def test_run_live_logs_entire_pipeline_failure_and_closes_status(monkeypatch, ca
         "state": "error",
         "expanded": True,
     }]
+
+
+def test_live_scan_dispatches_through_walter_architecture(monkeypatch):
+    expected = ([], 0, 0, [], {})
+    invocations = []
+    original_run = WalterArchitectureV1.run
+
+    def observed_run(self):
+        invocations.append(self)
+        return original_run(self)
+
+    monkeypatch.setattr("app.st.status", lambda *args, **kwargs: DummyStatus())
+    monkeypatch.setattr("app._run_live_pipeline", lambda *args, **kwargs: expected)
+    monkeypatch.setattr(WalterArchitectureV1, "run", observed_run)
+
+    assert run_live() is expected
+    assert len(invocations) == 1
+    assert isinstance(invocations[0], WalterArchitectureV1)
