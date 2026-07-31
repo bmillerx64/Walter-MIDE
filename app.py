@@ -115,6 +115,8 @@ from mide.discovery import (
     prefilter_snapshots,
     snapshot_identity_records,
 )
+from mide.flight_recorder import prefilter_decision
+from mide.pipeline_diagnostics import diagnostics_table, stage_diagnostic
 from mide.universe_diagnostics import UniverseVerification
 memory_checkpoint("discovery import", object_name="mide.discovery")
 from mide.scanner_v2 import (
@@ -938,7 +940,8 @@ def _run_live_pipeline(
         progress = st.progress(0, text="Starting Walter Architecture")
 
     state = {"seeds": [], "reasons": {}, "snapshots": {}, "news": [],
-             "candidates": [], "analyzed": [], "ranked": []}
+             "candidates": [], "analyzed": [], "ranked": [],
+             "stage_diagnostics": []}
     universe_verification = UniverseVerification(
         client, feed=settings.feed, market_session=market_phase()
     )
@@ -1026,6 +1029,15 @@ def _run_live_pipeline(
                 )
         price_failures = sorted(set(seeds) - set(prices))
         state["price_elapsed_ms"] = round((perf_counter() - price_started) * 1000, 3)
+        price_rows = [
+            {"symbol": symbol, "price": prices.get(symbol)} for symbol in seeds
+        ]
+        state["stage_diagnostics"].append(stage_diagnostic(
+            "Snapshot retrieval", price_rows,
+            [row for row in price_rows if row["price"] is not None],
+            rejection_reasons=("Snapshot unavailable" for _symbol in price_failures),
+            fields=("price",),
+        ))
         transitions = [{
             "transition_function_name": "minimal price retrieval for Price Gate",
             "input_count": len(seeds), "output_count": len(seeds),
@@ -1118,6 +1130,11 @@ def _run_live_pipeline(
                 True, "Catalyst", "Catalyst evidence assessed" if news else "No catalyst found",
                 updates,
             )
+        assessed = [dict(item, **decisions[item["symbol"]].updates) for item in records]
+        state["stage_diagnostics"].append(stage_diagnostic(
+            "Catalyst detection", assessed, assessed,
+            fields=("headline", "catalyst_score"),
+        ))
         return decisions
 
     def free_float(records):
@@ -1194,6 +1211,28 @@ def _run_live_pipeline(
             if symbol in symbols
         }
         candidates = prefilter_snapshots(eligible_snapshots, settings)
+        candidate_symbols = {item["symbol"] for item in candidates}
+        prefilter_reasons = [
+            prefilter_decision(symbol, snap, settings)["reason"]
+            for symbol, snap in eligible_snapshots.items()
+            if symbol not in candidate_symbols
+        ]
+        snapshot_metrics = []
+        for symbol, snap in eligible_snapshots.items():
+            snapshot_metrics.append({
+                "symbol": symbol,
+                "latest_trade": (snap.get("latestTrade") or {}).get("p"),
+                "latest_quote_bid": (snap.get("latestQuote") or {}).get("bp"),
+                "latest_quote_ask": (snap.get("latestQuote") or {}).get("ap"),
+                "daily_volume": (snap.get("dailyBar") or {}).get("v"),
+                "previous_close": (snap.get("prevDailyBar") or {}).get("c"),
+            })
+        state["stage_diagnostics"].append(stage_diagnostic(
+            "Prefilter", snapshot_metrics, candidates,
+            rejection_reasons=prefilter_reasons,
+            fields=("latest_trade", "latest_quote_bid", "latest_quote_ask",
+                    "daily_volume", "previous_close"),
+        ))
         candidate_by_symbol = {item["symbol"]: item for item in candidates}
         analyzed = analyze_candidates(
             client, candidates, index_news(state["news"]), state["reasons"]
@@ -1211,6 +1250,14 @@ def _run_live_pipeline(
             else:
                 analyzed_record = analyzed_by_symbol[symbol]
                 result[symbol] = Decision(True, "Participation", "Participation evidence measured", analyzed_record)
+        state["stage_diagnostics"].append(stage_diagnostic(
+            "Participation", candidates, analyzed,
+            rejection_reasons=(
+                "Insufficient intraday data for assessment"
+                for item in candidates if item["symbol"] not in analyzed_by_symbol
+            ),
+            fields=("volume", "dollar_volume", "prev_volume", "spread_pct"),
+        ))
         return result
 
     def expansion(records):
@@ -1225,6 +1272,15 @@ def _run_live_pipeline(
                  "candidate_status": item.get("candidate_status", "Entry Ready") if advanced else "Removed",
                  "scanner_version": "Walter Architecture v1.0"},
             )
+        expanded = [item for item in records if result[item["symbol"]].passed]
+        state["stage_diagnostics"].append(stage_diagnostic(
+            "Expansion", records, expanded,
+            rejection_reasons=(
+                result[item["symbol"]].reason for item in records
+                if not result[item["symbol"]].passed
+            ),
+            fields=("participation_score", "volume_acceleration", "vwap_relation"),
+        ))
         return result
 
     class RuntimeStore:
@@ -1263,6 +1319,16 @@ def _run_live_pipeline(
     )
     ledger = architecture.run()
     ranked = state["ranked"]
+    # Entry readiness is an observational view of the already-completed
+    # Expansion decision. It does not add a gate or alter ranking membership.
+    state["stage_diagnostics"].append(stage_diagnostic(
+        "Entry readiness", ranked, ranked,
+        fields=("candidate_status", "qualified_for_entry", "trigger_diagnostics"),
+    ))
+    state["stage_diagnostics"].append(stage_diagnostic(
+        "Ranking", ranked, ranked,
+        fields=("mission_rank", "conviction_score", "participation_score"),
+    ))
     # Outcome measurement is strictly downstream of publication and receives
     # detached snapshots, never the authoritative candidate objects.
     try:
@@ -1285,6 +1351,21 @@ def _run_live_pipeline(
         "operational_health": operational,
         "verification": architecture.verification_report,
         "universe_verification": universe_verification.report,
+    }
+    diagnostic_order = {
+        name: position for position, name in enumerate((
+            "Snapshot retrieval", "Prefilter", "Catalyst detection",
+            "Participation", "Expansion", "Entry readiness", "Ranking",
+        ))
+    }
+    stage_diagnostics = sorted(
+        state["stage_diagnostics"],
+        key=lambda item: diagnostic_order.get(item["stage"], len(diagnostic_order)),
+    )
+    client.diagnostics["post_universe_pipeline"] = {
+        "universe_count": len(state["seeds"]),
+        "stages": stage_diagnostics,
+        "table": diagnostics_table(stage_diagnostics),
     }
     timing_summary = []
     for item in architecture.trace:
@@ -1591,6 +1672,21 @@ with system_status_panel:
         )
         st.caption(
             "Healthy · persistence completed before publication · publication identity verified"
+        )
+
+    post_universe = (
+        scan_diagnostics.get("post_universe_pipeline")
+        if isinstance(scan_diagnostics, dict) else None
+    )
+    if post_universe:
+        st.subheader("Diagnostics")
+        st.caption(
+            f"Post-universe symbol accounting from "
+            f"{post_universe.get('universe_count', 0):,} loaded symbols."
+        )
+        st.dataframe(
+            post_universe.get("table", []), use_container_width=True,
+            hide_index=True,
         )
 
     verification = (
