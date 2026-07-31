@@ -139,17 +139,33 @@ def test_assets_accepts_asset_class_field_and_records_counts(monkeypatch):
 
     def fake_get(base, path, params=None, *, authenticated=True):
         return [
-            {"symbol": "GOOD", "tradable": True, "status": "active", "asset_class": "us_equity"},
+            {"symbol": "GOOD", "name": "Good Corp Common Stock", "tradable": True, "status": "active", "asset_class": "us_equity"},
             {"symbol": "BAD", "tradable": False, "status": "active", "asset_class": "us_equity"},
-            {"symbol": "UNIT.U", "tradable": True, "status": "active", "asset_class": "us_equity"},
+            {"symbol": "ODD", "name": "Odd Corp Units", "tradable": True, "status": "active", "asset_class": "us_equity"},
+            {"symbol": "WRONG", "name": "Wrong Corp Common Stock", "tradable": True, "status": "active", "asset_class": "crypto"},
         ]
 
     monkeypatch.setattr(client, "_get", fake_get)
     assets = client.assets()
     assert [item["symbol"] for item in assets] == ["GOOD"]
     assert client.diagnostics["assets_endpoint"] == "paper"
-    assert client.diagnostics["assets_raw"] == 3
+    assert client.diagnostics["assets_raw"] == 4
     assert client.diagnostics["assets_eligible"] == 1
+    assert client.diagnostics["assets_non_common_rejected"] == 1
+
+
+def test_assets_classifies_instruments_from_metadata_not_symbol(monkeypatch):
+    client = AlpacaClient("key", "secret")
+    monkeypatch.setattr(client, "_get", lambda *args, **kwargs: [
+        {"symbol": "KEEP.W", "name": "Keep Incorporated Common Stock", "tradable": True,
+         "status": "active", "class": "us_equity"},
+        {"symbol": "PLAIN", "name": "Plain Incorporated Warrant", "tradable": True,
+         "status": "active", "class": "us_equity"},
+        {"symbol": "PREF", "name": "Example Depositary Shares Preferred Stock", "tradable": True,
+         "status": "active", "class": "us_equity"},
+    ])
+
+    assert [asset["symbol"] for asset in client.assets()] == ["KEEP.W"]
 
 
 def test_bars_limit_is_capped_at_10000(monkeypatch):

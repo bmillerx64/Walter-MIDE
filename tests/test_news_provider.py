@@ -73,13 +73,35 @@ def fixture():
 def test_universe_uses_every_asset_without_rotation_or_batch_limit():
     client = DiscoveryClient()
     client.assets = lambda: [
-        {"symbol": "ZZZ", "tradable": True, "status": "active"},
-        {"symbol": "AAA", "tradable": True, "status": "active"},
+        {"symbol": "ZZZ", "tradable": True, "status": "active", "class": "us_equity"},
+        {"symbol": "AAA", "tradable": True, "status": "active", "class": "us_equity"},
     ]
     first, provenance = build_seed_symbols(client, Settings(), [])
     second, _ = build_seed_symbols(client, Settings(), [])
     assert first == second == ["AAA", "ZZZ"]
     assert provenance == {"AAA": ["Alpaca assets"], "ZZZ": ["Alpaca assets"]}
+
+
+def test_universe_uses_only_alpaca_common_stock_assets():
+    client = DiscoveryClient()
+    client.movers = lambda top: (_ for _ in ()).throw(AssertionError("movers called"))
+    client.most_actives = lambda top: (_ for _ in ()).throw(AssertionError("actives called"))
+    client.public_symbol_fallback = lambda: (_ for _ in ()).throw(
+        AssertionError("fallback called")
+    )
+    client.assets = lambda: [
+        {"symbol": "COMMON", "name": "Example Common Stock", "tradable": True,
+         "status": "active", "class": "us_equity"},
+        {"symbol": "WARRANT", "name": "Example Warrants", "tradable": True,
+         "status": "active", "class": "us_equity"},
+        {"symbol": "INACTIVE", "name": "Inactive Common Stock", "tradable": True,
+         "status": "inactive", "class": "us_equity"},
+    ]
+
+    seeds, _ = build_seed_symbols(client, Settings(), [])
+
+    assert seeds == ["COMMON"]
+    assert client.diagnostics["final_seed_count"] == 1
 
 
 def test_cycu_targeted_news_is_not_lost_when_global_batch_is_full(tmp_path):
