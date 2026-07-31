@@ -737,12 +737,14 @@ with st.sidebar:
         )
         st.write(f"Voice currently selected: {selected_voice}")
         stream_diagnostics = st.session_state.get("scan_diagnostics", {}).get("webull_stream", {})
-        source_diagnostics = st.session_state.get("scan_diagnostics", {}).get("market_data_sources", {})
         st.write(f"Selected provider: {selected_provider}")
         if selected_provider == "WEBULL":
-            st.write(f"Universe Provider: {source_diagnostics.get('universe_provider', 'N/A')}")
-            st.write(f"Snapshot Provider: {source_diagnostics.get('snapshot_provider', 'N/A')}")
-            st.write(f"Streaming Provider: {source_diagnostics.get('streaming_provider', 'N/A')}")
+            actual_sources = st.session_state.get("scan_diagnostics", {}).get("active_pipeline_sources", [])
+            st.write("Actual Live Webull pipeline providers and endpoints")
+            if actual_sources:
+                st.dataframe(actual_sources, use_container_width=True, hide_index=True)
+            else:
+                st.caption("Provider paths appear after the first Live Webull scan.")
             st.write(f"Webull authentication: {stream_diagnostics.get('authentication_status', 'pending')}")
             st.write(f"Stream connection: {stream_diagnostics.get('stream_connection_status', 'disconnected')}")
             st.write(f"Subscribed symbols: {stream_diagnostics.get('subscribed_symbols', 0)}")
@@ -1392,6 +1394,8 @@ def _run_live_pipeline(
         ) if state["seeds"] else 0.0,
     })
     client.diagnostics["pipeline_timing_summary"] = timing_summary
+    if isinstance(client, LiveWebullProvider):
+        client.diagnostics["active_pipeline_sources"] = client.pipeline_sources()
     log("Timing summary: " + json.dumps(timing_summary, separators=(",", ":")))
     st.session_state.symbols_sampled = len(state["seeds"])
     st.session_state.prefilter_count = len(state["candidates"])
@@ -1881,6 +1885,20 @@ if active_tab == "Radar":
                     radar_table(sorted_records), width="stretch", hide_index=True
                 )
 if active_tab == "Diagnostics":
+    active_sources = (
+        scan_diagnostics.get("active_pipeline_sources", [])
+        if isinstance(scan_diagnostics, dict) else []
+    )
+    st.subheader("Active Pipeline Data Sources")
+    st.caption(
+        "Runtime provider and endpoint paths for the selected Live Webull scan; "
+        "Alpaca usage is called out explicitly rather than hidden behind the selection label."
+    )
+    if active_sources:
+        st.dataframe(active_sources, use_container_width=True, hide_index=True)
+    else:
+        st.caption("Run a Live Webull scan to populate provider and endpoint evidence.")
+
     st.subheader("Universe Definition")
     universe_report = (
         (scan_diagnostics.get("walter_architecture") or {}).get("universe_verification")

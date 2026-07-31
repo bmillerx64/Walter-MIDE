@@ -117,6 +117,17 @@ def test_snapshot_is_complete_before_stream_starts_and_no_alpaca_prices_are_poll
         "streaming_provider": "Webull OpenAPI",
     }
 
+    sources = {row["Stage"]: row for row in provider.pipeline_sources()}
+    assert sources["Universe (tradable symbol list)"]["Actual provider"] == "Alpaca Trading API"
+    assert "/v2/assets" in sources["Universe (tradable symbol list)"]["Endpoint / operation"]
+    assert sources["Quote / snapshot retrieval"]["Actual provider"] == "Webull OpenAPI"
+    assert "/market-data/quotes" in sources["Quote / snapshot retrieval"]["Endpoint / operation"]
+    assert sources["News"]["Alpaca used"] == "Yes"
+    assert "/v1beta1/news" in sources["News"]["Endpoint / operation"]
+    assert sources["VWAP / volume calculations"]["Alpaca used"] == "Yes"
+    assert "/v2/stocks/bars" in sources["VWAP / volume calculations"]["Endpoint / operation"]
+    assert sources["Scanning / filtering"]["Endpoint / operation"].startswith("No provider endpoint")
+
 
 def test_official_snapshot_client_signs_request_and_normalizes_quotes():
     captured = {}

@@ -216,6 +216,70 @@ class LiveWebullProvider(WebullProvider):
             app_key, app_secret, base_url=os.getenv("WEBULL_OPENAPI_URL", DEFAULT_OPENAPI_URL))
         super().__init__(stream_factory=self._stream_factory)
 
+    def pipeline_sources(self) -> list[dict[str, str]]:
+        """Describe the providers Walter actually invokes in Live Webull mode.
+
+        This is deliberately derived from the configured clients instead of from
+        UI labels.  In particular, ``__getattr__`` delegates history/bars and the
+        explicit ``news`` method delegates news to the Alpaca fallback.
+        """
+        fallback = self.fallback
+        data_url = getattr(fallback, "DATA", "https://data.alpaca.markets")
+        asset_environment = fallback.diagnostics.get("assets_endpoint")
+        asset_base = {
+            "paper": getattr(fallback, "PAPER_TRADING", "https://paper-api.alpaca.markets"),
+            "live": getattr(fallback, "LIVE_TRADING", "https://api.alpaca.markets"),
+        }.get(asset_environment, "paper, then live Alpaca Trading API")
+        snapshot_base = getattr(self._snapshot_client, "base_url", DEFAULT_OPENAPI_URL)
+        snapshot_path = getattr(self._snapshot_client, "snapshot_path", DEFAULT_SNAPSHOT_PATH)
+        bootstrap_url = getattr(self._bootstrap, "url", DEFAULT_BOOTSTRAP_URL)
+        topic = (self._broker or {}).get("topic_template", DEFAULT_TOPIC)
+        feed = getattr(fallback, "feed", "iex")
+        return [
+            {
+                "Stage": "Universe (tradable symbol list)",
+                "Actual provider": "Alpaca Trading API",
+                "Endpoint / operation": f"GET {asset_base}/v2/assets?status=active&asset_class=us_equity",
+                "Code path": "app._run_live_pipeline.<locals>.discover → discovery.build_seed_symbols → LiveWebullProvider.__getattr__ → AlpacaClient.assets",
+                "Alpaca used": "Yes",
+            },
+            {
+                "Stage": "Quote / snapshot retrieval",
+                "Actual provider": "Webull OpenAPI",
+                "Endpoint / operation": f"GET {snapshot_base}{snapshot_path}?symbols=<batch>",
+                "Code path": "app._run_live_pipeline.<locals>.discover → LiveWebullProvider.initialize_quotes → WebullOpenAPIClient.snapshots; then LiveWebullProvider.snapshots reads the Webull cache",
+                "Alpaca used": "No",
+            },
+            {
+                "Stage": "Streaming quotes",
+                "Actual provider": "Webull OpenAPI streaming (MQTT)",
+                "Endpoint / operation": f"POST {bootstrap_url}; subscribe {topic}",
+                "Code path": "LiveWebullProvider.ensure_stream → WebullProvider.subscribe → LiveWebullProvider._stream_factory → PahoWebullStream",
+                "Alpaca used": "No",
+            },
+            {
+                "Stage": "News",
+                "Actual provider": "Alpaca Market Data API",
+                "Endpoint / operation": f"GET {data_url}/v1beta1/news",
+                "Code path": "app._run_live_pipeline.<locals>.catalyst → NewsService.fetch → MarketDataNewsProvider.fetch → LiveWebullProvider.news → AlpacaClient.news",
+                "Alpaca used": "Yes",
+            },
+            {
+                "Stage": "VWAP / volume calculations",
+                "Actual provider": "Alpaca Market Data bars + Walter local calculations",
+                "Endpoint / operation": f"GET {data_url}/v2/stocks/bars (feed={feed}; 1Min/30Sec); session_vwap and volume metrics run locally",
+                "Code path": "app._run_live_pipeline.<locals>.participation → discovery.analyze_candidates → LiveWebullProvider.__getattr__ → AlpacaClient.bars; then indicators.session_vwap / volume_pace.volume_pace_metrics",
+                "Alpaca used": "Yes",
+            },
+            {
+                "Stage": "Scanning / filtering",
+                "Actual provider": "Walter local pipeline (using the inputs above)",
+                "Endpoint / operation": "No provider endpoint; in-process gates, scoring, ranking, and filtering",
+                "Code path": "WalterArchitectureV1.run → discovery.prefilter_snapshots / analyze_candidates → scanner_v2 and scoring → trader_priority_sort_key",
+                "Alpaca used": "Indirectly (universe, news, and bar-derived evidence)",
+            },
+        ]
+
     def __getattr__(self, name):
         return getattr(self.fallback, name)
 
