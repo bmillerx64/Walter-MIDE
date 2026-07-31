@@ -1,7 +1,7 @@
 from copy import deepcopy
 from datetime import datetime, timedelta, timezone
 
-from mide.mission_outcomes import MissionOutcomeStore
+from mide.mission_outcomes import MissionOutcomeStore, OutcomeAnalyticsEngine
 
 
 START = datetime(2026, 7, 31, 14, 30, tzinfo=timezone.utc)
@@ -80,3 +80,67 @@ def test_tracking_cannot_mutate_candidate_decisions(tmp_path):
     original = deepcopy(source)
     MissionOutcomeStore(tmp_path / "outcomes.json").process_scan([source], timestamp=START)
     assert source == original
+
+
+def test_completed_outcome_has_excursions_timing_classification_and_attribution(tmp_path):
+    store = MissionOutcomeStore(tmp_path / "outcomes.json")
+    store.process_scan([candidate(candidate_status="Entry Window", mission_rank=1)], timestamp=START)
+    store.process_scan([candidate(candidate_status="Entry Window", price=10.5, high=11.2, low=9.7, mission_rank=1)], timestamp=START + timedelta(minutes=4))
+    store.process_scan([], timestamp=START + timedelta(minutes=5))
+    outcome = store.all()[0]
+    assert outcome["maximum_favorable_excursion"] == 12
+    assert outcome["maximum_adverse_excursion"] == -3
+    assert outcome["time_to_entry_ready"] == 0
+    assert outcome["time_to_peak"] == 4
+    assert outcome["closing_outcome"]["percentage_change"] == 5
+    assert outcome["classification"] == "Excellent"
+    assert set(outcome["component_attribution"]) == {
+        "Catalyst Assessment", "Participation Assessment", "Expansion Assessment",
+        "Conviction", "Entry Readiness", "Mission Ranking",
+    }
+
+
+def test_never_triggered_is_objectively_classified(tmp_path):
+    store = MissionOutcomeStore(tmp_path / "outcomes.json")
+    store.process_scan([candidate(price=10)], timestamp=START)
+    store.process_scan([], timestamp=START + timedelta(minutes=1))
+    assert store.all()[0]["classification"] == "Never Triggered"
+
+
+def test_historical_summaries_scorecards_ranking_and_readiness():
+    def completed(symbol, rank, state, change, classification, day="2026-07-31"):
+        success = classification in {"Excellent", "Good"}
+        predictions = {
+            name: {"predicted_success": rank == 1, "actual_success": success, "correct": (rank == 1) == success}
+            for name in ("Catalyst Assessment", "Participation Assessment", "Expansion Assessment", "Conviction", "Entry Readiness", "Mission Ranking")
+        }
+        return {"completed": True, "classification": classification, "symbol": symbol,
+                "session_date": day, "initial_rank": rank, "initial_readiness_state": state,
+                "became_entry_ready": state == "Entry Window", "closing_outcome": {"percentage_change": change},
+                "maximum_favorable_excursion": max(change, 0), "maximum_adverse_excursion": min(change, 0),
+                "component_attribution": predictions}
+
+    engine = OutcomeAnalyticsEngine([
+        completed("ONE", 1, "Entry Window", 8, "Good"),
+        completed("TWO", 2, "Early", 3, "Good"),
+        completed("THREE", 3, "Watch", -2, "Weak"),
+    ])
+    assert engine.ranking_validation()["accuracy"] == 100
+    assert engine.ranking_validation()["rank_2_outperformed_rank_3"] == 1
+    assert engine.readiness_validation()["entry_window_superior"]
+    daily = engine.daily_summary("2026-07-31")
+    assert daily["total_mission_candidates"] == 3
+    assert daily["winners"] == 2
+    assert daily["losers"] == 1
+    assert daily["average_gain"] == 5.5
+    assert engine.component_scorecards()["Mission Ranking"]["observations"] == 3
+    assert engine.weekly_summary()["subsystems"]["Mission Ranking"]["performance"] == "stable"
+
+
+def test_analytics_owns_copies_and_cannot_change_runtime_records():
+    records = [{"completed": True, "classification": "Good", "session_date": "2026-07-31",
+                "closing_outcome": {"percentage_change": 4}, "component_attribution": {}}]
+    original = deepcopy(records)
+    engine = OutcomeAnalyticsEngine(records)
+    engine.records[0]["closing_outcome"]["percentage_change"] = -99
+    assert records == original

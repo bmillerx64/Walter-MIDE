@@ -2016,3 +2016,44 @@ def opportunity_card(r):
     """,
         unsafe_allow_html=True,
     )
+
+
+def render_calibration_dashboard(report: dict) -> None:
+    """Render downstream calibration evidence without returning runtime inputs."""
+    st.subheader("Walter Calibration Dashboard")
+    st.caption(
+        "Measurement only — calibration does not alter ranking, scoring, or qualification."
+    )
+    ranking = report.get("ranking") or {}
+    readiness = report.get("readiness") or {}
+    columns = st.columns(3)
+    columns[0].metric(
+        "Ranking accuracy",
+        f"{ranking.get('accuracy'):.1f}%" if ranking.get("accuracy") is not None else "—",
+    )
+    columns[1].metric(
+        "Readiness accuracy",
+        f"{readiness.get('accuracy'):.1f}%"
+        if readiness.get("accuracy") is not None
+        else "—",
+    )
+    confidence = report.get("rolling_confidence")
+    columns[2].metric("Rolling confidence", f"{confidence:.1f}%" if confidence is not None else "—")
+    cards = report.get("component_scorecards") or {}
+    if cards:
+        st.markdown("##### Component accuracy")
+        st.dataframe(
+            [{"Component": name, **values} for name, values in cards.items()],
+            use_container_width=True,
+            hide_index=True,
+        )
+    st.markdown("##### Outcome distribution")
+    st.bar_chart(report.get("outcome_distribution") or {})
+    weekly = (report.get("weekly") or {}).get("subsystems") or {}
+    if weekly:
+        st.markdown("##### Rolling subsystem performance")
+        st.dataframe(
+            [{"Subsystem": name, **values} for name, values in weekly.items()],
+            use_container_width=True,
+            hide_index=True,
+        )
