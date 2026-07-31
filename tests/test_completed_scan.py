@@ -3,6 +3,8 @@ from datetime import datetime, timezone
 from mide.completed_scan import (
     CompletedScan,
     completed_scan_for_view,
+    publish_scan_result,
+    scan_context,
     store_completed_scan,
 )
 from mide.session_controls import (
@@ -50,6 +52,11 @@ def test_live_webull_completed_scan_is_the_authority_for_diagnostics_and_views()
         completed_at=datetime.now(timezone.utc),
         source_label="Live WEBULL · 1 symbols sampled · 1 prefiltered",
     )
+    context = scan_context(state)
+    provider = object()
+    pipeline = object()
+    context.provider_instance = provider
+    context.pipeline = pipeline
     store_completed_scan(state, scan)
     finish_scan(state)
 
@@ -61,6 +68,7 @@ def test_live_webull_completed_scan_is_the_authority_for_diagnostics_and_views()
         "Trade Outcomes",
         "Session Replay",
         "Data validation",
+        "What changed",
     )
     rendered = [completed_scan_for_view(state, view) for view in views]
     assert all(item is scan for item in rendered)
@@ -73,5 +81,63 @@ def test_live_webull_completed_scan_is_the_authority_for_diagnostics_and_views()
         "/api/quote/ticker/query",
     ]
     assert all(row["Alpaca used"] == "No" for row in diagnostics.pipeline_sources)
-    assert state["records"] is scan.records
-    assert state["scan_diagnostics"] is scan.diagnostics
+    assert scan_context(state) is context
+    assert context.provider_instance is provider
+    assert context.pipeline is pipeline
+
+
+def test_failed_rerun_cannot_replace_completed_webull_scan_with_zero_symbols():
+    state = {}
+    completed = CompletedScan(
+        provider="WEBULL",
+        records=[{"symbol": "WALT"}, {"symbol": "MIDE"}],
+        diagnostics={"selected_provider": "WEBULL", "universe_count": 731},
+        warnings=[], symbols_sampled=731, prefilter_count=28,
+        completed_at=datetime.now(timezone.utc), source_label="Live WEBULL",
+    )
+    publish_scan_result(state, completed)
+
+    interrupted = CompletedScan(
+        provider="WEBULL", records=[],
+        diagnostics={"scan_completed": False, "provider_failures": [{}]},
+        warnings=["transport interrupted"], symbols_sampled=0,
+        prefilter_count=0, completed_at=datetime.now(timezone.utc),
+        source_label="Live WEBULL · 0 symbols sampled",
+    )
+    assert publish_scan_result(state, interrupted) is completed
+
+    for view in (
+        "Radar", "Diagnostics", "Session Replay", "Trade Outcomes",
+        "Data validation", "What changed",
+    ):
+        observed = completed_scan_for_view(state, view)
+        assert observed is completed
+        assert observed.provider == "WEBULL"
+        assert observed.symbols_sampled == 731
+        assert [row["symbol"] for row in observed.records] == ["WALT", "MIDE"]
+        assert observed.diagnostics["selected_provider"] == "WEBULL"
+
+
+def test_genuine_completed_empty_universe_may_publish_zero_symbols():
+    state = {}
+    empty = CompletedScan(
+        provider="WEBULL", records=[], diagnostics={"scan_completed": True},
+        warnings=[], symbols_sampled=0, prefilter_count=0,
+        completed_at=datetime.now(timezone.utc), source_label="empty universe",
+    )
+    assert publish_scan_result(state, empty) is empty
+    assert completed_scan_for_view(state, "Radar").symbols_sampled == 0
+
+
+def test_context_survives_streamlit_hot_reload_class_identity_change():
+    """Old module instances are accepted by shape, not fragile isinstance."""
+    state = {}
+
+    class PreviousDeploymentContext:
+        completed_scan = None
+        provider_instance = object()
+        pipeline = object()
+
+    previous = PreviousDeploymentContext()
+    state["scan_context"] = previous
+    assert scan_context(state) is previous
