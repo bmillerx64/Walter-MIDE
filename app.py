@@ -114,6 +114,7 @@ from mide.architecture import (
     WalterArchitectureV1,
     scanner_implementation,
 )
+from mide.architecture_verification import candidate_trace
 from mide.mission_outcomes import MissionOutcomeStore
 memory_checkpoint("decision engine import", object_name="mide.decision_engine")
 from mide.free_float_inspector import inspect_free_float
@@ -1052,6 +1053,7 @@ def _run_live_pipeline(
             for outcome in ("Rejected", "Qualified and Ranked", "Technical Failure")
         },
         "operational_health": operational,
+        "verification": architecture.verification_report,
     }
     st.session_state.symbols_sampled = len(state["seeds"])
     st.session_state.prefilter_count = len(state["candidates"])
@@ -1330,6 +1332,42 @@ with system_status_panel:
         st.caption(
             "Healthy · persistence completed before publication · publication identity verified"
         )
+
+    verification = (
+        (scan_diagnostics.get("walter_architecture") or {}).get("verification")
+        if isinstance(scan_diagnostics, dict) else None
+    )
+    if verification:
+        st.subheader("Architecture Verification Dashboard")
+        integrity = int(verification.get("overall_integrity", 0))
+        st.metric("Overall Integrity", f"{integrity}%")
+        contract_rows = [
+            {"Contract": name, "Integrity": "✔" if passed else "✘"}
+            for name, passed in verification.get("contracts", {}).items()
+        ]
+        st.dataframe(contract_rows, use_container_width=True, hide_index=True)
+        st.markdown("**Candidate Accounting**")
+        st.dataframe(
+            verification.get("accounting", []), use_container_width=True,
+            hide_index=True,
+        )
+        if verification.get("failures"):
+            st.error("Architecture contract verification failed")
+            st.dataframe(
+                verification["failures"], use_container_width=True, hide_index=True,
+            )
+        else:
+            st.success("Every Walter architecture contract passed.")
+        if inspect_symbol:
+            st.markdown(f"**Candidate Trace — {inspect_symbol}**")
+            trace_rows = candidate_trace(
+                list(st.session_state.walter_candidate_ledger.records.values()),
+                inspect_symbol,
+            )
+            if trace_rows:
+                st.dataframe(trace_rows, use_container_width=True, hide_index=True)
+            else:
+                st.info("No recorded candidate identity matches this symbol.")
 
     st.markdown("#### Legacy Candidate Diagnostics")
     if inspect_symbol:

@@ -163,6 +163,7 @@ class WalterArchitectureV1:
         self.clock = clock or (lambda: datetime.now(timezone.utc))
         self.timer = timer or perf_counter
         self.trace: list[dict] = []
+        self.purity_observations: list[dict] = []
         self.candidate_ledger = ledger or WalterCandidateLedger()
         self._ledger = self.candidate_ledger.records
         self.operational_summary: dict[str, object] = {}
@@ -208,13 +209,16 @@ class WalterArchitectureV1:
         self, stage: str, input_count: int, output_count: int, *,
         started_at: float, technical_failures: int = 0,
     ) -> None:
+        rejected = max(0, input_count - output_count - technical_failures)
         self.trace.append({
             "number": len(self.trace) + 1,
             "stage": stage,
             "executions": 1,
             "input_count": input_count,
             "output_count": output_count,
-            "rejection_count": max(0, input_count - output_count - technical_failures),
+            "passed_count": output_count,
+            "rejection_count": rejected,
+            "rejected_count": rejected,
             "technical_failure_count": technical_failures,
             "execution_time_ms": round((self.timer() - started_at) * 1000, 3),
         })
@@ -261,6 +265,17 @@ class WalterArchitectureV1:
             if item.get("terminal_outcome") == "Technical Failure":
                 continue
             decision = decisions[symbol]
+            forbidden = {
+                "Catalyst Assessment": {"price", "free_float", "mission_rank", "ranking"},
+                "Participation Assessment": {"price", "free_float", "catalyst", "mission_rank", "ranking"},
+                "Expansion Assessment": {"price", "free_float", "catalyst", "mission_rank", "ranking"},
+            }.get(stage, set())
+            impure = sorted(forbidden.intersection(decision.updates))
+            if impure:
+                self.purity_observations.append({
+                    "stage": stage, "symbols": [symbol],
+                    "violation": f"{stage} wrote fields owned by another stage: {', '.join(impure)}",
+                })
             item.update(decision.updates)
             self._audit(
                 item, stage, input_status="Active",
@@ -346,6 +361,7 @@ class WalterArchitectureV1:
         # A run is one complete live scan. Trace counts therefore remain an
         # eight-stage proof of ordering rather than accumulating across scans.
         self.trace = []
+        self.purity_observations = []
         self.candidate_ledger.scan_number += 1
         scan_number = self.candidate_ledger.scan_number
         scan_timestamp = self._timestamp()
@@ -405,7 +421,8 @@ class WalterArchitectureV1:
             item.get("terminal_outcome") == "Technical Failure" for item in candidates
         )
         self._record_trace(
-            STAGES[0], len(discovered), len(candidates), started_at=universe_started,
+            STAGES[0], len(discovered), len(candidates) - universe_failures,
+            started_at=universe_started,
             technical_failures=universe_failures,
         )
         candidates = [
@@ -513,6 +530,11 @@ class WalterArchitectureV1:
             ledger=results, published=published, stages=self.trace,
             persistence_completed=True,
         )
+        from mide.architecture_verification import verify_architecture
+
+        self.verification_report = verify_architecture(
+            results, self.trace, purity_observations=self.purity_observations,
+        ).as_dict()
         return results
 
 
