@@ -212,3 +212,79 @@ def test_manifest_matches_runtime_and_ui_selection_is_exact():
     assert scanner_implementation("Walter Architecture v1.0") is WalterArchitectureV1
     with pytest.raises(KeyError):
         scanner_implementation("unknown")
+
+
+def test_ledger_has_complete_audit_and_no_candidate_can_disappear():
+    records = [
+        {"symbol": " pass ", "price": 1, "free_float": 1, "source": "test-feed"},
+        {"symbol": "reject", "price": 9, "free_float": 1},
+    ]
+    architecture, _, _ = pipeline(records)
+
+    results = architecture.run()
+
+    assert {item["symbol"] for item in results} == {"PASS", "REJECT"}
+    assert all([entry["stage"] for entry in item["architecture_audit"]] == list(STAGES)
+               for item in results)
+    assert all(set(entry) == {
+        "stage", "input_status", "decision", "evidence", "reason",
+        "provenance", "timestamp",
+    } for item in results for entry in item["architecture_audit"])
+    rejected = next(item for item in results if item["symbol"] == "REJECT")
+    assert rejected["terminal_stage"] == "Price Gate"
+    assert rejected["terminal_reason"] == "Price outside configured range"
+    assert rejected["architecture_audit"][1]["decision"] == "Rejected"
+
+
+def test_candidate_exception_is_contained_and_identity_survives_ranking():
+    records = [
+        {"symbol": "GOOD", "price": 1, "free_float": 1},
+        {"symbol": "BROKEN", "price": 1, "free_float": 1},
+    ]
+
+    def candidate_sensitive_stage(items):
+        if any(item["symbol"] == "BROKEN" for item in items):
+            raise ValueError("bad candidate payload")
+        return passing(items)
+
+    architecture, _, _ = pipeline(records, catalyst=candidate_sensitive_stage)
+    results = architecture.run()
+    by_symbol = {item["symbol"]: item for item in results}
+
+    assert by_symbol["BROKEN"]["terminal_outcome"] == "Technical Failure"
+    assert by_symbol["BROKEN"]["terminal_stage"] == "Catalyst Assessment"
+    assert "bad candidate payload" in by_symbol["BROKEN"]["terminal_reason"]
+    assert by_symbol["GOOD"]["terminal_outcome"] == "Qualified and Ranked"
+    assert by_symbol["GOOD"]["candidate_id"] == "GOOD"
+
+
+def test_persisted_ledger_precedes_and_exclusively_controls_publication():
+    events = []
+    persisted = []
+    published = []
+
+    class CapturingStore:
+        def persist(self, results):
+            events.append("persist")
+            persisted.extend(results)
+
+    architecture = WalterArchitectureV1(
+        policy=ArchitecturePolicy(0.05, 5.0, 3_500_000),
+        discover=lambda: [
+            {"symbol": "QUALIFIED", "price": 1, "free_float": 1},
+            {"symbol": "REJECTED", "price": 10, "free_float": 1},
+        ],
+        catalyst=passing, participation=passing, expansion=passing,
+        rank=lambda records: records, store=CapturingStore(),
+        publish=lambda records: (events.append("publish"), published.extend(records)),
+    )
+    results = architecture.run()
+
+    assert events == ["persist", "publish"]
+    assert persisted == results
+    expected = {
+        id(item) for item in persisted
+        if item["terminal_outcome"] == "Qualified and Ranked"
+    }
+    assert {id(item) for item in published} == expected
+    assert {item["symbol"] for item in published} == {"QUALIFIED"}

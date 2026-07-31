@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 import re
 from typing import Any, Callable, Iterable, Mapping, Protocol
 
@@ -36,6 +37,8 @@ class Decision:
     category: str
     reason: str
     updates: Mapping[str, object] = field(default_factory=dict)
+    evidence: object = field(default_factory=dict)
+    provenance: object = field(default_factory=dict)
 
 
 class ArchitectureViolation(RuntimeError):
@@ -68,6 +71,7 @@ class WalterArchitectureV1:
         publish: Publisher | None = None,
         runtime_dispatch: Callable[[], Any] | None = None,
         stage_observer: Callable[[int, str, list[dict]], None] | None = None,
+        clock: Callable[[], datetime] | None = None,
     ) -> None:
         self._runtime_dispatch = runtime_dispatch
         if runtime_dispatch is not None:
@@ -94,6 +98,7 @@ class WalterArchitectureV1:
         self.store = store
         self.publish = publish
         self.stage_observer = stage_observer
+        self.clock = clock or (lambda: datetime.now(timezone.utc))
         self.trace: list[dict] = []
         self._ledger: dict[str, dict] = {}
 
@@ -114,6 +119,26 @@ class WalterArchitectureV1:
             terminal_reason=reason,
         )
 
+    def _timestamp(self) -> str:
+        value = self.clock()
+        if value.tzinfo is None:
+            value = value.replace(tzinfo=timezone.utc)
+        return value.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+
+    def _audit(
+        self, record: dict, stage: str, *, input_status: str, decision: str,
+        reason: str, evidence: object = None, provenance: object = None,
+    ) -> None:
+        record["architecture_audit"].append({
+            "stage": stage,
+            "input_status": input_status,
+            "decision": decision,
+            "evidence": {} if evidence is None else evidence,
+            "reason": reason,
+            "provenance": {} if provenance is None else provenance,
+            "timestamp": self._timestamp(),
+        })
+
     def _record_trace(self, stage: str, input_count: int, output_count: int) -> None:
         self.trace.append({
             "number": len(self.trace) + 1,
@@ -128,23 +153,47 @@ class WalterArchitectureV1:
         try:
             decisions = operation([dict(item) for item in candidates])
         except Exception as exc:
+            # A provider/enricher commonly raises for just one bad symbol. Retry
+            # independently so that candidate cannot terminate or erase its peers.
+            decisions = {}
             for item in candidates:
-                self._terminal(item, "Technical Failure", stage, "Stage execution", str(exc))
-            self._record_trace(stage, len(candidates), 0)
-            return []
-        if set(decisions) != set(symbols):
+                symbol = self._symbol(item)
+                try:
+                    one = operation([dict(item)])
+                    if set(one) != {symbol}:
+                        raise ArchitectureViolation(
+                            f"{stage} must decide candidate {symbol}"
+                        )
+                    decisions[symbol] = one[symbol]
+                except Exception as candidate_exc:
+                    self._terminal(
+                        item, "Technical Failure", stage, "Stage execution",
+                        f"{type(candidate_exc).__name__}: {candidate_exc}",
+                    )
+                    self._audit(
+                        item, stage, input_status="Active", decision="Technical Failure",
+                        reason=item["terminal_reason"],
+                        evidence={"exception_type": type(candidate_exc).__name__},
+                    )
+        active_symbols = {
+            self._symbol(item) for item in candidates
+            if item.get("terminal_outcome") != "Technical Failure"
+        }
+        if set(decisions) != active_symbols:
             raise ArchitectureViolation(f"{stage} must decide every and only input symbol")
         output = []
         for item in candidates:
             symbol = self._symbol(item)
+            if item.get("terminal_outcome") == "Technical Failure":
+                continue
             decision = decisions[symbol]
             item.update(decision.updates)
-            item.setdefault("architecture_audit", []).append({
-                "stage": stage,
-                "category": decision.category,
-                "reason": decision.reason,
-                "passed": decision.passed,
-            })
+            self._audit(
+                item, stage, input_status="Active",
+                decision="Qualified" if decision.passed else "Rejected",
+                reason=decision.reason, evidence=decision.evidence,
+                provenance=decision.provenance,
+            )
             if decision.passed:
                 output.append(item)
             else:
@@ -221,9 +270,22 @@ class WalterArchitectureV1:
             if not symbol:
                 raise ArchitectureViolation("Universe candidate has no symbol")
             if symbol not in self._ledger:
-                record = dict(source, symbol=symbol, architecture_audit=[])
+                record = dict(
+                    source, symbol=symbol, candidate_id=symbol,
+                    architecture_audit=[],
+                )
                 self._ledger[symbol] = record
         candidates = list(self._ledger.values())
+        for record in candidates:
+            provenance = {
+                key: record[key] for key in ("provider", "source", "sources", "discovery_reasons")
+                if record.get(key) is not None
+            }
+            self._audit(
+                record, STAGES[0], input_status="Discovered", decision="Admitted",
+                reason="Normalized symbol admitted by Universe Construction",
+                evidence={"normalized_symbol": record["symbol"]}, provenance=provenance,
+            )
         self._record_trace(STAGES[0], len(discovered), len(candidates))
         for number, stage, operation in (
             (2, STAGES[1], self._price), (3, STAGES[2], self._validity),
@@ -241,17 +303,38 @@ class WalterArchitectureV1:
             raise ArchitectureViolation("Mission Ranking must preserve Expansion membership")
         for position, ranked_record in enumerate(ranked, 1):
             symbol = self._symbol(ranked_record)
+            if ranked_record.get("candidate_id") != self._ledger[symbol]["candidate_id"]:
+                raise ArchitectureViolation("Mission Ranking must preserve candidate identity")
             self._ledger[symbol].update(ranked_record, mission_rank=position)
             self._terminal(self._ledger[symbol], "Qualified and Ranked", STAGES[7], "Ranking", "Expansion-qualified candidate ranked")
+            self._audit(
+                self._ledger[symbol], STAGES[7], input_status="Expansion Qualified",
+                decision="Qualified and Ranked",
+                reason="Expansion-qualified candidate ranked",
+                evidence={"mission_rank": position},
+            )
         self._record_trace(STAGES[7], len(candidates), len(ranked))
         results = list(self._ledger.values())
+        for record in results:
+            audited = {entry["stage"] for entry in record["architecture_audit"]}
+            for stage in STAGES:
+                if stage not in audited:
+                    self._audit(
+                        record, stage, input_status="Not eligible",
+                        decision="Not evaluated",
+                        reason=f"Candidate already terminated at {record['terminal_stage']}",
+                    )
         if any(item.get("terminal_outcome") not in TERMINAL_OUTCOMES for item in results):
             raise ArchitectureViolation("Every discovered candidate requires a terminal outcome")
         self.store.persist(results)
         # Publish the authoritative ledger objects in ranking order so the UI
         # receives the terminal outcome, complete audit, and mission rank that
         # were persisted—not the ranker's detached working copies.
-        self.publish([self._ledger[symbol] for symbol in after])
+        published = sorted(
+            (item for item in results if item["terminal_outcome"] == "Qualified and Ranked"),
+            key=lambda item: item["mission_rank"],
+        )
+        self.publish(published)
         return results
 
 
