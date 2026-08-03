@@ -96,8 +96,10 @@ class WebullOpenAPIClient:
     base_url = HTTP_HOST
     snapshot_path = "/openapi/market-data/stock/snapshot"
 
-    def __init__(self, app_key: str, app_secret: str, *, sdk_client=None):
+    def __init__(self, app_key: str, app_secret: str, *, sdk_client=None,
+                 extended_hours_enabled: bool = False):
         self.sdk = WebullSDKClient(app_key, app_secret, sdk_client=sdk_client)
+        self.extended_hours_enabled = bool(extended_hours_enabled)
 
     @staticmethod
     def _rows(value: object) -> list[dict]:
@@ -117,7 +119,8 @@ class WebullOpenAPIClient:
         wanted = list(dict.fromkeys(str(s).strip().upper() for s in symbols if str(s).strip()))
         if len(wanted) > MAX_SNAPSHOT_SYMBOLS:
             raise ValueError("Webull snapshot requests are limited to 100 symbols")
-        rows = self._rows(self.sdk.stock_snapshot(wanted)) if wanted else []
+        rows = self._rows(self.sdk.stock_snapshot(
+            wanted, extended_hours=self.extended_hours_enabled)) if wanted else []
         normalized = {}
         for row in rows:
             symbol = str(row.get("symbol") or row.get("ticker") or row.get("ticker_symbol") or "").upper()
@@ -165,7 +168,7 @@ class LiveWebullProvider(WebullProvider):
 
     def __init__(self, app_key: str, app_secret: str, *, fallback=None, bootstrap=None,
                  rest_client=None, stream_class=None, universe_client=None, sdk_client=None,
-                 enable_streaming: bool = False):
+                 enable_streaming: bool = False, extended_hours_enabled: bool = False):
         LOGGER.info("LiveWebullProvider initialization started streaming_enabled=%s "
                     "rest_client_injected=%s sdk_client_injected=%s",
                     enable_streaming, rest_client is not None, sdk_client is not None)
@@ -179,6 +182,7 @@ class LiveWebullProvider(WebullProvider):
         self._universe_client = universe_client
         self._broker = None
         self._enable_streaming = enable_streaming
+        self._extended_hours_enabled = bool(extended_hours_enabled)
         if fallback is not None:
             raise ValueError("Live Webull is Webull-only; fallback providers are forbidden")
         self.warnings: list[str] = []
@@ -203,7 +207,8 @@ class LiveWebullProvider(WebullProvider):
         }
         self._bootstrap = bootstrap
         self._snapshot_client = rest_client or WebullOpenAPIClient(
-            app_key, app_secret, sdk_client=sdk_client)
+            app_key, app_secret, sdk_client=sdk_client,
+            extended_hours_enabled=self._extended_hours_enabled)
         super().__init__(stream_factory=self._stream_factory)
         LOGGER.info("LiveWebullProvider initialization complete streaming_status=%s",
                     self.diagnostics["webull_stream"]["stream_connection_status"])
@@ -221,7 +226,10 @@ class LiveWebullProvider(WebullProvider):
             {
                 "Stage": "Quote / snapshot retrieval",
                 "Actual provider": "Webull OpenAPI SDK",
-                "Endpoint / operation": SNAPSHOT_OPERATION + " (≤100 symbols; US_STOCK; extended/overnight)",
+                "Endpoint / operation": SNAPSHOT_OPERATION + (
+                    " (≤100 symbols; US_STOCK; extended/overnight explicitly enabled)"
+                    if self._extended_hours_enabled else
+                    " (≤100 symbols; US_STOCK; regular session)"),
                 "Code path": "app._run_live_pipeline.<locals>.discover → LiveWebullProvider.initialize_quotes → WebullOpenAPIClient.snapshots; then LiveWebullProvider.snapshots reads the Webull cache",
                 "Alpaca used": "No",
             },

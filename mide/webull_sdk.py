@@ -167,20 +167,30 @@ class WebullSDKClient:
                     return method
         raise RuntimeError("Webull OpenAPI SDK lacks operation: " + "/".join(names))
 
-    def stock_snapshot(self, symbols: Iterable[str]):
+    def stock_snapshot(self, symbols: Iterable[str], *, extended_hours: bool = False):
+        """Return US-equity snapshots without requesting optional sessions by default.
+
+        SDK 2.0.16 only adds the two session query parameters when their values
+        are truthy.  Omitting them is therefore important: setting either one
+        to true changes the entitlement Webull checks for this otherwise
+        standard stock-snapshot operation.
+        """
         symbols = list(symbols)
         if len(symbols) > MAX_SNAPSHOT_SYMBOLS:
             raise ValueError("Webull snapshot requests are limited to 100 symbols")
         # ``get_stock_snapshot`` remains accepted solely at the injected-test
         # boundary; installed SDK clients use their published ``get_snapshot``.
         method = self._operation(("get_snapshot", "get_stock_snapshot"))
-        arguments = dict(symbols=",".join(symbols), category="US_STOCK",
-                         extend_hour_required=True, overnight_required=True)
+        arguments = dict(symbols=",".join(symbols), category="US_STOCK")
+        if extended_hours:
+            arguments.update(extend_hour_required=True, overnight_required=True)
         try:
             return _plain(method(**arguments))
         except TypeError:
             # Some generated SDK versions name the overnight option explicitly
             # as include_overnight; neither fallback constructs an HTTP request.
+            if not extended_hours:
+                raise
             arguments.pop("overnight_required")
             arguments["include_overnight"] = True
             return _plain(method(**arguments))
