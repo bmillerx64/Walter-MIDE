@@ -6,7 +6,7 @@ import pytest
 from mide.market_data import EventType, MarketEvent
 from mide.webull_connection import run_connection_test
 from mide.webull_live import LiveWebullProvider, WebullOpenAPIClient, live_data_modes
-from mide.webull_sdk import WebullSDKClient
+from mide.webull_sdk import TracedHTTPTransport, WebullSDKClient
 
 
 class Rest:
@@ -71,6 +71,51 @@ def test_snapshot_batches_never_exceed_100_symbols():
     symbols = [f"S{i}" for i in range(251)]
     provider.initialize_quotes(symbols, batch_size=500)
     assert [len(call) for call in rest.calls] == [100, 100, 51]
+
+
+def test_streaming_is_bypassed_until_snapshots_are_proven():
+    class ForbiddenStream:
+        def __init__(self, *args, **kwargs):
+            raise AssertionError("stream must not initialize")
+    provider = LiveWebullProvider("key", "secret", rest_client=Rest(),
+        universe_client=Universe(), bootstrap=Bootstrap(), stream_class=ForbiddenStream)
+    assert provider.initialize_quotes(["HYFM"]) == {"HYFM": 10.0}
+    assert provider.diagnostics["webull_stream"]["stream_connection_status"] == "bypassed"
+
+
+def test_explicit_official_stream_failure_stops_initialization():
+    class BrokenStream:
+        def __init__(self, *args, **kwargs):
+            raise FileNotFoundError("official stream unavailable")
+    provider = LiveWebullProvider("key", "secret", rest_client=Rest(),
+        universe_client=Universe(), bootstrap=Bootstrap(), stream_class=BrokenStream,
+        enable_streaming=True)
+    with pytest.raises(RuntimeError, match="official SDK streaming initialization failed"):
+        provider.initialize_quotes(["HYFM"])
+
+
+def test_obsolete_streaming_token_endpoint_is_absent():
+    live_source = inspect.getsource(__import__("mide.webull_live", fromlist=["x"]))
+    sdk_source = inspect.getsource(__import__("mide.webull_sdk", fromlist=["x"]))
+    obsolete_path = "/api/market-data/streaming/" + "token"
+    assert obsolete_path not in live_source
+    assert obsolete_path not in sdk_source
+
+
+def test_http_trace_logs_request_and_response_without_secrets(caplog):
+    class Response:
+        status_code = 404
+        headers = {"content-type": "application/json"}
+        text = '{"error":"not found"}'
+    class Transport:
+        def request(self, method, url, **kwargs): return Response()
+    with caplog.at_level("INFO"):
+        TracedHTTPTransport(Transport()).request("POST", "https://api.webull.com/missing",
+            headers={"x-signature": "secret", "accept": "application/json"}, json={})
+    output = caplog.text
+    assert "method=POST" in output and "url=https://api.webull.com/missing" in output
+    assert "status=404" in output and '{"error":"not found"}' in output
+    assert "secret" not in output and "<redacted>" in output
 
 
 def test_provider_diagnostics_are_accurate():
