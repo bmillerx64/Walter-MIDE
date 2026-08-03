@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from importlib import import_module
 import json
 import logging
 from typing import Iterable
@@ -103,37 +102,15 @@ def _install_http_trace(sdk_client) -> bool:
 
 
 def create_official_client(app_key: str, app_secret: str):
-    """Construct the SDK client without implementing authentication locally.
+    """Construct the market-data API exposed by SDK version 2.0.16."""
+    from webullsdkcore.client import ApiClient
+    from webullsdkmdata.api import MarketDataApi
 
-    Releases of the official distribution have exposed both a convenience
-    client and an OpenAPI-generated client.  Supporting those public layouts
-    here also keeps the rest of Walter independent of SDK packaging details.
-    """
-    errors = []
-    for module_name, class_name in (
-        ("webull", "WebullClient"),
-        ("webull.openapi", "ApiClient"),
-        ("webull.openapi.api_client", "ApiClient"),
-        ("webull_openapi", "ApiClient"),
-    ):
-        LOGGER.info("WEBULL SDK initialization attempting %s.%s", module_name, class_name)
-        try:
-            cls = getattr(import_module(module_name), class_name)
-            try:
-                client = cls(app_key=app_key, app_secret=app_secret, base_url=HTTP_HOST)
-            except TypeError:
-                client = cls(app_key, app_secret)
-            LOGGER.info("WEBULL SDK initialization selected %s.%s host=%s",
-                        module_name, class_name, HTTP_HOST)
-            return client
-        except (ImportError, AttributeError, TypeError) as exc:
-            LOGGER.info("WEBULL SDK initialization rejected %s.%s: %s",
-                        module_name, class_name, exc)
-            errors.append(f"{module_name}.{class_name}: {exc}")
-    raise RuntimeError(
-        "Official webull-openapi-python-sdk client could not be initialized: "
-        + " | ".join(errors)
-    )
+    LOGGER.info("WEBULL SDK initialization using webullsdkcore.client.ApiClient")
+    api_client = ApiClient(app_key=app_key, app_secret=app_secret)
+    client = MarketDataApi(api_client)
+    LOGGER.info("WEBULL SDK initialization complete using webullsdkmdata.api.MarketDataApi")
+    return client
 
 
 def _plain(value):

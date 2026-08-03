@@ -1,12 +1,14 @@
 import inspect
+import sys
 import time
+import types
 
 import pytest
 
 from mide.market_data import EventType, MarketEvent
 from mide.webull_connection import run_connection_test
 from mide.webull_live import LiveWebullProvider, WebullOpenAPIClient, live_data_modes
-from mide.webull_sdk import TracedHTTPTransport, WebullSDKClient
+from mide.webull_sdk import TracedHTTPTransport, WebullSDKClient, create_official_client
 
 
 class Rest:
@@ -52,6 +54,37 @@ def test_official_sdk_client_is_selected_and_handwritten_auth_is_absent():
     client = WebullOpenAPIClient("key", "secret", sdk_client=sdk)
     assert isinstance(client.sdk, WebullSDKClient)
     assert client.sdk.sdk_client is sdk
+
+
+def test_official_sdk_uses_installed_package_layout(monkeypatch):
+    calls = []
+
+    class ApiClient:
+        def __init__(self, **kwargs):
+            calls.append(("ApiClient", kwargs))
+
+    class MarketDataApi:
+        def __init__(self, api_client):
+            calls.append(("MarketDataApi", api_client))
+            self.api_client = api_client
+
+    core = types.ModuleType("webullsdkcore")
+    core.__path__ = []
+    core_client = types.ModuleType("webullsdkcore.client")
+    core_client.ApiClient = ApiClient
+    mdata = types.ModuleType("webullsdkmdata")
+    mdata.__path__ = []
+    mdata_api = types.ModuleType("webullsdkmdata.api")
+    mdata_api.MarketDataApi = MarketDataApi
+    monkeypatch.setitem(sys.modules, "webullsdkcore", core)
+    monkeypatch.setitem(sys.modules, "webullsdkcore.client", core_client)
+    monkeypatch.setitem(sys.modules, "webullsdkmdata", mdata)
+    monkeypatch.setitem(sys.modules, "webullsdkmdata.api", mdata_api)
+
+    client = create_official_client("key", "secret")
+
+    assert calls[0] == ("ApiClient", {"app_key": "key", "app_secret": "secret"})
+    assert calls[1] == ("MarketDataApi", client.api_client)
 
 
 def test_sdk_snapshot_arguments_and_normalization():
