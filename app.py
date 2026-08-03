@@ -157,7 +157,11 @@ from mide.discovery import (
     snapshot_identity_records,
 )
 from mide.flight_recorder import prefilter_decision
-from mide.pipeline_diagnostics import diagnostics_table, stage_diagnostic
+from mide.pipeline_diagnostics import (
+    diagnostics_table,
+    pre_expansion_candidate_diagnostics,
+    stage_diagnostic,
+)
 from mide.universe_diagnostics import UniverseVerification
 memory_checkpoint("discovery import", object_name="mide.discovery")
 from mide.scanner_v2 import (
@@ -1407,6 +1411,9 @@ def _run_live_pipeline(
                  "candidate_status": item.get("candidate_status", "Entry Ready") if advanced else "Removed",
                  "scanner_version": "Walter Architecture v1.0"},
             )
+        state["pre_expansion_candidates"] = pre_expansion_candidate_diagnostics(
+            records, result
+        )
         expanded = [item for item in records if result[item["symbol"]].passed]
         state["stage_diagnostics"].append(stage_diagnostic(
             "Expansion", records, expanded,
@@ -1504,6 +1511,7 @@ def _run_live_pipeline(
         "universe_count": len(state["seeds"]),
         "stages": stage_diagnostics,
         "table": diagnostics_table(stage_diagnostics),
+        "pre_expansion_candidates": state.get("pre_expansion_candidates", []),
     }
     timing_summary = []
     for item in architecture.trace:
@@ -1839,6 +1847,16 @@ with system_status_panel:
             post_universe.get("table", []), use_container_width=True,
             hide_index=True,
         )
+        st.markdown("**Top 20 candidates before Expansion**")
+        st.caption(
+            "Ranked from the records entering Expansion, including candidates "
+            "that the Expansion gate subsequently rejected."
+        )
+        pre_expansion = post_universe.get("pre_expansion_candidates", [])
+        if pre_expansion:
+            st.dataframe(pre_expansion, use_container_width=True, hide_index=True)
+        else:
+            st.info("No candidates reached Expansion in the latest scan.")
 
     verification = (
         (scan_diagnostics.get("walter_architecture") or {}).get("verification")

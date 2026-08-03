@@ -68,3 +68,74 @@ def diagnostics_table(stages: Sequence[Mapping[str, object]]) -> list[dict[str, 
             "Symbols missing values": f"{float(item.get('missing_values_pct', 0)):.2f}%",
         })
     return rows
+
+
+def pre_expansion_candidate_diagnostics(
+    records: Iterable[dict], decisions: Mapping[str, object], limit: int = 20
+) -> list[dict]:
+    """Show the strongest Expansion inputs and their exact gate outcomes.
+
+    The view is diagnostic-only: it observes the unfiltered Expansion input and
+    the decisions already made by that stage without changing membership.
+    """
+
+    def number(record: Mapping[str, object], *keys: str) -> float | None:
+        for key in keys:
+            value = record.get(key)
+            if value is None:
+                continue
+            try:
+                return float(value)
+            except (TypeError, ValueError):
+                continue
+        return None
+
+    def mission_score(record: Mapping[str, object]) -> float:
+        return number(
+            record, "mission_score", "scanner_v2_score", "opportunity_score",
+            "conviction_score",
+        ) or 0.0
+
+    ordered = sorted(
+        records,
+        key=lambda record: (
+            -mission_score(record), str(record.get("symbol") or "")
+        ),
+    )[:max(0, int(limit))]
+    rows = []
+    for rank, record in enumerate(ordered, 1):
+        symbol = str(record.get("symbol") or "").upper()
+        decision = decisions.get(symbol)
+        passed = bool(getattr(decision, "passed", False))
+        updates = getattr(decision, "updates", {})
+        updates = updates if isinstance(updates, Mapping) else {}
+        expansion_score = number(updates, "expansion_score", "confluence_score")
+        if expansion_score is None:
+            expansion_score = number(
+                record, "expansion_score", "confluence_score",
+                "momentum_quality_score",
+            )
+        rejection = None
+        if not passed:
+            rejection = (
+                f"expansion_score = {expansion_score:g}; required = 65"
+                if expansion_score is not None
+                else str(getattr(decision, "reason", "Expansion rejected"))
+            )
+        rows.append({
+            "Rank before Expansion": rank,
+            "Symbol": symbol,
+            "Price": number(record, "price", "last_price"),
+            "Volume": number(record, "volume"),
+            "Float": number(record, "free_float", "float_shares", "shares_float"),
+            "RVOL": number(record, "rvol", "rvol_proxy", "relative_volume"),
+            "Spread %": number(record, "spread_pct"),
+            "Participation score": number(
+                record, "participation_surge_score", "participation_score"
+            ),
+            "Expansion score": expansion_score,
+            "Mission score": mission_score(record),
+            "Expansion result": "PASSED" if passed else "REJECTED",
+            "Rejected because": rejection,
+        })
+    return rows
