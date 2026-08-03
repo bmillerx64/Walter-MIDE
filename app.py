@@ -97,6 +97,7 @@ from mide.config import Settings
 from mide.credentials import WEBULL_CREDENTIAL_NAMES, credential_diagnostics, load_credentials
 from mide.market_data import MarketDataProvider
 from mide.webull_live import LiveWebullProvider, live_data_modes
+from mide.webull_connection import run_connection_test
 from mide.session_controls import (
     AUTO_SCAN_KEY,
     DATA_MODE_KEY,
@@ -779,6 +780,28 @@ with st.sidebar:
             st.write(f"Subscription failures/errors: {len(failures)}")
             if failures:
                 st.warning(" · ".join(failures[-3:]))
+        st.divider()
+        st.write("Webull Connection Test")
+        st.caption("Runs live only in the deployed app using Streamlit secrets; it does not change scan results.")
+        if st.button("Run Webull Connection Test", use_container_width=True):
+            try:
+                from mide.webull_live import WebullOpenAPIClient
+                alpaca_module = importlib.import_module("mide.market_data_providers")
+                universe = alpaca_module.AlpacaProvider(
+                    get_secret("ALPACA_API_KEY"), get_secret("ALPACA_SECRET_KEY"),
+                    feed=settings.feed, timeout=8).assets()
+                eligible = [row.get("symbol") for row in universe
+                            if row.get("tradable", True) and row.get("status", "active") == "active"]
+                connection_rows = run_connection_test(
+                    app_key=webull_credentials["WEBULL_APP_KEY"].value,
+                    app_secret=webull_credentials["WEBULL_APP_SECRET"].value,
+                    eligible_symbols=eligible, client_factory=WebullOpenAPIClient)
+                st.dataframe(connection_rows, use_container_width=True, hide_index=True)
+                failures = [row for row in connection_rows if row["Status"] == "FAIL"]
+                (st.error if failures else st.success)(
+                    "Webull Connection Test: " + ("FAIL" if failures else "PASS"))
+            except Exception as exc:
+                st.error(f"Webull Connection Test failed: {type(exc).__name__}: {exc}")
     st.subheader("Session backups")
     st.caption(
         "Download both files before refreshing, restarting, or deploying Walter."
@@ -929,10 +952,18 @@ def _run_live_pipeline(
         context = scan_context(st.session_state)
         client = context.provider_instance
         if not isinstance(client, LiveWebullProvider):
-            client = LiveWebullProvider(app_key, app_secret)
+            alpaca_key = get_secret("ALPACA_API_KEY")
+            alpaca_secret = get_secret("ALPACA_SECRET_KEY")
+            if not alpaca_key or not alpaca_secret:
+                raise RuntimeError("Alpaca credentials are required for the temporary /v2/assets symbol master.")
+            provider_module = importlib.import_module("mide.market_data_providers")
+            universe_client = provider_module.AlpacaProvider(
+                alpaca_key, alpaca_secret, feed=settings.feed, timeout=8)
+            client = LiveWebullProvider(
+                app_key, app_secret, universe_client=universe_client)
             context.provider_instance = client
         logging.getLogger(__name__).warning(
-            "Walter market-data provider: WEBULL (no Alpaca imports or fallback)"
+            "Walter quote/bars/stream provider: WEBULL SDK; symbol master: ALPACA /v2/assets"
         )
     else:
         api_key = get_secret("ALPACA_API_KEY")
@@ -1020,11 +1051,12 @@ def _run_live_pipeline(
                 st.session_state.walter_session_universe_cache = cached
         except Exception as exc:
             record_provider_failure(
-                client.diagnostics, provider="Alpaca", operation="universe discovery",
-                exception=exc, recovery_action="complete scan with an empty universe",
+                client.diagnostics, provider="Alpaca Trading API", operation="universe discovery",
+                exception=exc, recovery_action="stop scan and preserve last successful scan",
             )
-            client.warnings.append(f"Universe discovery unavailable: {exc}")
-            seeds, reasons = [], {}
+            raise RuntimeError(f"Universe discovery failed: {exc}") from exc
+        if not seeds:
+            raise RuntimeError("Universe discovery returned zero eligible symbols")
         state["universe_elapsed_ms"] = round((perf_counter() - universe_started) * 1000, 3)
         state["seeds"], state["reasons"] = seeds, reasons
         price_started = perf_counter()
@@ -1035,12 +1067,14 @@ def _run_live_pipeline(
             try:
                 prices = client.initialize_quotes(seeds, batch_size=settings.batch_size)
             except Exception as exc:
-                client.warnings.append(f"Webull initial snapshot unavailable: {exc}")
                 record_provider_failure(
-                    client.diagnostics, provider="Webull OpenAPI", operation="initial quote snapshot",
+                    client.diagnostics, provider="Webull OpenAPI SDK", operation="initial quote snapshot",
                     exception=exc, affected_symbols=seeds,
-                    recovery_action="reject only symbols lacking Webull cached prices",
+                    recovery_action="stop scan and preserve last successful scan",
                 )
+                raise RuntimeError(f"Webull initial snapshot failed: {exc}") from exc
+            if not prices:
+                raise RuntimeError("Webull snapshot returned zero symbols")
         for offset in range(0, len(seeds), settings.batch_size):
             batch = seeds[offset:offset + settings.batch_size]
             try:
@@ -1563,7 +1597,10 @@ if mode.startswith("Live ") and should_scan and not st.session_state[STOP_REQUES
             st.session_state.scan_failure_count = 0
         else:
             st.session_state.scan_failure_count += 1
-            st.warning("Scan retry failed; the last completed scan remains displayed.")
+            actual_failure = warnings[-1] if warnings else "Unknown provider failure"
+            st.error(
+                f"Scan stopped; the last successful scan remains displayed. {actual_failure}"
+            )
     except ScanAlreadyRunning as exc:
         log(f"Scan deferred: {exc}")
         st.info("Another Walter session is scanning. This session will retry automatically.")

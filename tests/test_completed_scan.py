@@ -118,15 +118,15 @@ def test_failed_rerun_cannot_replace_completed_webull_scan_with_zero_symbols():
         assert observed.diagnostics["selected_provider"] == "WEBULL"
 
 
-def test_genuine_completed_empty_universe_may_publish_zero_symbols():
+def test_completed_empty_universe_is_never_published():
     state = {}
     empty = CompletedScan(
         provider="WEBULL", records=[], diagnostics={"scan_completed": True},
         warnings=[], symbols_sampled=0, prefilter_count=0,
         completed_at=datetime.now(timezone.utc), source_label="empty universe",
     )
-    assert publish_scan_result(state, empty) is empty
-    assert completed_scan_for_view(state, "Radar").symbols_sampled == 0
+    assert publish_scan_result(state, empty) is None
+    assert completed_scan_for_view(state, "Radar") is None
 
 
 def test_context_survives_streamlit_hot_reload_class_identity_change():

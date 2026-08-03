@@ -6,32 +6,21 @@ from collections import deque
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
 from dataclasses import dataclass
 from datetime import datetime, timezone
-import hashlib
-import hmac
 import json
 import logging
-import os
 from threading import Lock
 import time
-from typing import Callable, Iterable, Mapping
-from urllib.parse import urlparse
-import uuid
-
-import requests
+from typing import Callable, Iterable
 
 from .market_data import EventType, MarketEvent
 from .market_data_providers import WebullProvider
-from .webull_stream_benchmark import PahoWebullStream, Quote
+from .webull_stream_benchmark import Quote
+from .webull_sdk import (HTTP_HOST, MAX_SNAPSHOT_SYMBOLS, SNAPSHOT_OPERATION,
+                         STREAM_HOST, WebullSDKClient)
 from .startup import log_startup
 
 
 LOGGER = logging.getLogger(__name__)
-DEFAULT_BOOTSTRAP_URL = "https://api.webull.com/api/market-data/streaming/token"
-DEFAULT_OPENAPI_URL = "https://api.webull.com"
-DEFAULT_SNAPSHOT_PATH = "/market-data/quotes"
-DEFAULT_RANKING_PATH = "/market-data/stock-rank/list"
-DEFAULT_BARS_PATH = "/market-data/history"
-DEFAULT_TOPIC = "market-data/{symbol}"
 NETWORK_TIMEOUT_SECONDS = 8
 _NETWORK_EXECUTOR = ThreadPoolExecutor(max_workers=4, thread_name_prefix="walter-network")
 
@@ -82,86 +71,38 @@ def parse_webull_message(payload: bytes) -> tuple[Quote, dict]:
                  _number(data.get("ask") or data.get("ask_price"))), data
 
 
-class WebullBootstrap:
-    """Obtain short-lived MQTT credentials with an OpenAPI-signed request."""
-
-    def __init__(self, app_key: str, app_secret: str, *, url: str = DEFAULT_BOOTSTRAP_URL,
-                 session=requests, timeout: int = NETWORK_TIMEOUT_SECONDS):
-        self.app_key, self._secret, self.url = app_key, app_secret, url
-        self.session, self.timeout = session, timeout
-
-    def obtain(self) -> dict:
-        log_startup("obtaining stream credentials")
-        timestamp = str(int(time.time() * 1000))
-        nonce = uuid.uuid4().hex
-        path = urlparse(self.url).path
-        canonical = f"POST\n{path}\n{timestamp}\n{nonce}\n"
-        signature = hmac.new(self._secret.encode(), canonical.encode(), hashlib.sha256).hexdigest()
-        headers = {"x-app-key": self.app_key, "x-timestamp": timestamp,
-                   "x-nonce": nonce, "x-signature": signature,
-                   "content-type": "application/json"}
-        response = self.session.post(self.url, headers=headers, json={}, timeout=self.timeout)
-        response.raise_for_status()
-        body = response.json().get("data", response.json())
-        aliases = {
-            "host": ("host", "mqtt_host", "endpoint"),
-            "username": ("username", "mqtt_username"),
-            "password": ("password", "mqtt_password", "token"),
-            "client_id": ("client_id", "clientId", "mqtt_client_id"),
-            "topic_template": ("topic_template", "topicTemplate"),
-            "port": ("port", "mqtt_port"),
-        }
-        normalized = {name: next((body[key] for key in keys if body.get(key) is not None), None)
-                      for name, keys in aliases.items()}
-        missing = [name for name in ("host", "username", "password", "client_id")
-                   if not normalized[name]]
-        if missing:
-            raise RuntimeError("Webull bootstrap response missing: " + ", ".join(missing))
-        normalized["topic_template"] = normalized["topic_template"] or DEFAULT_TOPIC
-        normalized["port"] = int(normalized["port"] or 443)
-        return normalized
-
-
 class WebullOpenAPIClient:
-    """Signed adapter for official Webull quote, ranking, and history operations."""
+    """Normalize official-SDK market-data responses for Walter."""
 
-    def __init__(self, app_key: str, app_secret: str, *, base_url=DEFAULT_OPENAPI_URL,
-                 snapshot_path=DEFAULT_SNAPSHOT_PATH, session=requests,
-                 timeout: int = NETWORK_TIMEOUT_SECONDS):
-        self.app_key, self._secret = app_key, app_secret
-        self.base_url, self.snapshot_path = base_url.rstrip("/"), snapshot_path
-        self.session, self.timeout = session, timeout
+    base_url = HTTP_HOST
+    snapshot_path = "/openapi/market-data/stock/snapshot"
 
-    def _headers(self, method: str, path: str, query: str) -> dict[str, str]:
-        timestamp, nonce = str(int(time.time() * 1000)), uuid.uuid4().hex
-        canonical = f"{method}\n{path}\n{timestamp}\n{nonce}\n{query}"
-        signature = hmac.new(self._secret.encode(), canonical.encode(), hashlib.sha256).hexdigest()
-        return {"x-app-key": self.app_key, "x-timestamp": timestamp, "x-nonce": nonce,
-                "x-signature": signature, "accept": "application/json"}
+    def __init__(self, app_key: str, app_secret: str, *, sdk_client=None):
+        self.sdk = WebullSDKClient(app_key, app_secret, sdk_client=sdk_client)
+
+    @staticmethod
+    def _rows(value: object) -> list[dict]:
+        if isinstance(value, list):
+            return [row for row in value if isinstance(row, dict)]
+        if isinstance(value, dict):
+            value = value.get("data", value)
+            if isinstance(value, list):
+                return [row for row in value if isinstance(row, dict)]
+            if isinstance(value, dict):
+                for key in ("items", "list", "rows", "snapshots", "bars"):
+                    if isinstance(value.get(key), list):
+                        return [row for row in value[key] if isinstance(row, dict)]
+        return []
 
     def snapshots(self, symbols: Iterable[str]) -> dict[str, dict]:
-        wanted = [str(symbol).strip().upper() for symbol in symbols if str(symbol).strip()]
-        if not wanted:
-            return {}
-        # The endpoint accepts a comma-delimited ticker list. Keep the exact
-        # encoded query in the signature so credentials never enter the URL.
-        params = {"symbols": ",".join(wanted)}
-        prepared = requests.Request("GET", self.base_url + self.snapshot_path,
-                                    params=params).prepare()
-        query = urlparse(prepared.url).query
-        response = self.session.get(prepared.url, headers=self._headers(
-            "GET", self.snapshot_path, query), timeout=self.timeout)
-        response.raise_for_status()
-        body = response.json()
-        rows = body.get("data", body) if isinstance(body, dict) else body
-        if isinstance(rows, dict):
-            rows = rows.get("quotes") or rows.get("items") or rows
-        if isinstance(rows, dict):
-            rows = [{**value, "symbol": key} for key, value in rows.items()]
+        wanted = list(dict.fromkeys(str(s).strip().upper() for s in symbols if str(s).strip()))
+        if len(wanted) > MAX_SNAPSHOT_SYMBOLS:
+            raise ValueError("Webull snapshot requests are limited to 100 symbols")
+        rows = self._rows(self.sdk.stock_snapshot(wanted)) if wanted else []
         normalized = {}
-        for row in rows or []:
+        for row in rows:
             symbol = str(row.get("symbol") or row.get("ticker") or row.get("ticker_symbol") or "").upper()
-            price = _number(row.get("price") or row.get("last_price") or row.get("close"))
+            price = _number(row.get("price") or row.get("last_price") or row.get("close") or row.get("latest_price"))
             if not symbol or price is None:
                 continue
             normalized[symbol] = {
@@ -172,138 +113,30 @@ class WebullOpenAPIClient:
                              "h": _number(row.get("high")), "l": _number(row.get("low"))},
                 "prevDailyBar": {"c": _number(row.get("prev_close") or row.get("previous_close")),
                                  "v": _number(row.get("prev_volume"))},
-                "market_data_provider": "Webull OpenAPI snapshot cache",
+                "market_data_provider": "Webull OpenAPI SDK",
             }
         return normalized
 
-    def _get(self, path: str, params: dict) -> object:
-        prepared = requests.Request("GET", self.base_url + path, params=params).prepare()
-        query = urlparse(prepared.url).query
-        response = self.session.get(prepared.url, headers=self._headers("GET", path, query),
-                                    timeout=self.timeout)
-        response.raise_for_status()
-        body = response.json()
-        return body.get("data", body) if isinstance(body, dict) else body
-
-    def _universe_get(self, rank_type: str) -> object:
-        """Issue and trace one request used solely for universe construction."""
-        path = DEFAULT_RANKING_PATH
-        params = {"market": "US", "rank_type": rank_type, "page_size": 200}
-        prepared = requests.Request("GET", self.base_url + path, params=params).prepare()
-        query = urlparse(prepared.url).query
-        response = None
-        LOGGER.info(
-            "Webull universe HTTP request: operation=stock ranking %s method=GET url=%s",
-            rank_type, prepared.url,
-        )
-        try:
-            response = self.session.get(
-                prepared.url, headers=self._headers("GET", path, query),
-                timeout=self.timeout,
-            )
-            response_length = len(response.content)
-            authentication_status = (
-                "authenticated" if 200 <= response.status_code < 300
-                else "rejected" if response.status_code in (401, 403)
-                else "not established"
-            )
-            LOGGER.info(
-                "Webull universe HTTP response: operation=stock ranking %s status=%s "
-                "response_length=%s authentication_status=%s",
-                rank_type, response.status_code, response_length,
-                authentication_status,
-            )
-            response.raise_for_status()
-            body = response.json()
-            return body.get("data", body) if isinstance(body, dict) else body
-        except Exception:
-            LOGGER.exception(
-                "Webull universe exception: operation=stock ranking %s url=%s status=%s "
-                "response_length=%s",
-                rank_type, prepared.url,
-                getattr(response, "status_code", "no response"),
-                len(response.content) if response is not None else 0,
-            )
-            raise
-
-    @staticmethod
-    def _rows(value: object) -> list[dict]:
-        if isinstance(value, list):
-            return [row for row in value if isinstance(row, dict)]
-        if isinstance(value, dict):
-            for key in ("items", "list", "rows", "rankings", "bars"):
-                if isinstance(value.get(key), list):
-                    return [row for row in value[key] if isinstance(row, dict)]
-        return []
-
-    def assets(self) -> list[dict]:
-        """Build the scan universe from Webull's official stock rankings.
-
-        OpenAPI has no full symbol-master operation. Combining gainers, losers,
-        volume, and turnover rankings is the documented Webull discovery
-        equivalent and intentionally yields a scan universe, not an exchange list.
-        """
-        LOGGER.info(
-            "Webull universe construction start: authentication_status=%s "
-            "app_key_configured=%s app_secret_configured=%s",
-            "credentials configured" if self.app_key and self._secret else "credentials missing",
-            bool(self.app_key), bool(self._secret),
-        )
-        found: dict[str, dict] = {}
-        for rank_type in ("GAIN", "DECLINE", "VOLUME", "TURNOVER"):
-            payload = self._universe_get(rank_type)
-            rows = self._rows(payload)
-            returned_symbols = [
-                str(row.get("symbol") or row.get("ticker_symbol") or
-                    row.get("ticker") or "").strip().upper()
-                for row in rows
-            ]
-            returned_symbols = [symbol for symbol in returned_symbols if symbol]
-            LOGGER.info(
-                "Webull universe parsed response: operation=stock ranking %s "
-                "parsed_symbol_count=%s first_10_returned_symbols=%s",
-                rank_type, len(returned_symbols), returned_symbols[:10],
-            )
-            for row in rows:
-                symbol = str(row.get("symbol") or row.get("ticker_symbol") or
-                             row.get("ticker") or "").strip().upper()
-                if symbol:
-                    found[symbol] = {"symbol": symbol, "status": "active",
-                                     "tradable": True, "class": "us_equity",
-                                     "source": f"Webull {rank_type} ranking"}
-        result = sorted(found.values(), key=lambda row: row["symbol"])
-        LOGGER.info(
-            "Webull universe construction complete: parsed_symbol_count=%s "
-            "first_10_returned_symbols=%s; operation is a four-ranking discovery "
-            "bootstrap, not a complete tradable-equity symbol master; Webull OpenAPI "
-            "does not publish a complete symbol-master endpoint, so a complete universe "
-            "requires a separately supplied, permitted instrument list before quote "
-            "subscription",
-            len(result), [row["symbol"] for row in result[:10]],
-        )
-        return result
-
     def bars(self, symbols: Iterable[str], *, start: datetime, timeframe="1Min",
              limit=10_000, **kwargs) -> dict[str, list[dict]]:
-        output: dict[str, list[dict]] = {}
+        output = {}
         interval = {"1Min": "m1", "30Sec": "s30"}.get(timeframe, timeframe)
         for symbol in symbols:
-            payload = self._get(DEFAULT_BARS_PATH, {
-                "symbol": symbol, "interval": interval,
-                "start_time": start.isoformat(), "count": min(int(limit), 10_000),
-            })
-            rows = []
-            for item in self._rows(payload):
-                rows.append({
-                    "t": item.get("timestamp") or item.get("time") or item.get("t"),
-                    "o": _number(item.get("open") or item.get("o")),
-                    "h": _number(item.get("high") or item.get("h")),
-                    "l": _number(item.get("low") or item.get("l")),
-                    "c": _number(item.get("close") or item.get("c")),
-                    "v": _number(item.get("volume") or item.get("v")),
-                })
-            output[str(symbol).upper()] = rows
+            payload = self.sdk.bars(symbol=symbol, category="US_STOCK", interval=interval,
+                                    start_time=start.isoformat(), count=min(int(limit), 10_000),
+                                    extend_hour_required=True, include_overnight=True)
+            output[str(symbol).upper()] = [{
+                "t": row.get("timestamp") or row.get("time") or row.get("t"),
+                "o": _number(row.get("open") or row.get("o")),
+                "h": _number(row.get("high") or row.get("h")),
+                "l": _number(row.get("low") or row.get("l")),
+                "c": _number(row.get("close") or row.get("c")),
+                "v": _number(row.get("volume") or row.get("v")),
+            } for row in self._rows(payload)]
         return output
+
+    def stream(self, callback):
+        return self.sdk.stream(callback)
 
 
 class LiveWebullProvider(WebullProvider):
@@ -312,7 +145,7 @@ class LiveWebullProvider(WebullProvider):
     provider_name = "Webull OpenAPI"
 
     def __init__(self, app_key: str, app_secret: str, *, fallback=None, bootstrap=None,
-                 rest_client=None, stream_class=PahoWebullStream):
+                 rest_client=None, stream_class=None, universe_client=None, sdk_client=None):
         self.cache: dict[str, CachedMarketData] = {}
         self._snapshot_cache: dict[str, dict] = {}
         self._lock = Lock()
@@ -320,6 +153,7 @@ class LiveWebullProvider(WebullProvider):
         self._subscribed: set[str] = set()
         self._latencies = deque(maxlen=1000)
         self._stream_class = stream_class
+        self._universe_client = universe_client
         self._broker = None
         if fallback is not None:
             raise ValueError("Live Webull is Webull-only; fallback providers are forbidden")
@@ -333,42 +167,38 @@ class LiveWebullProvider(WebullProvider):
             "disconnect_count": 0, "symbols_missing_prices": 0,
         }
         self.diagnostics["market_data_sources"] = {
-            "universe_provider": "Webull OpenAPI stock rankings",
-            "snapshot_provider": "Webull OpenAPI",
-            "streaming_provider": "Webull OpenAPI",
+            "universe_provider": "Alpaca Trading API",
+            "quote_provider": "Webull OpenAPI SDK",
+            "bars_provider": "Webull OpenAPI SDK",
+            "streaming_provider": "Webull OpenAPI SDK",
         }
-        bootstrap_url = os.getenv("WEBULL_STREAM_BOOTSTRAP_URL", DEFAULT_BOOTSTRAP_URL)
-        self._bootstrap = bootstrap or WebullBootstrap(app_key, app_secret, url=bootstrap_url)
+        self._bootstrap = bootstrap
         self._snapshot_client = rest_client or WebullOpenAPIClient(
-            app_key, app_secret, base_url=os.getenv("WEBULL_OPENAPI_URL", DEFAULT_OPENAPI_URL))
+            app_key, app_secret, sdk_client=sdk_client)
         super().__init__(stream_factory=self._stream_factory)
 
     def pipeline_sources(self) -> list[dict[str, str]]:
         """Describe every provider invoked by Live Webull mode."""
-        snapshot_base = getattr(self._snapshot_client, "base_url", DEFAULT_OPENAPI_URL)
-        snapshot_path = getattr(self._snapshot_client, "snapshot_path", DEFAULT_SNAPSHOT_PATH)
-        bootstrap_url = getattr(self._bootstrap, "url", DEFAULT_BOOTSTRAP_URL)
-        topic = (self._broker or {}).get("topic_template", DEFAULT_TOPIC)
         return [
             {
                 "Stage": "Universe (tradable symbol list)",
-                "Actual provider": "Webull OpenAPI rankings",
-                "Endpoint / operation": f"GET {snapshot_base}{DEFAULT_RANKING_PATH}",
-                "Code path": "build_seed_symbols → LiveWebullProvider.assets → WebullOpenAPIClient.assets",
-                "Alpaca used": "No",
+                "Actual provider": "Alpaca Trading API",
+                "Endpoint / operation": "GET /v2/assets (symbol master only)",
+                "Code path": "build_seed_symbols → LiveWebullProvider.assets → AlpacaProvider.assets",
+                "Alpaca used": "Yes — symbol master only",
             },
             {
                 "Stage": "Quote / snapshot retrieval",
-                "Actual provider": "Webull OpenAPI",
-                "Endpoint / operation": f"GET {snapshot_base}{snapshot_path}?symbols=<batch>",
+                "Actual provider": "Webull OpenAPI SDK",
+                "Endpoint / operation": SNAPSHOT_OPERATION + " (≤100 symbols; US_STOCK; extended/overnight)",
                 "Code path": "app._run_live_pipeline.<locals>.discover → LiveWebullProvider.initialize_quotes → WebullOpenAPIClient.snapshots; then LiveWebullProvider.snapshots reads the Webull cache",
                 "Alpaca used": "No",
             },
             {
                 "Stage": "Streaming quotes",
-                "Actual provider": "Webull OpenAPI streaming (MQTT)",
-                "Endpoint / operation": f"POST {bootstrap_url}; subscribe {topic}",
-                "Code path": "LiveWebullProvider.ensure_stream → WebullProvider.subscribe → LiveWebullProvider._stream_factory → PahoWebullStream",
+                "Actual provider": "Webull OpenAPI SDK",
+                "Endpoint / operation": f"SDK MQTT subscribe via {STREAM_HOST}",
+                "Code path": "LiveWebullProvider.ensure_stream → official SDK market-data stream",
                 "Alpaca used": "No",
             },
             {
@@ -380,8 +210,8 @@ class LiveWebullProvider(WebullProvider):
             },
             {
                 "Stage": "VWAP / volume calculations",
-                "Actual provider": "Webull OpenAPI history + Walter local calculations",
-                "Endpoint / operation": f"GET {snapshot_base}{DEFAULT_BARS_PATH}; session_vwap and volume metrics run locally",
+                "Actual provider": "Webull OpenAPI SDK + Walter local calculations",
+                "Endpoint / operation": "SDK stock bars; session_vwap and volume metrics run locally",
                 "Code path": "analyze_candidates → LiveWebullProvider.bars → WebullOpenAPIClient.bars",
                 "Alpaca used": "No",
             },
@@ -395,7 +225,9 @@ class LiveWebullProvider(WebullProvider):
         ]
 
     def assets(self):
-        return self._snapshot_client.assets()
+        if self._universe_client is None:
+            raise RuntimeError("Alpaca Trading API symbol-master client is not configured")
+        return self._universe_client.assets()
 
     def bars(self, symbols, **kwargs):
         return self._snapshot_client.bars(symbols, **kwargs)
@@ -415,19 +247,13 @@ class LiveWebullProvider(WebullProvider):
         return []
 
     def _stream_factory(self, receive: Callable[[MarketEvent], None]):
-        self._broker = self._bootstrap.obtain()
         diagnostic = self.diagnostics["webull_stream"]
         diagnostic["authentication_status"] = "authenticated"
-
-        def parser(payload: bytes) -> Quote:
-            quote, raw = parse_webull_message(payload)
-            return quote
-
-        # Paho's callback emits the normalized trade event to ``receive``.
-        return self._stream_class(receive, host=self._broker["host"], port=self._broker["port"],
-            username=self._broker["username"], password=self._broker["password"],
-            client_id=self._broker["client_id"], topic_template=self._broker["topic_template"],
-            parser=parser, on_disconnect=self._on_disconnect)
+        if self._stream_class is not None and self._bootstrap is not None:
+            # Test-only injection boundary; production streaming is SDK-owned.
+            broker = self._bootstrap.obtain()
+            return self._stream_class(receive, **broker)
+        return self._snapshot_client.stream(receive)
 
     def _on_disconnect(self) -> None:
         d = self.diagnostics["webull_stream"]
@@ -475,9 +301,10 @@ class LiveWebullProvider(WebullProvider):
             self.warnings.append(f"Webull stream unavailable; cached Webull snapshot retained: {exc}")
             LOGGER.error("WEBULL stream initialization failed; cached snapshot retained: %s", exc)
 
-    def initialize_quotes(self, symbols: Iterable[str], *, batch_size: int = 200) -> dict[str, float]:
+    def initialize_quotes(self, symbols: Iterable[str], *, batch_size: int = MAX_SNAPSHOT_SYMBOLS) -> dict[str, float]:
         """Synchronously seed every available price, then immediately stream it."""
         wanted = list(dict.fromkeys(str(s).strip().upper() for s in symbols if str(s).strip()))
+        batch_size = min(int(batch_size), MAX_SNAPSHOT_SYMBOLS)
         for offset in range(0, len(wanted), batch_size):
             batch = wanted[offset:offset + batch_size]
             # Every Webull socket is opened by a network worker. The Streamlit
