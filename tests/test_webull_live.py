@@ -53,7 +53,8 @@ class Stream:
 
 def test_provider_selection_includes_webull_and_prefers_configured_provider():
     assert live_data_modes(alpaca_configured=True, webull_configured=True) == (
-        ["Live Alpaca", "Live Webull", "Demo"], 0)
+        ["Live Alpaca", "Live Webull", "Demo"], 1)
+    assert live_data_modes(alpaca_configured=True, webull_configured=False)[1] == 0
     assert live_data_modes(alpaca_configured=False, webull_configured=True)[1] == 1
     assert live_data_modes(alpaca_configured=False, webull_configured=False)[1] == 2
 

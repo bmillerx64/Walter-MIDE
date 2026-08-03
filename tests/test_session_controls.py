@@ -5,6 +5,7 @@ from mide.session_controls import (
     SCAN_REQUESTED_KEY,
     SCAN_RUNNING_KEY,
     STOP_REQUESTED_KEY,
+    begin_scheduled_scan,
     finish_scan,
     initialize_session_controls,
     request_scan,
@@ -54,6 +55,7 @@ def test_stop_immediately_cancels_an_active_scan_and_prevents_auto_restart():
     state = {}
     initialize_session_controls(state, default_mode="Live Webull")
     request_scan(state)
+    begin_scheduled_scan(state)
     assert state[SCAN_RUNNING_KEY] is True
 
     request_stop(state)
@@ -62,6 +64,27 @@ def test_stop_immediately_cancels_an_active_scan_and_prevents_auto_restart():
     assert state[SCAN_REQUESTED_KEY] is False
     assert state[STOP_REQUESTED_KEY] is True
     assert state[AUTO_SCAN_KEY] is False
+
+
+def test_initialization_clears_scan_activity_left_by_an_interrupted_run():
+    state = {SCAN_RUNNING_KEY: True}
+
+    initialize_session_controls(state, default_mode="Live Webull")
+
+    assert state[SCAN_RUNNING_KEY] is False
+
+
+def test_manual_request_is_pending_until_scan_execution_actually_begins():
+    state = {}
+    initialize_session_controls(state, default_mode="Live Webull")
+
+    request_scan(state)
+
+    assert state[SCAN_REQUESTED_KEY] is True
+    assert state[SCAN_RUNNING_KEY] is False
+
+    begin_scheduled_scan(state)
+    assert state[SCAN_RUNNING_KEY] is True
 
 
 def test_reruns_never_silently_switch_the_selected_provider():
