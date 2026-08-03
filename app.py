@@ -140,7 +140,7 @@ from mide.completed_scan import (
     store_completed_scan,
 )
 memory_checkpoint("providers import", object_name="mide.webull_live")
-from mide.news import index_news, recent_wire_news_log
+from mide.news import index_news
 from mide.news_provider import (
     MarketDataNewsProvider,
     NewsService,
@@ -168,6 +168,7 @@ from mide.scanner_v2 import (
 memory_checkpoint("scanner import", object_name="mide.scanner_v2")
 from mide.memory import MemoryStore
 from mide.flight_recorder import FlightRecorder
+from mide.decision_engine import expansion_candidate_diagnostic
 memory_checkpoint("cache stores import", object_name="MemoryStore, FlightRecorder")
 from mide.memory_profile import compact_previous_record, profile as memory_profile, release_temporaries
 from mide.timeframe_alignment import alignment_voice
@@ -1012,7 +1013,8 @@ def _run_live_pipeline(
 
     state = {"seeds": [], "reasons": {}, "snapshots": {}, "news": [],
              "candidates": [], "analyzed": [], "ranked": [],
-             "stage_diagnostics": [], "scan_stage_counts": {}}
+             "stage_diagnostics": [], "scan_stage_counts": {},
+             "expansion_candidate_ledger": []}
     universe_verification = UniverseVerification(
         client, feed=settings.feed, market_session=market_phase()
     )
@@ -1399,6 +1401,9 @@ def _run_live_pipeline(
         result = {}
         for item in records:
             advanced, audit, confluence = behavioral_decision(item)
+            state["expansion_candidate_ledger"].append(
+                expansion_candidate_diagnostic(item, audit, confluence)
+            )
             result[item["symbol"]] = Decision(
                 advanced, "Expansion", f"Confluence {confluence}",
                 {"decision_funnel": audit, "confluence_score": confluence,
@@ -1535,6 +1540,15 @@ def _run_live_pipeline(
     print_scan_stage_counts(state["scan_stage_counts"])
     if isinstance(client, LiveWebullProvider):
         client.diagnostics["active_pipeline_sources"] = client.pipeline_sources()
+    flight_scan = record_scan_safely(
+        get_flight_recorder(), seeds=state["seeds"],
+        discovery_reasons=state["reasons"], snapshots=state["snapshots"],
+        candidates=state["candidates"], analyzed=state["analyzed"],
+        records=ranked, settings=settings, scanner_v2=True,
+        expansion_candidate_ledger=state["expansion_candidate_ledger"],
+    )
+    if flight_scan is not None:
+        client.diagnostics["flight_recorder"] = flight_scan
     log("Timing summary: " + json.dumps(timing_summary, separators=(",", ":")))
     progress.progress(1.0, text="Walter Architecture complete")
     status.update(label=f"Scan complete: {len(ranked)} ranked records",
@@ -2441,6 +2455,15 @@ if active_tab == "Diagnostics":
             ],
         ):
             column.metric(label, funnel.get(label, 0))
+        rejected_expansion = [
+            item for item in latest_flight_scan.get("expansion_candidate_ledger", [])
+            if not item.get("passed")
+        ][:50]
+        st.write("First 50 rejected Participation → Expansion candidates")
+        if rejected_expansion:
+            st.dataframe(rejected_expansion, width="stretch", hide_index=True)
+        else:
+            st.info("No Expansion Assessment rejections were recorded in this scan.")
         diagnostic_symbol = (
             st.text_input(
                 "Look up symbol across recorded scans",
