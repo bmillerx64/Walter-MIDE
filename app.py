@@ -1975,6 +1975,37 @@ if active_tab == "Radar":
                 )
 if active_tab == "Diagnostics":
     view_scan = completed_scan_for_view(st.session_state, "Diagnostics")
+    st.subheader("WEBULL SDK RUNTIME INSPECTION")
+    st.caption(
+        "Temporary read-only inspection of the SDK installed in this Streamlit runtime. "
+        "The report does not read or include credentials, headers, tokens, or secrets."
+    )
+    from mide.webull_runtime_inspection import (
+        format_runtime_report,
+        inspect_webull_runtime,
+    )
+
+    webull_runtime_report = inspect_webull_runtime()
+    st.write(f"Distribution installed: **{webull_runtime_report['installed']}**")
+    st.write(f"Installed version: **{webull_runtime_report['version'] or 'N/A'}**")
+    with st.expander("Distribution files containing webull", expanded=False):
+        st.code("\n".join(webull_runtime_report["webull_files"]) or "(none)")
+    st.markdown("**Importable top-level modules supplied by the distribution**")
+    st.dataframe(
+        webull_runtime_report["top_level_modules"],
+        use_container_width=True,
+        hide_index=True,
+    )
+    inspection_text = format_runtime_report(webull_runtime_report)
+    st.code(inspection_text, language="text")
+    st.caption("Names matching requested SDK capability terms are marked [HIGHLIGHT].")
+    st.download_button(
+        "Download Runtime Inspection Report",
+        data=inspection_text,
+        file_name="webull-sdk-runtime-inspection.txt",
+        mime="text/plain",
+    )
+    st.divider()
     active_sources = (
         view_scan.pipeline_sources if view_scan else []
     )
