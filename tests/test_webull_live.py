@@ -59,50 +59,23 @@ def test_official_sdk_client_is_selected_and_handwritten_auth_is_absent():
 def test_official_sdk_uses_installed_package_layout(monkeypatch, tmp_path):
     calls = []
 
-    class ApiClient:
+    class DataClient:
         def __init__(self, **kwargs):
-            calls.append(("ApiClient", kwargs))
+            calls.append(("DataClient", kwargs))
 
-    class MarketDataApi:
-        def __init__(self, api_client):
-            calls.append(("MarketDataApi", api_client))
-            self.api_client = api_client
-
-    core = types.ModuleType("webullsdkcore")
-    core.__path__ = []
-    core_client = types.ModuleType("webullsdkcore.client")
-    core_client.ApiClient = ApiClient
-    mdata = types.ModuleType("webullsdkmdata")
-    mdata.__path__ = []
-    mdata_api = types.ModuleType("webullsdkmdata.api")
-    mdata_api.MarketDataApi = MarketDataApi
-    monkeypatch.setitem(sys.modules, "webullsdkcore", core)
-    monkeypatch.setitem(sys.modules, "webullsdkcore.client", core_client)
-    monkeypatch.setitem(sys.modules, "webullsdkmdata", mdata)
-    monkeypatch.setitem(sys.modules, "webullsdkmdata.api", mdata_api)
-
-    (tmp_path / "webullsdkcore").mkdir()
-    (tmp_path / "webullsdkcore" / "__init__.py").write_text("")
-    (tmp_path / "webullsdkcore" / "client.py").write_text("class ApiClient: pass\n")
-    (tmp_path / "webullsdkmdata").mkdir()
-    (tmp_path / "webullsdkmdata" / "__init__.py").write_text("")
-    (tmp_path / "webullsdkmdata" / "api.py").write_text("class MarketDataApi: pass\n")
+    data_client = types.ModuleType("webull.data.data_client")
+    data_client.DataClient = DataClient
+    monkeypatch.setitem(sys.modules, "webull.data.data_client", data_client)
 
     class Distribution:
-        files = [
-            "webullsdkcore/__init__.py", "webullsdkcore/client.py",
-            "webullsdkmdata/__init__.py", "webullsdkmdata/api.py",
-        ]
-
-        def locate_file(self, file):
-            return tmp_path / file
+        files = ["webull/data/data_client.py"]
 
     monkeypatch.setattr("mide.webull_sdk.metadata.distribution", lambda name: Distribution())
 
     client = create_official_client("key", "secret")
 
-    assert calls[0] == ("ApiClient", {"app_key": "key", "app_secret": "secret"})
-    assert calls[1] == ("MarketDataApi", client.api_client)
+    assert calls == [("DataClient", {"app_key": "key", "app_secret": "secret"})]
+    assert isinstance(client, DataClient)
 
 
 def test_missing_declared_sdk_fails_once_with_explicit_package(monkeypatch):
