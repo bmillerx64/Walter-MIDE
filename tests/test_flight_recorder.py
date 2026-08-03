@@ -115,6 +115,29 @@ def test_recorder_keeps_legacy_schema_when_news_log_is_not_provided(tmp_path):
     assert "recent_wire_news" not in recorder.latest_scan()
 
 
+def test_recorder_persists_expansion_candidate_ledger(tmp_path):
+    recorder = FlightRecorder(tmp_path / "flights.jsonl")
+    rejected = {
+        "symbol": "DROP",
+        "participation_score": 41.0,
+        "expansion_score": 45,
+        "passed": False,
+        "decision_booleans": [{
+            "boolean": "VWAP", "passed": False, "result": "Failing",
+            "metric_values": {"vwap_distance_pct": -3.2},
+        }],
+        "first_failed_boolean": "VWAP",
+    }
+
+    scan = recorder.record_scan(
+        seeds=[], discovery_reasons={}, snapshots={}, candidates=[], analyzed=[],
+        records=[], settings=SETTINGS, expansion_candidate_ledger=[rejected],
+    )
+
+    assert scan["expansion_candidate_ledger"] == [rejected]
+    assert recorder.latest_scan()["expansion_candidate_ledger"][0]["symbol"] == "DROP"
+
+
 def test_safe_record_scan_retries_legacy_interface_without_news():
     class LegacyRecorder:
         def __init__(self):

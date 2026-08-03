@@ -317,6 +317,86 @@ def behavioral_decision(record: dict) -> tuple[bool, list[dict], int]:
     return agreement >= 3, audit, confluence
 
 
+def expansion_candidate_diagnostic(
+    record: dict, audit: list[dict], expansion_score: int
+) -> dict:
+    """Serialize the inputs to Expansion without making another decision.
+
+    This is deliberately built from the already-computed audit booleans.  It is
+    diagnostic-only: no value returned here is consumed by the decision engine.
+    """
+    decision_categories = {
+        "Participation": {
+            "participation_surge_score": record.get("participation_surge_score"),
+            "participation_score": record.get("participation_score"),
+            "volume_acceleration_3m": record.get("volume_acceleration_3m"),
+            "dollar_volume": record.get("dollar_volume"),
+        },
+        "Price Structure": {
+            "structure_score": record.get("structure_score"),
+            "higher_highs": record.get("higher_highs"),
+            "higher_lows": record.get("higher_lows"),
+            "healthy_pullbacks": record.get("healthy_pullbacks"),
+            "base_quality": record.get("base_quality"),
+        },
+        "VWAP": {
+            "vwap_reclaimed_last_10m": record.get("vwap_reclaimed_last_10m"),
+            "vwap_relation": record.get("vwap_relation"),
+            "vwap_distance_pct": record.get("vwap_distance_pct"),
+        },
+        "SuperTrend": {
+            "supertrend_flip": record.get("supertrend_flip"),
+            "supertrend_flipped_last_10m": record.get("supertrend_flipped_last_10m"),
+            "supertrend_bullish": record.get("supertrend_bullish"),
+            "supertrend_distance_pct": record.get("supertrend_distance_pct"),
+        },
+        "Momentum Quality": {
+            "exhaustion": record.get("exhaustion"),
+            "momentum_quality_score": record.get("momentum_quality_score"),
+            "current_momentum": record.get("current_momentum"),
+            "opportunity_score": record.get("opportunity_score"),
+            "volume_acceleration": record.get("volume_acceleration"),
+            "acceleration_ratio": record.get("acceleration_ratio"),
+        },
+        "Confluence": {
+            "agreement_count": sum(
+                bool(step.get("passed"))
+                for step in audit
+                if step.get("category") in {
+                    "Participation", "Price Structure", "VWAP",
+                    "SuperTrend", "Momentum Quality",
+                }
+            ),
+            "required_agreement_count": 3,
+            "expansion_score": expansion_score,
+        },
+    }
+    booleans = [
+        {
+            "boolean": step["category"],
+            "passed": bool(step.get("passed")),
+            "result": step.get("result"),
+            "metric_values": decision_categories[step["category"]],
+        }
+        for step in audit
+        if step.get("category") in decision_categories
+    ]
+    first_failed = next(
+        (item["boolean"] for item in booleans if not item["passed"]), None
+    )
+    participation_score = _number(
+        record, "participation_surge_score", "participation_score"
+    ) or 0
+    return {
+        "symbol": str(record.get("symbol") or "").upper(),
+        "participation_score": participation_score,
+        "expansion_score": expansion_score,
+        "passed": bool(booleans[-1]["passed"]) if booleans else False,
+        "decision_booleans": booleans,
+        "first_failed_boolean": first_failed,
+    }
+
+
 def evaluate(records: Iterable[dict], policy: IdentityPolicy | None = None) -> list[dict]:
     """Return records enriched with Stage 1–3 decisions and complete audit trails."""
     records = list(records)

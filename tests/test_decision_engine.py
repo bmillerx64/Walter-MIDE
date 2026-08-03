@@ -1,4 +1,10 @@
-from mide.decision_engine import IdentityPolicy, evaluate, stage2_filter
+from mide.decision_engine import (
+    IdentityPolicy,
+    behavioral_decision,
+    evaluate,
+    expansion_candidate_diagnostic,
+    stage2_filter,
+)
 from mide.ui import decision_funnel_markup
 
 
@@ -157,6 +163,33 @@ def test_weak_participation_is_evidence_and_does_not_veto_confluence():
     participation = next(s for s in accepted["decision_funnel"] if s["category"] == "Participation")
     assert participation["result"] == "10 — 3-minute volume flattening"
     assert not participation["passed"]
+
+
+def test_expansion_diagnostic_captures_all_decision_booleans_and_metrics():
+    candidate = record(
+        participation_score=10, volume_acceleration_3m=.8,
+        vwap_relation="below", vwap_distance_pct=-3,
+        supertrend_bullish=False, supertrend_distance_pct=4,
+    )
+    advanced, audit, score = behavioral_decision(candidate)
+
+    diagnostic = expansion_candidate_diagnostic(candidate, audit, score)
+
+    assert diagnostic["symbol"] == "EARN"
+    assert diagnostic["participation_score"] == 10
+    assert diagnostic["expansion_score"] == score
+    assert diagnostic["passed"] is advanced
+    assert [item["boolean"] for item in diagnostic["decision_booleans"]] == [
+        "Participation", "Price Structure", "VWAP", "SuperTrend",
+        "Momentum Quality", "Confluence",
+    ]
+    assert diagnostic["first_failed_boolean"] == "Participation"
+    assert diagnostic["decision_booleans"][0]["metric_values"] == {
+        "participation_surge_score": None,
+        "participation_score": 10,
+        "volume_acceleration_3m": .8,
+        "dollar_volume": 2_000_000,
+    }
 
 
 def test_policy_is_configurable():

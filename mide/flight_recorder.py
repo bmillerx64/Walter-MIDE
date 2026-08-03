@@ -116,6 +116,7 @@ class FlightRecorder:
         settings,
         scanner_v2=True,
         recent_news_log=None,
+        expansion_candidate_ledger=None,
         timestamp=None,
     ) -> dict:
         timestamp = timestamp or datetime.now(timezone.utc)
@@ -393,6 +394,8 @@ class FlightRecorder:
         }
         if recent_news_log is not None:
             scan["recent_wire_news"] = recent_news_log
+        if expansion_candidate_ledger is not None:
+            scan["expansion_candidate_ledger"] = list(expansion_candidate_ledger)
         with self.path.open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(scan, default=str) + "\n")
         return scan
