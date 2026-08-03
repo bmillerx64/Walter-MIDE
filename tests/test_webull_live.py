@@ -119,6 +119,37 @@ def test_sdk_snapshot_only_requests_extended_hours_when_explicitly_enabled():
     }]
 
 
+def test_first_successful_snapshot_raw_response_is_logged_before_parsing(caplog):
+    class Response:
+        status_code = 200
+        headers = {"Content-Type": "application/json", "Authorization": "secret"}
+        text = '{"data": [{"symbol": "HYFM"}]}'
+
+        def json(self):
+            return {"data": [{"symbol": "HYFM"}]}
+
+        def to_dict(self):
+            return {"data": [{"symbol": "HYFM"}]}
+
+    class SDK:
+        def get_snapshot(self, **_kwargs):
+            return Response()
+
+    client = WebullSDKClient("k", "s", sdk_client=SDK())
+    with caplog.at_level("INFO", logger="mide.webull_sdk"):
+        assert client.stock_snapshot(["HYFM"]) == {"data": [{"symbol": "HYFM"}]}
+        client.stock_snapshot(["HYFM"])
+
+    messages = [record.message for record in caplog.records
+                if "first successful snapshot raw response" in record.message]
+    assert len(messages) == 1
+    assert "type=test_webull_live." in messages[0]
+    assert "status=200" in messages[0]
+    assert "'Authorization': '<redacted>'" in messages[0]
+    assert 'text_first_1000={"data": [{"symbol": "HYFM"}]}' in messages[0]
+    assert 'json={"data": [{"symbol": "HYFM"}]}' in messages[0]
+
+
 def test_snapshot_batches_never_exceed_100_symbols():
     rest = Rest()
     provider = LiveWebullProvider("key", "secret", rest_client=rest,
