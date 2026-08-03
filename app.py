@@ -16,6 +16,8 @@ import json
 import logging
 import math
 import platform
+from pathlib import Path
+import re
 import sys
 from time import perf_counter
 memory_checkpoint("app.py standard-library imports")
@@ -502,11 +504,47 @@ def get_trade_outcome_store(recorder=None):
     return outcome_store
 
 
-def record_scan_safely(recorder, *, recent_news_log=None, **scan_data):
+def _recorder_file_state(path: Path | None) -> dict:
+    """Return metadata only (never contents) for the recorder diagnostics."""
+    if path is None:
+        return {"exists": False, "size_bytes": None}
+    try:
+        stat = path.stat()
+    except FileNotFoundError:
+        return {"exists": False, "size_bytes": None}
+    except OSError:
+        return {"exists": path.exists(), "size_bytes": None}
+    return {"exists": True, "size_bytes": stat.st_size}
+
+
+def _sanitized_recorder_error(exc: Exception) -> str:
+    """Keep useful recorder errors while refusing potentially sensitive text."""
+    message = " ".join(str(exc).split())
+    if re.search(
+        r"(?i)authorization|bearer|credential|password|secret|token|api[-_ ]?key|headers?",
+        message,
+    ):
+        return "[redacted: potentially sensitive exception message]"
+    return message[:300]
+
+
+def record_scan_safely(
+    recorder, *, recent_news_log=None, runtime_diagnostics=None, **scan_data
+):
     """Write an optional flight trace without affecting the live dashboard."""
+    diagnostics = runtime_diagnostics if runtime_diagnostics is not None else {}
+    recorder_path = getattr(recorder, "path", None)
+    resolved_path = Path(recorder_path).expanduser().resolve() if recorder_path else None
+    diagnostics.update({
+        "invoked": True,
+        "recorder_path": str(resolved_path) if resolved_path else None,
+        "before": _recorder_file_state(resolved_path),
+        "record_scan_succeeded": False,
+        "exception": None,
+    })
     try:
         try:
-            return recorder.record_scan(
+            result = recorder.record_scan(
                 **scan_data, recent_news_log=recent_news_log
             )
         except TypeError as exc:
@@ -518,14 +556,32 @@ def record_scan_safely(recorder, *, recent_news_log=None, **scan_data):
             logging.getLogger(__name__).warning(
                 "Flight Recorder is using the legacy interface; news log omitted"
             )
-            return recorder.record_scan(**scan_data)
+            result = recorder.record_scan(**scan_data)
+        diagnostics["record_scan_succeeded"] = True
+        return result
     except Exception as exc:
-        logging.getLogger(__name__).exception("Flight Recorder write failed")
+        sanitized_message = _sanitized_recorder_error(exc)
+        diagnostics["exception"] = {
+            "class": type(exc).__name__,
+            "message": sanitized_message,
+        }
+        logging.getLogger(__name__).error(
+            "Flight Recorder write failed (%s): %s",
+            type(exc).__name__,
+            sanitized_message,
+        )
         log(
             "Flight Recorder write failed; dashboard updated: "
-            f"{type(exc).__name__}: {exc}"
+            f"{type(exc).__name__}: {sanitized_message}"
         )
         return None
+    finally:
+        diagnostics["after"] = _recorder_file_state(resolved_path)
+
+
+def flight_recorder_download_bytes(recorder) -> bytes:
+    """Read the recorder at render time rather than caching a pre-scan payload."""
+    return recorder.export_bytes()
 
 
 def symbol_export(symbol: str, store: MemoryStore, recorder: FlightRecorder) -> dict:
@@ -838,13 +894,9 @@ with st.sidebar:
         mime="application/x-ndjson",
         use_container_width=True,
     )
-    st.download_button(
-        "Download Flight Recorder",
-        data=get_flight_recorder().export_bytes(),
-        file_name="flight_recorder.jsonl",
-        mime="application/x-ndjson",
-        use_container_width=True,
-    )
+    # Filled after scan orchestration below so its payload cannot be a snapshot
+    # taken before a just-requested scan appends to the recorder.
+    flight_recorder_download_slot = st.empty()
     run_scan = st.button(
         "Run live scan",
         type="primary",
@@ -1548,13 +1600,17 @@ def _run_live_pipeline(
     print_scan_stage_counts(state["scan_stage_counts"])
     if isinstance(client, LiveWebullProvider):
         client.diagnostics["active_pipeline_sources"] = client.pipeline_sources()
+    runtime_recorder = get_flight_recorder()
+    recorder_runtime_diagnostics = {}
     flight_scan = record_scan_safely(
-        get_flight_recorder(), seeds=state["seeds"],
+        runtime_recorder, seeds=state["seeds"],
         discovery_reasons=state["reasons"], snapshots=state["snapshots"],
         candidates=state["candidates"], analyzed=state["analyzed"],
         records=ranked, settings=settings, scanner_v2=True,
         expansion_candidate_ledger=state["expansion_candidate_ledger"],
+        runtime_diagnostics=recorder_runtime_diagnostics,
     )
+    client.diagnostics["flight_recorder_runtime"] = recorder_runtime_diagnostics
     if flight_scan is not None:
         client.diagnostics["flight_recorder"] = flight_scan
     log("Timing summary: " + json.dumps(timing_summary, separators=(",", ":")))
@@ -1698,6 +1754,17 @@ if mode.startswith("Live ") and should_scan and not st.session_state[STOP_REQUES
         )
     finally:
         finish_scan(st.session_state)
+
+# The sidebar slot keeps its original layout position, but the bytes are read
+# only after this run's scan (if any) has finished recording.
+with flight_recorder_download_slot:
+    st.download_button(
+        "Download Flight Recorder",
+        data=flight_recorder_download_bytes(get_flight_recorder()),
+        file_name="flight_recorder.jsonl",
+        mime="application/x-ndjson",
+        use_container_width=True,
+    )
 
 completed_scan = completed_scan_for_view(st.session_state, "Radar")
 records = completed_scan.records if completed_scan else []
