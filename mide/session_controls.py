@@ -34,7 +34,9 @@ def initialize_session_controls(
     """
     state.setdefault(DATA_MODE_KEY, default_mode)
     state.setdefault(PROVIDER_KEY, provider_for_mode(state[DATA_MODE_KEY]))
-    state.setdefault(AUTO_SCAN_KEY, True)
+    # Keep repair deployments manual until Webull credentials and entitlements
+    # have passed the deployed connection test.
+    state.setdefault(AUTO_SCAN_KEY, False)
     state[SCAN_RUNNING_KEY] = False
     state.setdefault(SCAN_REQUESTED_KEY, False)
     state.setdefault(STOP_REQUESTED_KEY, False)

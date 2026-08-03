@@ -92,7 +92,8 @@ def publish_scan_result(
     ``scan_completed=False``.  Such a run is not an empty-universe scan and must
     never replace the last completed result with misleading zero counts.
     """
-    if scan.diagnostics.get("scan_completed", True) is False:
+    if (scan.diagnostics.get("scan_completed", True) is False
+            or scan.symbols_sampled == 0):
         return completed_scan_for_view(state, "failed scan")
     return store_completed_scan(state, scan)
 
