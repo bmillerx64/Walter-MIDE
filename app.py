@@ -1057,6 +1057,10 @@ def _run_live_pipeline(
             raise RuntimeError(f"Universe discovery failed: {exc}") from exc
         if not seeds:
             raise RuntimeError("Universe discovery returned zero eligible symbols")
+        if isinstance(client, LiveWebullProvider):
+            logging.getLogger(__name__).info(
+                "WEBULL symbols discovered before streaming=%s", len(seeds)
+            )
         state["universe_elapsed_ms"] = round((perf_counter() - universe_started) * 1000, 3)
         state["seeds"], state["reasons"] = seeds, reasons
         price_started = perf_counter()

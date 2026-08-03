@@ -173,6 +173,8 @@ class LiveWebullProvider(WebullProvider):
             "cached_symbols": 0, "messages_received": 0, "last_message_timestamp": None,
             "stream_latency_ms": None, "subscription_failures": [],
             "disconnect_count": 0, "symbols_missing_prices": 0,
+            "discovered_symbols": 0, "cached_snapshot_symbols": 0,
+            "cached_snapshot_loaded": False, "snapshot_rest_succeeded": None,
         }
         self.diagnostics["market_data_sources"] = {
             "universe_provider": "Alpaca Trading API",
@@ -289,11 +291,12 @@ class LiveWebullProvider(WebullProvider):
             d["last_message_timestamp"] = datetime.fromtimestamp(now_ms / 1000, timezone.utc).isoformat()
             d["stream_latency_ms"] = round(sum(self._latencies) / len(self._latencies), 2)
 
-    def ensure_stream(self, symbols: Iterable[str]) -> None:
+    def ensure_stream(self, symbols: Iterable[str]) -> bool:
+        """Attempt streaming without making it a prerequisite for cached data."""
         wanted = {str(symbol).strip().upper() for symbol in symbols if str(symbol).strip()}
         new = sorted(wanted - self._subscribed)
         if not new and self._subscription is not None:
-            return
+            return True
         d = self.diagnostics["webull_stream"]
         try:
             if self._subscription is None:
@@ -304,18 +307,26 @@ class LiveWebullProvider(WebullProvider):
                 self._subscription.add(new)
             self._subscribed.update(new)
             d["subscribed_symbols"] = len(self._subscribed)
+            return True
         except Exception as exc:
             d["authentication_status"] = "failed" if self._broker is None else d["authentication_status"]
             d["stream_connection_status"] = "error"
             d["subscription_failures"].append(f"{type(exc).__name__}: {exc}")
             self.warnings.append(f"Webull stream unavailable; cached Webull snapshot retained: {exc}")
-            LOGGER.error("WEBULL stream initialization failed; cached snapshot retained: %s", exc)
-            raise RuntimeError(f"Webull official SDK streaming initialization failed: {exc}") from exc
+            LOGGER.error(
+                "WEBULL stream initialization failed; entering snapshot-only mode "
+                "cached_snapshot_symbols=%s error=%s", len(self._snapshot_cache), exc,
+            )
+            return False
 
     def initialize_quotes(self, symbols: Iterable[str], *, batch_size: int = MAX_SNAPSHOT_SYMBOLS) -> dict[str, float]:
         """Synchronously seed prices; optional SDK streaming starts only after proof."""
         wanted = list(dict.fromkeys(str(s).strip().upper() for s in symbols if str(s).strip()))
-        batch_size = min(int(batch_size), MAX_SNAPSHOT_SYMBOLS)
+        batch_size = max(1, min(int(batch_size), MAX_SNAPSHOT_SYMBOLS))
+        d = self.diagnostics["webull_stream"]
+        d["discovered_symbols"] = len(wanted)
+        LOGGER.info("WEBULL universe before snapshot discovered_symbols=%s", len(wanted))
+        rest_succeeded = True
         for offset in range(0, len(wanted), batch_size):
             batch = wanted[offset:offset + batch_size]
             # Every Webull socket is opened by a network worker. The Streamlit
@@ -327,6 +338,22 @@ class LiveWebullProvider(WebullProvider):
                 future.cancel()
                 LOGGER.error("Webull snapshot timed out after %ss", NETWORK_TIMEOUT_SECONDS)
                 snapshots = {}
+                rest_succeeded = False
+            except Exception as exc:
+                rest_succeeded = False
+                d["snapshot_rest_succeeded"] = False
+                LOGGER.error(
+                    "WEBULL snapshot REST failed independently of streaming "
+                    "batch_offset=%s batch_symbols=%s error=%s",
+                    offset, len(batch), exc,
+                )
+                raise
+            else:
+                LOGGER.info(
+                    "WEBULL snapshot REST succeeded independently of streaming "
+                    "batch_offset=%s requested_symbols=%s returned_symbols=%s",
+                    offset, len(batch), len(snapshots),
+                )
             now_ms = time.time_ns() // 1_000_000
             with self._lock:
                 for symbol, snapshot in snapshots.items():
@@ -345,9 +372,15 @@ class LiveWebullProvider(WebullProvider):
                         timestamp //= 1_000_000
                     self.cache[symbol] = CachedMarketData(price, _number(daily.get("v")),
                         _number(quote.get("bp")), _number(quote.get("ap")), timestamp, now_ms)
-        d = self.diagnostics["webull_stream"]
+        d["snapshot_rest_succeeded"] = rest_succeeded
         d["cached_symbols"] = len(self.cache)
+        d["cached_snapshot_symbols"] = len(self._snapshot_cache)
         d["symbols_missing_prices"] = len(set(wanted) - set(self.cache))
+        LOGGER.info(
+            "WEBULL snapshot seed complete discovered_symbols=%s "
+            "cached_snapshot_symbols=%s snapshot_rest_succeeded=%s",
+            len(wanted), len(self._snapshot_cache), rest_succeeded,
+        )
         # Snapshot completion is a hard ordering boundary before any optional
         # subscription. The obsolete hand-written token bootstrap is deliberately
         # absent: only the official SDK may initialize a stream.
@@ -383,6 +416,18 @@ class LiveWebullProvider(WebullProvider):
         with self._lock:
             snapshots = {symbol: dict(self._snapshot_cache.get(symbol, {}))
                          for symbol in symbols if symbol in self.cache}
+            cached_snapshot_count = sum(
+                1 for symbol in symbols if symbol in self._snapshot_cache
+            )
+        d = self.diagnostics["webull_stream"]
+        d["cached_snapshot_loaded"] = cached_snapshot_count > 0
+        d["cached_snapshot_symbols"] = len(self._snapshot_cache)
+        LOGGER.info(
+            "WEBULL cached snapshot load requested_symbols=%s loaded=%s "
+            "loaded_symbols=%s cached_snapshot_symbols=%s",
+            len(symbols), d["cached_snapshot_loaded"], cached_snapshot_count,
+            len(self._snapshot_cache),
+        )
         with self._lock:
             cached = {symbol: self.cache.get(symbol) for symbol in symbols}
         for symbol, live in cached.items():
