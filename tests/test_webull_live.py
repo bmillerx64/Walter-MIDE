@@ -95,11 +95,28 @@ def test_missing_declared_sdk_fails_once_with_explicit_package(monkeypatch):
 def test_sdk_snapshot_arguments_and_normalization():
     class SDK:
         def get_stock_snapshot(self, **kwargs):
-            assert kwargs == {"symbols": "HYFM", "category": "US_STOCK",
-                              "extend_hour_required": True, "overnight_required": True}
+            assert kwargs == {"symbols": "HYFM", "category": "US_STOCK"}
             return {"data": [{"symbol": "HYFM", "last_price": "3.25", "volume": 9}]}
     result = WebullOpenAPIClient("k", "s", sdk_client=SDK()).snapshots(["HYFM"])
     assert result["HYFM"]["latestTrade"]["p"] == 3.25
+
+
+def test_sdk_snapshot_only_requests_extended_hours_when_explicitly_enabled():
+    calls = []
+
+    class SDK:
+        def get_snapshot(self, **kwargs):
+            calls.append(kwargs)
+            return {"data": []}
+
+    client = WebullOpenAPIClient(
+        "k", "s", sdk_client=SDK(), extended_hours_enabled=True)
+    client.snapshots(["HYFM"])
+
+    assert calls == [{
+        "symbols": "HYFM", "category": "US_STOCK",
+        "extend_hour_required": True, "overnight_required": True,
+    }]
 
 
 def test_snapshot_batches_never_exceed_100_symbols():
