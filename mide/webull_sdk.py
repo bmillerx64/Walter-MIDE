@@ -152,6 +152,7 @@ class WebullSDKClient:
         LOGGER.info("WEBULL SDK adapter initialization started injected_client=%s",
                     sdk_client is not None)
         self.sdk_client = sdk_client or create_official_client(app_key, app_secret)
+        self._snapshot_response_captured = False
         self.http_trace_installed = _install_http_trace(self.sdk_client)
         LOGGER.info("WEBULL SDK adapter initialization complete http_trace_installed=%s",
                     self.http_trace_installed)
@@ -185,7 +186,7 @@ class WebullSDKClient:
         if extended_hours:
             arguments.update(extend_hour_required=True, overnight_required=True)
         try:
-            return _plain(method(**arguments))
+            response = method(**arguments)
         except TypeError:
             # Some generated SDK versions name the overnight option explicitly
             # as include_overnight; neither fallback constructs an HTTP request.
@@ -193,7 +194,43 @@ class WebullSDKClient:
                 raise
             arguments.pop("overnight_required")
             arguments["include_overnight"] = True
-            return _plain(method(**arguments))
+            response = method(**arguments)
+        self._capture_first_snapshot_response(response)
+        return _plain(response)
+
+    def _capture_first_snapshot_response(self, response) -> None:
+        """Log the first successful snapshot result before Walter parses it."""
+        if self._snapshot_response_captured:
+            return
+        self._snapshot_response_captured = True
+
+        response_type = f"{type(response).__module__}.{type(response).__qualname__}"
+        status = getattr(
+            response, "status_code", getattr(response, "status", "<unavailable>")
+        )
+        headers = _safe_headers(getattr(response, "headers", {}))
+        text = getattr(response, "text", "<unavailable>")
+        if callable(text):
+            text = text()
+        text_preview = _body_text(text)[:1000]
+
+        decoded_json = "<unavailable>"
+        json_method = getattr(response, "json", None)
+        if callable(json_method):
+            try:
+                decoded_json = json_method()
+            except Exception:  # Diagnostic decoding must not affect snapshot behavior.
+                decoded_json = "<JSON decoding failed>"
+
+        LOGGER.info(
+            "WEBULL first successful snapshot raw response type=%s status=%s "
+            "headers=%s text_first_1000=%s json=%s",
+            response_type,
+            status,
+            headers,
+            text_preview,
+            _body_text(decoded_json),
+        )
 
     def bars(self, **arguments):
         method = self._operation(("get_history_bar",))
