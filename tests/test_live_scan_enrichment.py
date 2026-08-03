@@ -8,6 +8,7 @@ from app import (
     ALERT_VOICE_SESSION_KEY,
     alert_voice_for_session,
     price_gate_savings_metrics,
+    print_scan_stage_counts,
     run_live,
 )
 from mide.memory import MemoryStore
@@ -75,6 +76,33 @@ def test_price_gate_savings_does_not_invent_timing_without_snapshot_sample():
     assert metrics["snapshot_batches_avoided"] == 2
     assert metrics["estimated_gross_snapshot_time_avoided_ms"] is None
     assert metrics["estimated_net_time_saved_ms"] is None
+
+
+def test_scan_stage_instrumentation_prints_only_the_ordered_counts(capsys):
+    print_scan_stage_counts({
+        "universe_discovered": 9,
+        "snapshot_requests_sent": 8,
+        "snapshot_records_received": 7,
+        "snapshot_records_normalized": 6,
+        "snapshot_cache_populated": 5,
+        "prefilter_input": 4,
+        "prefilter_output": 3,
+        "structure_engine_input": 2,
+        "final_candidates": 1,
+    })
+
+    assert capsys.readouterr().out.splitlines() == [
+        "Stage\tCount",
+        "Universe discovered\t9",
+        "Snapshot requests sent\t8",
+        "Snapshot records received\t7",
+        "Snapshot records normalized\t6",
+        "Snapshot cache populated\t5",
+        "Prefilter input\t4",
+        "Prefilter output\t3",
+        "Structure engine input\t2",
+        "Final candidates\t1",
+    ]
 
 
 def test_run_live_enrichment_path_passes_previous_state(monkeypatch, tmp_path):

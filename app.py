@@ -70,6 +70,26 @@ def price_gate_savings_metrics(
     }
 
 
+SCAN_COUNT_STAGES = (
+    ("Universe discovered", "universe_discovered"),
+    ("Snapshot requests sent", "snapshot_requests_sent"),
+    ("Snapshot records received", "snapshot_records_received"),
+    ("Snapshot records normalized", "snapshot_records_normalized"),
+    ("Snapshot cache populated", "snapshot_cache_populated"),
+    ("Prefilter input", "prefilter_input"),
+    ("Prefilter output", "prefilter_output"),
+    ("Structure engine input", "structure_engine_input"),
+    ("Final candidates", "final_candidates"),
+)
+
+
+def print_scan_stage_counts(counts: dict[str, int]) -> None:
+    """Print a count-only funnel for one completed scan."""
+    print("Stage\tCount", flush=True)
+    for label, key in SCAN_COUNT_STAGES:
+        print(f"{label}\t{int(counts.get(key, 0))}", flush=True)
+
+
 def repair_mide_module_links() -> None:
     """Restore package attributes that a hot reload may have detached.
 
@@ -992,7 +1012,7 @@ def _run_live_pipeline(
 
     state = {"seeds": [], "reasons": {}, "snapshots": {}, "news": [],
              "candidates": [], "analyzed": [], "ranked": [],
-             "stage_diagnostics": []}
+             "stage_diagnostics": [], "scan_stage_counts": {}}
     universe_verification = UniverseVerification(
         client, feed=settings.feed, market_session=market_phase()
     )
@@ -1063,6 +1083,7 @@ def _run_live_pipeline(
             )
         state["universe_elapsed_ms"] = round((perf_counter() - universe_started) * 1000, 3)
         state["seeds"], state["reasons"] = seeds, reasons
+        state["scan_stage_counts"]["universe_discovered"] = len(seeds)
         price_started = perf_counter()
         prices = {}
         if isinstance(client, LiveWebullProvider):
@@ -1140,6 +1161,7 @@ def _run_live_pipeline(
     def retrieve_market_data(records):
         started = perf_counter()
         symbols = [item["symbol"] for item in records]
+        state["scan_stage_counts"]["snapshot_requests_sent"] = len(symbols)
         snapshots = {}
         for offset in range(0, len(symbols), settings.batch_size):
             batch = symbols[offset:offset + settings.batch_size]
@@ -1153,7 +1175,12 @@ def _run_live_pipeline(
                     recovery_action="retain symbols with unusable data evidence",
                 )
         state["snapshots"] = snapshots
+        state["scan_stage_counts"]["snapshot_records_received"] = len(snapshots)
         refreshed = {item["symbol"]: item for item in snapshot_identity_records(snapshots)}
+        state["scan_stage_counts"]["snapshot_records_normalized"] = len(refreshed)
+        # ``state["snapshots"]`` is the application cache consumed by every
+        # subsequent stage, regardless of which provider filled it.
+        state["scan_stage_counts"]["snapshot_cache_populated"] = len(state["snapshots"])
         for record in records:
             update = refreshed.get(record["symbol"])
             if update:
@@ -1289,7 +1316,9 @@ def _run_live_pipeline(
             symbol: snap for symbol, snap in state["snapshots"].items()
             if symbol in symbols
         }
+        state["scan_stage_counts"]["prefilter_input"] = len(eligible_snapshots)
         candidates = prefilter_snapshots(eligible_snapshots, settings)
+        state["scan_stage_counts"]["prefilter_output"] = len(candidates)
         candidate_symbols = {item["symbol"] for item in candidates}
         prefilter_reasons = [
             prefilter_decision(symbol, snap, settings)["reason"]
@@ -1313,6 +1342,7 @@ def _run_live_pipeline(
                     "daily_volume", "previous_close"),
         ))
         candidate_by_symbol = {item["symbol"]: item for item in candidates}
+        state["scan_stage_counts"]["structure_engine_input"] = len(candidates)
         analyzed = analyze_candidates(
             client, candidates, index_news(state["news"]), state["reasons"]
         )
@@ -1474,6 +1504,9 @@ def _run_live_pipeline(
         ) if state["seeds"] else 0.0,
     })
     client.diagnostics["pipeline_timing_summary"] = timing_summary
+    state["scan_stage_counts"]["final_candidates"] = len(ranked)
+    client.diagnostics["scan_stage_counts"] = dict(state["scan_stage_counts"])
+    print_scan_stage_counts(state["scan_stage_counts"])
     if isinstance(client, LiveWebullProvider):
         client.diagnostics["active_pipeline_sources"] = client.pipeline_sources()
     log("Timing summary: " + json.dumps(timing_summary, separators=(",", ":")))
