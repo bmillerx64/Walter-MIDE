@@ -118,7 +118,7 @@ def create_official_client(app_key: str, app_secret: str):
             "webull-openapi-python-sdk"
         ) from exc
 
-    api_client = core_module.ApiClient(app_key=app_key, app_secret=app_secret)
+    api_client = core_module.ApiClient(app_key=app_key, app_secret=app_secret, region_id="us")
     data_client = data_module.DataClient(api_client)
     # Keep the two public SDK clients together at the adapter boundary.  The
     # streaming client is lazy so snapshot-only runs never open streaming
