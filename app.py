@@ -995,7 +995,20 @@ def _run_live_pipeline(
             cached_entry = cached.get(cache_key)
             if cached_entry:
                 seeds, reasons = cached_entry["seeds"], cached_entry["reasons"]
+                if isinstance(client, LiveWebullProvider):
+                    logging.getLogger(__name__).info(
+                        "Webull universe construction exit before HTTP request: "
+                        "session universe cache hit key=%s cached_symbol_count=%s "
+                        "first_10_returned_symbols=%s",
+                        cache_key, len(seeds), list(seeds[:10]),
+                    )
             else:
+                if isinstance(client, LiveWebullProvider):
+                    logging.getLogger(__name__).info(
+                        "Webull universe construction cache miss: invoking "
+                        "build_seed_symbols → LiveWebullProvider.assets → "
+                        "WebullOpenAPIClient.assets"
+                    )
                 discovery_parameters = inspect.signature(build_seed_symbols).parameters
                 if "universe_verification" in discovery_parameters:
                     seeds, reasons = build_seed_symbols(

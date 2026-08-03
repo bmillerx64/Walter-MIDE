@@ -1,4 +1,5 @@
 import json
+import logging
 import time
 
 from mide.market_data import EventType, MarketEvent
@@ -147,6 +148,63 @@ def test_official_snapshot_client_signs_request_and_normalizes_quotes():
     assert "symbols=AAA" in captured["url"]
     assert captured["headers"]["x-app-key"] == "app-key"
     assert "secret" not in json.dumps(captured)
+
+
+def test_universe_client_traces_each_request_response_and_parsed_symbols(caplog):
+    calls = []
+
+    class Response:
+        status_code = 200
+        content = b'{"data":{"items":[{"symbol":"AAA"},{"ticker":"BBB"}]}}'
+
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return {"data": {"items": [{"symbol": "AAA"}, {"ticker": "BBB"}]}}
+
+    class Session:
+        @staticmethod
+        def get(url, **kwargs):
+            calls.append(url)
+            return Response()
+
+    caplog.set_level(logging.INFO, logger="mide.webull_live")
+    assets = WebullOpenAPIClient(
+        "app-key", "secret", base_url="https://example.test", session=Session,
+    ).assets()
+
+    assert [asset["symbol"] for asset in assets] == ["AAA", "BBB"]
+    assert len(calls) == 4
+    assert all("/market-data/stock-rank/list?" in url for url in calls)
+    assert "authentication_status=credentials configured" in caplog.text
+    assert "status=200" in caplog.text
+    assert "response_length=54" in caplog.text
+    assert "parsed_symbol_count=2" in caplog.text
+    assert "first_10_returned_symbols=['AAA', 'BBB']" in caplog.text
+
+
+def test_universe_client_traces_exception_with_request_context(caplog):
+    class Session:
+        @staticmethod
+        def get(url, **kwargs):
+            raise TimeoutError("network stalled")
+
+    caplog.set_level(logging.INFO, logger="mide.webull_live")
+    client = WebullOpenAPIClient(
+        "app-key", "secret", base_url="https://example.test", session=Session,
+    )
+
+    try:
+        client.assets()
+    except TimeoutError:
+        pass
+    else:
+        raise AssertionError("the universe exception should propagate")
+
+    assert "operation=stock ranking GAIN" in caplog.text
+    assert "status=no response response_length=0" in caplog.text
+    assert "TimeoutError: network stalled" in caplog.text
 
 
 def test_bootstrap_never_places_secret_in_request(monkeypatch):

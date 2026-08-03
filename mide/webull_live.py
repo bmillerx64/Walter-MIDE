@@ -185,6 +185,47 @@ class WebullOpenAPIClient:
         body = response.json()
         return body.get("data", body) if isinstance(body, dict) else body
 
+    def _universe_get(self, rank_type: str) -> object:
+        """Issue and trace one request used solely for universe construction."""
+        path = DEFAULT_RANKING_PATH
+        params = {"market": "US", "rank_type": rank_type, "page_size": 200}
+        prepared = requests.Request("GET", self.base_url + path, params=params).prepare()
+        query = urlparse(prepared.url).query
+        response = None
+        LOGGER.info(
+            "Webull universe HTTP request: operation=stock ranking %s method=GET url=%s",
+            rank_type, prepared.url,
+        )
+        try:
+            response = self.session.get(
+                prepared.url, headers=self._headers("GET", path, query),
+                timeout=self.timeout,
+            )
+            response_length = len(response.content)
+            authentication_status = (
+                "authenticated" if 200 <= response.status_code < 300
+                else "rejected" if response.status_code in (401, 403)
+                else "not established"
+            )
+            LOGGER.info(
+                "Webull universe HTTP response: operation=stock ranking %s status=%s "
+                "response_length=%s authentication_status=%s",
+                rank_type, response.status_code, response_length,
+                authentication_status,
+            )
+            response.raise_for_status()
+            body = response.json()
+            return body.get("data", body) if isinstance(body, dict) else body
+        except Exception:
+            LOGGER.exception(
+                "Webull universe exception: operation=stock ranking %s url=%s status=%s "
+                "response_length=%s",
+                rank_type, prepared.url,
+                getattr(response, "status_code", "no response"),
+                len(response.content) if response is not None else 0,
+            )
+            raise
+
     @staticmethod
     def _rows(value: object) -> list[dict]:
         if isinstance(value, list):
@@ -202,19 +243,45 @@ class WebullOpenAPIClient:
         volume, and turnover rankings is the documented Webull discovery
         equivalent and intentionally yields a scan universe, not an exchange list.
         """
+        LOGGER.info(
+            "Webull universe construction start: authentication_status=%s "
+            "app_key_configured=%s app_secret_configured=%s",
+            "credentials configured" if self.app_key and self._secret else "credentials missing",
+            bool(self.app_key), bool(self._secret),
+        )
         found: dict[str, dict] = {}
         for rank_type in ("GAIN", "DECLINE", "VOLUME", "TURNOVER"):
-            payload = self._get(DEFAULT_RANKING_PATH, {
-                "market": "US", "rank_type": rank_type, "page_size": 200,
-            })
-            for row in self._rows(payload):
+            payload = self._universe_get(rank_type)
+            rows = self._rows(payload)
+            returned_symbols = [
+                str(row.get("symbol") or row.get("ticker_symbol") or
+                    row.get("ticker") or "").strip().upper()
+                for row in rows
+            ]
+            returned_symbols = [symbol for symbol in returned_symbols if symbol]
+            LOGGER.info(
+                "Webull universe parsed response: operation=stock ranking %s "
+                "parsed_symbol_count=%s first_10_returned_symbols=%s",
+                rank_type, len(returned_symbols), returned_symbols[:10],
+            )
+            for row in rows:
                 symbol = str(row.get("symbol") or row.get("ticker_symbol") or
                              row.get("ticker") or "").strip().upper()
                 if symbol:
                     found[symbol] = {"symbol": symbol, "status": "active",
                                      "tradable": True, "class": "us_equity",
                                      "source": f"Webull {rank_type} ranking"}
-        return sorted(found.values(), key=lambda row: row["symbol"])
+        result = sorted(found.values(), key=lambda row: row["symbol"])
+        LOGGER.info(
+            "Webull universe construction complete: parsed_symbol_count=%s "
+            "first_10_returned_symbols=%s; operation is a four-ranking discovery "
+            "bootstrap, not a complete tradable-equity symbol master; Webull OpenAPI "
+            "does not publish a complete symbol-master endpoint, so a complete universe "
+            "requires a separately supplied, permitted instrument list before quote "
+            "subscription",
+            len(result), [row["symbol"] for row in result[:10]],
+        )
+        return result
 
     def bars(self, symbols: Iterable[str], *, start: datetime, timeframe="1Min",
              limit=10_000, **kwargs) -> dict[str, list[dict]]:
