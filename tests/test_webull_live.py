@@ -111,6 +111,42 @@ def test_snapshot_batches_never_exceed_100_symbols():
     assert [len(call) for call in rest.calls] == [100, 100, 51]
 
 
+def test_known_when_issued_symbol_is_filtered_before_snapshot_request():
+    rest = Rest()
+    provider = LiveWebullProvider("key", "secret", rest_client=rest,
+        universe_client=Universe())
+    assert provider.initialize_quotes(["GOOD", "IPO.WI"]) == {"GOOD": 10.0}
+    assert rest.calls == [["GOOD"]]
+    assert provider.diagnostics["webull_stream"]["snapshot_unsupported_symbols"] == ["IPO.WI"]
+
+
+def test_invalid_symbol_isolated_without_hiding_other_sdk_failures():
+    class RejectingRest(Rest):
+        def snapshots(self, symbols):
+            self.calls.append(list(symbols))
+            if "BADADR" in symbols:
+                raise RuntimeError("HTTP 417 INVALID_SYMBOL")
+            return {symbol: {"latestTrade": {"p": 10.0}} for symbol in symbols}
+
+    rest = RejectingRest()
+    provider = LiveWebullProvider("key", "secret", rest_client=rest,
+        universe_client=Universe())
+    assert provider.initialize_quotes(["GOOD", "BADADR", "ALSO"]) == {
+        "GOOD": 10.0, "ALSO": 10.0,
+    }
+    assert ["BADADR"] in rest.calls
+    assert provider.diagnostics["webull_stream"]["snapshot_unsupported_symbols"] == ["BADADR"]
+
+    class AuthFailure(Rest):
+        def snapshots(self, symbols):
+            raise PermissionError("authorization denied")
+
+    auth_provider = LiveWebullProvider("key", "secret", rest_client=AuthFailure(),
+        universe_client=Universe())
+    with pytest.raises(PermissionError, match="authorization denied"):
+        auth_provider.initialize_quotes(["GOOD", "ALSO"])
+
+
 def test_streaming_is_bypassed_until_snapshots_are_proven():
     class ForbiddenStream:
         def __init__(self, *args, **kwargs):

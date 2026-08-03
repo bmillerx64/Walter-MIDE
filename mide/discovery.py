@@ -108,6 +108,9 @@ def build_seed_symbols(client, settings, news_items, *, universe_verification=No
             if item.get("tradable", True)
             and str(item.get("status", "active")).lower() == "active"
             and not item.get("otc", False)
+            and str(item.get("exchange") or "").upper() != "OTC"
+            and not str(item.get("symbol") or "").upper().endswith(".WI")
+            and not re.search(r"\bADR\b", str(item.get("name", "")), re.IGNORECASE)
             and not any(word in str(item.get("name", "")).lower()
                         for word in ("warrant", "right", "unit", "preferred", "depositary"))
         ]
