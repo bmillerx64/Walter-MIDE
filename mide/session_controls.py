@@ -26,11 +26,16 @@ def provider_for_mode(mode: str) -> str | None:
 def initialize_session_controls(
     state: MutableMapping[str, Any], *, default_mode: str
 ) -> None:
-    """Initialize control state once; never overwrite a value from a rerun."""
+    """Initialize persistent controls and discard interrupted scan activity.
+
+    This function runs before any scan execution starts on each Streamlit script
+    run.  A true value left behind by an interrupted prior run therefore cannot
+    describe work executing in the current run and must not disable its controls.
+    """
     state.setdefault(DATA_MODE_KEY, default_mode)
     state.setdefault(PROVIDER_KEY, provider_for_mode(state[DATA_MODE_KEY]))
     state.setdefault(AUTO_SCAN_KEY, True)
-    state.setdefault(SCAN_RUNNING_KEY, False)
+    state[SCAN_RUNNING_KEY] = False
     state.setdefault(SCAN_REQUESTED_KEY, False)
     state.setdefault(STOP_REQUESTED_KEY, False)
 
@@ -41,9 +46,8 @@ def select_data_mode(state: MutableMapping[str, Any]) -> None:
 
 
 def request_scan(state: MutableMapping[str, Any]) -> None:
-    """Mark a manual scan active before Streamlit starts the blocking work."""
+    """Schedule a manual scan; execution becomes active only when it begins."""
     state[SCAN_REQUESTED_KEY] = True
-    state[SCAN_RUNNING_KEY] = True
     state[STOP_REQUESTED_KEY] = False
 
 

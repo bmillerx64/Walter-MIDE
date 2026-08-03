@@ -39,10 +39,10 @@ _NETWORK_EXECUTOR = ThreadPoolExecutor(max_workers=4, thread_name_prefix="walter
 def live_data_modes(*, alpaca_configured: bool, webull_configured: bool) -> tuple[list[str], int]:
     """Return Walter's stable provider choices and the safest available default."""
     modes = ["Live Alpaca", "Live Webull", "Demo"]
-    if alpaca_configured:
-        return modes, 0
     if webull_configured:
         return modes, 1
+    if alpaca_configured:
+        return modes, 0
     return modes, 2
 
 
