@@ -145,7 +145,11 @@ class LiveWebullProvider(WebullProvider):
     provider_name = "Webull OpenAPI"
 
     def __init__(self, app_key: str, app_secret: str, *, fallback=None, bootstrap=None,
-                 rest_client=None, stream_class=None, universe_client=None, sdk_client=None):
+                 rest_client=None, stream_class=None, universe_client=None, sdk_client=None,
+                 enable_streaming: bool = False):
+        LOGGER.info("LiveWebullProvider initialization started streaming_enabled=%s "
+                    "rest_client_injected=%s sdk_client_injected=%s",
+                    enable_streaming, rest_client is not None, sdk_client is not None)
         self.cache: dict[str, CachedMarketData] = {}
         self._snapshot_cache: dict[str, dict] = {}
         self._lock = Lock()
@@ -155,13 +159,17 @@ class LiveWebullProvider(WebullProvider):
         self._stream_class = stream_class
         self._universe_client = universe_client
         self._broker = None
+        self._enable_streaming = enable_streaming
         if fallback is not None:
             raise ValueError("Live Webull is Webull-only; fallback providers are forbidden")
         self.warnings: list[str] = []
         self.diagnostics: dict = {}
         self.diagnostics["webull_stream"] = {
             "selected_provider": "WEBULL", "authentication_status": "pending",
-            "stream_connection_status": "disconnected", "subscribed_symbols": 0,
+            "stream_connection_status": ("disconnected" if enable_streaming else "bypassed"),
+            "stream_bypass_reason": (None if enable_streaming else
+                "Streaming is optional and disabled until REST snapshots are proven"),
+            "subscribed_symbols": 0,
             "cached_symbols": 0, "messages_received": 0, "last_message_timestamp": None,
             "stream_latency_ms": None, "subscription_failures": [],
             "disconnect_count": 0, "symbols_missing_prices": 0,
@@ -176,6 +184,8 @@ class LiveWebullProvider(WebullProvider):
         self._snapshot_client = rest_client or WebullOpenAPIClient(
             app_key, app_secret, sdk_client=sdk_client)
         super().__init__(stream_factory=self._stream_factory)
+        LOGGER.info("LiveWebullProvider initialization complete streaming_status=%s",
+                    self.diagnostics["webull_stream"]["stream_connection_status"])
 
     def pipeline_sources(self) -> list[dict[str, str]]:
         """Describe every provider invoked by Live Webull mode."""
@@ -300,9 +310,10 @@ class LiveWebullProvider(WebullProvider):
             d["subscription_failures"].append(f"{type(exc).__name__}: {exc}")
             self.warnings.append(f"Webull stream unavailable; cached Webull snapshot retained: {exc}")
             LOGGER.error("WEBULL stream initialization failed; cached snapshot retained: %s", exc)
+            raise RuntimeError(f"Webull official SDK streaming initialization failed: {exc}") from exc
 
     def initialize_quotes(self, symbols: Iterable[str], *, batch_size: int = MAX_SNAPSHOT_SYMBOLS) -> dict[str, float]:
-        """Synchronously seed every available price, then immediately stream it."""
+        """Synchronously seed prices; optional SDK streaming starts only after proof."""
         wanted = list(dict.fromkeys(str(s).strip().upper() for s in symbols if str(s).strip()))
         batch_size = min(int(batch_size), MAX_SNAPSHOT_SYMBOLS)
         for offset in range(0, len(wanted), batch_size):
@@ -337,7 +348,13 @@ class LiveWebullProvider(WebullProvider):
         d = self.diagnostics["webull_stream"]
         d["cached_symbols"] = len(self.cache)
         d["symbols_missing_prices"] = len(set(wanted) - set(self.cache))
-        # Snapshot completion is a hard ordering boundary before subscription.
+        # Snapshot completion is a hard ordering boundary before any optional
+        # subscription. The obsolete hand-written token bootstrap is deliberately
+        # absent: only the official SDK may initialize a stream.
+        if not self._enable_streaming:
+            LOGGER.info("WEBULL streaming bypassed after snapshot proof; cached_symbols=%s",
+                        len(self.cache))
+            return self.latest_trades(wanted, initialize=False)
         stream_future = _NETWORK_EXECUTOR.submit(self.ensure_stream, wanted)
         try:
             stream_future.result(timeout=NETWORK_TIMEOUT_SECONDS)
