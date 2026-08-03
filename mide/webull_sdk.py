@@ -2,13 +2,11 @@
 
 from __future__ import annotations
 
-import ast
 import importlib
 from importlib import metadata
 import json
 import logging
 from pathlib import Path
-import pkgutil
 import re
 from typing import Iterable
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
@@ -119,75 +117,33 @@ def _required_distribution_name() -> str:
     raise RuntimeError("No Webull SDK dependency is declared in requirements.txt")
 
 
-def _installed_client_classes():
-    """Discover client classes from the installed, declared SDK distribution.
-
-    Module names come exclusively from installed distribution metadata and
-    ``pkgutil`` enumeration.  Source files are inspected before importing so
-    initialization never probes a list of guessed package names.
-    """
+def _installed_data_client_class():
+    """Load the market-data client published by the declared SDK distribution."""
     distribution_name = _required_distribution_name()
     try:
-        distribution = metadata.distribution(distribution_name)
+        metadata.distribution(distribution_name)
     except metadata.PackageNotFoundError as exc:
         raise RuntimeError(
             f"Required Webull SDK package is not installed: {distribution_name}"
         ) from exc
-
-    roots = []
-    for file in distribution.files or ():
-        parts = Path(str(file)).parts
-        if len(parts) == 2 and parts[1] == "__init__.py":
-            package_path = Path(distribution.locate_file(parts[0]))
-            if package_path.is_dir():
-                roots.append(package_path.parent)
-    installed_modules = {
-        module.name
-        for root in dict.fromkeys(roots)
-        for module in pkgutil.iter_modules([str(root)])
-    }
-
-    class_modules = {}
-    for file in distribution.files or ():
-        relative = Path(str(file))
-        if relative.suffix != ".py" or not relative.parts:
-            continue
-        if relative.parts[0] not in installed_modules:
-            continue
-        source_path = Path(distribution.locate_file(file))
-        try:
-            tree = ast.parse(source_path.read_text(encoding="utf-8"))
-        except (OSError, SyntaxError, UnicodeError):
-            continue
-        declared = {node.name for node in tree.body if isinstance(node, ast.ClassDef)}
-        for class_name in ("ApiClient", "MarketDataApi"):
-            if class_name in declared:
-                module_parts = list(relative.with_suffix("").parts)
-                if module_parts[-1] == "__init__":
-                    module_parts.pop()
-                class_modules[class_name] = ".".join(module_parts)
-
-    missing = sorted({"ApiClient", "MarketDataApi"} - class_modules.keys())
-    if missing:
-        enumerated = ", ".join(sorted(installed_modules)) or "<none>"
+    module_name = "webull.data.data_client"
+    module = importlib.import_module(module_name)
+    try:
+        return module.DataClient
+    except AttributeError as exc:
         raise RuntimeError(
             f"Installed Webull SDK package {distribution_name} lacks client entry point "
-            f"{', '.join(missing)}; enumerated modules: {enumerated}"
-        )
-
-    api_module = importlib.import_module(class_modules["ApiClient"])
-    market_module = importlib.import_module(class_modules["MarketDataApi"])
-    return api_module.ApiClient, market_module.MarketDataApi, class_modules
+            f"{module_name}.DataClient"
+        ) from exc
 
 
 def create_official_client(app_key: str, app_secret: str):
     """Construct the verified market-data client from the installed SDK."""
-    ApiClient, MarketDataApi, modules = _installed_client_classes()
-    LOGGER.info("WEBULL SDK initialization using %s.ApiClient", modules["ApiClient"])
-    api_client = ApiClient(app_key=app_key, app_secret=app_secret)
-    client = MarketDataApi(api_client)
-    LOGGER.info("WEBULL SDK initialization complete using %s.MarketDataApi",
-                modules["MarketDataApi"])
+    DataClient = _installed_data_client_class()
+    LOGGER.info("WEBULL SDK initialization using webull.data.data_client.DataClient")
+    client = DataClient(app_key=app_key, app_secret=app_secret)
+    LOGGER.info("WEBULL SDK initialization complete using "
+                "webull.data.data_client.DataClient")
     return client
 
 
