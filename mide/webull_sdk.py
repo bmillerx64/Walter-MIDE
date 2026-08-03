@@ -2,14 +2,9 @@
 
 from __future__ import annotations
 
-import ast
 import importlib
-from importlib import metadata
 import json
 import logging
-from pathlib import Path
-import pkgutil
-import re
 from typing import Iterable
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
@@ -107,88 +102,33 @@ def _install_http_trace(sdk_client) -> bool:
     return False
 
 
-def _required_distribution_name() -> str:
-    """Read the SDK distribution name from the application's dependency manifest."""
-    requirements = Path(__file__).resolve().parents[1] / "requirements.txt"
-    for line in requirements.read_text(encoding="utf-8").splitlines():
-        requirement = line.partition("#")[0].strip()
-        if "webull" in requirement.casefold():
-            name = re.split(r"[<>=!~\[; ]", requirement, maxsplit=1)[0]
-            if name:
-                return name
-    raise RuntimeError("No Webull SDK dependency is declared in requirements.txt")
-
-
-def _installed_client_classes():
-    """Discover client classes from the installed, declared SDK distribution.
-
-    Module names come exclusively from installed distribution metadata and
-    ``pkgutil`` enumeration.  Source files are inspected before importing so
-    initialization never probes a list of guessed package names.
-    """
-    distribution_name = _required_distribution_name()
+def create_official_client(app_key: str, app_secret: str):
+    """Construct the SDK's published data clients without package discovery."""
     try:
-        distribution = metadata.distribution(distribution_name)
-    except metadata.PackageNotFoundError as exc:
+        core_module = importlib.import_module("webull.core.client")
+        data_module = importlib.import_module("webull.data.data_client")
+        streaming_module = importlib.import_module(
+            "webull.data.data_streaming_client"
+        )
+    except ImportError as exc:
         raise RuntimeError(
-            f"Required Webull SDK package is not installed: {distribution_name}"
+            "Required Webull SDK package is not installed: "
+            "webull-openapi-python-sdk"
         ) from exc
 
-    roots = []
-    for file in distribution.files or ():
-        parts = Path(str(file)).parts
-        if len(parts) == 2 and parts[1] == "__init__.py":
-            package_path = Path(distribution.locate_file(parts[0]))
-            if package_path.is_dir():
-                roots.append(package_path.parent)
-    installed_modules = {
-        module.name
-        for root in dict.fromkeys(roots)
-        for module in pkgutil.iter_modules([str(root)])
-    }
-
-    class_modules = {}
-    for file in distribution.files or ():
-        relative = Path(str(file))
-        if relative.suffix != ".py" or not relative.parts:
-            continue
-        if relative.parts[0] not in installed_modules:
-            continue
-        source_path = Path(distribution.locate_file(file))
-        try:
-            tree = ast.parse(source_path.read_text(encoding="utf-8"))
-        except (OSError, SyntaxError, UnicodeError):
-            continue
-        declared = {node.name for node in tree.body if isinstance(node, ast.ClassDef)}
-        for class_name in ("ApiClient", "MarketDataApi"):
-            if class_name in declared:
-                module_parts = list(relative.with_suffix("").parts)
-                if module_parts[-1] == "__init__":
-                    module_parts.pop()
-                class_modules[class_name] = ".".join(module_parts)
-
-    missing = sorted({"ApiClient", "MarketDataApi"} - class_modules.keys())
-    if missing:
-        enumerated = ", ".join(sorted(installed_modules)) or "<none>"
-        raise RuntimeError(
-            f"Installed Webull SDK package {distribution_name} lacks client entry point "
-            f"{', '.join(missing)}; enumerated modules: {enumerated}"
-        )
-
-    api_module = importlib.import_module(class_modules["ApiClient"])
-    market_module = importlib.import_module(class_modules["MarketDataApi"])
-    return api_module.ApiClient, market_module.MarketDataApi, class_modules
-
-
-def create_official_client(app_key: str, app_secret: str):
-    """Construct the verified market-data client from the installed SDK."""
-    ApiClient, MarketDataApi, modules = _installed_client_classes()
-    LOGGER.info("WEBULL SDK initialization using %s.ApiClient", modules["ApiClient"])
-    api_client = ApiClient(app_key=app_key, app_secret=app_secret)
-    client = MarketDataApi(api_client)
-    LOGGER.info("WEBULL SDK initialization complete using %s.MarketDataApi",
-                modules["MarketDataApi"])
-    return client
+    api_client = core_module.ApiClient(app_key=app_key, app_secret=app_secret)
+    data_client = data_module.DataClient(api_client)
+    # Keep the two public SDK clients together at the adapter boundary.  The
+    # streaming client is lazy so snapshot-only runs never open streaming
+    # resources merely by constructing the REST client.
+    data_client._walter_streaming_client_factory = lambda: (
+        streaming_module.DataStreamingClient(api_client)
+    )
+    LOGGER.info(
+        "WEBULL SDK initialization complete using %s.DataClient and %s.DataStreamingClient",
+        data_module.__name__, streaming_module.__name__,
+    )
+    return data_client
 
 
 def _plain(value):
@@ -229,7 +169,9 @@ class WebullSDKClient:
         symbols = list(symbols)
         if len(symbols) > MAX_SNAPSHOT_SYMBOLS:
             raise ValueError("Webull snapshot requests are limited to 100 symbols")
-        method = self._operation(("get_stock_snapshot", "stock_snapshot", "get_stock_snapshots"))
+        # ``get_stock_snapshot`` remains accepted solely at the injected-test
+        # boundary; installed SDK clients use their published ``get_snapshot``.
+        method = self._operation(("get_snapshot", "get_stock_snapshot"))
         arguments = dict(symbols=",".join(symbols), category="US_STOCK",
                          extend_hour_required=True, overnight_required=True)
         try:
@@ -242,9 +184,13 @@ class WebullSDKClient:
             return _plain(method(**arguments))
 
     def bars(self, **arguments):
-        method = self._operation(("get_bars", "get_stock_bars", "stock_bars"))
+        method = self._operation(("get_history_bar",))
         return _plain(method(**arguments))
 
     def stream(self, callback):
-        method = self._operation(("market_data_stream", "create_market_data_stream", "stream"))
-        return method(callback=callback, host=STREAM_HOST)
+        factory = getattr(self.sdk_client, "_walter_streaming_client_factory", None)
+        if factory is None:
+            raise RuntimeError("Webull OpenAPI SDK lacks DataStreamingClient")
+        client = factory()
+        client.callback = callback
+        return client
