@@ -83,15 +83,32 @@ def test_streaming_is_bypassed_until_snapshots_are_proven():
     assert provider.diagnostics["webull_stream"]["stream_connection_status"] == "bypassed"
 
 
-def test_explicit_official_stream_failure_stops_initialization():
+def test_explicit_official_stream_failure_keeps_snapshot_only_universe():
     class BrokenStream:
         def __init__(self, *args, **kwargs):
             raise FileNotFoundError("official stream unavailable")
     provider = LiveWebullProvider("key", "secret", rest_client=Rest(),
         universe_client=Universe(), bootstrap=Bootstrap(), stream_class=BrokenStream,
         enable_streaming=True)
-    with pytest.raises(RuntimeError, match="official SDK streaming initialization failed"):
-        provider.initialize_quotes(["HYFM"])
+    assert provider.initialize_quotes(["HYFM"]) == {"HYFM": 10.0}
+    diagnostic = provider.diagnostics["webull_stream"]
+    assert diagnostic["stream_connection_status"] == "error"
+    assert diagnostic["snapshot_rest_succeeded"] is True
+    assert diagnostic["cached_snapshot_symbols"] == 1
+
+
+def test_cached_snapshot_load_is_proven_in_diagnostics(caplog):
+    provider = LiveWebullProvider("key", "secret", rest_client=Rest(),
+        universe_client=Universe())
+    provider.initialize_quotes(["AAA", "BBB"])
+    with caplog.at_level("INFO"):
+        snapshots = provider.snapshots(["AAA", "BBB"])
+    diagnostic = provider.diagnostics["webull_stream"]
+    assert set(snapshots) == {"AAA", "BBB"}
+    assert diagnostic["discovered_symbols"] == 2
+    assert diagnostic["cached_snapshot_symbols"] == 2
+    assert diagnostic["cached_snapshot_loaded"] is True
+    assert "loaded_symbols=2" in caplog.text
 
 
 def test_obsolete_streaming_token_endpoint_is_absent():
