@@ -173,6 +173,66 @@ def test_assessments_only_receive_preceding_output_and_catalyst_runs_once():
     ]
 
 
+def test_participation_trace_has_rule_histogram_symbols_and_exact_failed_metrics():
+    def participation(records):
+        decisions = {}
+        for item in records:
+            symbol = item["symbol"]
+            if symbol in {"VOL1", "VOL2"}:
+                decisions[symbol] = Decision(
+                    False, "Participation", "Average volume below threshold",
+                    evidence={"failed_metrics": [{
+                        "metric": "volume", "measured": item["volume"],
+                        "operator": "<", "threshold": 100_000,
+                    }]},
+                )
+            else:
+                decisions[symbol] = Decision(
+                    False, "Participation", "RVOL unavailable",
+                    evidence={"failed_metrics": [{
+                        "metric": "rvol", "measured": None,
+                        "operator": "unavailable", "threshold": 1.5,
+                    }]},
+                )
+        return decisions
+
+    records = [
+        {"symbol": "VOL1", "price": 1, "free_float": 1, "volume": 10},
+        {"symbol": "VOL2", "price": 1, "free_float": 1, "volume": 20},
+        {"symbol": "NORVOL", "price": 1, "free_float": 1, "volume": 200_000},
+    ]
+    architecture, _, _ = pipeline(records, participation=participation)
+
+    architecture.run()
+
+    trace = next(
+        row for row in architecture.trace if row["stage"] == "Participation Assessment"
+    )
+    assert trace["input_count"] == trace["rejection_count"] == 3
+    assert trace["distinct_rejection_rules"] == 2
+    assert trace["all_rejections_same_rule"] is False
+    assert trace["rejection_histogram"] == [
+        {
+            "reason": "Average volume below threshold", "count": 2,
+            "representative_symbols": ["VOL1", "VOL2"],
+            "failed_metrics": [
+                {"symbol": "VOL1", "metric": "volume", "measured": 10,
+                 "operator": "<", "threshold": 100_000},
+                {"symbol": "VOL2", "metric": "volume", "measured": 20,
+                 "operator": "<", "threshold": 100_000},
+            ],
+        },
+        {
+            "reason": "RVOL unavailable", "count": 1,
+            "representative_symbols": ["NORVOL"],
+            "failed_metrics": [{
+                "symbol": "NORVOL", "metric": "rvol", "measured": None,
+                "operator": "unavailable", "threshold": 1.5,
+            }],
+        },
+    ]
+
+
 def test_market_data_hook_receives_only_price_gate_survivors():
     retrieved = []
     architecture, _, _ = pipeline([

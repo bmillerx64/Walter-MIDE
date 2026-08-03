@@ -1320,9 +1320,12 @@ def _run_live_pipeline(
         candidates = prefilter_snapshots(eligible_snapshots, settings)
         state["scan_stage_counts"]["prefilter_output"] = len(candidates)
         candidate_symbols = {item["symbol"] for item in candidates}
-        prefilter_reasons = [
-            prefilter_decision(symbol, snap, settings)["reason"]
+        prefilter_decisions = {
+            symbol: prefilter_decision(symbol, snap, settings)
             for symbol, snap in eligible_snapshots.items()
+        }
+        prefilter_reasons = [
+            decision["reason"] for symbol, decision in prefilter_decisions.items()
             if symbol not in candidate_symbols
         ]
         snapshot_metrics = []
@@ -1353,9 +1356,32 @@ def _run_live_pipeline(
         for item in records:
             symbol = item["symbol"]
             if symbol not in candidate_by_symbol:
-                result[symbol] = Decision(False, "Participation", "Market participation prefilter not satisfied")
+                prefilter = prefilter_decisions[symbol]
+                result[symbol] = Decision(
+                    False, "Participation",
+                    prefilter["failed_rule"] or "Market participation prefilter not satisfied",
+                    evidence={
+                        "failed_metrics": prefilter["failed_metrics"],
+                        "measured_values": prefilter["measured_values"],
+                        "thresholds": prefilter["thresholds"],
+                        "exact_reason": prefilter["reason"],
+                    },
+                )
             elif symbol not in analyzed_by_symbol:
-                result[symbol] = Decision(False, "Participation", "Insufficient intraday data for assessment")
+                candidate = candidate_by_symbol[symbol]
+                result[symbol] = Decision(
+                    False, "Participation", "Missing or insufficient intraday bars",
+                    evidence={"failed_metrics": [{
+                        "metric": "intraday_bars",
+                        "measured": candidate.get("intraday_bar_count"),
+                        "operator": "unavailable_or_insufficient",
+                        "threshold": "provider/timeframe minimum",
+                    }], "available_snapshot_metrics": {
+                        key: candidate.get(key) for key in (
+                            "volume", "dollar_volume", "prev_volume", "spread_pct"
+                        )
+                    }},
+                )
             else:
                 analyzed_record = analyzed_by_symbol[symbol]
                 result[symbol] = Decision(True, "Participation", "Participation evidence measured", analyzed_record)
