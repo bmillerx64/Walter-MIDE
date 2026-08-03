@@ -56,7 +56,7 @@ def test_official_sdk_client_is_selected_and_handwritten_auth_is_absent():
     assert client.sdk.sdk_client is sdk
 
 
-def test_official_sdk_uses_installed_package_layout(monkeypatch):
+def test_official_sdk_uses_installed_package_layout(monkeypatch, tmp_path):
     calls = []
 
     class ApiClient:
@@ -81,10 +81,42 @@ def test_official_sdk_uses_installed_package_layout(monkeypatch):
     monkeypatch.setitem(sys.modules, "webullsdkmdata", mdata)
     monkeypatch.setitem(sys.modules, "webullsdkmdata.api", mdata_api)
 
+    (tmp_path / "webullsdkcore").mkdir()
+    (tmp_path / "webullsdkcore" / "__init__.py").write_text("")
+    (tmp_path / "webullsdkcore" / "client.py").write_text("class ApiClient: pass\n")
+    (tmp_path / "webullsdkmdata").mkdir()
+    (tmp_path / "webullsdkmdata" / "__init__.py").write_text("")
+    (tmp_path / "webullsdkmdata" / "api.py").write_text("class MarketDataApi: pass\n")
+
+    class Distribution:
+        files = [
+            "webullsdkcore/__init__.py", "webullsdkcore/client.py",
+            "webullsdkmdata/__init__.py", "webullsdkmdata/api.py",
+        ]
+
+        def locate_file(self, file):
+            return tmp_path / file
+
+    monkeypatch.setattr("mide.webull_sdk.metadata.distribution", lambda name: Distribution())
+
     client = create_official_client("key", "secret")
 
     assert calls[0] == ("ApiClient", {"app_key": "key", "app_secret": "secret"})
     assert calls[1] == ("MarketDataApi", client.api_client)
+
+
+def test_missing_declared_sdk_fails_once_with_explicit_package(monkeypatch):
+    def missing(_name):
+        from importlib import metadata
+        raise metadata.PackageNotFoundError
+
+    monkeypatch.setattr("mide.webull_sdk.metadata.distribution", missing)
+    with pytest.raises(RuntimeError) as error:
+        create_official_client("key", "secret")
+
+    assert str(error.value) == (
+        "Required Webull SDK package is not installed: webull-openapi-python-sdk"
+    )
 
 
 def test_sdk_snapshot_arguments_and_normalization():
