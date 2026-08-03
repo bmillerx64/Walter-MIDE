@@ -146,8 +146,37 @@ def test_first_successful_snapshot_raw_response_is_logged_before_parsing(caplog)
     assert "type=test_webull_live." in messages[0]
     assert "status=200" in messages[0]
     assert "'Authorization': '<redacted>'" in messages[0]
-    assert 'text_first_1000={"data": [{"symbol": "HYFM"}]}' in messages[0]
+    assert 'text_first_500={"data": [{"symbol": "HYFM"}]}' in messages[0]
     assert 'json={"data": [{"symbol": "HYFM"}]}' in messages[0]
+
+
+def test_requests_response_json_is_converted_to_internal_snapshot_rows():
+    class Response:
+        status_code = 200
+        text = '{"data":[{"symbol":"HYFM","last_price":"3.25","volume":9}]}'
+
+        def json(self):
+            return {
+                "data": [{
+                    "symbol": "HYFM", "last_price": "3.25", "volume": 9,
+                }]
+            }
+
+    class SDK:
+        def get_snapshot(self, **_kwargs):
+            return Response()
+
+    snapshots = WebullOpenAPIClient("k", "s", sdk_client=SDK()).snapshots(["HYFM"])
+
+    assert snapshots == {
+        "HYFM": {
+            "latestTrade": {"p": 3.25, "t": None},
+            "latestQuote": {"bp": None, "ap": None},
+            "dailyBar": {"c": 3.25, "v": 9.0, "h": None, "l": None},
+            "prevDailyBar": {"c": None, "v": None},
+            "market_data_provider": "Webull OpenAPI SDK",
+        }
+    }
 
 
 def test_snapshot_batches_never_exceed_100_symbols():
