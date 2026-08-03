@@ -138,6 +138,9 @@ def _plain(value):
         return value.to_dict()
     if hasattr(value, "model_dump"):
         return value.model_dump()
+    json_method = getattr(value, "json", None)
+    if callable(json_method):
+        return json_method()
     return value
 
 
@@ -212,7 +215,7 @@ class WebullSDKClient:
         text = getattr(response, "text", "<unavailable>")
         if callable(text):
             text = text()
-        text_preview = _body_text(text)[:1000]
+        text_preview = _body_text(text)[:500]
 
         decoded_json = "<unavailable>"
         json_method = getattr(response, "json", None)
@@ -224,7 +227,7 @@ class WebullSDKClient:
 
         LOGGER.info(
             "WEBULL first successful snapshot raw response type=%s status=%s "
-            "headers=%s text_first_1000=%s json=%s",
+            "headers=%s text_first_500=%s json=%s",
             response_type,
             status,
             headers,
