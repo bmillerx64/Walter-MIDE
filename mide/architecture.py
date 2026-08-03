@@ -210,6 +210,7 @@ class WalterArchitectureV1:
     def _record_trace(
         self, stage: str, input_count: int, output_count: int, *,
         started_at: float, technical_failures: int = 0,
+        rejection_histogram: list[dict[str, object]] | None = None,
     ) -> None:
         rejected = max(0, input_count - output_count - technical_failures)
         self.trace.append({
@@ -222,8 +223,40 @@ class WalterArchitectureV1:
             "rejection_count": rejected,
             "rejected_count": rejected,
             "technical_failure_count": technical_failures,
+            "rejection_histogram": rejection_histogram or [],
+            "distinct_rejection_rules": len(rejection_histogram or []),
+            "all_rejections_same_rule": bool(
+                rejected and len(rejection_histogram or []) == 1
+            ),
             "execution_time_ms": round((self.timer() - started_at) * 1000, 3),
         })
+
+    @staticmethod
+    def _rejection_histogram(rejections: list[tuple[str, Decision]]) -> list[dict[str, object]]:
+        """Group rejections while retaining inspectable per-symbol measurements."""
+        grouped: dict[str, dict[str, object]] = {}
+        for symbol, decision in rejections:
+            key = decision.reason or "Unspecified rejection"
+            bucket = grouped.setdefault(key, {
+                "reason": key,
+                "count": 0,
+                "representative_symbols": [],
+                "failed_metrics": [],
+            })
+            bucket["count"] += 1
+            representatives = bucket["representative_symbols"]
+            if len(representatives) < 5:
+                representatives.append(symbol)
+            evidence = decision.evidence if isinstance(decision.evidence, Mapping) else {}
+            metrics = evidence.get("failed_metrics") or []
+            if isinstance(metrics, Mapping):
+                metrics = [metrics]
+            for metric in metrics:
+                if len(bucket["failed_metrics"]) >= 10:
+                    break
+                if isinstance(metric, Mapping):
+                    bucket["failed_metrics"].append({"symbol": symbol, **dict(metric)})
+        return sorted(grouped.values(), key=lambda row: (-row["count"], row["reason"]))
 
     def _assess(self, stage: str, candidates: list[dict], operation: Stage) -> list[dict]:
         started_at = self.timer()
@@ -262,6 +295,7 @@ class WalterArchitectureV1:
         if set(decisions) != active_symbols:
             raise ArchitectureViolation(f"{stage} must decide every and only input symbol")
         output = []
+        rejections: list[tuple[str, Decision]] = []
         for item in candidates:
             symbol = self._symbol(item)
             if item.get("terminal_outcome") == "Technical Failure":
@@ -288,6 +322,7 @@ class WalterArchitectureV1:
             if decision.passed:
                 output.append(item)
             else:
+                rejections.append((symbol, decision))
                 self._terminal(item, "Rejected", stage, decision.category, decision.reason)
         failures = sum(
             item.get("terminal_outcome") == "Technical Failure" for item in candidates
@@ -295,6 +330,7 @@ class WalterArchitectureV1:
         self._record_trace(
             stage, len(candidates), len(output), started_at=started_at,
             technical_failures=failures,
+            rejection_histogram=self._rejection_histogram(rejections),
         )
         return output
 

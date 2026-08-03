@@ -24,6 +24,13 @@ def test_prefilter_decision_exposes_exact_measurements_and_thresholds():
 
     assert decision["passed"] is False
     assert "pct_change 0 < 5" in decision["reason"]
+    assert decision["failed_rule"] == (
+        "Percent change and average volume below thresholds"
+    )
+    assert decision["failed_metrics"] == [
+        {"metric": "pct_change", "measured": 0.0, "operator": "<", "threshold": 5.0},
+        {"metric": "volume", "measured": 10.0, "operator": "<", "threshold": 100_000},
+    ]
     assert decision["measured_values"]["volume"] == 10
     assert decision["thresholds"]["min_day_volume"] == 100_000
 

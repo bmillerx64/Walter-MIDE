@@ -52,22 +52,43 @@ def prefilter_decision(symbol: str, snapshot: dict, settings) -> dict:
         "spread_pct": spread,
     }
     if not settings.min_price <= price <= settings.max_price:
+        failed_rule = "Price outside threshold"
+        failed_metrics = [{
+            "metric": "price", "measured": price, "operator": "outside",
+            "threshold": [settings.min_price, settings.max_price],
+        }]
         reason = (
             f"price {price:g} outside [{settings.min_price:g}, {settings.max_price:g}]"
         )
     elif pct_change < settings.min_pct_change and volume < settings.min_day_volume:
+        failed_rule = "Percent change and average volume below thresholds"
+        failed_metrics = [
+            {"metric": "pct_change", "measured": pct_change, "operator": "<",
+             "threshold": settings.min_pct_change},
+            {"metric": "volume", "measured": volume, "operator": "<",
+             "threshold": settings.min_day_volume},
+        ]
         reason = (
             f"pct_change {pct_change:.4g} < {settings.min_pct_change:g} and "
             f"volume {volume:g} < {settings.min_day_volume:g}"
         )
     elif dollar_volume < 50_000:
+        failed_rule = "Dollar volume below threshold"
+        failed_metrics = [{
+            "metric": "dollar_volume", "measured": dollar_volume,
+            "operator": "<", "threshold": 50_000,
+        }]
         reason = f"dollar_volume {dollar_volume:g} < 50000"
     else:
+        failed_rule = None
+        failed_metrics = []
         reason = "passed all prefilter rules"
     return {
         "symbol": symbol,
         "passed": reason == "passed all prefilter rules",
         "reason": reason,
+        "failed_rule": failed_rule,
+        "failed_metrics": failed_metrics,
         "measured_values": measured,
         "thresholds": thresholds,
     }
