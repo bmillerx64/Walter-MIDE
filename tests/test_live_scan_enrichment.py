@@ -184,6 +184,12 @@ def test_run_live_enrichment_path_passes_previous_state(monkeypatch, tmp_path):
     ]
     assert __import__("app").st.session_state.records is records
     assert "flight_recorder_error" not in diagnostics
+    assert diagnostics["flight_recorder_runtime"]["invoked"] is True
+    assert diagnostics["flight_recorder_runtime"]["record_scan_succeeded"] is False
+    assert diagnostics["flight_recorder_runtime"]["exception"] == {
+        "class": "OSError",
+        "message": "recorder unavailable",
+    }
     persisted = [json.loads(line) for line in history_path.read_text().splitlines()]
     assert persisted[-1]["symbol"] == records[0]["symbol"]
     assert persisted[-1]["velocity"] == records[0]["velocity"]

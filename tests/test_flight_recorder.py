@@ -1,6 +1,10 @@
 from types import SimpleNamespace
 
-from app import record_scan_safely, repair_mide_module_links
+from app import (
+    flight_recorder_download_bytes,
+    record_scan_safely,
+    repair_mide_module_links,
+)
 from mide.flight_recorder import FlightRecorder, STAGES, prefilter_decision
 
 SETTINGS = SimpleNamespace(
@@ -162,14 +166,56 @@ def test_safe_record_scan_retries_legacy_interface_without_news():
 
 def test_safe_record_scan_logs_and_swallows_write_failure(caplog):
     class BrokenRecorder:
-        def record_scan(self, **kwargs):
-            raise OSError("disk unavailable")
+        path = None
 
+        def record_scan(self, **kwargs):
+            raise OSError("disk unavailable; token=do-not-expose")
+
+    diagnostics = {}
     with caplog.at_level("ERROR", logger="app"):
-        result = record_scan_safely(BrokenRecorder(), records=[])
+        result = record_scan_safely(
+            BrokenRecorder(), records=[], runtime_diagnostics=diagnostics
+        )
 
     assert result is None
     assert "Flight Recorder write failed" in caplog.text
+    assert diagnostics == {
+        "invoked": True,
+        "recorder_path": None,
+        "before": {"exists": False, "size_bytes": None},
+        "record_scan_succeeded": False,
+        "exception": {
+            "class": "OSError",
+            "message": "[redacted: potentially sensitive exception message]",
+        },
+        "after": {"exists": False, "size_bytes": None},
+    }
+    assert "do-not-expose" not in repr(diagnostics)
+
+
+def test_safe_record_scan_reports_append_and_download_reads_post_scan_bytes(tmp_path):
+    path = tmp_path / "flights.jsonl"
+    recorder = FlightRecorder(path)
+    before_download = flight_recorder_download_bytes(recorder)
+    diagnostics = {}
+
+    result = record_scan_safely(
+        recorder,
+        seeds=[], discovery_reasons={}, snapshots={}, candidates=[], analyzed=[],
+        records=[], settings=SETTINGS, runtime_diagnostics=diagnostics,
+    )
+    refreshed_download = flight_recorder_download_bytes(recorder)
+
+    assert result is not None
+    assert diagnostics["invoked"] is True
+    assert diagnostics["recorder_path"] == str(path.resolve())
+    assert diagnostics["before"] == {"exists": False, "size_bytes": None}
+    assert diagnostics["record_scan_succeeded"] is True
+    assert diagnostics["exception"] is None
+    assert diagnostics["after"]["exists"] is True
+    assert diagnostics["after"]["size_bytes"] > 0
+    assert refreshed_download == path.read_bytes()
+    assert len(refreshed_download) > len(before_download)
 
 
 def test_hot_reload_repair_restores_scanner_package_reference(monkeypatch):
