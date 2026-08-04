@@ -79,24 +79,35 @@ def price_gate_savings_metrics(
     }
 
 
-SCAN_COUNT_STAGES = (
-    ("Universe discovered", "universe_discovered"),
-    ("Snapshot requests sent", "snapshot_requests_sent"),
-    ("Snapshot records received", "snapshot_records_received"),
-    ("Snapshot records normalized", "snapshot_records_normalized"),
-    ("Snapshot cache populated", "snapshot_cache_populated"),
-    ("Prefilter input", "prefilter_input"),
-    ("Prefilter output", "prefilter_output"),
-    ("Structure engine input", "structure_engine_input"),
-    ("Final candidates", "final_candidates"),
+SCAN_RUNTIME_STAGES = (
+    "Universe discovered",
+    "Symbols loaded",
+    "Prefiltered",
+    "Candidates",
+    "Analyzed",
+    "Ranked",
+    "Published",
+    "Dashboard",
 )
 
 
-def print_scan_stage_counts(counts: dict[str, int]) -> None:
-    """Print a count-only funnel for one completed scan."""
-    print("Stage\tCount", flush=True)
-    for label, key in SCAN_COUNT_STAGES:
-        print(f"{label}\t{int(counts.get(key, 0))}", flush=True)
+def runtime_stage_observation(records) -> dict[str, object]:
+    """Observe a collection's size and first symbols without changing it."""
+    symbols = []
+    for record in records:
+        symbol = record if isinstance(record, str) else record.get("symbol", "")
+        symbols.append(str(symbol).upper())
+        if len(symbols) == 5:
+            break
+    return {"count": len(records), "symbols": symbols}
+
+
+def print_scan_stage_counts(stages: dict[str, dict[str, object]]) -> None:
+    """Print the requested runtime funnel and ticker samples for one scan."""
+    for label in SCAN_RUNTIME_STAGES:
+        observation = stages.get(label, {})
+        symbols = ",".join(observation.get("symbols", []))
+        print(f"{label}\t{int(observation.get('count', 0))}\t{symbols}", flush=True)
 
 
 def repair_mide_module_links() -> None:
@@ -1083,6 +1094,7 @@ def _run_live_pipeline(
     state = {"seeds": [], "reasons": {}, "snapshots": {}, "news": [],
              "candidates": [], "analyzed": [], "ranked": [],
              "stage_diagnostics": [], "scan_stage_counts": {},
+             "runtime_stages": {},
              "expansion_candidate_ledger": []}
     universe_verification = UniverseVerification(
         client, feed=settings.feed, market_session=market_phase()
@@ -1164,6 +1176,9 @@ def _run_live_pipeline(
             )
         state["universe_elapsed_ms"] = round((perf_counter() - universe_started) * 1000, 3)
         state["seeds"], state["reasons"] = seeds, reasons
+        state["runtime_stages"]["Universe discovered"] = (
+            runtime_stage_observation(seeds)
+        )
         observe_runtime_collection_count(
             client.diagnostics, "universe discovered", seeds,
             statement="build_seed_symbols(...) returned seeds",
@@ -1266,6 +1281,9 @@ def _run_live_pipeline(
         state["snapshots"] = snapshots
         state["scan_stage_counts"]["snapshot_records_received"] = len(snapshots)
         refreshed = {item["symbol"]: item for item in snapshot_identity_records(snapshots)}
+        state["runtime_stages"]["Symbols loaded"] = runtime_stage_observation(
+            list(refreshed.values())
+        )
         state["scan_stage_counts"]["snapshot_records_normalized"] = len(refreshed)
         inspect_session_state_dataframes(st.session_state)
         # ``state["snapshots"]`` is the application cache consumed by every
@@ -1408,6 +1426,9 @@ def _run_live_pipeline(
         }
         state["scan_stage_counts"]["prefilter_input"] = len(eligible_snapshots)
         candidates = prefilter_snapshots(eligible_snapshots, settings)
+        state["runtime_stages"]["Prefiltered"] = runtime_stage_observation(
+            candidates
+        )
         state["scan_stage_counts"]["prefilter_output"] = len(candidates)
         candidate_symbols = {item["symbol"] for item in candidates}
         prefilter_decisions = {
@@ -1442,6 +1463,7 @@ def _run_live_pipeline(
         analyzed = history.enrich_velocity(analyzed, previous=previous)
         analyzed_by_symbol = {item["symbol"]: item for item in analyzed}
         state["candidates"], state["analyzed"] = candidates, analyzed
+        state["runtime_stages"]["Analyzed"] = runtime_stage_observation(analyzed)
         observe_runtime_collection_count(
             client.diagnostics, "candidates", state["candidates"],
             statement="candidates = prefilter_snapshots(eligible_snapshots, settings)",
@@ -1494,6 +1516,7 @@ def _run_live_pipeline(
         return result
 
     def expansion(records):
+        state["runtime_stages"]["Candidates"] = runtime_stage_observation(records)
         result = {}
         for item in records:
             advanced, audit, confluence = behavioral_decision(item)
@@ -1530,6 +1553,9 @@ def _run_live_pipeline(
 
     def rank(records):
         ranked_records = sorted(records, key=trader_priority_sort_key)
+        state["runtime_stages"]["Ranked"] = runtime_stage_observation(
+            ranked_records
+        )
         observe_runtime_collection_count(
             client.diagnostics, "ranked", ranked_records,
             statement=(
@@ -1540,6 +1566,7 @@ def _run_live_pipeline(
         return ranked_records
 
     def publish(records):
+        state["runtime_stages"]["Published"] = runtime_stage_observation(records)
         observe_runtime_collection_count(
             client.diagnostics, "published", records,
             statement="WalterArchitectureV1.publish(records)",
@@ -1653,8 +1680,11 @@ def _run_live_pipeline(
     client.diagnostics["pipeline_timing_summary"] = timing_summary
     state["scan_stage_counts"]["final_candidates"] = len(ranked)
     client.diagnostics["scan_stage_counts"] = dict(state["scan_stage_counts"])
-    print_scan_stage_counts(state["scan_stage_counts"])
     if isinstance(client, LiveWebullProvider):
+        client.diagnostics["production_webull_runtime_stages"] = dict(
+            state["runtime_stages"]
+        )
+        client.diagnostics["production_webull_runtime_report_pending"] = True
         client.diagnostics["active_pipeline_sources"] = client.pipeline_sources()
     runtime_recorder = get_flight_recorder()
     recorder_runtime_diagnostics = {}
@@ -1872,6 +1902,14 @@ if completed_scan:
             'not in {"PASS", "Removed"}]'
         ),
     )
+    runtime_stages = scan_diagnostics.get("production_webull_runtime_stages")
+    if (
+        scan_diagnostics.get("production_webull_runtime_report_pending")
+        and isinstance(runtime_stages, dict)
+    ):
+        runtime_stages["Dashboard"] = runtime_stage_observation(display_records)
+        print_scan_stage_counts(runtime_stages)
+        scan_diagnostics["production_webull_runtime_report_pending"] = False
 
 mission = walter_mission_control(actionable_records)
 focus_count = int(mission["primary"] is not None) + int(
