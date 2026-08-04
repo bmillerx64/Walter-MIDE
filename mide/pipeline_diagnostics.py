@@ -8,6 +8,14 @@ from typing import Iterable, Mapping, MutableMapping, Sequence
 
 RUNTIME_COLLECTION_COUNTS_KEY = "runtime_collection_counts"
 
+__all__ = (
+    "RUNTIME_COLLECTION_COUNTS_KEY",
+    "diagnostics_table",
+    "observe_runtime_collection_count",
+    "pre_expansion_candidate_diagnostics",
+    "stage_diagnostic",
+)
+
 
 def observe_runtime_collection_count(
     diagnostics: MutableMapping[str, object],
