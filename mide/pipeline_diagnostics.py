@@ -3,7 +3,44 @@
 from __future__ import annotations
 
 from collections import Counter
-from typing import Iterable, Mapping, Sequence
+from typing import Iterable, Mapping, MutableMapping, Sequence
+
+
+RUNTIME_COLLECTION_COUNTS_KEY = "runtime_collection_counts"
+
+
+def observe_runtime_collection_count(
+    diagnostics: MutableMapping[str, object],
+    stage: str,
+    collection: Sequence[object],
+    *,
+    statement: str,
+) -> int:
+    """Append one behavior-neutral runtime length observation.
+
+    ``statement`` names the assignment or expression between this observation
+    and the preceding one.  This makes a count change attributable without
+    retaining, copying, or comparing candidate objects.
+    """
+    observations = diagnostics.setdefault(RUNTIME_COLLECTION_COUNTS_KEY, [])
+    # Streamlit can render the same completed scan repeatedly. Re-observing a
+    # stage replaces it and later render observations instead of growing the
+    # single-scan trace on every widget rerun.
+    repeated_at = next((
+        index for index, item in enumerate(observations)
+        if item["stage"] == stage
+    ), None)
+    if repeated_at is not None:
+        del observations[repeated_at:]
+    count = len(collection)
+    previous = observations[-1]["count"] if observations else None
+    observations.append({
+        "stage": stage,
+        "count": count,
+        "change": None if previous is None else count - previous,
+        "statement": statement,
+    })
+    return count
 
 
 def stage_diagnostic(

@@ -1,6 +1,7 @@
 from mide.architecture import Decision
 from mide.pipeline_diagnostics import (
     diagnostics_table,
+    observe_runtime_collection_count,
     pre_expansion_candidate_diagnostics,
     stage_diagnostic,
 )
@@ -85,3 +86,32 @@ def test_pre_expansion_diagnostics_keeps_rejections_and_ranks_top_twenty():
         "Rejected because": "expansion_score = 45; required = 65",
     }
     assert rows[-1]["Symbol"] == "S05"
+
+
+def test_runtime_collection_counts_report_deltas_and_replace_rerenders():
+    diagnostics = {}
+
+    observe_runtime_collection_count(
+        diagnostics, "published", [{}, {}], statement="publish(records)"
+    )
+    observe_runtime_collection_count(
+        diagnostics, "dashboard render", [{}], statement="filter visible records"
+    )
+    observe_runtime_collection_count(
+        diagnostics, "dashboard render", [{}, {}], statement="show all records"
+    )
+
+    assert diagnostics["runtime_collection_counts"] == [
+        {
+            "stage": "published",
+            "count": 2,
+            "change": None,
+            "statement": "publish(records)",
+        },
+        {
+            "stage": "dashboard render",
+            "count": 2,
+            "change": 0,
+            "statement": "show all records",
+        },
+    ]

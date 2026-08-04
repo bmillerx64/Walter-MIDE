@@ -1,6 +1,7 @@
 import inspect
 import json
 import logging
+from datetime import datetime, timezone
 
 import pytest
 
@@ -11,8 +12,11 @@ from app import (
     print_scan_stage_counts,
     run_live,
 )
+from mide.completed_scan import CompletedScan
 from mide.memory import MemoryStore
 from mide.architecture import WalterArchitectureV1
+from mide.pipeline_diagnostics import observe_runtime_collection_count
+from mide.ui import actionable_candidate_records
 
 
 class DummyStatus:
@@ -190,6 +194,47 @@ def test_run_live_enrichment_path_passes_previous_state(monkeypatch, tmp_path):
         "class": "OSError",
         "message": "recorder unavailable",
     }
+    scan = CompletedScan(
+        provider="ALPACA", records=records, diagnostics=diagnostics,
+        warnings=warnings, symbols_sampled=seed_count,
+        prefilter_count=candidate_count, completed_at=datetime.now(timezone.utc),
+        source_label="instrumented live scan",
+    )
+    observe_runtime_collection_count(
+        diagnostics, "CompletedScan.records", scan.records,
+        statement="scan = CompletedScan(records=records, ...)",
+    )
+    actionable = actionable_candidate_records(scan.records)
+    observe_runtime_collection_count(
+        diagnostics, "actionable_candidate_records(records)", actionable,
+        statement="actionable_records = actionable_candidate_records(records)",
+    )
+    display_records = [
+        record for record in actionable
+        if record.get("status") not in {"PASS", "Removed"}
+    ]
+    observe_runtime_collection_count(
+        diagnostics, "dashboard render", display_records,
+        statement=(
+            'display_records = [r for r in actionable_records if r.get("status") '
+            'not in {"PASS", "Removed"}]'
+        ),
+    )
+    assert [
+        (item["stage"], item["count"], item["change"])
+        for item in diagnostics["runtime_collection_counts"]
+    ] == [
+        ("universe discovered", 1, None),
+        ("seeds", 1, 0),
+        ("candidates", 1, 0),
+        ("analyzed", 1, 0),
+        ("ranked", 1, 0),
+        ("published", 1, 0),
+        ('state["ranked"]', 1, 0),
+        ("CompletedScan.records", 1, 0),
+        ("actionable_candidate_records(records)", 1, 0),
+        ("dashboard render", 1, 0),
+    ]
     persisted = [json.loads(line) for line in history_path.read_text().splitlines()]
     assert persisted[-1]["symbol"] == records[0]["symbol"]
     assert persisted[-1]["velocity"] == records[0]["velocity"]
@@ -198,6 +243,7 @@ def test_run_live_enrichment_path_passes_previous_state(monkeypatch, tmp_path):
 def test_run_live_scanner_v1_enrichment_path_accepts_previous_state(
     monkeypatch, tmp_path
 ):
+    __import__("app").st.session_state.walter_session_universe_cache = {}
     monkeypatch.setattr("app.get_secret", lambda name, default="": "secret")
     monkeypatch.setattr("app.st.status", lambda *args, **kwargs: DummyStatus())
     monkeypatch.setattr("app.st.progress", lambda *args, **kwargs: DummyProgress())
