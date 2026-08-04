@@ -1,5 +1,6 @@
 from __future__ import annotations
 from datetime import datetime, timedelta, timezone
+import logging
 import math
 import re
 import pandas as pd
@@ -24,6 +25,7 @@ from .timeframe_alignment import alignment_summary
 # Fourteen calendar days reliably covers at least five completed U.S. trading
 # sessions across weekends and ordinary exchange holidays.
 VOLUME_PROFILE_LOOKBACK_DAYS = 14
+LOGGER = logging.getLogger(__name__)
 
 
 def _value(obj, *path, default=None):
@@ -97,11 +99,13 @@ def build_seed_symbols(client, settings, news_items, *, universe_verification=No
 
     # Universe membership is supplied by the selected provider's normalized
     # asset/ranking operation.
+    assets = "<provider call did not return>"
     try:
         provider_name = getattr(client, "provider_name", "Alpaca")
         assets = (call(f"{provider_name} tradable universe", "assets",
                        {"status": "active", "asset_class": "us_equity"}, client.assets)
                   if call else client.assets())
+        asset_record_count = len(assets) if hasattr(assets, "__len__") else None
         eligible_assets = [
             str(item.get("symbol") or "").strip().upper()
             for item in assets
@@ -114,6 +118,19 @@ def build_seed_symbols(client, settings, news_items, *, universe_verification=No
             and not any(word in str(item.get("name", "")).lower()
                         for word in ("warrant", "right", "unit", "preferred", "depositary"))
         ]
+        if not eligible_assets:
+            detail = {
+                "location": "build_seed_symbols: provider eligibility filter",
+                "record_count": 0,
+                "input_record_count": asset_record_count,
+                "api_response": assets,
+            }
+            client.diagnostics.setdefault("universe_first_empty", detail)
+            LOGGER.error(
+                "UNIVERSE EMPTY location=%s input_record_count=%s record_count=0 "
+                "api_response=%r",
+                detail["location"], asset_record_count, assets,
+            )
         source = "Alpaca assets" if provider_name == "Alpaca" else f"{provider_name} universe"
     except Exception as exc:
         client.warnings.append(f"Provider universe unavailable: {exc}")
@@ -121,6 +138,17 @@ def build_seed_symbols(client, settings, news_items, *, universe_verification=No
         source = "none"
 
     eligible_assets = [s for s in eligible_assets if is_valid_us_symbol(s)]
+    if not eligible_assets and "universe_first_empty" not in client.diagnostics:
+        detail = {
+            "location": "build_seed_symbols: US symbol validation",
+            "record_count": 0,
+            "api_response": assets,
+        }
+        client.diagnostics["universe_first_empty"] = detail
+        LOGGER.error(
+            "UNIVERSE EMPTY location=%s record_count=0 api_response=%r",
+            detail["location"], assets,
+        )
     client.diagnostics["broad_source"] = source
     client.diagnostics["broad_eligible"] = len(eligible_assets)
 
@@ -128,6 +156,18 @@ def build_seed_symbols(client, settings, news_items, *, universe_verification=No
         add(symbol, source)
 
     client.diagnostics["final_seed_count"] = len(symbols)
+    if not symbols:
+        first_empty = client.diagnostics.get("universe_first_empty") or {
+            "location": "build_seed_symbols: final symbol merge",
+            "record_count": 0,
+            "api_response": assets,
+        }
+        client.diagnostics.setdefault("universe_first_empty", first_empty)
+        LOGGER.error(
+            "UNIVERSE DISCOVERY RESULT record_count=0 first_empty_location=%s "
+            "api_response=%r",
+            first_empty["location"], first_empty.get("api_response"),
+        )
     return sorted(symbols), why
 
 

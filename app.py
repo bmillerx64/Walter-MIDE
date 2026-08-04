@@ -1146,6 +1146,16 @@ def _run_live_pipeline(
             )
             raise RuntimeError(f"Universe discovery failed: {exc}") from exc
         if not seeds:
+            first_empty = client.diagnostics.get("universe_first_empty") or {
+                "location": "app._run_live_pipeline.discover: session universe cache",
+                "record_count": 0,
+                "api_response": "<not available from cached universe>",
+            }
+            logging.getLogger(__name__).error(
+                "UNIVERSE DISCOVERY ABORT record_count=0 first_empty_location=%s "
+                "api_response=%r",
+                first_empty["location"], first_empty.get("api_response"),
+            )
             raise RuntimeError("Universe discovery returned zero eligible symbols")
         if isinstance(client, LiveWebullProvider):
             logging.getLogger(__name__).info(

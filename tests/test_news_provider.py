@@ -3,6 +3,7 @@ import json
 from pathlib import Path
 
 from mide.discovery import build_seed_symbols
+from mide.alpaca import AlpacaClient, AlpacaError
 from mide.news_provider import (
     NewsArticle,
     NewsProvider,
@@ -102,6 +103,45 @@ def test_universe_uses_only_alpaca_common_stock_assets():
 
     assert seeds == ["COMMON"]
     assert client.diagnostics["final_seed_count"] == 1
+
+
+def test_empty_universe_reports_response_count_and_first_empty_location(caplog):
+    client = DiscoveryClient()
+
+    with caplog.at_level("ERROR"):
+        seeds, _ = build_seed_symbols(client, Settings(), [])
+
+    assert seeds == []
+    assert client.diagnostics["universe_first_empty"] == {
+        "location": "build_seed_symbols: provider eligibility filter",
+        "record_count": 0,
+        "input_record_count": 0,
+        "api_response": [],
+    }
+    assert "record_count=0" in caplog.text
+    assert "api_response=[]" in caplog.text
+
+
+def test_asset_filter_reports_raw_api_response_as_first_empty_location(caplog):
+    client = AlpacaClient("key", "secret")
+    response = [{
+        "symbol": "TESTW", "name": "Test Warrants", "tradable": True,
+        "status": "active", "class": "us_equity",
+    }]
+    client._get = lambda *args, **kwargs: response
+
+    with caplog.at_level("ERROR"):
+        try:
+            client.assets()
+        except AlpacaError:
+            pass
+
+    detail = client.diagnostics["universe_first_empty"]
+    assert detail["location"] == "AlpacaClient.assets: common_stock_asset filter"
+    assert detail["record_count"] == 0
+    assert detail["input_record_count"] == 1
+    assert detail["api_response"] == response
+    assert "record_count=0" in caplog.text
 
 
 def test_cycu_targeted_news_is_not_lost_when_global_batch_is_full(tmp_path):
