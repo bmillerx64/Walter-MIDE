@@ -735,7 +735,12 @@ with st.sidebar:
     data_modes, default_mode = live_data_modes(
         alpaca_configured=alpaca_possible, webull_configured=webull_possible
     )
-    initialize_session_controls(st.session_state, default_mode=data_modes[default_mode])
+    current_watchdog = importlib.import_module("mide.watchdog").PROCESS_SCAN_WATCHDOG
+    initialize_session_controls(
+        st.session_state,
+        default_mode=data_modes[default_mode],
+        scan_running=current_watchdog.is_running,
+    )
     mode = st.radio(
         "Data mode", data_modes, key=DATA_MODE_KEY,
         on_change=select_data_mode, args=(st.session_state,),
@@ -1712,13 +1717,15 @@ else:
 if mode.startswith("Live ") and should_scan and not st.session_state[STOP_REQUESTED_KEY]:
     st.session_state.last_scan_attempt = datetime.now().astimezone()
     try:
-        begin_scheduled_scan(st.session_state)
         # Resolve the watchdog dynamically: a deployment may have replaced the
         # module while this Streamlit session still holds older app globals.
         repair_mide_module_links()
         watchdog = importlib.import_module("mide.watchdog").PROCESS_SCAN_WATCHDOG
         records, universe_count, prefiltered, warnings, diagnostics = watchdog.run(
-            lambda: run_live(scanner_version, provider_name=selected_provider), before_retry=repair_mide_module_links
+            lambda: run_live(scanner_version, provider_name=selected_provider),
+            before_retry=repair_mide_module_links,
+            on_acquired=lambda: begin_scheduled_scan(st.session_state),
+            on_finished=lambda: finish_scan(st.session_state),
         )
         if diagnostics.get("scan_completed", True):
             completed_at = datetime.now().astimezone()
@@ -1752,9 +1759,6 @@ if mode.startswith("Live ") and should_scan and not st.session_state[STOP_REQUES
         st.info(
             "Walter remains online and will retry automatically with backoff."
         )
-    finally:
-        finish_scan(st.session_state)
-
 # The sidebar slot keeps its original layout position, but the bytes are read
 # only after this run's scan (if any) has finished recording.
 with flight_recorder_download_slot:

@@ -34,9 +34,12 @@ result fields are copied into independent session-state containers.
 * `get_store()` and `get_flight_recorder()` are `st.cache_resource` resources;
   they are not reconstructed by ordinary reruns. Mission and trade outcome
   stores are durable file-backed projections, not scan authorities.
-* `finish_scan()` clears only request/running flags. Stop clears scheduling
-  flags, not the context. Presentation histories may be updated independently,
-  but cannot change the completed scan.
+* The process watchdog is authoritative for active scan state on every rerun.
+  Only the execution that acquires its lock runs the begin/finish callbacks;
+  rejected overlapping reruns cannot clear the owner's running flag.
+  `finish_scan()` clears only request/running flags. Stop clears scheduling flags,
+  not the context. Presentation histories may be updated independently, but
+  cannot change the completed scan.
 * A recovered exception is marked `scan_completed=False`. Publication rejects
   it and retains the previous completed scan. A successful run with an actually
   empty provider universe remains publishable and is the only scan path that

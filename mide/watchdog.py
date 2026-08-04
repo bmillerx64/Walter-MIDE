@@ -50,10 +50,14 @@ class ScanWatchdog:
         scan: Callable[[], T],
         *,
         before_retry: Callable[[], None] | None = None,
+        on_acquired: Callable[[], None] | None = None,
+        on_finished: Callable[[], None] | None = None,
     ) -> T:
         if not self._lock.acquire(blocking=False):
             raise ScanAlreadyRunning("a scan is already running in this process")
         try:
+            if on_acquired is not None:
+                on_acquired()
             self.last_failures = []
             for attempt in range(1, self.max_attempts + 1):
                 try:
@@ -74,7 +78,16 @@ class ScanWatchdog:
                         self._sleep(delay)
             raise AssertionError("unreachable")
         finally:
-            self._lock.release()
+            try:
+                if on_finished is not None:
+                    on_finished()
+            finally:
+                self._lock.release()
+
+    @property
+    def is_running(self) -> bool:
+        """Return whether this process currently has an active scan owner."""
+        return self._lock.locked()
 
 
 # Kept in this small, stable module so Streamlit session reruns share one lock.

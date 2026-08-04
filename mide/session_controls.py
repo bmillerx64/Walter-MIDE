@@ -24,20 +24,23 @@ def provider_for_mode(mode: str) -> str | None:
 
 
 def initialize_session_controls(
-    state: MutableMapping[str, Any], *, default_mode: str
+    state: MutableMapping[str, Any], *, default_mode: str, scan_running: bool | None = None
 ) -> None:
-    """Initialize persistent controls and discard interrupted scan activity.
+    """Initialize persistent controls and synchronize actual scan activity.
 
     This function runs before any scan execution starts on each Streamlit script
-    run.  A true value left behind by an interrupted prior run therefore cannot
-    describe work executing in the current run and must not disable its controls.
+    run. The process watchdog, rather than a value left over from a prior script
+    execution, is authoritative during reruns.
     """
     state.setdefault(DATA_MODE_KEY, default_mode)
     state.setdefault(PROVIDER_KEY, provider_for_mode(state[DATA_MODE_KEY]))
     # Keep repair deployments manual until Webull credentials and entitlements
     # have passed the deployed connection test.
     state.setdefault(AUTO_SCAN_KEY, False)
-    state[SCAN_RUNNING_KEY] = False
+    if scan_running is None:
+        state.setdefault(SCAN_RUNNING_KEY, False)
+    else:
+        state[SCAN_RUNNING_KEY] = scan_running
     state.setdefault(SCAN_REQUESTED_KEY, False)
     state.setdefault(STOP_REQUESTED_KEY, False)
 

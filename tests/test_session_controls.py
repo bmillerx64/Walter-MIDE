@@ -66,12 +66,27 @@ def test_stop_immediately_cancels_an_active_scan_and_prevents_auto_restart():
     assert state[AUTO_SCAN_KEY] is False
 
 
-def test_initialization_clears_scan_activity_left_by_an_interrupted_run():
+def test_initialization_uses_watchdog_state_instead_of_stale_session_activity():
     state = {SCAN_RUNNING_KEY: True}
 
-    initialize_session_controls(state, default_mode="Live Webull")
+    initialize_session_controls(
+        state, default_mode="Live Webull", scan_running=False
+    )
 
     assert state[SCAN_RUNNING_KEY] is False
+
+
+def test_streamlit_rerun_preserves_active_watchdog_scan_state():
+    state = {}
+
+    initialize_session_controls(
+        state, default_mode="Live Webull", scan_running=True
+    )
+    initialize_session_controls(
+        state, default_mode="Live Webull", scan_running=True
+    )
+
+    assert state[SCAN_RUNNING_KEY] is True
 
 
 def test_manual_request_is_pending_until_scan_execution_actually_begins():
