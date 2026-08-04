@@ -3,6 +3,7 @@ from datetime import datetime, timezone
 from typing import Iterable
 import csv
 import io
+import logging
 import re
 import requests
 from requests.exceptions import ConnectionError as RequestsConnectionError, Timeout
@@ -20,6 +21,9 @@ memory_checkpoint("free-float fallback import", object_name="YahooFinanceFloatPr
 
 class AlpacaError(RuntimeError):
     pass
+
+
+LOGGER = logging.getLogger(__name__)
 
 
 # Alpaca does not expose a dedicated security-type field on Asset.  Its `name`
@@ -111,6 +115,21 @@ class AlpacaClient:
                 data = self._get(base, "/v2/assets", params)
                 if not isinstance(data, list):
                     raise AlpacaError(f"Unexpected assets response type: {type(data).__name__}")
+                # Observation only: retain the first zero-count boundary so a
+                # successful HTTP/auth exchange cannot be mistaken for a later
+                # discovery filter removing the universe.
+                if not data:
+                    detail = {
+                        "location": "AlpacaClient.assets: /v2/assets API response",
+                        "endpoint": f"{base}/v2/assets",
+                        "record_count": 0,
+                        "api_response": data,
+                    }
+                    self.diagnostics.setdefault("universe_first_empty", detail)
+                    LOGGER.error(
+                        "UNIVERSE EMPTY location=%s endpoint=%s record_count=0 api_response=%r",
+                        detail["location"], detail["endpoint"], data,
+                    )
                 filtered = []
                 rejected_instrument_type = 0
                 for item in data:
@@ -129,6 +148,20 @@ class AlpacaClient:
                 self.diagnostics["assets_non_common_rejected"] = rejected_instrument_type
                 if filtered:
                     return filtered
+                if data:
+                    detail = {
+                        "location": "AlpacaClient.assets: common_stock_asset filter",
+                        "endpoint": f"{base}/v2/assets",
+                        "record_count": 0,
+                        "input_record_count": len(data),
+                        "api_response": data,
+                    }
+                    self.diagnostics.setdefault("universe_first_empty", detail)
+                    LOGGER.error(
+                        "UNIVERSE EMPTY location=%s endpoint=%s input_record_count=%s "
+                        "record_count=0 api_response=%r",
+                        detail["location"], detail["endpoint"], len(data), data,
+                    )
                 errors.append(f"{label}: endpoint returned {len(data)} assets but 0 eligible")
             except Exception as exc:
                 errors.append(f"{label}: {exc}")
