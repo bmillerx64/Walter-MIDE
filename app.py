@@ -25,6 +25,13 @@ memory_checkpoint("app.py standard-library imports")
 import streamlit as st
 memory_checkpoint("streamlit import", object_name="streamlit module graph")
 
+from mide.arrow_diagnostics import (
+    inspect_session_state_dataframes,
+    instrument_streamlit_tables,
+)
+
+instrument_streamlit_tables(st)
+
 
 def price_gate_savings_metrics(
     universe_count: int,
@@ -1241,6 +1248,7 @@ def _run_live_pipeline(
         state["scan_stage_counts"]["snapshot_records_received"] = len(snapshots)
         refreshed = {item["symbol"]: item for item in snapshot_identity_records(snapshots)}
         state["scan_stage_counts"]["snapshot_records_normalized"] = len(refreshed)
+        inspect_session_state_dataframes(st.session_state)
         # ``state["snapshots"]`` is the application cache consumed by every
         # subsequent stage, regardless of which provider filled it.
         state["scan_stage_counts"]["snapshot_cache_populated"] = len(state["snapshots"])
