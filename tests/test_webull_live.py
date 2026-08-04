@@ -101,6 +101,22 @@ def test_sdk_snapshot_arguments_and_normalization():
     assert result["HYFM"]["latestTrade"]["p"] == 3.25
 
 
+def test_sdk_snapshot_decodes_nested_bytes_before_dataframe_serialization():
+    class SDK:
+        def get_stock_snapshot(self, **_kwargs):
+            return {
+                "data": [{
+                    "symbol": b"HYFM",
+                    "last_price": "3.25",
+                    "timestamp": b"2026-08-04T14:30:00Z",
+                }]
+            }
+
+    result = WebullOpenAPIClient("k", "s", sdk_client=SDK()).snapshots(["HYFM"])
+
+    assert result["HYFM"]["latestTrade"]["t"] == "2026-08-04T14:30:00Z"
+
+
 def test_sdk_snapshot_only_requests_extended_hours_when_explicitly_enabled():
     calls = []
 

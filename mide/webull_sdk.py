@@ -135,12 +135,20 @@ def create_official_client(app_key: str, app_secret: str):
 
 def _plain(value):
     if hasattr(value, "to_dict"):
-        return value.to_dict()
+        value = value.to_dict()
     if hasattr(value, "model_dump"):
-        return value.model_dump()
+        value = value.model_dump()
     json_method = getattr(value, "json", None)
     if callable(json_method):
-        return json_method()
+        value = json_method()
+    if isinstance(value, bytes):
+        return value.decode("utf-8", errors="replace")
+    if isinstance(value, dict):
+        return {_plain(key): _plain(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_plain(item) for item in value]
+    if isinstance(value, tuple):
+        return tuple(_plain(item) for item in value)
     return value
 
 
