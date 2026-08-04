@@ -84,28 +84,25 @@ def test_price_gate_savings_does_not_invent_timing_without_snapshot_sample():
 
 def test_scan_stage_instrumentation_prints_only_the_ordered_counts(capsys):
     print_scan_stage_counts({
-        "universe_discovered": 9,
-        "snapshot_requests_sent": 8,
-        "snapshot_records_received": 7,
-        "snapshot_records_normalized": 6,
-        "snapshot_cache_populated": 5,
-        "prefilter_input": 4,
-        "prefilter_output": 3,
-        "structure_engine_input": 2,
-        "final_candidates": 1,
+        "Universe discovered": {"count": 9, "symbols": ["AAA", "BBB", "CCC", "DDD", "EEE"]},
+        "Symbols loaded": {"count": 8, "symbols": ["AAA", "BBB", "CCC", "DDD", "EEE"]},
+        "Prefiltered": {"count": 7, "symbols": ["AAA", "BBB", "CCC", "DDD", "EEE"]},
+        "Candidates": {"count": 6, "symbols": ["AAA", "BBB", "CCC", "DDD", "EEE"]},
+        "Analyzed": {"count": 5, "symbols": ["AAA", "BBB", "CCC", "DDD", "EEE"]},
+        "Ranked": {"count": 4, "symbols": ["AAA", "BBB", "CCC", "DDD"]},
+        "Published": {"count": 3, "symbols": ["AAA", "BBB", "CCC"]},
+        "Dashboard": {"count": 2, "symbols": ["AAA", "BBB"]},
     })
 
     assert capsys.readouterr().out.splitlines() == [
-        "Stage\tCount",
-        "Universe discovered\t9",
-        "Snapshot requests sent\t8",
-        "Snapshot records received\t7",
-        "Snapshot records normalized\t6",
-        "Snapshot cache populated\t5",
-        "Prefilter input\t4",
-        "Prefilter output\t3",
-        "Structure engine input\t2",
-        "Final candidates\t1",
+        "Universe discovered\t9\tAAA,BBB,CCC,DDD,EEE",
+        "Symbols loaded\t8\tAAA,BBB,CCC,DDD,EEE",
+        "Prefiltered\t7\tAAA,BBB,CCC,DDD,EEE",
+        "Candidates\t6\tAAA,BBB,CCC,DDD,EEE",
+        "Analyzed\t5\tAAA,BBB,CCC,DDD,EEE",
+        "Ranked\t4\tAAA,BBB,CCC,DDD",
+        "Published\t3\tAAA,BBB,CCC",
+        "Dashboard\t2\tAAA,BBB",
     ]
 
 
