@@ -168,6 +168,7 @@ from mide.discovery import (
 from mide.flight_recorder import prefilter_decision
 from mide.pipeline_diagnostics import (
     diagnostics_table,
+    observe_runtime_collection_count,
     pre_expansion_candidate_diagnostics,
     stage_diagnostic,
 )
@@ -1163,6 +1164,14 @@ def _run_live_pipeline(
             )
         state["universe_elapsed_ms"] = round((perf_counter() - universe_started) * 1000, 3)
         state["seeds"], state["reasons"] = seeds, reasons
+        observe_runtime_collection_count(
+            client.diagnostics, "universe discovered", seeds,
+            statement="build_seed_symbols(...) returned seeds",
+        )
+        observe_runtime_collection_count(
+            client.diagnostics, "seeds", state["seeds"],
+            statement='state["seeds"], state["reasons"] = seeds, reasons',
+        )
         state["scan_stage_counts"]["universe_discovered"] = len(seeds)
         price_started = perf_counter()
         prices = {}
@@ -1433,6 +1442,14 @@ def _run_live_pipeline(
         analyzed = history.enrich_velocity(analyzed, previous=previous)
         analyzed_by_symbol = {item["symbol"]: item for item in analyzed}
         state["candidates"], state["analyzed"] = candidates, analyzed
+        observe_runtime_collection_count(
+            client.diagnostics, "candidates", state["candidates"],
+            statement="candidates = prefilter_snapshots(eligible_snapshots, settings)",
+        )
+        observe_runtime_collection_count(
+            client.diagnostics, "analyzed", state["analyzed"],
+            statement="analyzed = history.enrich_velocity(analyze_candidates(...))",
+        )
         result = {}
         for item in records:
             symbol = item["symbol"]
@@ -1512,10 +1529,26 @@ def _run_live_pipeline(
             history.append(results)
 
     def rank(records):
-        return sorted(records, key=trader_priority_sort_key)
+        ranked_records = sorted(records, key=trader_priority_sort_key)
+        observe_runtime_collection_count(
+            client.diagnostics, "ranked", ranked_records,
+            statement=(
+                "WalterArchitectureV1._assess(\"Expansion Assessment\", ...) "
+                "then sorted(records, key=trader_priority_sort_key)"
+            ),
+        )
+        return ranked_records
 
     def publish(records):
+        observe_runtime_collection_count(
+            client.diagnostics, "published", records,
+            statement="WalterArchitectureV1.publish(records)",
+        )
         state["ranked"] = records
+        observe_runtime_collection_count(
+            client.diagnostics, 'state["ranked"]', state["ranked"],
+            statement='state["ranked"] = records',
+        )
         # Transitional identity alias for integrations invoked during the scan;
         # it is the exact pipeline list, never a second result container.
         st.session_state.records = records
@@ -1747,7 +1780,7 @@ if mode.startswith("Live ") and should_scan and not st.session_state[STOP_REQUES
         )
         if diagnostics.get("scan_completed", True):
             completed_at = datetime.now().astimezone()
-            publish_scan_result(st.session_state, CompletedScan(
+            scan = CompletedScan(
                 provider=selected_provider,
                 records=records,
                 diagnostics=diagnostics,
@@ -1759,7 +1792,12 @@ if mode.startswith("Live ") and should_scan and not st.session_state[STOP_REQUES
                     f"Live {selected_provider} · {universe_count} symbols sampled · "
                     f"{prefiltered} prefiltered"
                 ),
-            ))
+            )
+            observe_runtime_collection_count(
+                diagnostics, "CompletedScan.records", scan.records,
+                statement="scan = CompletedScan(records=records, ...)",
+            )
+            publish_scan_result(st.session_state, scan)
             st.session_state.scan_failure_count = 0
         else:
             st.session_state.scan_failure_count += 1
@@ -1814,12 +1852,26 @@ if records:
             st.markdown(decision_funnel_markup(record), unsafe_allow_html=True)
 
 actionable_records = actionable_candidate_records(records)
+if completed_scan:
+    observe_runtime_collection_count(
+        scan_diagnostics, "actionable_candidate_records(records)", actionable_records,
+        statement="actionable_records = actionable_candidate_records(records)",
+    )
 rejected_records = st.session_state.get("rejected_candidate_history", [])
 display_records = (
     actionable_records
     if show_pass
     else [r for r in actionable_records if r.get("status") not in {"PASS", "Removed"}]
 )
+if completed_scan:
+    observe_runtime_collection_count(
+        scan_diagnostics, "dashboard render", display_records,
+        statement=(
+            "display_records = actionable_records" if show_pass else
+            'display_records = [r for r in actionable_records if r.get("status") '
+            'not in {"PASS", "Removed"}]'
+        ),
+    )
 
 mission = walter_mission_control(actionable_records)
 focus_count = int(mission["primary"] is not None) + int(
