@@ -1,10 +1,20 @@
 from mide.architecture import Decision
+import mide.pipeline_diagnostics as pipeline_diagnostics
 from mide.pipeline_diagnostics import (
     diagnostics_table,
     observe_runtime_collection_count,
     pre_expansion_candidate_diagnostics,
     stage_diagnostic,
 )
+
+
+def test_pipeline_diagnostics_exports_every_app_import():
+    assert set(pipeline_diagnostics.__all__) >= {
+        "diagnostics_table",
+        "observe_runtime_collection_count",
+        "pre_expansion_candidate_diagnostics",
+        "stage_diagnostic",
+    }
 
 
 def test_stage_diagnostic_accounts_for_rejections_missing_values_and_top_ten():
