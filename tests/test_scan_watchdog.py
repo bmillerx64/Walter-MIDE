@@ -51,3 +51,38 @@ def test_watchdog_rejects_overlapping_scans():
     release.set()
     worker.join(timeout=2)
     assert not worker.is_alive()
+
+
+def test_only_lock_owner_runs_scan_lifecycle_callbacks_during_rerun():
+    watchdog = ScanWatchdog(max_attempts=1)
+    entered = threading.Event()
+    release = threading.Event()
+    lifecycle = []
+
+    def blocking_scan():
+        entered.set()
+        release.wait(timeout=2)
+
+    worker = threading.Thread(
+        target=lambda: watchdog.run(
+            blocking_scan,
+            on_acquired=lambda: lifecycle.append("begin"),
+            on_finished=lambda: lifecycle.append("finish"),
+        )
+    )
+    worker.start()
+    assert entered.wait(timeout=1)
+    assert watchdog.is_running is True
+
+    with pytest.raises(ScanAlreadyRunning):
+        watchdog.run(
+            lambda: None,
+            on_acquired=lambda: lifecycle.append("rerun begin"),
+            on_finished=lambda: lifecycle.append("rerun finish"),
+        )
+
+    assert lifecycle == ["begin"]
+    release.set()
+    worker.join(timeout=2)
+    assert lifecycle == ["begin", "finish"]
+    assert watchdog.is_running is False
