@@ -141,6 +141,8 @@ import mide.webull_live as wl
 
 logging.info("WEBULL FILE=%s", wl.__file__)
 logging.info("HAS live_data_modes=%s", hasattr(wl, "live_data_modes"))
+logging.info("DIR=%s", sorted([n for n in dir(wl) if not n.startswith("_")]))
+
 from mide.webull_live import LiveWebullProvider, live_data_modes
 from mide.webull_connection import run_connection_test
 from mide.session_controls import (
