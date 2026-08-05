@@ -6,7 +6,6 @@ from datetime import datetime, timezone
 import json
 from pathlib import Path
 from uuid import uuid4
-from collections import defaultdict
 
 from mide.trade_outcomes import TradeOutcomeStore
 
@@ -22,34 +21,8 @@ STAGES = (
 )
 
 
-# Temporary diagnostic counters for prefilter rules. These are intentionally
-# lightweight and ephemeral; they are reset at the start of a scan and printed
-# once per scan by the discovery prefilter routine.
-PREFILTER_COUNTERS = {
-    "evaluated": 0,
-    "price_outside_threshold": 0,
-    "pct_and_volume_below": 0,
-    "dollar_volume_below": 0,
-    "passed": 0,
-}
-
-
-def reset_prefilter_counters():
-    for k in PREFILTER_COUNTERS:
-        PREFILTER_COUNTERS[k] = 0
-
-
-def get_prefilter_counters():
-    return PREFILTER_COUNTERS.copy()
-
-
 def prefilter_decision(symbol: str, snapshot: dict, settings) -> dict:
-    """Explain the existing prefilter rules without changing their behavior.
-
-    This function additionally increments lightweight diagnostic counters so a
-    single scan can report how many symbols failed each rejection rule. It does
-    not alter any thresholds or logic.
-    """
+    """Explain the existing prefilter rules without changing their behavior."""
     trade = snapshot.get("latestTrade") or {}
     quote = snapshot.get("latestQuote") or {}
     daily = snapshot.get("dailyBar") or {}
@@ -78,12 +51,7 @@ def prefilter_decision(symbol: str, snapshot: dict, settings) -> dict:
         "dollar_volume": dollar_volume,
         "spread_pct": spread,
     }
-
-    # Update diagnostics: mark this symbol as evaluated.
-    PREFILTER_COUNTERS["evaluated"] += 1
-
     if not settings.min_price <= price <= settings.max_price:
-        PREFILTER_COUNTERS["price_outside_threshold"] += 1
         failed_rule = "Price outside threshold"
         failed_metrics = [{
             "metric": "price", "measured": price, "operator": "outside",
@@ -93,7 +61,6 @@ def prefilter_decision(symbol: str, snapshot: dict, settings) -> dict:
             f"price {price:g} outside [{settings.min_price:g}, {settings.max_price:g}]"
         )
     elif pct_change < settings.min_pct_change and volume < settings.min_day_volume:
-        PREFILTER_COUNTERS["pct_and_volume_below"] += 1
         failed_rule = "Percent change and average volume below thresholds"
         failed_metrics = [
             {"metric": "pct_change", "measured": pct_change, "operator": "<",
@@ -106,7 +73,6 @@ def prefilter_decision(symbol: str, snapshot: dict, settings) -> dict:
             f"volume {volume:g} < {settings.min_day_volume:g}"
         )
     elif dollar_volume < 50_000:
-        PREFILTER_COUNTERS["dollar_volume_below"] += 1
         failed_rule = "Dollar volume below threshold"
         failed_metrics = [{
             "metric": "dollar_volume", "measured": dollar_volume,
@@ -114,7 +80,6 @@ def prefilter_decision(symbol: str, snapshot: dict, settings) -> dict:
         }]
         reason = f"dollar_volume {dollar_volume:g} < 50000"
     else:
-        PREFILTER_COUNTERS["passed"] += 1
         failed_rule = None
         failed_metrics = []
         reason = "passed all prefilter rules"
@@ -433,22 +398,6 @@ class FlightRecorder:
             scan["expansion_candidate_ledger"] = list(expansion_candidate_ledger)
         with self.path.open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(scan, default=str) + "\n")
-
-        # Print one-shot aggregate prefilter diagnostics for this scan so engineers
-        # can see which rules are rejecting the most symbols. This is temporary
-        # diagnostic logging and does not change any filtering behavior.
-        try:
-            counters = get_prefilter_counters()
-            print("Prefilter diagnostics after scan:")
-            print(f"  snapshots_evaluated: {counters.get('evaluated', 0)}")
-            print(f"  passed: {counters.get('passed', 0)}")
-            print(f"  price_outside_threshold: {counters.get('price_outside_threshold', 0)}")
-            print(f"  pct_and_volume_below: {counters.get('pct_and_volume_below', 0)}")
-            print(f"  dollar_volume_below: {counters.get('dollar_volume_below', 0)}")
-        except Exception:
-            # Best-effort diagnostic printing; do not raise on failure.
-            pass
-
         return scan
 
     def latest_scan(self) -> dict | None:
