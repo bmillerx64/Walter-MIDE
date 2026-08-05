@@ -157,13 +157,13 @@ def test_first_successful_snapshot_raw_response_is_logged_before_parsing(caplog)
         client.stock_snapshot(["HYFM"])
 
     messages = [record.message for record in caplog.records
-                if "first successful snapshot raw response" in record.message]
+                if "first successful snapshot response summary" in record.message]
     assert len(messages) == 1
     assert "type=test_webull_live." in messages[0]
     assert "status=200" in messages[0]
-    assert "'Authorization': '<redacted>'" in messages[0]
-    assert 'text_first_500={"data": [{"symbol": "HYFM"}]}' in messages[0]
-    assert 'json={"data": [{"symbol": "HYFM"}]}' in messages[0]
+    assert "Authorization" not in messages[0]
+    assert 'text_first_500={"data": [{"symbol": "HYFM"}]}' not in messages[0]
+    assert 'json={"data": [{"symbol": "HYFM"}]}' not in messages[0]
 
 
 def test_requests_response_json_is_converted_to_internal_snapshot_rows():
@@ -223,7 +223,7 @@ def test_endpoint_rejected_symbol_is_removed_and_batch_retried(caplog):
     assert rest.calls[0] == ["GOOD", "IPO.WI", "ALSO"]
     assert ["IPO.WI"] in rest.calls
     assert provider.diagnostics["webull_stream"]["snapshot_unsupported_symbols"] == ["IPO.WI"]
-    assert caplog.text.count("WEBULL skipped invalid snapshot symbol symbol=IPO.WI") == 1
+    assert caplog.text.count("WEBULL skipped invalid snapshot symbols count=1") == 1
 
 
 def test_invalid_symbol_isolated_without_hiding_other_sdk_failures():
@@ -251,6 +251,68 @@ def test_invalid_symbol_isolated_without_hiding_other_sdk_failures():
         universe_client=Universe())
     with pytest.raises(PermissionError, match="authorization denied"):
         auth_provider.initialize_quotes(["GOOD", "ALSO"])
+
+
+def test_invalid_symbols_are_blacklisted_and_diagnostics_are_bounded(caplog):
+    class RejectKnown(Rest):
+        def snapshots(self, symbols):
+            self.calls.append(list(symbols))
+            invalid = [s for s in symbols if s in {"BAD1", "BAD2"}]
+            if invalid:
+                raise RuntimeError(f"HTTP 417 INVALID_SYMBOL invalidSymbols={invalid}")
+            return {symbol: {"latestTrade": {"p": 10.0}} for symbol in symbols}
+
+    rest = RejectKnown()
+    provider = LiveWebullProvider("key", "secret", rest_client=rest, universe_client=Universe())
+    with caplog.at_level("WARNING", logger="mide.webull_live"):
+        prices = provider.initialize_quotes(["GOOD", "BAD1", "BAD2", "ALSO", "SB.PRC", "SB.PRD", "PBR.A"])
+    assert prices == {"GOOD": 10.0, "ALSO": 10.0}
+    assert rest.calls == [["GOOD", "BAD1", "BAD2", "ALSO"], ["GOOD", "ALSO"]]
+    assert all("BAD1" not in call and "BAD2" not in call for call in rest.calls[2:])
+    d = provider.diagnostics["webull_stream"]
+    assert d["snapshot_initial_symbol_count"] == 7
+    assert d["snapshot_prefilter_excluded_count"] == 3
+    assert d["snapshot_rejected_by_webull_count"] == 2
+    assert d["snapshot_retry_count"] == 1
+    assert d["snapshot_successful_count"] == 2
+    assert d["snapshot_supported_universe_count"] == 2
+    assert d["snapshot_unsupported_symbols_total"] == 5
+    assert len(d["snapshot_unsupported_symbols"]) <= 50
+    assert "key" not in caplog.text and "secret" not in caplog.text
+
+
+def test_second_live_scan_skips_previously_blacklisted_symbols():
+    class RejectKnown(Rest):
+        def snapshots(self, symbols):
+            self.calls.append(list(symbols))
+            if "BAD" in symbols:
+                raise RuntimeError("HTTP 417 INVALID_SYMBOL BAD")
+            return {symbol: {"latestTrade": {"p": 10.0}} for symbol in symbols}
+
+    rest = RejectKnown()
+    provider = LiveWebullProvider("key", "secret", rest_client=rest, universe_client=Universe())
+    assert provider.initialize_quotes(["GOOD", "BAD"]) == {"GOOD": 10.0}
+    assert provider.initialize_quotes(["BAD", "ALSO"]) == {"ALSO": 10.0}
+    assert rest.calls == [["GOOD", "BAD"], ["GOOD"], ["ALSO"]]
+
+
+def test_bisected_invalid_symbol_is_not_retried_after_identification():
+    attempts = {}
+    class OpaqueReject(Rest):
+        def snapshots(self, symbols):
+            self.calls.append(list(symbols))
+            for symbol in symbols:
+                attempts[symbol] = attempts.get(symbol, 0) + 1
+            if "BAD" in symbols:
+                raise RuntimeError("HTTP 417 INVALID_SYMBOL")
+            return {symbol: {"latestTrade": {"p": 10.0}} for symbol in symbols}
+
+    rest = OpaqueReject()
+    provider = LiveWebullProvider("key", "secret", rest_client=rest, universe_client=Universe())
+    assert provider.initialize_quotes(["GOOD", "BAD", "ALSO"]) == {"GOOD": 10.0, "ALSO": 10.0}
+    identified_index = next(i for i, call in enumerate(rest.calls) if call == ["BAD"])
+    assert all("BAD" not in call for call in rest.calls[identified_index + 1:])
+    assert provider.diagnostics["webull_stream"]["snapshot_rest_succeeded"] is True
 
 
 def test_streaming_is_bypassed_until_snapshots_are_proven():
@@ -311,8 +373,9 @@ def test_http_trace_logs_request_and_response_without_secrets(caplog):
             headers={"x-signature": "secret", "accept": "application/json"}, json={})
     output = caplog.text
     assert "method=POST" in output and "url=https://api.webull.com/missing" in output
-    assert "status=404" in output and '{"error":"not found"}' in output
-    assert "secret" not in output and "<redacted>" in output
+    assert "status=404" in output
+    assert '{"error":"not found"}' not in output
+    assert "secret" not in output
 
 
 def test_provider_diagnostics_are_accurate():
