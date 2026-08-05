@@ -5,9 +5,16 @@ from __future__ import annotations
 from contextlib import contextmanager
 from datetime import datetime, timezone
 import logging
+import sys
+import traceback
 from threading import Timer
 from time import monotonic
 from typing import Callable, Iterator, TypeVar
+
+try:
+    import streamlit as st
+except ImportError:  # pragma: no cover - Streamlit is optional for unit tests.
+    st = None
 
 
 LOGGER = logging.getLogger("walter.startup")
@@ -65,3 +72,32 @@ def instrument_startup(component: str) -> Callable[[Callable[..., _T]], Callable
         return instrumented
 
     return decorate
+
+
+def configure_full_traceback_logging() -> None:
+    """Ensure unhandled startup exceptions emit their complete traceback."""
+    logging.basicConfig(level=logging.INFO, force=False)
+
+    def log_unhandled_exception(exc_type, exc, tb):
+        LOGGER.error(
+            "Unhandled startup exception",
+            exc_info=(exc_type, exc, tb),
+        )
+        if st is not None:
+            try:
+                st.exception("".join(traceback.format_exception(exc_type, exc, tb)))
+            except Exception:
+                LOGGER.debug("Unable to render startup traceback", exc_info=True)
+        sys.__excepthook__(exc_type, exc, tb)
+
+    sys.excepthook = log_unhandled_exception
+
+
+def startup_checkpoint(label: str) -> None:
+    """Emit a user-visible and log-visible startup checkpoint."""
+    log_startup(label, "checkpoint")
+    if st is not None:
+        try:
+            st.write(f"STARTUP CHECKPOINT: {label}")
+        except Exception:
+            LOGGER.debug("Unable to render startup checkpoint %s", label, exc_info=True)

@@ -24,3 +24,18 @@ def test_webull_network_timeout_is_within_startup_budget():
     from mide.webull_live import NETWORK_TIMEOUT_SECONDS
 
     assert 5 <= NETWORK_TIMEOUT_SECONDS <= 10
+
+
+def test_startup_checkpoint_logs_requested_label(caplog):
+    with caplog.at_level(logging.INFO, logger="walter.startup"):
+        startup.startup_checkpoint("START")
+
+    assert "component=START checkpoint" in caplog.text
+
+
+def test_full_traceback_logging_installs_excepthook():
+    import sys
+
+    startup.configure_full_traceback_logging()
+
+    assert sys.excepthook.__name__ == "log_unhandled_exception"

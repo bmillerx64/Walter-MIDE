@@ -1,6 +1,14 @@
 from __future__ import annotations
 
-from mide.startup import instrument_startup, log_startup, startup_step
+from mide.startup import (
+    configure_full_traceback_logging,
+    instrument_startup,
+    log_startup,
+    startup_checkpoint,
+    startup_step,
+)
+
+configure_full_traceback_logging()
 
 log_startup("entering app.py")
 
@@ -23,6 +31,7 @@ from time import perf_counter
 memory_checkpoint("app.py standard-library imports")
 
 import streamlit as st
+startup_checkpoint("START")
 memory_checkpoint("streamlit import", object_name="streamlit module graph")
 
 from mide.arrow_diagnostics import (
@@ -714,6 +723,7 @@ def secrets_mapping() -> dict:
 
 with startup_step("loading secrets"):
     settings = Settings.from_mapping(secrets_mapping())
+startup_checkpoint("Loaded config")
 memory_checkpoint("settings initialization", object_name="Settings")
 
 mission_header_slot = st.empty()
@@ -755,6 +765,7 @@ for key, default in session_defaults.items():
     if key not in st.session_state:
         st.session_state[key] = default
 runtime_context = scan_context(st.session_state)
+startup_checkpoint("Loaded session")
 memory_checkpoint("session cache initialization", object_name="st.session_state")
 memory_profile("startup", session_state=st.session_state)
 persisted_alert_voice()
@@ -1078,6 +1089,8 @@ def _run_live_pipeline(
             client = LiveWebullProvider(
                 app_key, app_secret, universe_client=universe_client)
             context.provider_instance = client
+        startup_checkpoint("Created Webull client")
+        startup_checkpoint("Authenticated")
         logging.getLogger(__name__).warning(
             "Walter quote/bars/stream provider: WEBULL SDK; symbol master: ALPACA /v2/assets"
         )
@@ -1102,6 +1115,8 @@ def _run_live_pipeline(
                 recovery_action="continue with available discovery sources")
             client.warnings.append(f"Alpaca credential check unavailable: {exc}")
         client.diagnostics["selected_provider"] = "ALPACA"
+        startup_checkpoint("Created Webull client" if provider_name.upper() == "WEBULL" else "Created Alpaca client")
+        startup_checkpoint("Authenticated")
         logging.getLogger(__name__).warning("Walter live market-data provider: ALPACA")
     with scan_runtime_slot:
         progress = st.progress(0, text="Starting Walter Architecture")
@@ -1189,6 +1204,7 @@ def _run_live_pipeline(
             logging.getLogger(__name__).info(
                 "WEBULL symbols discovered before streaming=%s", len(seeds)
             )
+        startup_checkpoint("Universe loaded")
         state["universe_elapsed_ms"] = round((perf_counter() - universe_started) * 1000, 3)
         state["seeds"], state["reasons"] = seeds, reasons
         state["runtime_stages"]["Seeds"] = runtime_stage_observation(seeds)
@@ -1985,6 +2001,7 @@ arm_live_clock_engine(
 
 with escalation_engine_slot:
     render_escalation_engine(actionable_records)
+startup_checkpoint("Dashboard rendered")
 
 with system_status_panel:
     st.markdown(
