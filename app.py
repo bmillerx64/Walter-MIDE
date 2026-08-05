@@ -136,6 +136,11 @@ memory_checkpoint("mide package repair")
 from mide.config import Settings
 from mide.credentials import WEBULL_CREDENTIAL_NAMES, credential_diagnostics, load_credentials
 from mide.market_data import MarketDataProvider
+import logging
+import mide.webull_live as wl
+
+logging.info("WEBULL FILE=%s", wl.__file__)
+logging.info("HAS live_data_modes=%s", hasattr(wl, "live_data_modes"))
 from mide.webull_live import LiveWebullProvider, live_data_modes
 from mide.webull_connection import run_connection_test
 from mide.session_controls import (
