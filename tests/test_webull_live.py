@@ -204,13 +204,26 @@ def test_snapshot_batches_never_exceed_100_symbols():
     assert [len(call) for call in rest.calls] == [100, 100, 51]
 
 
-def test_known_when_issued_symbol_is_filtered_before_snapshot_request():
-    rest = Rest()
+def test_endpoint_rejected_symbol_is_removed_and_batch_retried(caplog):
+    class RejectWhenIssued(Rest):
+        def snapshots(self, symbols):
+            self.calls.append(list(symbols))
+            if "IPO.WI" in symbols:
+                raise RuntimeError("HTTP 417 INVALID_SYMBOL")
+            return {symbol: {"latestTrade": {"p": 10.0}} for symbol in symbols}
+
+    rest = RejectWhenIssued()
     provider = LiveWebullProvider("key", "secret", rest_client=rest,
         universe_client=Universe())
-    assert provider.initialize_quotes(["GOOD", "IPO.WI"]) == {"GOOD": 10.0}
-    assert rest.calls == [["GOOD"]]
+    with caplog.at_level("WARNING", logger="mide.webull_live"):
+        assert provider.initialize_quotes(["GOOD", "IPO.WI", "ALSO"]) == {
+            "GOOD": 10.0, "ALSO": 10.0,
+        }
+
+    assert rest.calls[0] == ["GOOD", "IPO.WI", "ALSO"]
+    assert ["IPO.WI"] in rest.calls
     assert provider.diagnostics["webull_stream"]["snapshot_unsupported_symbols"] == ["IPO.WI"]
+    assert caplog.text.count("WEBULL skipped invalid snapshot symbol symbol=IPO.WI") == 1
 
 
 def test_invalid_symbol_isolated_without_hiding_other_sdk_failures():

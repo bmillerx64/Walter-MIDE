@@ -8,7 +8,6 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 import json
 import logging
-import re
 from threading import Lock
 import time
 from typing import Callable, Iterable
@@ -24,18 +23,6 @@ from .startup import log_startup
 LOGGER = logging.getLogger(__name__)
 NETWORK_TIMEOUT_SECONDS = 8
 _NETWORK_EXECUTOR = ThreadPoolExecutor(max_workers=4, thread_name_prefix="walter-network")
-_WEBULL_UNSUPPORTED_SYMBOL = re.compile(r"(?:\.|-)WI$", re.IGNORECASE)
-
-
-def webull_snapshot_symbol_supported(symbol: object) -> bool:
-    """Reject security suffixes known not to be accepted by stock snapshots.
-
-    Security-type metadata is filtered while constructing the universe.  This
-    last-mile check covers when-issued tickers even when only a symbol reaches
-    the provider.
-    """
-    value = str(symbol or "").strip().upper()
-    return bool(value) and not _WEBULL_UNSUPPORTED_SYMBOL.search(value)
 
 
 def _invalid_symbol_error(exc: Exception) -> bool:
@@ -348,21 +335,32 @@ class LiveWebullProvider(WebullProvider):
 
     def initialize_quotes(self, symbols: Iterable[str], *, batch_size: int = MAX_SNAPSHOT_SYMBOLS) -> dict[str, float]:
         """Synchronously seed prices; optional SDK streaming starts only after proof."""
-        submitted = list(dict.fromkeys(str(s).strip().upper() for s in symbols if str(s).strip()))
-        wanted = [symbol for symbol in submitted if webull_snapshot_symbol_supported(symbol)]
-        rejected = [symbol for symbol in submitted if symbol not in wanted]
+        wanted = list(dict.fromkeys(str(s).strip().upper() for s in symbols if str(s).strip()))
         batch_size = max(1, min(int(batch_size), MAX_SNAPSHOT_SYMBOLS))
         d = self.diagnostics["webull_stream"]
-        d["discovered_symbols"] = len(submitted)
-        d["snapshot_unsupported_symbols"] = rejected
-        for symbol in rejected:
-            self.warnings.append(f"Skipped unsupported Webull snapshot symbol {symbol}")
-        LOGGER.info("WEBULL universe before snapshot discovered_symbols=%s supported_symbols=%s "
-                    "rejected_symbols=%s", len(submitted), len(wanted), len(rejected))
+        d["discovered_symbols"] = len(wanted)
+        d["snapshot_unsupported_symbols"] = []
+        skipped_symbols: set[str] = set()
+        LOGGER.info("WEBULL universe before snapshot discovered_symbols=%s", len(wanted))
         rest_succeeded = True
 
+        def record_invalid_symbol(symbol: str, exc: Exception) -> None:
+            """Record an endpoint-rejected ticker once while keeping the scan alive."""
+            if symbol in skipped_symbols:
+                return
+            skipped_symbols.add(symbol)
+            d["snapshot_unsupported_symbols"].append(symbol)
+            self.warnings.append(f"Skipped unsupported Webull snapshot symbol {symbol}: {exc}")
+            LOGGER.warning("WEBULL skipped invalid snapshot symbol symbol=%s error=%s", symbol, exc)
+
         def fetch(batch):
-            """Bisect only INVALID_SYMBOL failures so one ticker cannot poison a batch."""
+            """Retry INVALID_SYMBOL batches without the endpoint-rejected ticker.
+
+            Webull may reject ticker classes that are not reliably detectable from
+            the symbol string alone.  When that happens, split the failed batch to
+            isolate the offending ticker, remove only that ticker, and continue
+            returning snapshots for the rest of the batch.
+            """
             future = _NETWORK_EXECUTOR.submit(self._snapshot_client.snapshots, batch)
             try:
                 return future.result(timeout=NETWORK_TIMEOUT_SECONDS)
@@ -373,10 +371,7 @@ class LiveWebullProvider(WebullProvider):
                 if not _invalid_symbol_error(exc):
                     raise
                 if len(batch) == 1:
-                    symbol = batch[0]
-                    d["snapshot_unsupported_symbols"].append(symbol)
-                    self.warnings.append(f"Skipped unsupported Webull snapshot symbol {symbol}: {exc}")
-                    LOGGER.warning("WEBULL skipped invalid snapshot symbol symbol=%s error=%s", symbol, exc)
+                    record_invalid_symbol(batch[0], exc)
                     return {}
                 midpoint = len(batch) // 2
                 return {**fetch(batch[:midpoint]), **fetch(batch[midpoint:])}
