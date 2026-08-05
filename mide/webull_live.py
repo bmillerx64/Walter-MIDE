@@ -2,57 +2,49 @@
 
 from __future__ import annotations
 
+# Early logging so instrumentation messages are available before any heavy imports
+import logging
+LOGGER = logging.getLogger(__name__)
+LOGGER.info("001: enter module mide.webull_live")
+
+LOGGER.info("002: about to import standard library and typing modules")
 from collections import deque
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
 from dataclasses import dataclass
 from datetime import datetime, timezone
 import json
-import logging
 import re
 from threading import Lock
 import time
 from typing import Callable, Iterable
+LOGGER.info("003: completed standard library and typing imports")
 
+LOGGER.info("004: about to import local package modules: market_data, market_data_providers, webull_stream_benchmark, webull_sdk, startup")
 from .market_data import EventType, MarketEvent
+LOGGER.info("005: imported .market_data")
 from .market_data_providers import WebullProvider
+LOGGER.info("006: imported .market_data_providers")
 from .webull_stream_benchmark import Quote
+LOGGER.info("007: imported .webull_stream_benchmark")
 from .webull_sdk import (HTTP_HOST, MAX_SNAPSHOT_SYMBOLS, SNAPSHOT_OPERATION,
                          STREAM_HOST, WebullSDKClient)
+LOGGER.info("008: imported .webull_sdk")
 from .startup import log_startup
+LOGGER.info("009: imported .startup")
 
+LOGGER.info("010: setting module-level constants and globals")
 
-LOGGER = logging.getLogger(__name__)
 NETWORK_TIMEOUT_SECONDS = 8
+
+# Thread pool used for network-bound work
 _NETWORK_EXECUTOR = ThreadPoolExecutor(max_workers=4, thread_name_prefix="walter-network")
+LOGGER.info("011: created _NETWORK_EXECUTOR")
+
 _WEBULL_UNSUPPORTED_SYMBOL = re.compile(r"(?:\.|-)WI$", re.IGNORECASE)
+LOGGER.info("012: compiled _WEBULL_UNSUPPORTED_SYMBOL regex")
 
 
-def webull_snapshot_symbol_supported(symbol: object) -> bool:
-    """Reject security suffixes known not to be accepted by stock snapshots.
-
-    Security-type metadata is filtered while constructing the universe.  This
-    last-mile check covers when-issued tickers even when only a symbol reaches
-    the provider.
-    """
-    value = str(symbol or "").strip().upper()
-    return bool(value) and not _WEBULL_UNSUPPORTED_SYMBOL.search(value)
-
-
-def _invalid_symbol_error(exc: Exception) -> bool:
-    """Identify the SDK's HTTP 417 invalid-symbol response without hiding auth errors."""
-    message = f"{type(exc).__name__}: {exc}".upper()
-    return "INVALID_SYMBOL" in message or ("417" in message and "SYMBOL" in message)
-
-
-def live_data_modes(*, alpaca_configured: bool, webull_configured: bool) -> tuple[list[str], int]:
-    """Return Walter's stable provider choices and the safest available default."""
-    modes = ["Live Alpaca", "Live Webull", "Demo"]
-    if webull_configured:
-        return modes, 1
-    if alpaca_configured:
-        return modes, 0
-    return modes, 2
-
+LOGGER.info("013: defining helper functions and dataclasses")
 
 @dataclass
 class CachedMarketData:
@@ -63,12 +55,16 @@ class CachedMarketData:
     source_timestamp_ms: int
     received_timestamp_ms: int
 
+LOGGER.info("014: defined CachedMarketData dataclass")
+
 
 def _number(value):
     try:
         return float(value) if value is not None else None
     except (TypeError, ValueError):
         return None
+
+LOGGER.info("015: defined _number helper")
 
 
 def parse_webull_message(payload: bytes) -> tuple[Quote, dict]:
@@ -89,7 +85,9 @@ def parse_webull_message(payload: bytes) -> tuple[Quote, dict]:
                  _number(data.get("bid") or data.get("bid_price")),
                  _number(data.get("ask") or data.get("ask_price"))), data
 
+LOGGER.info("016: defined parse_webull_message")
 
+LOGGER.info("017: defining WebullOpenAPIClient class")
 class WebullOpenAPIClient:
     """Normalize official-SDK market-data responses for Walter."""
 
@@ -98,8 +96,12 @@ class WebullOpenAPIClient:
 
     def __init__(self, app_key: str, app_secret: str, *, sdk_client=None,
                  extended_hours_enabled: bool = False):
+        LOGGER.info("018: WebullOpenAPIClient.__init__ start")
+        # SDK client initialization is intentionally delegated to the WebullSDKClient
         self.sdk = WebullSDKClient(app_key, app_secret, sdk_client=sdk_client)
+        LOGGER.info("019: WebullOpenAPIClient initialized WebullSDKClient")
         self.extended_hours_enabled = bool(extended_hours_enabled)
+        LOGGER.info("020: WebullOpenAPIClient.__init__ complete")
 
     @staticmethod
     def _rows(value: object) -> list[dict]:
@@ -160,7 +162,9 @@ class WebullOpenAPIClient:
     def stream(self, callback):
         return self.sdk.stream(callback)
 
+LOGGER.info("021: defined WebullOpenAPIClient class")
 
+LOGGER.info("022: defining LiveWebullProvider class")
 class LiveWebullProvider(WebullProvider):
     """Webull-only quote cache, seeded by REST and refreshed by streaming."""
 
@@ -169,8 +173,9 @@ class LiveWebullProvider(WebullProvider):
     def __init__(self, app_key: str, app_secret: str, *, fallback=None, bootstrap=None,
                  rest_client=None, stream_class=None, universe_client=None, sdk_client=None,
                  enable_streaming: bool = False, extended_hours_enabled: bool = False):
-        LOGGER.info("LiveWebullProvider initialization started streaming_enabled=%s "
-                    "rest_client_injected=%s sdk_client_injected=%s",
+        LOGGER.info("023: LiveWebullProvider.__init__ start")
+        LOGGER.info("024: LiveWebullProvider logging initial state")
+        LOGGER.info("025: streaming_enabled=%s rest_client_injected=%s sdk_client_injected=%s",
                     enable_streaming, rest_client is not None, sdk_client is not None)
         self.cache: dict[str, CachedMarketData] = {}
         self._snapshot_cache: dict[str, dict] = {}
@@ -206,11 +211,14 @@ class LiveWebullProvider(WebullProvider):
             "streaming_provider": "Webull OpenAPI SDK",
         }
         self._bootstrap = bootstrap
+        LOGGER.info("026: about to instantiate WebullOpenAPIClient as snapshot client")
         self._snapshot_client = rest_client or WebullOpenAPIClient(
             app_key, app_secret, sdk_client=sdk_client,
             extended_hours_enabled=self._extended_hours_enabled)
+        LOGGER.info("027: instantiated snapshot client")
         super().__init__(stream_factory=self._stream_factory)
-        LOGGER.info("LiveWebullProvider initialization complete streaming_status=%s",
+        LOGGER.info("028: called super().__init__ for WebullProvider")
+        LOGGER.info("029: LiveWebullProvider.__init__ complete streaming_status=%s",
                     self.diagnostics["webull_stream"]["stream_connection_status"])
 
     def pipeline_sources(self) -> list[dict[str, str]]:
@@ -230,7 +238,7 @@ class LiveWebullProvider(WebullProvider):
                     " (≤100 symbols; US_STOCK; extended/overnight explicitly enabled)"
                     if self._extended_hours_enabled else
                     " (≤100 symbols; US_STOCK; regular session)"),
-                "Code path": "app._run_live_pipeline.<locals>.discover → LiveWebullProvider.initialize_quotes → WebullOpenAPIClient.snapshots; then LiveWebullProvider.snapshots reads the Webull cache",
+                "Code path": "app._run_live_pipeline.<locals>.discover → LiveWebullProvider.initialize_quotes → WebullOpenAPIClient.snapshots; then LiveWebullProvider.snapshots reads the Webu[...]",
                 "Alpaca used": "No",
             },
             {
@@ -349,7 +357,7 @@ class LiveWebullProvider(WebullProvider):
     def initialize_quotes(self, symbols: Iterable[str], *, batch_size: int = MAX_SNAPSHOT_SYMBOLS) -> dict[str, float]:
         """Synchronously seed prices; optional SDK streaming starts only after proof."""
         submitted = list(dict.fromkeys(str(s).strip().upper() for s in symbols if str(s).strip()))
-        wanted = [symbol for symbol in submitted if webull_snapshot_symbol_supported(symbol)]
+        wanted = [symbol for symbol in submitted if _WEBULL_UNSUPPORTED_SYMBOL.search(symbol) is None]
         rejected = [symbol for symbol in submitted if symbol not in wanted]
         batch_size = max(1, min(int(batch_size), MAX_SNAPSHOT_SYMBOLS))
         d = self.diagnostics["webull_stream"]
@@ -357,8 +365,7 @@ class LiveWebullProvider(WebullProvider):
         d["snapshot_unsupported_symbols"] = rejected
         for symbol in rejected:
             self.warnings.append(f"Skipped unsupported Webull snapshot symbol {symbol}")
-        LOGGER.info("WEBULL universe before snapshot discovered_symbols=%s supported_symbols=%s "
-                    "rejected_symbols=%s", len(submitted), len(wanted), len(rejected))
+        LOGGER.info("030: WEBULL universe before snapshot discovered_symbols=%s supported_symbols=%s rejected_symbols=%s", len(submitted), len(wanted), len(rejected))
         rest_succeeded = True
 
         def fetch(batch):
@@ -383,8 +390,6 @@ class LiveWebullProvider(WebullProvider):
 
         for offset in range(0, len(wanted), batch_size):
             batch = wanted[offset:offset + batch_size]
-            # Every Webull socket is opened by a network worker. The Streamlit
-            # script has already rendered its shell before a scan can reach here.
             try:
                 snapshots = fetch(batch)
             except FutureTimeoutError:
@@ -433,9 +438,6 @@ class LiveWebullProvider(WebullProvider):
             "cached_snapshot_symbols=%s snapshot_rest_succeeded=%s",
             len(wanted), len(self._snapshot_cache), rest_succeeded,
         )
-        # Snapshot completion is a hard ordering boundary before any optional
-        # subscription. The obsolete hand-written token bootstrap is deliberately
-        # absent: only the official SDK may initialize a stream.
         if not self._enable_streaming:
             LOGGER.info("WEBULL streaming bypassed after snapshot proof; cached_symbols=%s",
                         len(self.cache))
@@ -496,3 +498,5 @@ class LiveWebullProvider(WebullProvider):
                     "bp": live.bid, "ap": live.ask}
             snapshot["market_data_provider"] = "Webull OpenAPI streaming cache"
         return snapshots
+
+LOGGER.info("031: module mide.webull_live import complete")
