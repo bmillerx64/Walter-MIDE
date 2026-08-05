@@ -1231,6 +1231,15 @@ def _run_live_pipeline(
                     recovery_action="stop scan and preserve last successful scan",
                 )
                 raise RuntimeError(f"Webull initial snapshot failed: {exc}") from exc
+            removed_invalid = sorted(client.invalid_symbol_blacklist.intersection(seeds))
+            if removed_invalid:
+                seeds = [symbol for symbol in seeds if symbol not in client.invalid_symbol_blacklist]
+                reasons = {symbol: value for symbol, value in reasons.items() if symbol in set(seeds)}
+                state["seeds"], state["reasons"] = seeds, reasons
+                client.diagnostics["webull_stream"]["invalid_symbols_removed"] = len(removed_invalid)
+                client.warnings.append(
+                    f"Removed {len(removed_invalid)} invalid Webull symbols from active universe"
+                )
             if not prices:
                 raise RuntimeError("Webull snapshot returned zero symbols")
         for offset in range(0, len(seeds), settings.batch_size):

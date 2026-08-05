@@ -64,6 +64,17 @@ def _webull_prefilter_unsupported(symbols: Iterable[str]) -> tuple[list[str], li
         else:
             accepted.append(symbol)
     return list(dict.fromkeys(accepted)), list(dict.fromkeys(excluded))
+def _invalid_symbols_from_error(exc: Exception, batch: Iterable[str]) -> list[str]:
+    """Return request symbols named by Webull's invalid-symbol response."""
+    message = f"{type(exc).__name__}: {exc}".upper()
+    requested = [str(symbol).strip().upper() for symbol in batch if str(symbol).strip()]
+    named = [
+        symbol for symbol in requested
+        if re.search(rf"(?<![A-Z0-9]){re.escape(symbol)}(?![A-Z0-9])", message)
+    ]
+    if named:
+        return named
+    return requested
 
 
 def live_data_modes(*, alpaca_configured: bool, webull_configured: bool) -> tuple[list[str], int]:
@@ -199,6 +210,7 @@ class LiveWebullProvider(WebullProvider):
         self._lock = Lock()
         self._subscription = None
         self._subscribed: set[str] = set()
+        self.invalid_symbol_blacklist: set[str] = set()
         self._latencies = deque(maxlen=1000)
         self._unsupported_symbols: set[str] = set()
         self._stream_class = stream_class
@@ -225,6 +237,8 @@ class LiveWebullProvider(WebullProvider):
             "snapshot_rejected_by_webull_count": 0, "snapshot_retry_count": 0,
             "snapshot_successful_count": 0, "snapshot_supported_universe_count": 0,
             "snapshot_unsupported_symbols_total": 0,
+            "snapshot_unsupported_symbols": [], "invalid_symbol_blacklist_size": 0,
+            "invalid_symbols_removed": 0,
         }
         self.diagnostics["market_data_sources"] = {
             "universe_provider": "Alpaca Trading API",
@@ -449,20 +463,61 @@ class LiveWebullProvider(WebullProvider):
 
         for offset in range(0, len(wanted), batch_size):
             batch = wanted[offset:offset + batch_size]
+        """Synchronously seed prices; invalid Webull symbols are blacklisted once."""
+        requested = list(dict.fromkeys(str(s).strip().upper() for s in symbols if str(s).strip()))
+        wanted = [symbol for symbol in requested if symbol not in self.invalid_symbol_blacklist]
+        batch_size = max(1, min(int(batch_size), MAX_SNAPSHOT_SYMBOLS))
+        d = self.diagnostics["webull_stream"]
+        d["discovered_symbols"] = len(wanted)
+        d["snapshot_unsupported_symbols"] = sorted(self.invalid_symbol_blacklist)
+        skipped_symbols: set[str] = set()
+        LOGGER.info(
+            "WEBULL universe before snapshot discovered_symbols=%s blacklisted_symbols=%s",
+            len(wanted), len(self.invalid_symbol_blacklist),
+        )
+        rest_succeeded = True
+
+        def record_invalid_symbols(symbols_to_remove: Iterable[str], exc: Exception) -> None:
+            """Permanently remove endpoint-rejected tickers for this provider session."""
+            for symbol in symbols_to_remove:
+                if symbol in skipped_symbols or symbol in self.invalid_symbol_blacklist:
+                    continue
+                skipped_symbols.add(symbol)
+                self.invalid_symbol_blacklist.add(symbol)
+                self._snapshot_cache.pop(symbol, None)
+                self.cache.pop(symbol, None)
+                d["snapshot_unsupported_symbols"].append(symbol)
+                self.warnings.append(f"Skipped unsupported Webull snapshot symbol {symbol}: {exc}")
+                LOGGER.warning("WEBULL blacklisted invalid snapshot symbol symbol=%s error=%s", symbol, exc)
+
+        for offset in range(0, len(wanted), batch_size):
+            batch = [symbol for symbol in wanted[offset:offset + batch_size]
+                     if symbol not in self.invalid_symbol_blacklist]
+            if not batch:
+                continue
+            # Every Webull socket is opened by a network worker. The Streamlit
+            # script has already rendered its shell before a scan can reach here.
+            future = _NETWORK_EXECUTOR.submit(self._snapshot_client.snapshots, batch)
             try:
-                snapshots = fetch(batch)
+                snapshots = future.result(timeout=NETWORK_TIMEOUT_SECONDS)
             except FutureTimeoutError:
+                future.cancel()
                 LOGGER.error("Webull snapshot timed out after %ss", NETWORK_TIMEOUT_SECONDS)
                 snapshots = {}
                 rest_succeeded = False
             except Exception as exc:
-                rest_succeeded = False
-                d["snapshot_rest_succeeded"] = False
-                LOGGER.error(
-                    "WEBULL snapshot REST failed independently of streaming batch_offset=%s batch_symbols=%s error_type=%s",
-                    offset, len(batch), type(exc).__name__,
-                )
-                raise
+                if _invalid_symbol_error(exc):
+                    record_invalid_symbols(_invalid_symbols_from_error(exc, batch), exc)
+                    snapshots = {}
+                else:
+                    rest_succeeded = False
+                    d["snapshot_rest_succeeded"] = False
+                    LOGGER.error(
+                        "WEBULL snapshot REST failed independently of streaming "
+                        "batch_offset=%s batch_symbols=%s error=%s",
+                        offset, len(batch), exc,
+                    )
+                    raise
             else:
                 LOGGER.info(
                     "WEBULL snapshot REST succeeded independently of streaming batch_offset=%s requested_symbols=%s returned_symbols=%s",
@@ -496,12 +551,21 @@ class LiveWebullProvider(WebullProvider):
             "WEBULL snapshot seed complete initial_symbols=%s prefilter_excluded=%s webull_rejected=%s retries=%s successful_snapshots=%s supported_universe=%s",
             len(initial), d["snapshot_prefilter_excluded_count"], d["snapshot_rejected_by_webull_count"],
             d["snapshot_retry_count"], d["snapshot_successful_count"], d["snapshot_supported_universe_count"],
+        d["invalid_symbol_blacklist_size"] = len(self.invalid_symbol_blacklist)
+        d["invalid_symbols_removed"] = len(skipped_symbols)
+        d["snapshot_unsupported_symbols"] = sorted(self.invalid_symbol_blacklist)
+        active_symbols = [symbol for symbol in wanted if symbol not in self.invalid_symbol_blacklist]
+        d["symbols_missing_prices"] = len(set(active_symbols) - set(self.cache))
+        LOGGER.info(
+            "WEBULL snapshot seed complete discovered_symbols=%s removed_invalid_symbols=%s "
+            "cached_snapshot_symbols=%s snapshot_rest_succeeded=%s",
+            len(wanted), len(skipped_symbols), len(self._snapshot_cache), rest_succeeded,
         )
         if not self._enable_streaming:
             LOGGER.info("WEBULL streaming bypassed after snapshot proof; cached_symbols=%s",
                         len(self.cache))
-            return self.latest_trades(wanted, initialize=False)
-        stream_future = _NETWORK_EXECUTOR.submit(self.ensure_stream, wanted)
+            return self.latest_trades(active_symbols, initialize=False)
+        stream_future = _NETWORK_EXECUTOR.submit(self.ensure_stream, active_symbols)
         try:
             stream_future.result(timeout=NETWORK_TIMEOUT_SECONDS)
         except FutureTimeoutError:
@@ -511,10 +575,14 @@ class LiveWebullProvider(WebullProvider):
             self.diagnostics["webull_stream"]["subscription_failures"].append(message)
             self.warnings.append(message)
             LOGGER.error(message)
-        return self.latest_trades(wanted, initialize=False)
+        return self.latest_trades(active_symbols, initialize=False)
 
     def latest_trades(self, symbols: Iterable[str], *, initialize: bool = True) -> dict[str, float]:
-        symbols = list(symbols)
+        symbols = [
+            str(symbol).strip().upper() for symbol in symbols
+            if str(symbol).strip()
+            and str(symbol).strip().upper() not in self.invalid_symbol_blacklist
+        ]
         if initialize and any(symbol not in self.cache for symbol in symbols):
             return self.initialize_quotes(symbols)
         with self._lock:
@@ -523,7 +591,11 @@ class LiveWebullProvider(WebullProvider):
     trades = latest_trades
 
     def snapshots(self, symbols: Iterable[str]) -> dict:
-        symbols = list(symbols)
+        symbols = [
+            str(symbol).strip().upper() for symbol in symbols
+            if str(symbol).strip()
+            and str(symbol).strip().upper() not in self.invalid_symbol_blacklist
+        ]
         if any(symbol not in self.cache for symbol in symbols):
             self.initialize_quotes(symbols)
         with self._lock:

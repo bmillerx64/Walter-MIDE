@@ -204,43 +204,48 @@ def test_snapshot_batches_never_exceed_100_symbols():
     assert [len(call) for call in rest.calls] == [100, 100, 51]
 
 
-def test_endpoint_rejected_symbol_is_removed_and_batch_retried(caplog):
+def test_endpoint_rejected_symbol_is_blacklisted_without_retry_loop(caplog):
     class RejectWhenIssued(Rest):
         def snapshots(self, symbols):
             self.calls.append(list(symbols))
             if "IPO.WI" in symbols:
-                raise RuntimeError("HTTP 417 INVALID_SYMBOL")
+                raise RuntimeError("HTTP 417 INVALID_SYMBOL IPO.WI")
             return {symbol: {"latestTrade": {"p": 10.0}} for symbol in symbols}
 
     rest = RejectWhenIssued()
     provider = LiveWebullProvider("key", "secret", rest_client=rest,
         universe_client=Universe())
     with caplog.at_level("WARNING", logger="mide.webull_live"):
-        assert provider.initialize_quotes(["GOOD", "IPO.WI", "ALSO"]) == {
+        assert provider.initialize_quotes(["GOOD", "IPO.WI", "ALSO"], batch_size=1) == {
             "GOOD": 10.0, "ALSO": 10.0,
         }
 
-    assert rest.calls[0] == ["GOOD", "IPO.WI", "ALSO"]
-    assert ["IPO.WI"] in rest.calls
+    assert rest.calls == [["GOOD"], ["IPO.WI"], ["ALSO"]]
+    assert provider.invalid_symbol_blacklist == {"IPO.WI"}
     assert provider.diagnostics["webull_stream"]["snapshot_unsupported_symbols"] == ["IPO.WI"]
     assert caplog.text.count("WEBULL skipped invalid snapshot symbols count=1") == 1
+    assert provider.diagnostics["webull_stream"]["invalid_symbols_removed"] == 1
+    assert caplog.text.count("WEBULL blacklisted invalid snapshot symbol symbol=IPO.WI") == 1
+
+    provider.initialize_quotes(["IPO.WI", "NEXT"])
+    assert rest.calls[-1] == ["NEXT"]
 
 
-def test_invalid_symbol_isolated_without_hiding_other_sdk_failures():
+def test_invalid_symbol_response_continues_without_hiding_other_sdk_failures():
     class RejectingRest(Rest):
         def snapshots(self, symbols):
             self.calls.append(list(symbols))
             if "BADADR" in symbols:
-                raise RuntimeError("HTTP 417 INVALID_SYMBOL")
+                raise RuntimeError("HTTP 417 INVALID_SYMBOL BADADR")
             return {symbol: {"latestTrade": {"p": 10.0}} for symbol in symbols}
 
     rest = RejectingRest()
     provider = LiveWebullProvider("key", "secret", rest_client=rest,
         universe_client=Universe())
-    assert provider.initialize_quotes(["GOOD", "BADADR", "ALSO"]) == {
+    assert provider.initialize_quotes(["GOOD", "BADADR", "ALSO"], batch_size=1) == {
         "GOOD": 10.0, "ALSO": 10.0,
     }
-    assert ["BADADR"] in rest.calls
+    assert rest.calls == [["GOOD"], ["BADADR"], ["ALSO"]]
     assert provider.diagnostics["webull_stream"]["snapshot_unsupported_symbols"] == ["BADADR"]
 
     class AuthFailure(Rest):
