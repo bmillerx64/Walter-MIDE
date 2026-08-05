@@ -84,9 +84,9 @@ def test_price_gate_savings_does_not_invent_timing_without_snapshot_sample():
 
 def test_scan_stage_instrumentation_prints_only_the_ordered_counts(capsys):
     print_scan_stage_counts({
-        "Universe discovered": {"count": 9, "symbols": ["AAA", "BBB", "CCC", "DDD", "EEE"]},
-        "Symbols loaded": {"count": 8, "symbols": ["AAA", "BBB", "CCC", "DDD", "EEE"]},
-        "Prefiltered": {"count": 7, "symbols": ["AAA", "BBB", "CCC", "DDD", "EEE"]},
+        "Universe": {"count": 9, "symbols": ["AAA", "BBB", "CCC", "DDD", "EEE"]},
+        "Seeds": {"count": 8, "symbols": ["AAA", "BBB", "CCC", "DDD", "EEE"]},
+        "Prefilter": {"count": 7, "symbols": ["AAA", "BBB", "CCC", "DDD", "EEE"]},
         "Candidates": {"count": 6, "symbols": ["AAA", "BBB", "CCC", "DDD", "EEE"]},
         "Analyzed": {"count": 5, "symbols": ["AAA", "BBB", "CCC", "DDD", "EEE"]},
         "Ranked": {"count": 4, "symbols": ["AAA", "BBB", "CCC", "DDD"]},
@@ -95,14 +95,15 @@ def test_scan_stage_instrumentation_prints_only_the_ordered_counts(capsys):
     })
 
     assert capsys.readouterr().out.splitlines() == [
-        "Universe discovered\t9\tAAA,BBB,CCC,DDD,EEE",
-        "Symbols loaded\t8\tAAA,BBB,CCC,DDD,EEE",
-        "Prefiltered\t7\tAAA,BBB,CCC,DDD,EEE",
+        "Universe\t9\tAAA,BBB,CCC,DDD,EEE",
+        "Seeds\t8\tAAA,BBB,CCC,DDD,EEE",
+        "Prefilter\t7\tAAA,BBB,CCC,DDD,EEE",
         "Candidates\t6\tAAA,BBB,CCC,DDD,EEE",
         "Analyzed\t5\tAAA,BBB,CCC,DDD,EEE",
         "Ranked\t4\tAAA,BBB,CCC,DDD",
         "Published\t3\tAAA,BBB,CCC",
         "Dashboard\t2\tAAA,BBB",
+        "First disappearance\tUniverse->Seeds\t9->8",
     ]
 
 

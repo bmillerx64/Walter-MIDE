@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib
+from importlib import metadata
 import json
 import logging
 from pathlib import Path
@@ -15,6 +16,7 @@ HTTP_HOST = "https://api.webull.com"
 STREAM_HOST = "data-api.webull.com"
 SNAPSHOT_OPERATION = "GET /openapi/market-data/stock/snapshot"
 MAX_SNAPSHOT_SYMBOLS = 100
+DISTRIBUTION_NAME = "webull-openapi-python-sdk"
 LOGGER = logging.getLogger(__name__)
 _SECRET_HEADER_PARTS = ("authorization", "signature", "secret", "token", "cookie", "app-key")
 
@@ -66,20 +68,14 @@ class TracedHTTPTransport:
         logged_url = _exact_url(url, kwargs)
         headers = kwargs.get("headers") or {}
         body = kwargs.get("body", kwargs.get("data", kwargs.get("json")))
-        LOGGER.info("WEBULL HTTP request method=%s url=%s headers=%s body=%s",
-                    method, logged_url, _safe_headers(headers), _body_text(body))
+        LOGGER.info("WEBULL HTTP request method=%s url=%s", method, logged_url)
         try:
             response = self._transport.request(method, url, *args, **kwargs)
         except Exception:
             LOGGER.exception("WEBULL HTTP request failed method=%s url=%s", method, logged_url)
             raise
         status = getattr(response, "status", getattr(response, "status_code", "<unknown>"))
-        response_headers = getattr(response, "headers", {})
-        response_body = getattr(response, "data", None)
-        if response_body is None:
-            response_body = getattr(response, "text", None)
-        LOGGER.info("WEBULL HTTP response method=%s url=%s status=%s headers=%s body=%s",
-                    method, logged_url, status, _safe_headers(response_headers), _body_text(response_body))
+        LOGGER.info("WEBULL HTTP response method=%s url=%s status=%s", method, logged_url, status)
         return response
 
 
@@ -105,27 +101,37 @@ def _install_http_trace(sdk_client) -> bool:
 
 
 def create_official_client(app_key: str, app_secret: str):
-    """Construct the SDK's published data clients without package discovery."""
+    """Construct the SDK's published data clients with SDK logging disabled."""
     try:
+        metadata.distribution(DISTRIBUTION_NAME)
         core_module = importlib.import_module("webull.core.client")
         data_module = importlib.import_module("webull.data.data_client")
         streaming_module = importlib.import_module(
             "webull.data.data_streaming_client"
         )
-    except ImportError as exc:
+    except (ImportError, metadata.PackageNotFoundError) as exc:
         raise RuntimeError(
             "Required Webull SDK package is not installed: "
             "webull-openapi-python-sdk"
         ) from exc
 
-    api_client = core_module.ApiClient(app_key=app_key, app_secret=app_secret, region_id="us")
-    data_client = data_module.DataClient(api_client)
+    for logger_name in ("webull", "webull.core", "webull.core.client"):
+        sdk_logger = logging.getLogger(logger_name)
+        sdk_logger.handlers = [logging.NullHandler()]
+        sdk_logger.propagate = False
+        sdk_logger.disabled = True
+
+    try:
+        api_client = core_module.ApiClient(app_key=app_key, app_secret=app_secret, region_id="us")
+        data_client = data_module.DataClient(api_client)
+        stream_factory = lambda: streaming_module.DataStreamingClient(api_client)
+    except TypeError:
+        data_client = data_module.DataClient(app_key=app_key, app_secret=app_secret)
+        stream_factory = lambda: streaming_module.DataStreamingClient(app_key=app_key, app_secret=app_secret)
     # Keep the two public SDK clients together at the adapter boundary.  The
     # streaming client is lazy so snapshot-only runs never open streaming
     # resources merely by constructing the REST client.
-    data_client._walter_streaming_client_factory = lambda: (
-        streaming_module.DataStreamingClient(api_client)
-    )
+    data_client._walter_streaming_client_factory = stream_factory
     LOGGER.info(
         "WEBULL SDK initialization complete using %s.DataClient and %s.DataStreamingClient",
         data_module.__name__, streaming_module.__name__,
@@ -219,28 +225,10 @@ class WebullSDKClient:
         status = getattr(
             response, "status_code", getattr(response, "status", "<unavailable>")
         )
-        headers = _safe_headers(getattr(response, "headers", {}))
-        text = getattr(response, "text", "<unavailable>")
-        if callable(text):
-            text = text()
-        text_preview = _body_text(text)[:500]
-
-        decoded_json = "<unavailable>"
-        json_method = getattr(response, "json", None)
-        if callable(json_method):
-            try:
-                decoded_json = json_method()
-            except Exception:  # Diagnostic decoding must not affect snapshot behavior.
-                decoded_json = "<JSON decoding failed>"
-
         LOGGER.info(
-            "WEBULL first successful snapshot raw response type=%s status=%s "
-            "headers=%s text_first_500=%s json=%s",
+            "WEBULL first successful snapshot response summary type=%s status=%s",
             response_type,
             status,
-            headers,
-            text_preview,
-            _body_text(decoded_json),
         )
 
     def bars(self, **arguments):
