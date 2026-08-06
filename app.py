@@ -2493,11 +2493,14 @@ if active_tab == "Diagnostics":
             "articles_without_symbols": "Articles with no symbol tags",
             "symbols_seeded_from_news": "Symbols seeded from news",
         }
+        coverage_rows = [
+            {"Metric": label, "Value": news_coverage.get(key, "—")}
+            for key, label in coverage_labels.items()
+        ]
+        for row in coverage_rows:
+            row["Value"] = str(row["Value"])
         st.dataframe(
-            [
-                {"Metric": label, "Value": news_coverage.get(key, "—")}
-                for key, label in coverage_labels.items()
-            ],
+            coverage_rows,
             width="stretch",
             hide_index=True,
         )
