@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 import importlib
 import json
 import logging
@@ -244,8 +245,46 @@ class WebullSDKClient:
         )
 
     def bars(self, **arguments):
+        """Translate Walter bar arguments to Webull SDK 2.x get_history_bar."""
         method = self._operation(("get_history_bar",))
-        return _plain(method(**arguments))
+        normalized = dict(arguments)
+
+        interval = normalized.pop("interval", normalized.pop("timeframe", None))
+        if interval is not None and "timespan" not in normalized:
+            interval_key = str(interval).strip().lower()
+            timespans = {
+                "m1": "M1", "1min": "M1", "1m": "M1",
+                "m5": "M5", "5min": "M5", "5m": "M5",
+                "m15": "M15", "15min": "M15", "15m": "M15",
+                "m30": "M30", "30min": "M30", "30m": "M30",
+                "m60": "M60", "60min": "M60", "1h": "M60",
+                "d": "D", "1d": "D",
+            }
+            if interval_key in {"s30", "30sec", "30s"}:
+                raise ValueError("Webull OpenAPI historical bars do not support 30-second timespan")
+            normalized["timespan"] = timespans.get(interval_key, str(interval).upper())
+
+        start_time = normalized.get("start_time")
+        if isinstance(start_time, str):
+            try:
+                parsed = datetime.fromisoformat(start_time.replace("Z", "+00:00"))
+                normalized["start_time"] = int(parsed.timestamp() * 1000)
+            except ValueError:
+                pass
+
+        normalized["count"] = str(min(int(normalized.get("count", 200)), 1200))
+        normalized.pop("extend_hour_required", None)
+        include_overnight = normalized.pop("include_overnight", None)
+        if include_overnight and not normalized.get("trading_sessions"):
+            normalized["trading_sessions"] = "PRE,RTH,ATH,OVN"
+        normalized.setdefault("real_time_required", True)
+
+        response = _plain(method(**normalized))
+        # SDK 2.x single-symbol historical bars use ``result`` for OHLCV rows.
+        # Walter's downstream row normalizer already understands ``data``.
+        if isinstance(response, dict) and isinstance(response.get("result"), list):
+            response = {**response, "data": response["result"]}
+        return response
 
     def stream(self, callback):
         factory = getattr(self.sdk_client, "_walter_streaming_client_factory", None)
