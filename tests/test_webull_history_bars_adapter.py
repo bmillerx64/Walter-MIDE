@@ -72,18 +72,25 @@ def test_webull_history_bars_translate_to_sdk_2_signature_and_result_rows():
     }
 
 
-def test_webull_30_second_history_is_explicitly_unsupported():
+def test_webull_30_second_history_is_explicitly_unsupported_without_fallback():
+    calls = []
+
     class SDK:
+        def get_batch_history_bar(self, *args, **kwargs):
+            calls.append("batch")
+
         def get_history_bar(self, *args, **kwargs):
-            raise AssertionError("30-second request must fail before SDK invocation")
+            calls.append("single")
 
     client = WebullOpenAPIClient("key", "secret", sdk_client=SDK())
     with pytest.raises(ValueError, match="do not support 30-second"):
         client.bars(
-            ["TEST"],
+            [f"SYM{index}" for index in range(41)],
             start=datetime(2026, 8, 1, tzinfo=timezone.utc),
             timeframe="30Sec",
         )
+
+    assert calls == []
 
 
 def test_multiple_symbols_use_batch_history_and_group_rows():
@@ -164,3 +171,28 @@ def test_unavailable_or_undecodable_batch_falls_back_to_single_history():
 
     assert calls == ["AAA", "BBB"]
     assert set(result) == {"AAA", "BBB"}
+
+
+def test_batch_history_splits_41_symbols_into_legal_consecutive_batches():
+    batch_calls = []
+
+    class SDK:
+        def get_batch_history_bar(self, symbols, **kwargs):
+            batch_calls.append(list(symbols))
+            return {"data": [
+                {"symbol": symbol, "bars": [{"time": symbol, "close": 1}]}
+                for symbol in symbols
+            ]}
+
+        def get_history_bar(self, **kwargs):
+            raise AssertionError("successful batches must not use single-symbol history")
+
+    symbols = [f"SYM{index:02d}" for index in range(41)]
+    result = WebullOpenAPIClient("k", "s", sdk_client=SDK()).bars(
+        symbols, start=datetime(2026, 8, 1, tzinfo=timezone.utc)
+    )
+
+    assert [len(batch) for batch in batch_calls] == [20, 20, 1]
+    assert batch_calls == [symbols[:20], symbols[20:40], symbols[40:]]
+    assert max(map(len, batch_calls)) <= 20
+    assert set(result) == set(symbols)
