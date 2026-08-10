@@ -59,31 +59,42 @@ def test_official_sdk_client_is_selected_and_handwritten_auth_is_absent():
 def test_official_sdk_uses_installed_package_layout(monkeypatch, tmp_path):
     calls = []
 
-    class DataClient:
+    class ApiClient:
         def __init__(self, **kwargs):
-            calls.append(("DataClient", kwargs))
+            calls.append(("ApiClient", kwargs))
 
+    class DataClient:
+        def __init__(self, api_client):
+            calls.append(("DataClient", api_client))
+
+    class DataStreamingClient:
+        def __init__(self, api_client):
+            calls.append(("DataStreamingClient", api_client))
+
+    core_client = types.ModuleType("webull.core.client")
+    core_client.ApiClient = ApiClient
     data_client = types.ModuleType("webull.data.data_client")
     data_client.DataClient = DataClient
+    streaming_client = types.ModuleType("webull.data.data_streaming_client")
+    streaming_client.DataStreamingClient = DataStreamingClient
+    monkeypatch.setitem(sys.modules, "webull.core.client", core_client)
     monkeypatch.setitem(sys.modules, "webull.data.data_client", data_client)
-
-    class Distribution:
-        files = ["webull/data/data_client.py"]
-
-    monkeypatch.setattr("mide.webull_sdk.metadata.distribution", lambda name: Distribution())
+    monkeypatch.setitem(sys.modules, "webull.data.data_streaming_client", streaming_client)
 
     client = create_official_client("key", "secret")
 
-    assert calls == [("DataClient", {"app_key": "key", "app_secret": "secret"})]
+    assert calls == [
+        ("ApiClient", {"app_key": "key", "app_secret": "secret", "region_id": "us"}),
+        ("DataClient", client._walter_streaming_client_factory.__closure__[0].cell_contents),
+    ]
     assert isinstance(client, DataClient)
 
 
 def test_missing_declared_sdk_fails_once_with_explicit_package(monkeypatch):
     def missing(_name):
-        from importlib import metadata
-        raise metadata.PackageNotFoundError
+        raise ImportError("missing official SDK")
 
-    monkeypatch.setattr("mide.webull_sdk.metadata.distribution", missing)
+    monkeypatch.setattr("mide.webull_sdk.importlib.import_module", missing)
     with pytest.raises(RuntimeError) as error:
         create_official_client("key", "secret")
 
@@ -99,6 +110,29 @@ def test_sdk_snapshot_arguments_and_normalization():
             return {"data": [{"symbol": "HYFM", "last_price": "3.25", "volume": 9}]}
     result = WebullOpenAPIClient("k", "s", sdk_client=SDK()).snapshots(["HYFM"])
     assert result["HYFM"]["latestTrade"]["p"] == 3.25
+
+
+def test_official_snapshot_fields_support_downstream_percent_change():
+    class SDK:
+        def get_stock_snapshot(self, **_kwargs):
+            return {"data": [{
+                "symbol": "PENNY", "price": "0.25", "volume": "200000",
+                "pre_close": "0.20", "last_trade_time": 1786372200000,
+                "high": "0.27", "low": "0.19",
+            }]}
+
+    snapshot = WebullOpenAPIClient("k", "s", sdk_client=SDK()).snapshots(
+        ["PENNY"])["PENNY"]
+
+    assert snapshot["prevDailyBar"]["c"] == 0.20
+    assert snapshot["latestTrade"]["t"] == 1786372200000
+    assert snapshot["dailyBar"] == {
+        "c": 0.25, "v": 200000.0, "h": 0.27, "l": 0.19,
+    }
+    pct_change = (
+        snapshot["latestTrade"]["p"] / snapshot["prevDailyBar"]["c"] - 1
+    ) * 100
+    assert pct_change == pytest.approx(25.0)
 
 
 def test_sdk_snapshot_decodes_nested_bytes_before_dataframe_serialization():
@@ -202,6 +236,22 @@ def test_snapshot_batches_never_exceed_100_symbols():
     symbols = [f"S{i}" for i in range(251)]
     provider.initialize_quotes(symbols, batch_size=500)
     assert [len(call) for call in rest.calls] == [100, 100, 51]
+
+
+def test_snapshot_initialization_logs_one_compact_summary(caplog):
+    provider = LiveWebullProvider("key", "secret", rest_client=Rest(),
+        universe_client=Universe())
+
+    with caplog.at_level("INFO", logger="mide.webull_live"):
+        provider.initialize_quotes(["AAA", "BBB"])
+
+    summaries = [record.message for record in caplog.records
+                 if "snapshot initialization summary" in record.message]
+    assert summaries == [
+        "WEBULL snapshot initialization summary discovered_symbols=2 "
+        "snapshot_rows_decoded=2 snapshot_rows_normalized=2 "
+        "cached_snapshot_symbols=2 symbols_missing_prices=0"
+    ]
 
 
 def test_known_when_issued_symbol_is_filtered_before_snapshot_request():

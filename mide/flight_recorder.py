@@ -42,7 +42,6 @@ def prefilter_decision(symbol: str, snapshot: dict, settings) -> dict:
         "max_price": settings.max_price,
         "min_pct_change": settings.min_pct_change,
         "min_day_volume": settings.min_day_volume,
-        "min_dollar_volume": 50_000,
     }
     measured = {
         "price": price,
@@ -72,13 +71,13 @@ def prefilter_decision(symbol: str, snapshot: dict, settings) -> dict:
             f"pct_change {pct_change:.4g} < {settings.min_pct_change:g} and "
             f"volume {volume:g} < {settings.min_day_volume:g}"
         )
-    elif dollar_volume < 50_000:
-        failed_rule = "Dollar volume below threshold"
+    elif volume < settings.min_day_volume:
+        failed_rule = "Share volume below threshold"
         failed_metrics = [{
-            "metric": "dollar_volume", "measured": dollar_volume,
-            "operator": "<", "threshold": 50_000,
+            "metric": "volume", "measured": volume,
+            "operator": "<", "threshold": settings.min_day_volume,
         }]
-        reason = f"dollar_volume {dollar_volume:g} < 50000"
+        reason = f"volume {volume:g} < {settings.min_day_volume:g}"
     else:
         failed_rule = None
         failed_metrics = []
