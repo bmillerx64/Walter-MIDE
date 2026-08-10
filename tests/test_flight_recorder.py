@@ -6,6 +6,7 @@ from app import (
     repair_mide_module_links,
 )
 from mide.flight_recorder import FlightRecorder, STAGES, prefilter_decision
+from mide.discovery import prefilter_snapshots
 
 SETTINGS = SimpleNamespace(
     min_price=0.02, max_price=5.0, min_pct_change=5.0, min_day_volume=100_000
@@ -37,6 +38,19 @@ def test_prefilter_decision_exposes_exact_measurements_and_thresholds():
     ]
     assert decision["measured_values"]["volume"] == 10
     assert decision["thresholds"]["min_day_volume"] == 100_000
+
+
+def test_prefilter_uses_share_volume_not_dollar_volume():
+    decision = prefilter_decision(
+        "PENNY", snapshot(price=0.25, volume=100_000, previous_close=0.20), SETTINGS
+    )
+
+    assert decision["passed"] is True
+    assert decision["measured_values"]["dollar_volume"] == 25_000
+    assert [candidate["symbol"] for candidate in prefilter_snapshots(
+        {"PENNY": snapshot(price=0.25, volume=100_000, previous_close=0.20)},
+        SETTINGS,
+    )] == ["PENNY"]
 
 
 def test_recorder_persists_complete_paths_funnel_and_latest_lookup(tmp_path):

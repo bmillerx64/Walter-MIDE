@@ -121,6 +121,7 @@ class WebullOpenAPIClient:
             raise ValueError("Webull snapshot requests are limited to 100 symbols")
         rows = self._rows(self.sdk.stock_snapshot(
             wanted, extended_hours=self.extended_hours_enabled)) if wanted else []
+        self.last_snapshot_rows_decoded = len(rows)
         normalized = {}
         for row in rows:
             symbol = str(row.get("symbol") or row.get("ticker") or row.get("ticker_symbol") or "").upper()
@@ -128,15 +129,18 @@ class WebullOpenAPIClient:
             if not symbol or price is None:
                 continue
             normalized[symbol] = {
-                "latestTrade": {"p": price, "t": row.get("timestamp") or row.get("time")},
+                "latestTrade": {"p": price, "t": row.get("last_trade_time") or
+                                row.get("timestamp") or row.get("time")},
                 "latestQuote": {"bp": _number(row.get("bid") or row.get("bid_price")),
                                 "ap": _number(row.get("ask") or row.get("ask_price"))},
                 "dailyBar": {"c": price, "v": _number(row.get("volume") or row.get("total_volume")),
                              "h": _number(row.get("high")), "l": _number(row.get("low"))},
-                "prevDailyBar": {"c": _number(row.get("prev_close") or row.get("previous_close")),
+                "prevDailyBar": {"c": _number(row.get("pre_close") or row.get("prev_close") or
+                                                row.get("previous_close")),
                                  "v": _number(row.get("prev_volume"))},
                 "market_data_provider": "Webull OpenAPI SDK",
             }
+        self.last_snapshot_rows_normalized = len(normalized)
         return normalized
 
     def bars(self, symbols: Iterable[str], *, start: datetime, timeframe="1Min",
@@ -360,6 +364,8 @@ class LiveWebullProvider(WebullProvider):
         LOGGER.info("WEBULL universe before snapshot discovered_symbols=%s supported_symbols=%s "
                     "rejected_symbols=%s", len(submitted), len(wanted), len(rejected))
         rest_succeeded = True
+        snapshot_rows_decoded = 0
+        snapshot_rows_normalized = 0
 
         def fetch(batch):
             """Bisect only INVALID_SYMBOL failures so one ticker cannot poison a batch."""
@@ -383,6 +389,9 @@ class LiveWebullProvider(WebullProvider):
 
         for offset in range(0, len(wanted), batch_size):
             batch = wanted[offset:offset + batch_size]
+            for counter in ("last_snapshot_rows_decoded", "last_snapshot_rows_normalized"):
+                if hasattr(self._snapshot_client, counter):
+                    setattr(self._snapshot_client, counter, 0)
             # Every Webull socket is opened by a network worker. The Streamlit
             # script has already rendered its shell before a scan can reach here.
             try:
@@ -406,6 +415,10 @@ class LiveWebullProvider(WebullProvider):
                     "batch_offset=%s requested_symbols=%s returned_symbols=%s",
                     offset, len(batch), len(snapshots),
                 )
+            snapshot_rows_decoded += int(getattr(
+                self._snapshot_client, "last_snapshot_rows_decoded", len(snapshots)))
+            snapshot_rows_normalized += int(getattr(
+                self._snapshot_client, "last_snapshot_rows_normalized", len(snapshots)))
             now_ms = time.time_ns() // 1_000_000
             with self._lock:
                 for symbol, snapshot in snapshots.items():
@@ -429,9 +442,11 @@ class LiveWebullProvider(WebullProvider):
         d["cached_snapshot_symbols"] = len(self._snapshot_cache)
         d["symbols_missing_prices"] = len(set(wanted) - set(self.cache))
         LOGGER.info(
-            "WEBULL snapshot seed complete discovered_symbols=%s "
-            "cached_snapshot_symbols=%s snapshot_rest_succeeded=%s",
-            len(wanted), len(self._snapshot_cache), rest_succeeded,
+            "WEBULL snapshot initialization summary discovered_symbols=%s "
+            "snapshot_rows_decoded=%s snapshot_rows_normalized=%s "
+            "cached_snapshot_symbols=%s symbols_missing_prices=%s",
+            len(submitted), snapshot_rows_decoded, snapshot_rows_normalized,
+            len(self._snapshot_cache), d["symbols_missing_prices"],
         )
         # Snapshot completion is a hard ordering boundary before any optional
         # subscription. The obsolete hand-written token bootstrap is deliberately
