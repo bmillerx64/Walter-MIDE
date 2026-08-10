@@ -8,6 +8,8 @@ import json
 import logging
 from pathlib import Path
 import re
+from threading import Lock
+import time
 from typing import Iterable
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
@@ -18,6 +20,9 @@ SNAPSHOT_OPERATION = "GET /openapi/market-data/stock/snapshot"
 MAX_SNAPSHOT_SYMBOLS = 100
 LOGGER = logging.getLogger(__name__)
 _SECRET_HEADER_PARTS = ("authorization", "signature", "secret", "token", "cookie", "app-key")
+_HISTORY_BAR_RATE_LOCK = Lock()
+_HISTORY_BAR_LAST_CALL = 0.0
+_HISTORY_BAR_MIN_INTERVAL_SECONDS = 1.05
 
 
 def _safe_headers(headers) -> dict:
@@ -49,6 +54,22 @@ def _exact_url(url: str, kwargs: dict) -> str:
     query = parse_qsl(parts.query, keep_blank_values=True)
     query.extend(params.items() if hasattr(params, "items") else params)
     return urlunsplit((parts.scheme, parts.netloc, parts.path, urlencode(query, doseq=True), parts.fragment))
+
+
+def _wait_for_history_bar_slot() -> None:
+    """Respect Webull's published one-call-per-second history-bar limit."""
+    global _HISTORY_BAR_LAST_CALL
+    with _HISTORY_BAR_RATE_LOCK:
+        now = time.monotonic()
+        delay = _HISTORY_BAR_MIN_INTERVAL_SECONDS - (now - _HISTORY_BAR_LAST_CALL)
+        if delay > 0:
+            time.sleep(delay)
+        _HISTORY_BAR_LAST_CALL = time.monotonic()
+
+
+def _invalid_history_symbol(exc: Exception) -> bool:
+    message = f"{type(exc).__name__}: {exc}".upper()
+    return "INVALID_SYMBOL" in message or ("417" in message and "SYMBOL" in message)
 
 
 class TracedHTTPTransport:
@@ -121,9 +142,6 @@ def create_official_client(app_key: str, app_secret: str):
 
     api_client = core_module.ApiClient(app_key=app_key, app_secret=app_secret, region_id="us")
     data_client = data_module.DataClient(api_client)
-    # Keep the two public SDK clients together at the adapter boundary.  The
-    # streaming client is lazy so snapshot-only runs never open streaming
-    # resources merely by constructing the REST client.
     data_client._walter_streaming_client_factory = lambda: (
         streaming_module.DataStreamingClient(api_client)
     )
@@ -181,18 +199,10 @@ class WebullSDKClient:
         raise RuntimeError("Webull OpenAPI SDK lacks operation: " + "/".join(names))
 
     def stock_snapshot(self, symbols: Iterable[str], *, extended_hours: bool = False):
-        """Return US-equity snapshots without requesting optional sessions by default.
-
-        SDK 2.0.16 only adds the two session query parameters when their values
-        are truthy.  Omitting them is therefore important: setting either one
-        to true changes the entitlement Webull checks for this otherwise
-        standard stock-snapshot operation.
-        """
+        """Return US-equity snapshots without requesting optional sessions by default."""
         symbols = list(symbols)
         if len(symbols) > MAX_SNAPSHOT_SYMBOLS:
             raise ValueError("Webull snapshot requests are limited to 100 symbols")
-        # ``get_stock_snapshot`` remains accepted solely at the injected-test
-        # boundary; installed SDK clients use their published ``get_snapshot``.
         method = self._operation(("get_snapshot", "get_stock_snapshot"))
         arguments = dict(symbols=",".join(symbols), category="US_STOCK")
         if extended_hours:
@@ -200,8 +210,6 @@ class WebullSDKClient:
         try:
             response = method(**arguments)
         except TypeError:
-            # Some generated SDK versions name the overnight option explicitly
-            # as include_overnight; neither fallback constructs an HTTP request.
             if not extended_hours:
                 raise
             arguments.pop("overnight_required")
@@ -231,7 +239,7 @@ class WebullSDKClient:
         if callable(json_method):
             try:
                 decoded_json = json_method()
-            except Exception:  # Diagnostic decoding must not affect snapshot behavior.
+            except Exception:
                 decoded_json = "<JSON decoding failed>"
 
         LOGGER.info(
@@ -245,7 +253,7 @@ class WebullSDKClient:
         )
 
     def bars(self, **arguments):
-        """Translate Walter bar arguments to Webull SDK 2.x get_history_bar."""
+        """Translate Walter bar arguments and isolate invalid history symbols."""
         method = self._operation(("get_history_bar",))
         normalized = dict(arguments)
 
@@ -279,9 +287,17 @@ class WebullSDKClient:
             normalized["trading_sessions"] = "PRE,RTH,ATH,OVN"
         normalized.setdefault("real_time_required", True)
 
-        response = _plain(method(**normalized))
-        # SDK 2.x single-symbol historical bars use ``result`` for OHLCV rows.
-        # Walter's downstream row normalizer already understands ``data``.
+        _wait_for_history_bar_slot()
+        try:
+            response = _plain(method(**normalized))
+        except Exception as exc:
+            if _invalid_history_symbol(exc):
+                LOGGER.warning(
+                    "WEBULL history bars skipped invalid symbol symbol=%s error=%s",
+                    normalized.get("symbol"), exc,
+                )
+                return {"data": []}
+            raise
         if isinstance(response, dict) and isinstance(response.get("result"), list):
             response = {**response, "data": response["result"]}
         return response
