@@ -284,7 +284,11 @@ class WebullSDKClient:
         normalized.pop("extend_hour_required", None)
         include_overnight = normalized.pop("include_overnight", None)
         if include_overnight and not normalized.get("trading_sessions"):
-            normalized["trading_sessions"] = "PRE,RTH,ATH,OVN"
+            # Walter needs pre-market, regular-hours, and after-hours bars. OVN is
+            # intentionally excluded because it requires Webull's separate Night
+            # Trading Stock Quotes subscription and otherwise turns every history
+            # request into MARKET_DATA_NOT_SUBSCRIBED (HTTP 403).
+            normalized["trading_sessions"] = "PRE,RTH,ATH"
         normalized.setdefault("real_time_required", True)
 
         _wait_for_history_bar_slot()
