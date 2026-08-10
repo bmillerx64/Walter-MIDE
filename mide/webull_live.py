@@ -45,6 +45,26 @@ def _invalid_symbol_error(exc: Exception) -> bool:
     return "INVALID_SYMBOL" in message or ("417" in message and "SYMBOL" in message)
 
 
+_INVALID_SNAPSHOT_SYMBOLS = re.compile(
+    r"symbols?\s+does\s+not\s+exist\s+in\s+the\s+category\s*\.\s*\[([^\[\]]+)\]",
+    re.IGNORECASE,
+)
+
+
+def _invalid_snapshot_symbols(exc: Exception) -> tuple[str, ...]:
+    """Extract Webull's explicit invalid-symbol list from a snapshot 417."""
+    if not _invalid_symbol_error(exc):
+        return ()
+    match = _INVALID_SNAPSHOT_SYMBOLS.search(str(exc))
+    if not match:
+        return ()
+    symbols = tuple(part.strip().upper() for part in match.group(1).split(","))
+    if not symbols or any(not re.fullmatch(r"[A-Z0-9][A-Z0-9.\-]*", symbol)
+                          for symbol in symbols):
+        return ()
+    return tuple(dict.fromkeys(symbols))
+
+
 def live_data_modes(*, alpaca_configured: bool, webull_configured: bool) -> tuple[list[str], int]:
     """Return Walter's stable provider choices and the safest available default."""
     modes = ["Live Alpaca", "Live Webull", "Demo"]
@@ -461,11 +481,31 @@ class LiveWebullProvider(WebullProvider):
             except Exception as exc:
                 if not _invalid_symbol_error(exc):
                     raise
+                identified = set(_invalid_snapshot_symbols(exc))
+                invalid = [symbol for symbol in batch if symbol in identified]
+                if invalid:
+                    for symbol in invalid:
+                        if symbol not in d["snapshot_unsupported_symbols"]:
+                            d["snapshot_unsupported_symbols"].append(symbol)
+                        self.warnings.append(
+                            f"Skipped unsupported Webull snapshot symbol {symbol}: "
+                            "Webull returned HTTP 417 INVALID_SYMBOL"
+                        )
+                    remaining = [symbol for symbol in batch if symbol not in identified]
+                    LOGGER.warning(
+                        "WEBULL snapshot rejected invalid symbols symbols=%s "
+                        "batch_size=%d retry_count=%d",
+                        invalid, len(batch), int(bool(remaining)),
+                    )
+                    return fetch(remaining) if remaining else {}
                 if len(batch) == 1:
                     symbol = batch[0]
                     d["snapshot_unsupported_symbols"].append(symbol)
-                    self.warnings.append(f"Skipped unsupported Webull snapshot symbol {symbol}: {exc}")
-                    LOGGER.warning("WEBULL skipped invalid snapshot symbol symbol=%s error=%s", symbol, exc)
+                    self.warnings.append(
+                        f"Skipped unsupported Webull snapshot symbol {symbol}: "
+                        "Webull returned HTTP 417 INVALID_SYMBOL"
+                    )
+                    LOGGER.warning("WEBULL skipped invalid snapshot symbol symbol=%s", symbol)
                     return {}
                 midpoint = len(batch) // 2
                 return {**fetch(batch[:midpoint]), **fetch(batch[midpoint:])}

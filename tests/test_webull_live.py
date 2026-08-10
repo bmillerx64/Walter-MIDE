@@ -1,4 +1,5 @@
 import inspect
+import logging
 import sys
 import time
 import types
@@ -7,7 +8,8 @@ import pytest
 
 from mide.market_data import EventType, MarketEvent
 from mide.webull_connection import run_connection_test
-from mide.webull_live import LiveWebullProvider, WebullOpenAPIClient, live_data_modes
+from mide.webull_live import (LiveWebullProvider, WebullOpenAPIClient,
+                              _invalid_snapshot_symbols, live_data_modes)
 from mide.webull_sdk import TracedHTTPTransport, WebullSDKClient, create_official_client
 
 
@@ -290,6 +292,72 @@ def test_invalid_symbol_isolated_without_hiding_other_sdk_failures():
         auth_provider.initialize_quotes(["GOOD", "ALSO"])
 
 
+def test_named_invalid_snapshot_symbols_are_removed_in_one_retry():
+    class RejectingRest(Rest):
+        def snapshots(self, symbols):
+            self.calls.append(list(symbols))
+            if "ALL.PRI" in symbols:
+                raise RuntimeError(
+                    "HTTP 417 INVALID_SYMBOL: The symbols does not exist in the "
+                    "category. [ALL.PRI, ALL.PRH]."
+                )
+            return {symbol: {"latestTrade": {"p": 10.0}} for symbol in symbols}
+
+    rest = RejectingRest()
+    provider = LiveWebullProvider("key", "secret", rest_client=rest,
+        universe_client=Universe())
+    assert provider.initialize_quotes(["GOOD", "ALL.PRI", "ALL.PRH", "ALSO"]) == {
+        "GOOD": 10.0, "ALSO": 10.0,
+    }
+    assert rest.calls == [
+        ["GOOD", "ALL.PRI", "ALL.PRH", "ALSO"], ["GOOD", "ALSO"],
+    ]
+    assert provider.diagnostics["webull_stream"]["snapshot_unsupported_symbols"] == [
+        "ALL.PRI", "ALL.PRH",
+    ]
+
+
+def test_all_named_invalid_snapshot_symbols_skip_empty_retry():
+    class RejectingRest(Rest):
+        def snapshots(self, symbols):
+            self.calls.append(list(symbols))
+            raise RuntimeError(
+                "417 INVALID_SYMBOL The symbols does not exist in the category. [BF.A, BF.B]."
+            )
+
+    rest = RejectingRest()
+    provider = LiveWebullProvider("key", "secret", rest_client=rest,
+        universe_client=Universe())
+    assert provider.initialize_quotes(["BF.A", "BF.B"]) == {}
+    assert rest.calls == [["BF.A", "BF.B"]]
+
+
+def test_invalid_snapshot_symbol_parser_requires_417_and_safe_list():
+    assert _invalid_snapshot_symbols(RuntimeError(
+        "HTTP 417 INVALID_SYMBOL: The symbols does not exist in the category. "
+        "[TRTN.PRE, WFC.PRL].")) == ("TRTN.PRE", "WFC.PRL")
+    assert _invalid_snapshot_symbols(RuntimeError("HTTP 417 INVALID_SYMBOL")) == ()
+    assert _invalid_snapshot_symbols(RuntimeError(
+        "HTTP 400: The symbols does not exist in the category. [BAD].")) == ()
+
+
+def test_unparseable_invalid_snapshot_response_retains_bisection():
+    class RejectingRest(Rest):
+        def snapshots(self, symbols):
+            self.calls.append(list(symbols))
+            if "BAD" in symbols:
+                raise RuntimeError("HTTP 417 INVALID_SYMBOL")
+            return {symbol: {"latestTrade": {"p": 10.0}} for symbol in symbols}
+
+    rest = RejectingRest()
+    provider = LiveWebullProvider("key", "secret", rest_client=rest,
+        universe_client=Universe())
+    assert provider.initialize_quotes(["GOOD", "BAD", "ALSO"]) == {
+        "GOOD": 10.0, "ALSO": 10.0,
+    }
+    assert ["BAD"] in rest.calls
+
+
 def test_streaming_is_bypassed_until_snapshots_are_proven():
     class ForbiddenStream:
         def __init__(self, *args, **kwargs):
@@ -350,6 +418,37 @@ def test_http_trace_logs_request_and_response_without_secrets(caplog):
     assert "method=POST" in output and "url=https://api.webull.com/missing" in output
     assert "status=404" in output and '{"error":"not found"}' in output
     assert "secret" not in output and "<redacted>" in output
+
+
+def test_official_sdk_logging_and_walter_trace_do_not_expose_credentials(caplog):
+    leaked = {
+        "app_key": "APP-KEY-VALUE", "access_token": "ACCESS-TOKEN-VALUE",
+        "signature": "SIGNATURE-VALUE", "nonce": "NONCE-VALUE",
+        "app_secret": "APP-SECRET-VALUE", "Authorization": "BEARER-VALUE",
+    }
+    sdk_logger = logging.getLogger("webull.core.http.response")
+    sdk_logger.disabled = False
+    sdk_logger.addHandler(logging.StreamHandler())
+    WebullSDKClient("k", "s", sdk_client=object())
+
+    class Response:
+        status_code = 417
+        headers = {"Authorization": leaked["Authorization"]}
+        text = '{"code":"INVALID_SYMBOL"}'
+    class Transport:
+        def request(self, *_args, **_kwargs): return Response()
+
+    with caplog.at_level("DEBUG"):
+        sdk_logger.error("raw headers=%s", leaked)
+        TracedHTTPTransport(Transport()).request(
+            "POST", "https://api.webull.com/snapshot",
+            headers=leaked, json=leaked, params={"access_token": leaked["access_token"]},
+        )
+
+    output = caplog.text
+    for key, value in leaked.items():
+        assert value not in output, key
+    assert "<redacted>" in output
 
 
 def test_provider_diagnostics_are_accurate():
