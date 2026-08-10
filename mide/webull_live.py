@@ -23,6 +23,7 @@ from .startup import log_startup
 
 LOGGER = logging.getLogger(__name__)
 NETWORK_TIMEOUT_SECONDS = 8
+WEBULL_HISTORY_BATCH_MAX = 20
 _NETWORK_EXECUTOR = ThreadPoolExecutor(max_workers=4, thread_name_prefix="walter-network")
 _WEBULL_UNSUPPORTED_SYMBOL = re.compile(r"(?:\.|-)WI$", re.IGNORECASE)
 
@@ -149,7 +150,11 @@ class WebullOpenAPIClient:
             str(symbol).strip().upper() for symbol in symbols if str(symbol).strip()
         ))
         output: dict[str, list[dict]] = {}
-        interval = {"1Min": "m1", "30Sec": "s30"}.get(timeframe, timeframe)
+        if str(timeframe).strip().lower() in {"30sec", "30s", "s30"}:
+            raise ValueError(
+                "Webull OpenAPI historical bars do not support 30-second timespan"
+            )
+        interval = {"1Min": "m1"}.get(timeframe, timeframe)
 
         def normalize(rows):
             return [{
@@ -233,7 +238,8 @@ class WebullOpenAPIClient:
         if len(wanted) == 1:
             single(wanted[0])
         elif wanted:
-            request_batch(wanted)
+            for offset in range(0, len(wanted), WEBULL_HISTORY_BATCH_MAX):
+                request_batch(wanted[offset:offset + WEBULL_HISTORY_BATCH_MAX])
             LOGGER.info("WEBULL batch history complete batch_size=%d returned_symbols=%d "
                         "fallback_count=%d", len(wanted), len(output), fallback_count)
         return output
