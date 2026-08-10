@@ -7,19 +7,24 @@ from mide.webull_sdk import WebullSDKClient
 def test_history_bar_requests_are_rate_limited(monkeypatch):
     calls = []
     sleeps = []
-    ticks = iter([100.0, 100.0, 100.0, 100.2, 100.2, 101.25])
+    clock = {"now": 100.0}
 
     class SDK:
         def get_history_bar(self, **kwargs):
             calls.append(kwargs)
             return {"result": []}
 
-    monkeypatch.setattr(sdk_module.time, "monotonic", lambda: next(ticks))
-    monkeypatch.setattr(sdk_module.time, "sleep", sleeps.append)
+    def fake_sleep(seconds):
+        sleeps.append(seconds)
+        clock["now"] += seconds
+
+    monkeypatch.setattr(sdk_module.time, "monotonic", lambda: clock["now"])
+    monkeypatch.setattr(sdk_module.time, "sleep", fake_sleep)
     monkeypatch.setattr(sdk_module, "_HISTORY_BAR_LAST_CALL", 0.0)
 
     client = WebullSDKClient("k", "s", sdk_client=SDK())
     client.bars(symbol="AAA", category="US_STOCK", interval="m1", count=200)
+    clock["now"] += 0.2
     client.bars(symbol="BBB", category="US_STOCK", interval="m1", count=200)
 
     assert calls[0]["timespan"] == "M1"
