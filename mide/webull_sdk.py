@@ -25,22 +25,58 @@ _HISTORY_BAR_LAST_CALL = 0.0
 _HISTORY_BAR_MIN_INTERVAL_SECONDS = 1.05
 
 
+def _suppress_official_sdk_logging() -> None:
+    """Silence SDK-owned loggers that emit raw signed requests and tokens."""
+    prefixes = ("webull.core", "webull.data")
+    names = set(prefixes)
+    names.update(name for name in logging.Logger.manager.loggerDict
+                 if name.startswith(prefixes))
+    for name in names:
+        sdk_logger = logging.getLogger(name)
+        sdk_logger.disabled = True
+        # webull.core.http.response installs its own DEBUG StreamHandler at import.
+        sdk_logger.handlers.clear()
+
+
 def _safe_headers(headers) -> dict:
     """Return headers suitable for diagnostics without credential material."""
-    return {str(key): ("<redacted>" if any(part in str(key).lower()
-            for part in _SECRET_HEADER_PARTS) else str(value))
+    return {str(key): ("<redacted>" if _secret_key(key) else str(value))
             for key, value in dict(headers or {}).items()}
+
+
+def _secret_key(key: object) -> bool:
+    normalized = str(key).lower().replace("_", "-")
+    return any(part in normalized for part in _SECRET_HEADER_PARTS) or normalized == "nonce"
+
+
+def _safe_value(value):
+    if isinstance(value, dict):
+        return {str(key): ("<redacted>" if _secret_key(key) else _safe_value(item))
+                for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_safe_value(item) for item in value]
+    return value
+
+
+_SECRET_TEXT_VALUE = re.compile(
+    r"(?i)([\"']?(?:authorization|signature|[^\s\"']*(?:secret|token|nonce|app[_-]?key))"
+    r"[\"']?\s*[:=]\s*)([\"']?)[^\s,;}\"']+\2"
+)
+
+
+def _redact_text(value: str) -> str:
+    return _SECRET_TEXT_VALUE.sub(r"\1<redacted>", value)
 
 
 def _body_text(value) -> str:
     if value is None:
         return "<empty>"
     if isinstance(value, bytes):
-        return value.decode("utf-8", errors="replace")
+        return _redact_text(value.decode("utf-8", errors="replace"))
     if isinstance(value, str):
-        return value
+        return _redact_text(value)
     try:
-        return json.dumps(value, sort_keys=True, default=str)
+        return json.dumps(_safe_value(value), sort_keys=True, default=str)
     except TypeError:
         return repr(value)
 
@@ -53,6 +89,7 @@ def _exact_url(url: str, kwargs: dict) -> str:
     parts = urlsplit(str(url))
     query = parse_qsl(parts.query, keep_blank_values=True)
     query.extend(params.items() if hasattr(params, "items") else params)
+    query = [(key, "<redacted>" if _secret_key(key) else value) for key, value in query]
     return urlunsplit((parts.scheme, parts.netloc, parts.path, urlencode(query, doseq=True), parts.fragment))
 
 
@@ -140,6 +177,8 @@ def create_official_client(app_key: str, app_secret: str):
             "webull-openapi-python-sdk"
         ) from exc
 
+    _suppress_official_sdk_logging()
+
     api_client = core_module.ApiClient(app_key=app_key, app_secret=app_secret, region_id="us")
     data_client = data_module.DataClient(api_client)
     data_client._walter_streaming_client_factory = lambda: (
@@ -181,6 +220,7 @@ class WebullSDKClient:
     def __init__(self, app_key: str, app_secret: str, *, sdk_client=None):
         LOGGER.info("WEBULL SDK adapter initialization started injected_client=%s",
                     sdk_client is not None)
+        _suppress_official_sdk_logging()
         self.sdk_client = sdk_client or create_official_client(app_key, app_secret)
         self._snapshot_response_captured = False
         self.http_trace_installed = _install_http_trace(self.sdk_client)
