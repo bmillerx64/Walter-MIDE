@@ -17,7 +17,7 @@ from .market_data import EventType, MarketEvent
 from .market_data_providers import WebullProvider
 from .webull_stream_benchmark import Quote
 from .webull_sdk import (HTTP_HOST, MAX_SNAPSHOT_SYMBOLS, SNAPSHOT_OPERATION,
-                         STREAM_HOST, WebullSDKClient)
+                         STREAM_HOST, WebullSDKClient, _invalid_history_symbol)
 from .startup import log_startup
 
 
@@ -145,20 +145,97 @@ class WebullOpenAPIClient:
 
     def bars(self, symbols: Iterable[str], *, start: datetime, timeframe="1Min",
              limit=10_000, **kwargs) -> dict[str, list[dict]]:
-        output = {}
+        wanted = list(dict.fromkeys(
+            str(symbol).strip().upper() for symbol in symbols if str(symbol).strip()
+        ))
+        output: dict[str, list[dict]] = {}
         interval = {"1Min": "m1", "30Sec": "s30"}.get(timeframe, timeframe)
-        for symbol in symbols:
-            payload = self.sdk.bars(symbol=symbol, category="US_STOCK", interval=interval,
-                                    start_time=start.isoformat(), count=min(int(limit), 10_000),
-                                    extend_hour_required=True, include_overnight=True)
-            output[str(symbol).upper()] = [{
+
+        def normalize(rows):
+            return [{
                 "t": row.get("timestamp") or row.get("time") or row.get("t"),
                 "o": _number(row.get("open") or row.get("o")),
                 "h": _number(row.get("high") or row.get("h")),
                 "l": _number(row.get("low") or row.get("l")),
                 "c": _number(row.get("close") or row.get("c")),
                 "v": _number(row.get("volume") or row.get("v")),
-            } for row in self._rows(payload)]
+            } for row in rows]
+
+        def single(symbol):
+            payload = self.sdk.bars(symbol=symbol, category="US_STOCK", interval=interval,
+                                    start_time=start.isoformat(), count=min(int(limit), 10_000),
+                                    extend_hour_required=True, include_overnight=True)
+            output[symbol] = normalize(self._rows(payload))
+
+        def grouped(payload):
+            """Decode SDK batch envelopes without accepting ambiguous bar rows."""
+            value = payload.get("data", payload.get("result", payload)) \
+                if isinstance(payload, dict) else payload
+            groups = {}
+            if isinstance(value, dict):
+                for symbol, rows in value.items():
+                    key = str(symbol).upper()
+                    decoded = self._rows(rows)
+                    if key in wanted and (decoded or rows == []):
+                        groups[key] = decoded
+            elif isinstance(value, list):
+                for item in value:
+                    if not isinstance(item, dict):
+                        continue
+                    symbol = str(item.get("symbol") or item.get("ticker") or
+                                 item.get("ticker_symbol") or "").upper()
+                    if symbol not in wanted:
+                        continue
+                    rows = self._rows(item.get("bars", item.get("data", item.get("result", []))))
+                    groups.setdefault(symbol, []).extend(rows)
+            return groups
+
+        fallback_count = 0
+
+        def fallback(batch, reason):
+            nonlocal fallback_count
+            fallback_count += len(batch)
+            LOGGER.warning("WEBULL batch history fallback batch_size=%d reason=%s",
+                           len(batch), reason)
+            for symbol in batch:
+                single(symbol)
+
+        def request_batch(batch):
+            try:
+                payload = self.sdk.batch_bars(
+                    symbols=batch, category="US_STOCK", interval=interval,
+                    start_time=start.isoformat(), count=min(int(limit), 10_000),
+                    extend_hour_required=True, include_overnight=True,
+                )
+                decoded = grouped(payload)
+                if not decoded:
+                    fallback(batch, "response could not be safely decoded")
+                    return
+                for symbol, rows in decoded.items():
+                    output[symbol] = normalize(rows)
+                missing = [symbol for symbol in batch if symbol not in decoded]
+                if missing:
+                    fallback(missing, "symbols absent from batch response")
+                LOGGER.info("WEBULL batch history batch_size=%d returned_symbols=%d "
+                            "fallback_count=%d", len(batch), len(decoded), len(missing))
+            except Exception as exc:
+                # A 417 may identify only that the request contains a bad symbol.
+                # Bisect it so valid peers continue to benefit from batch history.
+                if _invalid_history_symbol(exc) and len(batch) > 1:
+                    midpoint = len(batch) // 2
+                    LOGGER.warning("WEBULL batch history failed batch_size=%d reason=%s; "
+                                   "isolating invalid symbol", len(batch), exc)
+                    request_batch(batch[:midpoint])
+                    request_batch(batch[midpoint:])
+                else:
+                    fallback(batch, f"{type(exc).__name__}: {exc}")
+
+        if len(wanted) == 1:
+            single(wanted[0])
+        elif wanted:
+            request_batch(wanted)
+            LOGGER.info("WEBULL batch history complete batch_size=%d returned_symbols=%d "
+                        "fallback_count=%d", len(wanted), len(output), fallback_count)
         return output
 
     def stream(self, callback):

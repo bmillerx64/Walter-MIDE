@@ -252,9 +252,9 @@ class WebullSDKClient:
             _body_text(decoded_json),
         )
 
-    def bars(self, **arguments):
-        """Translate Walter bar arguments and isolate invalid history symbols."""
-        method = self._operation(("get_history_bar",))
+    @staticmethod
+    def _history_arguments(arguments):
+        """Translate Walter history arguments to the official SDK v2 signature."""
         normalized = dict(arguments)
 
         interval = normalized.pop("interval", normalized.pop("timeframe", None))
@@ -290,6 +290,21 @@ class WebullSDKClient:
             # request into MARKET_DATA_NOT_SUBSCRIBED (HTTP 403).
             normalized["trading_sessions"] = "PRE,RTH,ATH"
         normalized.setdefault("real_time_required", True)
+        return normalized
+
+    def batch_bars(self, **arguments):
+        """Call the SDK's official batch history operation without per-symbol delay."""
+        method = self._operation(("get_batch_history_bar",))
+        normalized = self._history_arguments(arguments)
+        # The installed SDK accepts a list here and passes it unchanged in the
+        # POST body (unlike the comma-delimited snapshot operation).
+        normalized["symbols"] = list(normalized.get("symbols", ()))
+        return _plain(method(**normalized))
+
+    def bars(self, **arguments):
+        """Translate Walter bar arguments and isolate invalid history symbols."""
+        method = self._operation(("get_history_bar",))
+        normalized = self._history_arguments(arguments)
 
         _wait_for_history_bar_slot()
         try:
