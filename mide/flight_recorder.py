@@ -124,6 +124,27 @@ class FlightRecorder:
         candidate_symbols = {item.get("symbol") for item in candidates}
         analyzed_by_symbol = {item.get("symbol"): item for item in analyzed}
         records_by_symbol = {item.get("symbol"): item for item in records}
+        raw_prefilter_pass_symbols = {
+            symbol for symbol, snap in snapshots.items()
+            if prefilter_decision(symbol, snap, settings)["passed"]
+        }
+        free_float_values = {}
+        for symbol, snap in snapshots.items():
+            value = next((
+                snap.get(key) for key in ("free_float", "float_shares", "shares_float")
+                if snap.get(key) is not None
+            ), None)
+            try:
+                free_float_values[symbol] = float(value) if value is not None else None
+            except (TypeError, ValueError):
+                free_float_values[symbol] = None
+        free_float_available_symbols = {
+            symbol for symbol, value in free_float_values.items() if value is not None
+        }
+        free_float_pass_symbols = {
+            symbol for symbol, value in free_float_values.items()
+            if value is not None and value <= settings.max_free_float
+        }
         paths = []
         for symbol in seeds:
             events = []
@@ -161,6 +182,7 @@ class FlightRecorder:
                     decision["thresholds"],
                 )
             else:
+                decision = None
                 event("prefilter", False, "not evaluated: snapshot unavailable")
             analyzed_record = analyzed_by_symbol.get(symbol)
             if symbol in candidate_symbols:
@@ -174,7 +196,12 @@ class FlightRecorder:
                     ),
                 )
             else:
-                event("Scanner V2", False, "not evaluated: prefilter failed")
+                scanner_reason = (
+                    "not evaluated: failed architecture gate before Participation"
+                    if decision is not None and decision["passed"]
+                    else "not evaluated: prefilter failed"
+                )
+                event("Scanner V2", False, scanner_reason)
             record = records_by_symbol.get(symbol)
             participation = (record or {}).get("participation_gate") or {}
             structure = (record or {}).get("structure_gate") or {}
@@ -214,8 +241,6 @@ class FlightRecorder:
                     for item in structure.get("checks", [])
                 },
             )
-            # TODO Walter 2.0 Phase 2: replace this compatibility-stage trace
-            # with the three explicit workflow predicates.
             qualified = bool(
                 record and record.get("qualified_for_ranking", not scanner_v2)
             )
@@ -262,6 +287,10 @@ class FlightRecorder:
                 "snapshot_prefilter_rejection_reason": (
                     None if prefilter["passed"] else prefilter["reason"]
                 ),
+                "free_float": free_float_values.get(symbol),
+                "free_float_available": symbol in free_float_available_symbols,
+                "free_float_within_limit": symbol in free_float_pass_symbols,
+                "max_free_float": settings.max_free_float,
                 "workflow_state": (record or {}).get("candidate_status")
                 or (record or {}).get("status")
                 or "Candidate",
@@ -367,7 +396,11 @@ class FlightRecorder:
 
         funnel = {
             "Sampled": len(seeds),
-            "Prefiltered": len(candidate_symbols),
+            "Snapshots": len(snapshots),
+            "Raw Snapshot Prefilter PASS": len(raw_prefilter_pass_symbols),
+            "Free Float Available": len(free_float_available_symbols),
+            "Free Float Within Limit": len(free_float_pass_symbols),
+            "Participation Prefiltered": len(candidate_symbols),
             "Analyzed": len(analyzed_by_symbol),
             "Participation PASS": sum(
                 bool((r.get("participation_gate") or {}).get("passed")) for r in records
