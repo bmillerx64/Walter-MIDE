@@ -255,6 +255,44 @@ from mide.free_float import (
 from mide.version import BUILD
 memory_checkpoint("remaining providers and application imports")
 
+
+def free_float_decision(
+    snapshot: dict[str, object], max_free_float: int
+) -> Decision:
+    """Apply the production float ceiling without treating missing data as a veto."""
+    updates = dict(snapshot)
+    raw_value = next((updates.get(key) for key in (
+        "free_float", "float_shares", "shares_float"
+    ) if updates.get(key) is not None), None)
+    try:
+        value = float(raw_value)
+        if math.isnan(value):
+            raise ValueError("free float is NaN")
+    except (TypeError, ValueError):
+        updates.update(
+            free_float_verified=False,
+            free_float_verification_status="unavailable",
+        )
+        return Decision(
+            True,
+            "Free Float",
+            "Free float unavailable; configured limit unverified",
+            updates,
+        )
+
+    updates.update(
+        free_float_verified=True,
+        free_float_verification_status="verified",
+    )
+    passed = value <= max_free_float
+    reason = (
+        "Free float within configured limit"
+        if passed
+        else "Free float exceeds configured limit"
+    )
+    return Decision(passed, "Free Float", reason, updates)
+
+
 SYSTEM_DEFAULT_VOICE_ID = "__system_default__"
 DEFAULT_VOICE = "System Default"
 SAMANTHA_VOICE = "Samantha"
@@ -1403,19 +1441,9 @@ def _run_live_pipeline(
         for item in records:
             symbol = item["symbol"]
             update = refreshed.get(symbol, {})
-            value = next((update.get(key) for key in (
-                "free_float", "float_shares", "shares_float"
-            ) if update.get(key) is not None), None)
-            try:
-                passed = float(value) <= policy.max_free_float
-            except (TypeError, ValueError):
-                passed = False
-            reason = (
-                "Free float within configured limit" if passed else
-                "Usable free-float value unavailable" if value is None else
-                "Free float exceeds configured limit"
+            decisions[symbol] = free_float_decision(
+                update, policy.max_free_float
             )
-            decisions[symbol] = Decision(passed, "Free Float", reason, update)
         return decisions
 
     def participation(records):
