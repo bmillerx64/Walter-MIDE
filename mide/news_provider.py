@@ -8,7 +8,10 @@ from pathlib import Path
 from time import perf_counter
 from typing import Iterable
 import json
+import os
 import re
+
+import requests
 
 from .resilience import record_provider_failure
 
@@ -32,6 +35,28 @@ def _utc(value, default=None) -> datetime | None:
 
 def _headline_key(value: str) -> str:
     return re.sub(r"[^a-z0-9]+", " ", value.casefold()).strip()
+
+
+def _configured_fmp_api_key() -> str:
+    """Resolve FMP without logging or exposing the credential value."""
+    for name in ("FMP_API_KEY", "FINANCIAL_MODELING_PREP_API_KEY"):
+        value = str(os.getenv(name, "") or "").strip()
+        if value:
+            return value
+    # Streamlit Cloud secrets are not guaranteed to be copied into os.environ.
+    # Keep this import optional so CLI/tests do not acquire a Streamlit dependency.
+    try:
+        import streamlit as st
+        for name in ("FMP_API_KEY", "FINANCIAL_MODELING_PREP_API_KEY"):
+            try:
+                value = str(st.secrets.get(name, "") or "").strip()
+            except Exception:
+                value = ""
+            if value:
+                return value
+    except Exception:
+        pass
+    return ""
 
 
 @dataclass(frozen=True)
@@ -121,6 +146,108 @@ class MarketDataNewsProvider(AlpacaNewsProvider):
         return [article for item in raw if (article := self._normalize(item))]
 
 
+class FMPNewsProvider(NewsProvider):
+    """Official Financial Modeling Prep stock-news and press-release adapter.
+
+    Walter already uses FMP for share-structure fundamentals. When an FMP key is
+    configured, this adapter provides the structured ticker/headline/time/source
+    metadata that Webull OpenAPI does not expose. No headline-to-ticker inference
+    is performed: only provider-supplied symbol metadata is retained.
+    """
+
+    name = "Financial Modeling Prep news"
+    BASE_URL = "https://financialmodelingprep.com/stable"
+    BATCH_SIZE = 20
+
+    def __init__(self, api_key: str, *, timeout: int = 12, session=None):
+        self.api_key = str(api_key or "").strip()
+        self.timeout = timeout
+        self.session = session or requests.Session()
+        self.request_count = 0
+
+    @staticmethod
+    def _symbols(item: dict) -> list[str]:
+        raw = item.get("symbols")
+        if isinstance(raw, str):
+            values = re.split(r"[,\s]+", raw)
+        elif isinstance(raw, (list, tuple, set)):
+            values = raw
+        else:
+            single = item.get("symbol") or item.get("ticker")
+            values = [single] if single else []
+        return sorted({str(value).strip().upper() for value in values if str(value or "").strip()})
+
+    @classmethod
+    def _normalize(cls, item: dict, *, endpoint: str) -> NewsArticle | None:
+        if not isinstance(item, dict):
+            return None
+        headline = str(item.get("title") or item.get("headline") or "").strip()
+        created = _utc(
+            item.get("publishedDate") or item.get("published_date")
+            or item.get("date") or item.get("created_at")
+        )
+        symbols = cls._symbols(item)
+        if not headline or created is None or not symbols:
+            return None
+        url = item.get("url") or item.get("link") or None
+        source = str(
+            item.get("publisher") or item.get("site") or item.get("source")
+            or ("Company Press Release" if "press-releases" in endpoint else "FMP")
+        ).strip()
+        stable_id = item.get("id") or url or f"{endpoint}:{created.isoformat()}:{_headline_key(headline)}"
+        return NewsArticle(
+            id=str(stable_id),
+            headline=headline,
+            created_at=created,
+            updated_at=_utc(item.get("updated_at") or item.get("updatedDate")),
+            symbols=symbols,
+            source=source or "FMP",
+            url=str(url) if url else None,
+            provider="Financial Modeling Prep",
+        )
+
+    def _request(self, endpoint: str, symbols: list[str], since: datetime) -> list[NewsArticle]:
+        params = {
+            "symbols": ",".join(symbols),
+            "from": since.astimezone(UTC).date().isoformat(),
+            "to": datetime.now(UTC).date().isoformat(),
+            "page": 0,
+            "limit": 100,
+            "apikey": self.api_key,
+        }
+        self.request_count += 1
+        response = self.session.get(
+            f"{self.BASE_URL}/{endpoint}", params=params, timeout=self.timeout
+        )
+        response.raise_for_status()
+        payload = response.json()
+        rows = payload if isinstance(payload, list) else payload.get("data", []) if isinstance(payload, dict) else []
+        output = []
+        for item in rows:
+            article = self._normalize(item, endpoint=endpoint)
+            if article is not None and article.created_at >= since:
+                output.append(article)
+        return output
+
+    def fetch(self, *, since: datetime, symbols: Iterable[str] = ()) -> list[NewsArticle]:
+        wanted = list(dict.fromkeys(
+            str(symbol or "").strip().upper() for symbol in symbols if str(symbol or "").strip()
+        ))
+        if not self.api_key:
+            raise RuntimeError("FMP news credential is not configured")
+        batches = [wanted[i:i + self.BATCH_SIZE] for i in range(0, len(wanted), self.BATCH_SIZE)] or [[]]
+        self.request_count = 0
+        output: list[NewsArticle] = []
+        for batch in batches:
+            if not batch:
+                continue
+            # Stock news catches publisher feeds such as market-news wires; press
+            # releases adds the direct company-announcement lane requested by Walter.
+            output.extend(self._request("news/stock", batch, since))
+            output.extend(self._request("news/press-releases", batch, since))
+        return output
+
+
 class CredentialPendingNewsProvider(NewsProvider):
     """Explicit non-activation guard for enterprise providers under evaluation."""
 
@@ -147,7 +274,16 @@ class NewsService:
     """Incremental cache, deduplication, metrics, and safe provider fallback."""
 
     def __init__(self, providers: Iterable[NewsProvider], *, state_path=DEFAULT_STATE_PATH, now=None):
-        self.providers = list(providers)
+        configured = list(providers)
+        # Webull OpenAPI has no raw article feed. If Walter already has an FMP
+        # credential, transparently use FMP's official structured news endpoints
+        # before the explicit unavailable seam. This preserves the provider-neutral
+        # contract and never imports or calls Alpaca from a Live Webull scan.
+        if configured and all(isinstance(provider, UnavailableNewsProvider) for provider in configured):
+            api_key = _configured_fmp_api_key()
+            if api_key:
+                configured.insert(0, FMPNewsProvider(api_key))
+        self.providers = configured
         self.state_path = Path(state_path)
         self.now = now or (lambda: datetime.now(UTC))
         self._state = self._load()
