@@ -366,9 +366,12 @@ def analyze_candidates(client, candidates, news_index, discovery_reasons):
     symbols = [
         x["symbol"] for x in candidates if is_valid_us_symbol(x.get("symbol"))
     ]
+    history_diagnostics = getattr(client, "history_call_diagnostics", {})
+    fallback_calls_before = int(history_diagnostics.get("single_fallback_calls", 0))
     raw = client.bars(
         symbols, start=session_start.to_pydatetime(), timeframe="1Min",
-        limit=CURRENT_SESSION_HISTORY_BARS,
+        limit=CURRENT_SESSION_HISTORY_BARS, force_batch=True,
+        history_reason="stage6_current_session",
     )
     cache = _history_profile_cache(client)
     session_key = eastern_now.date()
@@ -379,7 +382,8 @@ def analyze_candidates(client, candidates, news_index, discovery_reasons):
         client.bars(
             missing_profiles, start=start,
             end=completed_session_end.to_pydatetime(), timeframe="1Min",
-            limit=HISTORICAL_PROFILE_HISTORY_BARS,
+            limit=HISTORICAL_PROFILE_HISTORY_BARS, force_batch=True,
+            history_reason="stage6_historical_profile",
         )
         if missing_profiles else {}
     )
@@ -395,7 +399,8 @@ def analyze_candidates(client, candidates, news_index, discovery_reasons):
     try:
         raw_30s = client.bars(
             symbols, start=session_start.to_pydatetime(), timeframe="30Sec",
-            limit=CURRENT_SESSION_HISTORY_BARS,
+            limit=CURRENT_SESSION_HISTORY_BARS, force_batch=True,
+            history_reason="stage6_current_session_30s",
         )
     except Exception as exc:
         raw_30s = {}
@@ -407,7 +412,8 @@ def analyze_candidates(client, candidates, news_index, discovery_reasons):
     try:
         benchmark_raw = client.bars(
             benchmark_symbols, start=session_start.to_pydatetime(), timeframe="1Min",
-            limit=CURRENT_SESSION_HISTORY_BARS,
+            limit=CURRENT_SESSION_HISTORY_BARS, force_batch=True,
+            history_reason="stage6_benchmark",
         )
     except Exception as exc:
         benchmark_raw = {}
@@ -415,11 +421,17 @@ def analyze_candidates(client, candidates, news_index, discovery_reasons):
             client.warnings.append(f"Relative-strength benchmarks unavailable: {exc}")
     retrieval_elapsed = (datetime.now(timezone.utc) - retrieval_started).total_seconds()
     analysis_started = datetime.now(timezone.utc)
+    fallback_calls = int(getattr(client, "history_call_diagnostics", {}).get(
+        "single_fallback_calls", 0
+    )) - fallback_calls_before
     LOGGER.warning(
-        "STAGE6 history retrieval symbols=%d current_count=%d historical_count=%d "
-        "historical_cache_misses=%d elapsed_seconds=%.3f",
-        len(symbols), CURRENT_SESSION_HISTORY_BARS, HISTORICAL_PROFILE_HISTORY_BARS,
-        len(missing_profiles), retrieval_elapsed,
+        "STAGE6 history summary candidate_symbols=%d current_session_batch_calls=%d "
+        "historical_profile_cache_hits=%d historical_profile_cache_misses=%d "
+        "historical_profile_batch_calls=%d single_symbol_fallback_calls=%d "
+        "total_history_elapsed_seconds=%.3f",
+        len(symbols), (len(symbols) + 19) // 20, len(symbols) - len(missing_profiles),
+        len(missing_profiles), (len(missing_profiles) + 19) // 20, fallback_calls,
+        retrieval_elapsed,
     )
     output = []
 

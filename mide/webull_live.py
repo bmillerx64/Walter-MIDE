@@ -123,6 +123,7 @@ class WebullOpenAPIClient:
                  extended_hours_enabled: bool = False):
         self.sdk = WebullSDKClient(app_key, app_secret, sdk_client=sdk_client)
         self.extended_hours_enabled = bool(extended_hours_enabled)
+        self.history_call_diagnostics = {"batch_calls": 0, "single_fallback_calls": 0}
 
     @staticmethod
     def _rows(value: object) -> list[dict]:
@@ -178,6 +179,8 @@ class WebullOpenAPIClient:
             )
         interval = {"1Min": "m1"}.get(timeframe, timeframe)
         end = kwargs.get("end")
+        force_batch = bool(kwargs.get("force_batch"))
+        call_reason = str(kwargs.get("history_reason") or "direct_single_symbol")
 
         def normalize(rows):
             return [{
@@ -189,7 +192,10 @@ class WebullOpenAPIClient:
                 "v": _number(row.get("volume") or row.get("v")),
             } for row in rows]
 
-        def single(symbol):
+        def single(symbol, reason):
+            LOGGER.warning(
+                "WEBULL single-symbol history symbol=%s reason=%s", symbol, reason
+            )
             payload = self.sdk.bars(symbol=symbol, category="US_STOCK", interval=interval,
                                     start_time=start.isoformat(), count=min(int(limit), 10_000),
                                     end_time=end.isoformat() if end else None,
@@ -228,16 +234,19 @@ class WebullOpenAPIClient:
             nonlocal fallback_count
             with result_lock:
                 fallback_count += len(batch)
+                self.history_call_diagnostics["single_fallback_calls"] += len(batch)
             LOGGER.warning("WEBULL batch history fallback batch_size=%d reason=%s",
                            len(batch), reason)
             for symbol in batch:
-                single(symbol)
+                single(symbol, reason)
 
         def request_batch(batch):
             batch_started = time.monotonic()
             returned_count = 0
             batch_fallback_count = 0
             try:
+                with result_lock:
+                    self.history_call_diagnostics["batch_calls"] += 1
                 payload = self.sdk.batch_bars(
                     symbols=batch, category="US_STOCK", interval=interval,
                     start_time=start.isoformat(), count=min(int(limit), 10_000),
@@ -246,7 +255,7 @@ class WebullOpenAPIClient:
                 )
                 decoded = grouped(payload)
                 if not decoded:
-                    fallback(batch, "response could not be safely decoded")
+                    fallback(batch, "fallback_undecodable_batch")
                     batch_fallback_count = len(batch)
                     return
                 for symbol, rows in decoded.items():
@@ -254,7 +263,7 @@ class WebullOpenAPIClient:
                         output[symbol] = normalize(rows)
                 missing = [symbol for symbol in batch if symbol not in decoded]
                 if missing:
-                    fallback(missing, "symbols absent from batch response")
+                    fallback(missing, "fallback_missing_batch_symbol")
                 returned_count = len(decoded)
                 batch_fallback_count = len(missing)
             except Exception as exc:
@@ -262,12 +271,15 @@ class WebullOpenAPIClient:
                 # Bisect it so valid peers continue to benefit from batch history.
                 if _invalid_history_symbol(exc) and len(batch) > 1:
                     midpoint = len(batch) // 2
-                    LOGGER.warning("WEBULL batch history failed batch_size=%d reason=%s; "
-                                   "isolating invalid symbol", len(batch), exc)
+                    LOGGER.warning("WEBULL batch history failed batch_size=%d "
+                                   "reason=fallback_invalid_symbol; isolating invalid symbol",
+                                   len(batch))
                     request_batch(batch[:midpoint])
                     request_batch(batch[midpoint:])
                 else:
-                    fallback(batch, f"{type(exc).__name__}: {exc}")
+                    reason = ("fallback_invalid_symbol" if _invalid_history_symbol(exc)
+                              else "fallback_batch_error")
+                    fallback(batch, reason)
                     batch_fallback_count = len(batch)
             finally:
                 LOGGER.warning(
@@ -278,9 +290,9 @@ class WebullOpenAPIClient:
                     batch_fallback_count,
                 )
 
-        if len(wanted) == 1:
+        if len(wanted) == 1 and not force_batch:
             started = time.monotonic()
-            single(wanted[0])
+            single(wanted[0], call_reason)
             LOGGER.warning(
                 "WEBULL history complete total_symbols=1 count_per_symbol=%d batches=1 "
                 "concurrency=1 elapsed_seconds=%.3f returned_symbols=%d returned_bars=%d "

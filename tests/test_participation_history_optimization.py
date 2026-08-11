@@ -9,6 +9,7 @@ from mide.discovery import (
     clear_history_profile_cache,
 )
 from mide.volume_pace import historical_volume_profile, volume_pace_metrics
+from mide.webull_live import WebullOpenAPIClient
 
 
 def _rows(day, count, *, close=2.0, volume=1_000):
@@ -105,3 +106,37 @@ def test_completed_profile_cache_has_a_hard_population_bound(monkeypatch):
 
     assert len(client._walter_history_profile_cache) == 2
     assert {key[1] for key in client._walter_history_profile_cache} == {"BBB", "CCC"}
+
+
+def test_41_profile_misses_use_legal_batches_without_single_symbol_history():
+    batch_calls = []
+    single_calls = []
+    today = datetime.now(timezone.utc)
+    current_rows = _rows(today, 100)
+    historical_rows = sum(
+        (_rows(today - timedelta(days=day), 100) for day in (8, 7, 6, 5, 4)),
+        [],
+    )
+
+    class SDK:
+        def get_batch_history_bar(self, symbols, end_time=None, **kwargs):
+            batch_calls.append((list(symbols), end_time))
+            rows = historical_rows if end_time is not None else current_rows
+            return {"data": [{"symbol": symbol, "bars": rows} for symbol in symbols]}
+
+        def get_history_bar(self, **kwargs):
+            single_calls.append(kwargs["symbol"])
+            raise AssertionError("normal Stage-6 retrieval must stay on the batch path")
+
+    client = WebullOpenAPIClient("k", "s", sdk_client=SDK())
+    client.bars_frame = HistoryClient.bars_frame
+    symbols = [f"SYM{index:02d}" for index in range(41)]
+    candidates = [{**_candidate(), "symbol": symbol} for symbol in symbols]
+
+    result = analyze_candidates(client, candidates, {}, {})
+
+    historical_batches = [symbols for symbols, end in batch_calls if end is not None]
+    assert [len(batch) for batch in historical_batches] == [20, 20, 1]
+    assert single_calls == []
+    assert client.history_call_diagnostics["single_fallback_calls"] == 0
+    assert len(result) == 41

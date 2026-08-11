@@ -125,7 +125,8 @@ def test_multiple_symbols_use_batch_history_and_group_rows():
     }
 
 
-def test_invalid_symbol_batch_failure_isolated_without_aborting_good_symbols(monkeypatch):
+def test_invalid_symbol_batch_failure_isolated_without_aborting_good_symbols(
+        monkeypatch, caplog):
     single_calls = []
     sleeps = []
 
@@ -146,7 +147,8 @@ def test_invalid_symbol_batch_failure_isolated_without_aborting_good_symbols(mon
     monkeypatch.setattr(sdk_module.time, "sleep", lambda delay: sleeps.append(delay))
     monkeypatch.setattr(sdk_module, "_HISTORY_BAR_LAST_CALL", 99.5)
 
-    result = WebullOpenAPIClient("k", "s", sdk_client=SDK()).bars(
+    client = WebullOpenAPIClient("k", "s", sdk_client=SDK())
+    result = client.bars(
         ["GOOD", "BAD", "ALSO"], start=datetime(2026, 8, 1, tzinfo=timezone.utc)
     )
 
@@ -156,6 +158,32 @@ def test_invalid_symbol_batch_failure_isolated_without_aborting_good_symbols(mon
     assert result["BAD"] == []
     assert [call["symbol"] for call in single_calls] == ["BAD"]
     assert sleeps == [pytest.approx(.55)]
+    assert client.history_call_diagnostics["single_fallback_calls"] == 1
+    assert "reason=fallback_invalid_symbol" in caplog.text
+
+
+def test_forced_single_symbol_request_uses_batch_without_fallback():
+    calls = {"batch": [], "single": []}
+
+    class SDK:
+        def get_batch_history_bar(self, symbols, **kwargs):
+            calls["batch"].append(list(symbols))
+            return {"data": [{"symbol": symbols[0], "bars": []}]}
+
+        def get_history_bar(self, **kwargs):
+            calls["single"].append(kwargs["symbol"])
+
+    client = WebullOpenAPIClient("k", "s", sdk_client=SDK())
+    result = client.bars(
+        ["ONLY"], start=datetime(2026, 8, 1, tzinfo=timezone.utc),
+        force_batch=True, history_reason="stage6_historical_profile",
+    )
+
+    assert result == {"ONLY": []}
+    assert calls == {"batch": [["ONLY"]], "single": []}
+    assert client.history_call_diagnostics == {
+        "batch_calls": 1, "single_fallback_calls": 0,
+    }
 
 
 def test_unavailable_or_undecodable_batch_falls_back_to_single_history():
