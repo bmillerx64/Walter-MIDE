@@ -63,48 +63,93 @@ def _normalize_snapshot_float(snapshot: dict) -> float | None:
     return max(values) if values else None
 
 
-def _webull_enrich_free_float(self, snapshots: dict[str, dict], symbols) -> dict[str, dict]:
-    """Refresh every Live Webull candidate's float and fail closed.
+def _webull_enrich_free_float(
+    self,
+    snapshots: dict[str, dict],
+    symbols,
+    *,
+    max_free_float: float = 3_500_000,
+) -> dict[str, dict]:
+    """Verify only apparent low-float names and fail closed when evidence is absent.
 
-    A populated FMP/cache value must not suppress the live refresh: stale small
-    values can otherwise pass the 3.5M squeeze gate after capital-structure
-    changes. Conflicting evidence uses the larger value conservatively.
+    FMP/cache evidence is the broad primary source.  Yahoo is a narrow freshness
+    check only for names that *appear* to be at or below the configured squeeze
+    ceiling.  Querying Yahoo for the entire post-price-gate universe caused a
+    guaranteed request storm and HTTP 429 responses.  Names already above the
+    ceiling cannot become eligible by a conservative refresh, so they need no
+    Yahoo request.  Names with no primary float evidence fail closed immediately.
     """
+    threshold = max(0.0, float(max_free_float))
     wanted = []
-    existing = {}
+    existing: dict[str, float] = {}
+    refresh_symbols: list[str] = []
     normalized = 0
+
     for symbol in dict.fromkeys(str(s or "").strip().upper() for s in symbols if s):
         snapshot = snapshots.get(symbol)
         if not isinstance(snapshot, dict):
             continue
+        wanted.append(symbol)
         shares = _normalize_snapshot_float(snapshot)
         if shares is not None:
             existing[symbol] = shares
             normalized += 1
-        wanted.append(symbol)
+            if shares <= threshold:
+                refresh_symbols.append(symbol)
 
-    values = {}
-    errors = {}
-    if wanted:
-        provider = YahooFinanceFloatProvider(timeout=5, max_workers=24)
-        values, errors = provider.lookup_many(wanted)
+    values: dict[str, float] = {}
+    errors: dict[str, str] = {}
+    if refresh_symbols:
+        provider = YahooFinanceFloatProvider(
+            timeout=5,
+            max_workers=min(8, len(refresh_symbols)),
+        )
+        values, errors = provider.lookup_many(refresh_symbols)
 
     resolved = 0
     failed_closed = 0
     conflicts = 0
+    unresolved_primary = 0
+    refresh_failed = 0
+
     for symbol in wanted:
         snapshot = snapshots.get(symbol)
         if not isinstance(snapshot, dict):
             continue
+
         prior = existing.get(symbol)
+        if prior is None:
+            snapshot["float_shares"] = float("inf")
+            snapshot["shares_float"] = float("inf")
+            snapshot["free_float"] = float("inf")
+            snapshot["free_float_source"] = "primary float unresolved; fail closed"
+            snapshot["free_float_verified"] = False
+            snapshot["free_float_verification_status"] = "unavailable-reject"
+            failed_closed += 1
+            unresolved_primary += 1
+            continue
+
+        # Already above the configured ceiling: a conservative refresh cannot
+        # make the name eligible, so keep the primary value and avoid the call.
+        if prior > threshold:
+            snapshot["float_shares"] = prior
+            snapshot["shares_float"] = prior
+            snapshot["free_float"] = prior
+            snapshot.setdefault("free_float_source", "normalized existing provider float")
+            snapshot["free_float_verified"] = True
+            snapshot["free_float_verification_status"] = "verified-above-limit"
+            resolved += 1
+            continue
+
         refreshed = values.get(symbol)
         try:
             refreshed = float(refreshed) if refreshed is not None else None
         except (TypeError, ValueError):
             refreshed = None
+
         if refreshed is not None and refreshed > 0:
-            chosen = max(prior or 0, refreshed)
-            if prior is not None and abs(prior - refreshed) > 1:
+            chosen = max(prior, refreshed)
+            if abs(prior - refreshed) > 1:
                 conflicts += 1
             snapshot["float_shares"] = chosen
             snapshot["shares_float"] = chosen
@@ -113,32 +158,34 @@ def _webull_enrich_free_float(self, snapshots: dict[str, dict], symbols) -> dict
                 "conservative max of existing evidence and Yahoo Finance "
                 "defaultKeyStatistics.floatShares.raw"
             )
-            resolved += 1
-        elif prior is not None:
-            snapshot["float_shares"] = prior
-            snapshot["shares_float"] = prior
-            snapshot["free_float"] = prior
-            snapshot.setdefault("free_float_source", "normalized existing provider float")
+            snapshot["free_float_verified"] = True
+            snapshot["free_float_verification_status"] = "verified-live-refresh"
             resolved += 1
         else:
+            # A stale low float is precisely the dangerous case.  If the narrow
+            # freshness check cannot confirm it, reject rather than trusting it.
             snapshot["float_shares"] = float("inf")
             snapshot["shares_float"] = float("inf")
             snapshot["free_float"] = float("inf")
-            snapshot["free_float_source"] = "unresolved live float; fail closed"
+            snapshot["free_float_source"] = "low-float live refresh unresolved; fail closed"
+            snapshot["free_float_verified"] = False
+            snapshot["free_float_verification_status"] = "refresh-unavailable-reject"
             failed_closed += 1
+            refresh_failed += 1
 
-    self.diagnostics["free_float_fallback_requested"] = len(wanted)
-    self.diagnostics["free_float_fallback_resolved"] = resolved
+    self.diagnostics["free_float_fallback_requested"] = len(refresh_symbols)
+    self.diagnostics["free_float_fallback_resolved"] = sum(
+        1 for symbol in refresh_symbols if symbol in values
+    )
     self.diagnostics["free_float_snapshot_normalized"] = normalized
     self.diagnostics["free_float_fallback_failed"] = len(errors)
     self.diagnostics["free_float_fail_closed"] = failed_closed
+    self.diagnostics["free_float_unresolved_primary"] = unresolved_primary
+    self.diagnostics["free_float_refresh_failed"] = refresh_failed
     self.diagnostics["free_float_provider_conflicts"] = conflicts
-    if errors:
-        sample = "; ".join(f"{k}: {v}" for k, v in list(errors.items())[:3])
-        self.warnings.append(
-            f"Free-float refresh unresolved for {len(errors)}/{len(wanted)} symbols"
-            + (f" ({sample})" if sample else "")
-        )
+    self.diagnostics["free_float_refresh_ceiling"] = threshold
+    # Coverage gaps are data-quality diagnostics, not API-warning spam.  The
+    # safety consequence is already explicit: every unresolved name fails closed.
     return snapshots
 
 
