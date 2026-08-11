@@ -1,4 +1,5 @@
 from __future__ import annotations
+from collections import OrderedDict
 from datetime import datetime, timedelta, timezone
 import logging
 import math
@@ -17,7 +18,11 @@ from .indicators import (
     proximity_pct,
     intraday_participation_metrics,
 )
-from .volume_pace import volume_pace_metrics
+from .volume_pace import (
+    CompactVolumeProfile,
+    historical_volume_profile,
+    volume_pace_metrics,
+)
 from .scoring import Evidence, score
 from .flight_recorder import prefilter_decision
 from .timeframe_alignment import alignment_summary
@@ -25,7 +30,23 @@ from .timeframe_alignment import alignment_summary
 # Fourteen calendar days reliably covers at least five completed U.S. trading
 # sessions across weekends and ordinary exchange holidays.
 VOLUME_PROFILE_LOOKBACK_DAYS = 14
+CURRENT_SESSION_HISTORY_BARS = 960
+HISTORICAL_PROFILE_HISTORY_BARS = 1200
+MAX_HISTORY_PROFILE_CACHE_ENTRIES = 1024
 LOGGER = logging.getLogger(__name__)
+
+
+def clear_history_profile_cache(client) -> None:
+    """Clear the scan client's bounded completed-session profile cache."""
+    setattr(client, "_walter_history_profile_cache", OrderedDict())
+
+
+def _history_profile_cache(client) -> OrderedDict:
+    cache = getattr(client, "_walter_history_profile_cache", None)
+    if cache is None:
+        cache = OrderedDict()
+        setattr(client, "_walter_history_profile_cache", cache)
+    return cache
 
 
 def _value(obj, *path, default=None):
@@ -336,13 +357,46 @@ def apply_attention_ranking(records):
 def analyze_candidates(client, candidates, news_index, discovery_reasons):
     if not candidates:
         return []
-    start = datetime.now(timezone.utc) - timedelta(days=VOLUME_PROFILE_LOOKBACK_DAYS)
+    retrieval_started = datetime.now(timezone.utc)
+    now = retrieval_started
+    start = now - timedelta(days=VOLUME_PROFILE_LOOKBACK_DAYS)
+    eastern_now = pd.Timestamp(now).tz_convert("America/New_York")
+    session_start = eastern_now.normalize().replace(hour=4)
+    completed_session_end = session_start
     symbols = [
         x["symbol"] for x in candidates if is_valid_us_symbol(x.get("symbol"))
     ]
-    raw = client.bars(symbols, start=start, timeframe="1Min", limit=10_000)
+    raw = client.bars(
+        symbols, start=session_start.to_pydatetime(), timeframe="1Min",
+        limit=CURRENT_SESSION_HISTORY_BARS,
+    )
+    cache = _history_profile_cache(client)
+    session_key = eastern_now.date()
+    missing_profiles = [
+        symbol for symbol in symbols if (session_key, symbol) not in cache
+    ]
+    historical_raw = (
+        client.bars(
+            missing_profiles, start=start,
+            end=completed_session_end.to_pydatetime(), timeframe="1Min",
+            limit=HISTORICAL_PROFILE_HISTORY_BARS,
+        )
+        if missing_profiles else {}
+    )
+    for symbol in missing_profiles:
+        historical_frame = client.bars_frame(historical_raw.get(symbol, []))
+        profile = historical_volume_profile(
+            symbol, historical_frame, current_session_date=session_key
+        )
+        cache[(session_key, symbol)] = CompactVolumeProfile.from_dict(profile)
+        cache.move_to_end((session_key, symbol))
+        while len(cache) > MAX_HISTORY_PROFILE_CACHE_ENTRIES:
+            cache.popitem(last=False)
     try:
-        raw_30s = client.bars(symbols, start=start, timeframe="30Sec", limit=10_000)
+        raw_30s = client.bars(
+            symbols, start=session_start.to_pydatetime(), timeframe="30Sec",
+            limit=CURRENT_SESSION_HISTORY_BARS,
+        )
     except Exception as exc:
         raw_30s = {}
         if hasattr(client, "warnings"):
@@ -352,12 +406,21 @@ def analyze_candidates(client, candidates, news_index, discovery_reasons):
     benchmark_symbols = sorted({benchmark_for(item) for item in candidates})
     try:
         benchmark_raw = client.bars(
-            benchmark_symbols, start=start, timeframe="1Min", limit=10_000
+            benchmark_symbols, start=session_start.to_pydatetime(), timeframe="1Min",
+            limit=CURRENT_SESSION_HISTORY_BARS,
         )
     except Exception as exc:
         benchmark_raw = {}
         if hasattr(client, "warnings"):
             client.warnings.append(f"Relative-strength benchmarks unavailable: {exc}")
+    retrieval_elapsed = (datetime.now(timezone.utc) - retrieval_started).total_seconds()
+    analysis_started = datetime.now(timezone.utc)
+    LOGGER.warning(
+        "STAGE6 history retrieval symbols=%d current_count=%d historical_count=%d "
+        "historical_cache_misses=%d elapsed_seconds=%.3f",
+        len(symbols), CURRENT_SESSION_HISTORY_BARS, HISTORICAL_PROFILE_HISTORY_BARS,
+        len(missing_profiles), retrieval_elapsed,
+    )
     output = []
 
     for item in candidates:
@@ -445,7 +508,9 @@ def analyze_candidates(client, candidates, news_index, discovery_reasons):
             ).total_seconds(),
         )
 
-        vpi = volume_pace_metrics(symbol, frame)
+        vpi = volume_pace_metrics(
+            symbol, frame, historical_profile=cache.get((session_key, symbol))
+        )
         surge_metrics = intraday_participation_metrics(session)
         ema5_value = float(ema(session["close"], 5).iloc[-1])
         ten_minute_start = (
@@ -554,4 +619,10 @@ def analyze_candidates(client, candidates, news_index, discovery_reasons):
                 **alignment,
             }
         )
-    return apply_attention_ranking(output)
+    result = apply_attention_ranking(output)
+    LOGGER.warning(
+        "STAGE6 frame conversion and analysis input_symbols=%d output_symbols=%d "
+        "elapsed_seconds=%.3f", len(symbols), len(result),
+        (datetime.now(timezone.utc) - analysis_started).total_seconds(),
+    )
+    return result
