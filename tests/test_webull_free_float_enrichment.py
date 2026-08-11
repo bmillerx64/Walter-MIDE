@@ -1,3 +1,5 @@
+import math
+
 from mide import free_float_inspector
 from mide.webull_live import LiveWebullProvider
 
@@ -40,3 +42,25 @@ def test_live_webull_uses_yahoo_fallback_for_missing_float(monkeypatch):
     assert provider.diagnostics["free_float_fallback_requested"] == 1
     assert provider.diagnostics["free_float_fallback_resolved"] == 1
     assert provider.diagnostics["free_float_fallback_failed"] == 0
+
+
+def test_live_webull_fails_closed_when_all_float_sources_are_unresolved(monkeypatch):
+    class FakeYahoo:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def lookup_many(self, symbols):
+            assert list(symbols) == ["UNKNOWN"]
+            return {}, {"UNKNOWN": "no float returned"}
+
+    monkeypatch.setattr(free_float_inspector, "YahooFinanceFloatProvider", FakeYahoo)
+    provider = _provider()
+    snapshots = {"UNKNOWN": {}}
+
+    provider.enrich_free_float(snapshots, ["UNKNOWN"])
+
+    assert math.isinf(snapshots["UNKNOWN"]["float_shares"])
+    assert snapshots["UNKNOWN"]["free_float_verified"] is False
+    assert snapshots["UNKNOWN"]["free_float_verification_status"] == "unavailable-reject"
+    assert provider.diagnostics["free_float_fail_closed"] == 1
+    assert provider.diagnostics["free_float_fallback_failed"] == 1
