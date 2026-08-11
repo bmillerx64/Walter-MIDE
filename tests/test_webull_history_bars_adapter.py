@@ -1,4 +1,5 @@
 from datetime import datetime, timezone
+from threading import Barrier, Lock
 
 import pytest
 
@@ -196,3 +197,66 @@ def test_batch_history_splits_41_symbols_into_legal_consecutive_batches():
     assert batch_calls == [symbols[:20], symbols[20:40], symbols[40:]]
     assert max(map(len, batch_calls)) <= 20
     assert set(result) == set(symbols)
+
+
+def test_61_symbols_use_four_legal_batches_with_bounded_concurrency():
+    batch_calls = []
+    state = {"active": 0, "maximum": 0}
+    lock = Lock()
+    barrier = Barrier(4)
+
+    class SDK:
+        def get_batch_history_bar(self, symbols, **kwargs):
+            with lock:
+                batch_calls.append(list(symbols))
+                state["active"] += 1
+                state["maximum"] = max(state["maximum"], state["active"])
+            barrier.wait(timeout=2)
+            with lock:
+                state["active"] -= 1
+            return {"data": [
+                {"symbol": symbol, "bars": [{"time": symbol, "close": 1}]}
+                for symbol in symbols
+            ]}
+
+        def get_history_bar(self, **kwargs):
+            raise AssertionError("successful batches must not use fallback")
+
+    symbols = [f"SYM{index:02d}" for index in range(61)]
+    result = WebullOpenAPIClient("k", "s", sdk_client=SDK()).bars(
+        symbols, start=datetime(2026, 8, 1, tzinfo=timezone.utc)
+    )
+
+    assert sorted(map(len, batch_calls), reverse=True) == [20, 20, 20, 1]
+    assert state["maximum"] == 4
+    assert list(result) == symbols
+    assert all(result[symbol][0]["t"] == symbol for symbol in symbols)
+
+
+def test_failed_batch_preserves_successful_neighboring_batch_results(monkeypatch):
+    single_calls = []
+    monkeypatch.setattr("mide.webull_sdk._wait_for_history_bar_slot", lambda: None)
+
+    class SDK:
+        def get_batch_history_bar(self, symbols, **kwargs):
+            if symbols[0] == "SYM20":
+                raise RuntimeError("temporary batch failure")
+            return {"data": [
+                {"symbol": symbol, "bars": [{"time": symbol, "close": 1}]}
+                for symbol in symbols
+            ]}
+
+        def get_history_bar(self, symbol, **kwargs):
+            single_calls.append(symbol)
+            return {"result": [{"time": symbol, "close": 2}]}
+
+    symbols = [f"SYM{index:02d}" for index in range(41)]
+    result = WebullOpenAPIClient("k", "s", sdk_client=SDK()).bars(
+        symbols, start=datetime(2026, 8, 1, tzinfo=timezone.utc)
+    )
+
+    assert single_calls == symbols[20:40]
+    assert list(result) == symbols
+    assert result["SYM00"][0]["c"] == 1.0
+    assert result["SYM20"][0]["c"] == 2.0
+    assert result["SYM40"][0]["c"] == 1.0
