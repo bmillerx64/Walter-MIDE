@@ -8,8 +8,12 @@ import pandas as pd
 
 from .indicators import ema, higher_lows, session_vwap, supertrend
 
-TIMEFRAMES = ("30s", "1m", "5m")
-ALIGNMENT_LABELS = {3: "Strong", 2: "Good", 1: "Weak", 0: "Countertrend"}
+# Webull OpenAPI historical bars do not provide 30-second candles. Keep the
+# alignment engine entirely on provider-supported history so live scans do not
+# generate a guaranteed warning/request failure. Immediate tape movement still
+# comes from live/snapshot market data elsewhere in Walter.
+TIMEFRAMES = ("1m", "3m", "5m", "10m")
+ALIGNMENT_LABELS = {4: "Strong", 3: "Good", 2: "Good", 1: "Weak", 0: "Countertrend"}
 
 
 def _higher_highs(frame: pd.DataFrame, bars: int = 6) -> bool | None:
@@ -65,7 +69,10 @@ def alignment_voice(record: dict) -> str:
     """Format the short audible alignment suffix for a candidate."""
     if record.get("alignment_score") is None:
         return ""
-    score = max(0, min(3, int(record["alignment_score"])))
-    label = str(record.get("alignment_label") or ALIGNMENT_LABELS[score])
-    words = ("zero", "one", "two", "three")
-    return f"Alignment {words[score]} of three. {label}."
+    total = max(1, int(record.get("alignment_total") or len(TIMEFRAMES)))
+    score = max(0, min(total, int(record["alignment_score"])))
+    label = str(record.get("alignment_label") or ALIGNMENT_LABELS.get(score, "Strong"))
+    words = ("zero", "one", "two", "three", "four")
+    score_word = words[score] if score < len(words) else str(score)
+    total_word = words[total] if total < len(words) else str(total)
+    return f"Alignment {score_word} of {total_word}. {label}."
