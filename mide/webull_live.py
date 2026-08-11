@@ -438,13 +438,34 @@ class LiveWebullProvider(WebullProvider):
 
     @staticmethod
     def bars_frame(rows):
+        """Normalize Webull rows without falling back to dateutil per timestamp."""
         import pandas as pd
         frame = pd.DataFrame(rows)
         if frame.empty:
             return frame
         frame = frame.rename(columns={"t": "timestamp", "o": "open", "h": "high",
                                       "l": "low", "c": "close", "v": "volume"})
-        frame["timestamp"] = pd.to_datetime(frame["timestamp"], utc=True)
+        timestamps = frame["timestamp"]
+        numeric = pd.to_numeric(timestamps, errors="coerce")
+        non_null = timestamps.notna()
+        if non_null.any() and numeric[non_null].notna().all():
+            magnitude = float(numeric[non_null].abs().median())
+            if magnitude >= 1e17:
+                unit = "ns"
+            elif magnitude >= 1e14:
+                unit = "us"
+            elif magnitude >= 1e11:
+                unit = "ms"
+            else:
+                unit = "s"
+            frame["timestamp"] = pd.to_datetime(
+                numeric, unit=unit, utc=True, errors="coerce"
+            )
+        else:
+            frame["timestamp"] = pd.to_datetime(
+                timestamps, utc=True, format="mixed", errors="coerce"
+            )
+        frame = frame.dropna(subset=["timestamp"])
         return frame.set_index("timestamp").sort_index()
 
     def news(self, *args, **kwargs):

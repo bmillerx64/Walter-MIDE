@@ -1,8 +1,9 @@
-"""Read-only diagnostics for values that pandas cannot serialize to Arrow."""
+"""Diagnostics and safe presentation coercion for Arrow-backed Streamlit tables."""
 
 from __future__ import annotations
 
 import inspect
+import json
 import logging
 from functools import wraps
 from typing import Any
@@ -24,12 +25,7 @@ def _is_missing(value: Any) -> bool:
 
 
 def arrow_violations(value: Any, *, dataframe_name: str) -> list[dict[str, Any]]:
-    """Return the columns and Python values that fail Arrow conversion.
-
-    The input is copied into a DataFrame only for inspection.  No coercion or
-    replacement is performed, so this diagnostic cannot mask the Streamlit
-    serialization error under investigation.
-    """
+    """Return the columns and Python values that fail Arrow conversion."""
     frame = value if isinstance(value, pd.DataFrame) else pd.DataFrame(value)
     try:
         pa.Table.from_pandas(frame)
@@ -70,8 +66,29 @@ def log_arrow_violations(value: Any, *, dataframe_name: str) -> list[dict[str, A
     return violations
 
 
+def _arrow_safe_table_value(value: Any) -> Any:
+    """Serialize nested diagnostic payloads without altering scanner data.
+
+    Streamlit/PyArrow cannot reliably infer a single Arrow type for object columns
+    containing nested lists/dicts with mixed scalar types. These values are UI-only
+    diagnostics, so render the nested payload as deterministic JSON while leaving
+    scalar columns untouched.
+    """
+    if isinstance(value, (dict, list, tuple, set)):
+        return json.dumps(value, sort_keys=True, default=str)
+    return value
+
+
+def _arrow_safe_frame(value: Any, violating_columns: set[str]) -> pd.DataFrame:
+    frame = value.copy() if isinstance(value, pd.DataFrame) else pd.DataFrame(value)
+    for column in frame.columns:
+        if str(column) in violating_columns:
+            frame[column] = frame[column].map(_arrow_safe_table_value)
+    return frame
+
+
 def instrument_streamlit_tables(streamlit_module: Any) -> None:
-    """Inspect every top-level Streamlit table call without changing its input."""
+    """Inspect top-level Streamlit tables and safely render diagnostic object columns."""
     for method_name in ("dataframe", "table"):
         original = getattr(streamlit_module, method_name)
         if getattr(original, "_walter_arrow_diagnostic", False):
@@ -81,7 +98,13 @@ def instrument_streamlit_tables(streamlit_module: Any) -> None:
         def inspected(value=None, *args, _original=original, _name=method_name, **kwargs):
             caller = inspect.currentframe().f_back
             location = f"{caller.f_code.co_filename}:{caller.f_lineno}"
-            log_arrow_violations(value, dataframe_name=f"st.{_name} at {location}")
+            violations = log_arrow_violations(
+                value, dataframe_name=f"st.{_name} at {location}"
+            )
+            if violations:
+                value = _arrow_safe_frame(
+                    value, {str(item["column"]) for item in violations}
+                )
             return _original(value, *args, **kwargs)
 
         inspected._walter_arrow_diagnostic = True
