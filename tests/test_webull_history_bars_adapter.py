@@ -73,6 +73,35 @@ def test_webull_history_bars_translate_to_sdk_2_signature_and_result_rows():
     }
 
 
+def test_batch_history_normalizes_end_time_to_sdk_epoch_milliseconds():
+    calls = []
+
+    class SDK:
+        def get_batch_history_bar(self, **kwargs):
+            calls.append(kwargs)
+            return {"data": [
+                {"symbol": symbol, "bars": []} for symbol in kwargs["symbols"]
+            ]}
+
+        def get_history_bar(self, **kwargs):
+            raise AssertionError("end-dated batch request must not fall back")
+
+    client = WebullOpenAPIClient("key", "secret", sdk_client=SDK())
+    result = client.bars(
+        ["AAA", "BBB"],
+        start=datetime(2026, 7, 27, tzinfo=timezone.utc),
+        end=datetime(2026, 8, 10, 8, 0, tzinfo=timezone.utc),
+        timeframe="1Min",
+        limit=1200,
+    )
+
+    assert result == {"AAA": [], "BBB": []}
+    assert len(calls) == 1
+    assert calls[0]["start_time"] == 1785110400000
+    assert calls[0]["end_time"] == 1786348800000
+    assert calls[0]["trading_sessions"] == "PRE,RTH,ATH"
+
+
 def test_webull_30_second_history_is_explicitly_unsupported_without_fallback():
     calls = []
 

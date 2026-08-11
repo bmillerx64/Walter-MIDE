@@ -34,7 +34,6 @@ def _suppress_official_sdk_logging() -> None:
     for name in names:
         sdk_logger = logging.getLogger(name)
         sdk_logger.disabled = True
-        # webull.core.http.response installs its own DEBUG StreamHandler at import.
         sdk_logger.handlers.clear()
 
 
@@ -312,22 +311,19 @@ class WebullSDKClient:
                 raise ValueError("Webull OpenAPI historical bars do not support 30-second timespan")
             normalized["timespan"] = timespans.get(interval_key, str(interval).upper())
 
-        start_time = normalized.get("start_time")
-        if isinstance(start_time, str):
-            try:
-                parsed = datetime.fromisoformat(start_time.replace("Z", "+00:00"))
-                normalized["start_time"] = int(parsed.timestamp() * 1000)
-            except ValueError:
-                pass
+        for key in ("start_time", "end_time"):
+            value = normalized.get(key)
+            if isinstance(value, str):
+                try:
+                    parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+                    normalized[key] = int(parsed.timestamp() * 1000)
+                except ValueError:
+                    pass
 
         normalized["count"] = str(min(int(normalized.get("count", 200)), 1200))
         normalized.pop("extend_hour_required", None)
         include_overnight = normalized.pop("include_overnight", None)
         if include_overnight and not normalized.get("trading_sessions"):
-            # Walter needs pre-market, regular-hours, and after-hours bars. OVN is
-            # intentionally excluded because it requires Webull's separate Night
-            # Trading Stock Quotes subscription and otherwise turns every history
-            # request into MARKET_DATA_NOT_SUBSCRIBED (HTTP 403).
             normalized["trading_sessions"] = "PRE,RTH,ATH"
         normalized.setdefault("real_time_required", True)
         return normalized
@@ -336,8 +332,6 @@ class WebullSDKClient:
         """Call the SDK's official batch history operation without per-symbol delay."""
         method = self._operation(("get_batch_history_bar",))
         normalized = self._history_arguments(arguments)
-        # The installed SDK accepts a list here and passes it unchanged in the
-        # POST body (unlike the comma-delimited snapshot operation).
         normalized["symbols"] = list(normalized.get("symbols", ()))
         return _plain(method(**normalized))
 
