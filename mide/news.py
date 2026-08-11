@@ -157,10 +157,6 @@ def recent_wire_news_log(
     for symbol, article in sorted(newest.items()):
         snapshot = (snapshots or {}).get(symbol)
         prefilter = (
-            prefilter_decision(symbol, snapshot, settings)["passed"]
-            if False else None
-        )
-        prefilter = (
             prefilter_decision(symbol, snapshot, settings)
             if snapshot is not None
             else {"passed": False, "reason": "snapshot unavailable"}
