@@ -6,7 +6,8 @@ from dataclasses import asdict, dataclass
 from typing import Any
 
 from .discovery import is_valid_us_symbol
-from .free_float import FreeFloatProvider
+from .free_float import FreeFloatProvider, YahooFinanceFloatProvider
+from .webull_live import LiveWebullProvider
 
 
 FIELD_ALIASES = {
@@ -32,6 +33,93 @@ class FreeFloatInspection:
 
     def as_dict(self) -> dict[str, Any]:
         return asdict(self)
+
+
+def _normalize_snapshot_float(snapshot: dict) -> float | None:
+    """Normalize any established snapshot float field to a share count."""
+    reference = snapshot.get("reference") or {}
+    for key in ("float_shares", "shares_float", "free_float"):
+        raw = snapshot.get(key)
+        if raw is None and isinstance(reference, dict):
+            raw = reference.get(key)
+        if raw is not None:
+            try:
+                value = float(raw)
+            except (TypeError, ValueError):
+                continue
+            if value > 0:
+                return value
+    raw_millions = snapshot.get("float_millions")
+    if raw_millions is None and isinstance(reference, dict):
+        raw_millions = reference.get("float_millions")
+    if raw_millions is not None:
+        try:
+            value = float(raw_millions) * 1_000_000
+        except (TypeError, ValueError):
+            return None
+        return value if value > 0 else None
+    return None
+
+
+def _webull_enrich_free_float(self, snapshots: dict[str, dict], symbols) -> dict[str, dict]:
+    """Resolve authoritative free-float evidence for Live Webull snapshots.
+
+    Webull's stock snapshot payload does not reliably expose float shares.  The
+    production pipeline already calls ``client.enrich_free_float`` after FMP; this
+    adapter makes that generic fallback available in Live Webull mode. Existing
+    provider float fields are normalized first, including ``float_millions``.
+    Only unresolved symbols are sent to Yahoo Finance.
+    """
+    wanted = []
+    normalized = 0
+    for symbol in dict.fromkeys(str(s or "").strip().upper() for s in symbols if s):
+        snapshot = snapshots.get(symbol)
+        if not isinstance(snapshot, dict):
+            continue
+        shares = _normalize_snapshot_float(snapshot)
+        if shares is not None:
+            snapshot["float_shares"] = shares
+            snapshot.setdefault("free_float_source", "normalized snapshot float field")
+            normalized += 1
+        else:
+            wanted.append(symbol)
+
+    values = {}
+    errors = {}
+    if wanted:
+        provider = YahooFinanceFloatProvider(timeout=5, max_workers=24)
+        values, errors = provider.lookup_many(wanted)
+        for symbol, shares in values.items():
+            snapshot = snapshots.get(symbol)
+            if not isinstance(snapshot, dict):
+                continue
+            snapshot["float_shares"] = float(shares)
+            snapshot["free_float_source"] = (
+                "Yahoo Finance defaultKeyStatistics.floatShares.raw"
+            )
+
+    self.diagnostics["free_float_fallback_requested"] = len(wanted)
+    self.diagnostics["free_float_fallback_resolved"] = len(values)
+    self.diagnostics["free_float_snapshot_normalized"] = normalized
+    self.diagnostics["free_float_fallback_failed"] = len(errors)
+    if errors:
+        sample = "; ".join(
+            f"{key}: {value}" for key, value in list(errors.items())[:3]
+        )
+        self.warnings.append(
+            f"Free-float fallback unresolved for {len(errors)}/{len(wanted)} symbols"
+            + (f" ({sample})" if sample else "")
+        )
+    return snapshots
+
+
+# ``app.py`` intentionally invokes free-float enrichment through the provider
+# contract. LiveWebullProvider did not implement that hook, which meant symbols
+# with unavailable FMP data were allowed through the permissive unverified path.
+# Install the missing provider hook at import time without changing market-data
+# acquisition, ranking, or trading logic.
+if not hasattr(LiveWebullProvider, "enrich_free_float"):
+    LiveWebullProvider.enrich_free_float = _webull_enrich_free_float
 
 
 def inspect_free_float(
