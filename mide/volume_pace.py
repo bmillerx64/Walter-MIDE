@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections import OrderedDict
+from array import array
 from dataclasses import dataclass
 from datetime import time
 from typing import Hashable
@@ -27,6 +28,37 @@ class VolumePaceMetrics:
     passed: bool
     status: str
     reason: str | None
+
+
+@dataclass(frozen=True)
+class CompactVolumeProfile:
+    """Memory-conscious immutable lookup for a completed-session profile."""
+
+    minutes: array
+    expected_volume: array
+    expected_5m_volume: array
+
+    @classmethod
+    def from_dict(cls, profile: dict[int, dict[str, float]]):
+        minutes = sorted(profile)
+        return cls(
+            array("H", minutes),
+            array("d", (profile[minute]["expected_volume"] for minute in minutes)),
+            array("d", (profile[minute]["expected_5m_volume"] for minute in minutes)),
+        )
+
+    def __bool__(self) -> bool:
+        return bool(self.minutes)
+
+    def get(self, minute: int):
+        try:
+            index = self.minutes.index(minute)
+        except ValueError:
+            return None
+        return {
+            "expected_volume": self.expected_volume[index],
+            "expected_5m_volume": self.expected_5m_volume[index],
+        }
 
 
 def _minute_of_day(index: pd.DatetimeIndex) -> pd.Index:
@@ -102,7 +134,12 @@ def historical_volume_profile(
     return profile
 
 
-def volume_pace_metrics(symbol: str, frame: pd.DataFrame) -> VolumePaceMetrics:
+def volume_pace_metrics(
+    symbol: str,
+    frame: pd.DataFrame,
+    *,
+    historical_profile: dict[int, dict[str, float]] | CompactVolumeProfile | None = None,
+) -> VolumePaceMetrics:
     def unavailable(reason: str) -> VolumePaceMetrics:
         return VolumePaceMetrics(0, 0, 0, 0, 0, 0, False, "unavailable", reason)
 
@@ -125,7 +162,11 @@ def volume_pace_metrics(symbol: str, frame: pd.DataFrame) -> VolumePaceMetrics:
     session = regular[regular.index.date == current_date].copy()
     if session.empty:
         return unavailable("outside_regular_session")
-    profile = historical_volume_profile(symbol, regular, current_date)
+    profile = (
+        historical_profile
+        if historical_profile is not None
+        else historical_volume_profile(symbol, regular, current_date)
+    )
     if not profile:
         return unavailable("missing_historical_profile")
     minute = int(_minute_of_day(pd.DatetimeIndex([session.index[-1]]))[0])

@@ -177,6 +177,7 @@ class WebullOpenAPIClient:
                 "Webull OpenAPI historical bars do not support 30-second timespan"
             )
         interval = {"1Min": "m1"}.get(timeframe, timeframe)
+        end = kwargs.get("end")
 
         def normalize(rows):
             return [{
@@ -191,6 +192,7 @@ class WebullOpenAPIClient:
         def single(symbol):
             payload = self.sdk.bars(symbol=symbol, category="US_STOCK", interval=interval,
                                     start_time=start.isoformat(), count=min(int(limit), 10_000),
+                                    end_time=end.isoformat() if end else None,
                                     extend_hour_required=True, include_overnight=True)
             rows = normalize(self._rows(payload))
             with result_lock:
@@ -239,6 +241,7 @@ class WebullOpenAPIClient:
                 payload = self.sdk.batch_bars(
                     symbols=batch, category="US_STOCK", interval=interval,
                     start_time=start.isoformat(), count=min(int(limit), 10_000),
+                    end_time=end.isoformat() if end else None,
                     extend_hour_required=True, include_overnight=True,
                 )
                 decoded = grouped(payload)
@@ -267,15 +270,24 @@ class WebullOpenAPIClient:
                     fallback(batch, f"{type(exc).__name__}: {exc}")
                     batch_fallback_count = len(batch)
             finally:
-                LOGGER.info(
+                LOGGER.warning(
                     "WEBULL batch history batch_size=%d elapsed_seconds=%.3f "
-                    "returned_symbols=%d fallback_count=%d",
+                    "returned_symbols=%d returned_bars=%d fallback_count=%d",
                     len(batch), time.monotonic() - batch_started, returned_count,
+                    sum(len(output.get(symbol, ())) for symbol in batch),
                     batch_fallback_count,
                 )
 
         if len(wanted) == 1:
+            started = time.monotonic()
             single(wanted[0])
+            LOGGER.warning(
+                "WEBULL history complete total_symbols=1 count_per_symbol=%d batches=1 "
+                "concurrency=1 elapsed_seconds=%.3f returned_symbols=%d returned_bars=%d "
+                "fallback_count=0",
+                min(int(limit), 1200), time.monotonic() - started, len(output),
+                sum(len(rows) for rows in output.values()),
+            )
         elif wanted:
             started = time.monotonic()
             batches = [wanted[offset:offset + WEBULL_HISTORY_BATCH_MAX]
@@ -288,11 +300,13 @@ class WebullOpenAPIClient:
                 futures = [executor.submit(request_batch, batch) for batch in batches]
                 for future in as_completed(futures):
                     future.result()
-            LOGGER.info(
-                "WEBULL batch history complete total_symbols=%d batches=%d concurrency=%d "
-                "elapsed_seconds=%.3f returned_symbols=%d fallback_count=%d",
-                len(wanted), len(batches), concurrency, time.monotonic() - started,
-                len(output), fallback_count,
+            LOGGER.warning(
+                "WEBULL batch history complete total_symbols=%d count_per_symbol=%d "
+                "batches=%d concurrency=%d elapsed_seconds=%.3f returned_symbols=%d "
+                "returned_bars=%d fallback_count=%d",
+                len(wanted), min(int(limit), 1200), len(batches), concurrency,
+                time.monotonic() - started, len(output),
+                sum(len(rows) for rows in output.values()), fallback_count,
             )
         return {symbol: output[symbol] for symbol in wanted if symbol in output}
 
