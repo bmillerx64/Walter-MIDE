@@ -9,7 +9,7 @@ class Store:
         self.results = results
 
 
-def _pipeline(records, *, catalyst_scores):
+def _pipeline(records, *, catalyst_scores, trusted=True):
     store = Store()
     calls = {"catalyst": 0}
 
@@ -24,6 +24,7 @@ def _pipeline(records, *, catalyst_scores):
                 updates = {
                     "headline": f"{symbol} announces material company news",
                     "catalyst_score": score,
+                    "news_flags": ["source_quality:trusted"] if trusted else [],
                 }
             decisions[symbol] = Decision(True, "Catalyst", "assessed", updates)
         return decisions
@@ -76,7 +77,7 @@ def test_low_float_candidate_remains_normal_squeeze_lane():
     assert calls["catalyst"] == 1
 
 
-def test_plag_style_larger_float_with_material_catalyst_reaches_participation():
+def test_plag_style_larger_float_with_trusted_material_catalyst_reaches_participation():
     architecture, result, calls = _pipeline(
         [{"symbol": "PLAG", "price": 1.0, "float_shares": 11_500_000}],
         catalyst_scores={"PLAG": 9},
@@ -91,7 +92,6 @@ def test_plag_style_larger_float_with_material_catalyst_reaches_participation():
     assert stages.index("Free-Float Gate") < stages.index("Catalyst Assessment")
     assert "Participation Assessment" in stages
     assert "Expansion Assessment" in stages
-    # The Stage-5 catalyst assessment consumes the Stage-4 preflight cache.
     assert calls["catalyst"] == 1
 
 
@@ -119,6 +119,19 @@ def test_weak_headline_score_does_not_bypass_float_gate():
     assert calls["catalyst"] == 1
 
 
+def test_untrusted_source_does_not_bypass_float_gate_even_with_high_score():
+    architecture, result, calls = _pipeline(
+        [{"symbol": "BLOG", "price": 1.0, "float_shares": 11_500_000}],
+        catalyst_scores={"BLOG": 20},
+        trusted=False,
+    )
+    record = next(item for item in result if item["symbol"] == "BLOG")
+    assert record.get("float_gate_bypass") is not True
+    assert record["terminal_outcome"] == "Rejected"
+    assert record["terminal_stage"] == "Free-Float Gate"
+    assert calls["catalyst"] == 1
+
+
 def test_unavailable_float_is_never_excused_by_catalyst_lane():
     calls = {"catalyst": 0}
 
@@ -129,7 +142,11 @@ def test_unavailable_float_is_never_excused_by_catalyst_lane():
                 True,
                 "Catalyst",
                 "assessed",
-                {"headline": "Material news", "catalyst_score": 10},
+                {
+                    "headline": "Material news",
+                    "catalyst_score": 10,
+                    "news_flags": ["source_quality:trusted"],
+                },
             )
             for item in items
         }
