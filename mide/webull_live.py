@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 from collections import deque
-from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
+from concurrent.futures import (ThreadPoolExecutor, TimeoutError as FutureTimeoutError,
+                                as_completed)
 from dataclasses import dataclass
 from datetime import datetime, timezone
 import json
@@ -24,6 +25,7 @@ from .startup import log_startup
 LOGGER = logging.getLogger(__name__)
 NETWORK_TIMEOUT_SECONDS = 8
 WEBULL_HISTORY_BATCH_MAX = 20
+WEBULL_HISTORY_MAX_CONCURRENCY = 4
 _NETWORK_EXECUTOR = ThreadPoolExecutor(max_workers=4, thread_name_prefix="walter-network")
 _WEBULL_UNSUPPORTED_SYMBOL = re.compile(r"(?:\.|-)WI$", re.IGNORECASE)
 
@@ -190,7 +192,9 @@ class WebullOpenAPIClient:
             payload = self.sdk.bars(symbol=symbol, category="US_STOCK", interval=interval,
                                     start_time=start.isoformat(), count=min(int(limit), 10_000),
                                     extend_hour_required=True, include_overnight=True)
-            output[symbol] = normalize(self._rows(payload))
+            rows = normalize(self._rows(payload))
+            with result_lock:
+                output[symbol] = rows
 
         def grouped(payload):
             """Decode SDK batch envelopes without accepting ambiguous bar rows."""
@@ -216,16 +220,21 @@ class WebullOpenAPIClient:
             return groups
 
         fallback_count = 0
+        result_lock = Lock()
 
         def fallback(batch, reason):
             nonlocal fallback_count
-            fallback_count += len(batch)
+            with result_lock:
+                fallback_count += len(batch)
             LOGGER.warning("WEBULL batch history fallback batch_size=%d reason=%s",
                            len(batch), reason)
             for symbol in batch:
                 single(symbol)
 
         def request_batch(batch):
+            batch_started = time.monotonic()
+            returned_count = 0
+            batch_fallback_count = 0
             try:
                 payload = self.sdk.batch_bars(
                     symbols=batch, category="US_STOCK", interval=interval,
@@ -235,14 +244,16 @@ class WebullOpenAPIClient:
                 decoded = grouped(payload)
                 if not decoded:
                     fallback(batch, "response could not be safely decoded")
+                    batch_fallback_count = len(batch)
                     return
                 for symbol, rows in decoded.items():
-                    output[symbol] = normalize(rows)
+                    with result_lock:
+                        output[symbol] = normalize(rows)
                 missing = [symbol for symbol in batch if symbol not in decoded]
                 if missing:
                     fallback(missing, "symbols absent from batch response")
-                LOGGER.info("WEBULL batch history batch_size=%d returned_symbols=%d "
-                            "fallback_count=%d", len(batch), len(decoded), len(missing))
+                returned_count = len(decoded)
+                batch_fallback_count = len(missing)
             except Exception as exc:
                 # A 417 may identify only that the request contains a bad symbol.
                 # Bisect it so valid peers continue to benefit from batch history.
@@ -254,15 +265,36 @@ class WebullOpenAPIClient:
                     request_batch(batch[midpoint:])
                 else:
                     fallback(batch, f"{type(exc).__name__}: {exc}")
+                    batch_fallback_count = len(batch)
+            finally:
+                LOGGER.info(
+                    "WEBULL batch history batch_size=%d elapsed_seconds=%.3f "
+                    "returned_symbols=%d fallback_count=%d",
+                    len(batch), time.monotonic() - batch_started, returned_count,
+                    batch_fallback_count,
+                )
 
         if len(wanted) == 1:
             single(wanted[0])
         elif wanted:
-            for offset in range(0, len(wanted), WEBULL_HISTORY_BATCH_MAX):
-                request_batch(wanted[offset:offset + WEBULL_HISTORY_BATCH_MAX])
-            LOGGER.info("WEBULL batch history complete batch_size=%d returned_symbols=%d "
-                        "fallback_count=%d", len(wanted), len(output), fallback_count)
-        return output
+            started = time.monotonic()
+            batches = [wanted[offset:offset + WEBULL_HISTORY_BATCH_MAX]
+                       for offset in range(0, len(wanted), WEBULL_HISTORY_BATCH_MAX)]
+            concurrency = min(WEBULL_HISTORY_MAX_CONCURRENCY, len(batches))
+            # SDK 2.0.16 builds a request, signature, and Response locally for each
+            # call; the shared ApiClient contributes read-only credentials/config.
+            with ThreadPoolExecutor(max_workers=concurrency,
+                                    thread_name_prefix="webull-history") as executor:
+                futures = [executor.submit(request_batch, batch) for batch in batches]
+                for future in as_completed(futures):
+                    future.result()
+            LOGGER.info(
+                "WEBULL batch history complete total_symbols=%d batches=%d concurrency=%d "
+                "elapsed_seconds=%.3f returned_symbols=%d fallback_count=%d",
+                len(wanted), len(batches), concurrency, time.monotonic() - started,
+                len(output), fallback_count,
+            )
+        return {symbol: output[symbol] for symbol in wanted if symbol in output}
 
     def stream(self, callback):
         return self.sdk.stream(callback)

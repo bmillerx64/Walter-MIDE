@@ -1485,6 +1485,15 @@ def _run_live_pipeline(
         ))
         candidate_by_symbol = {item["symbol"]: item for item in candidates}
         state["scan_stage_counts"]["structure_engine_input"] = len(candidates)
+        history_symbols = sum(
+            1 for item in candidates if is_valid_us_symbol(item.get("symbol"))
+        )
+        logging.getLogger(__name__).info(
+            "Participation history submission stage_input=%d snapshot_prefilter_output=%d "
+            "symbols_submitted=%d history_batches=%d",
+            len(records), len(candidates), history_symbols,
+            (history_symbols + 19) // 20,
+        )
         analyzed = analyze_candidates(
             client, candidates, index_news(state["news"]), state["reasons"]
         )
