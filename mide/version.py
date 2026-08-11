@@ -8,6 +8,11 @@ import os
 from pathlib import Path
 import subprocess
 
+# Import after the core modules have loaded but before app.py binds the live
+# behavioral decision function. This activates the narrow live-market safety
+# overlays for share-structure conflicts and thin-participation promotions.
+from . import live_safety as _live_safety  # noqa: F401
+
 
 def _version() -> str:
     return (Path(__file__).parents[1] / "VERSION").read_text().strip()
@@ -40,4 +45,3 @@ BUILD = BuildInfo(
 )
 
 __version__ = BUILD.version
-
