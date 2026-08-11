@@ -43,8 +43,6 @@ def _configured_fmp_api_key() -> str:
         value = str(os.getenv(name, "") or "").strip()
         if value:
             return value
-    # Streamlit Cloud secrets are not guaranteed to be copied into os.environ.
-    # Keep this import optional so CLI/tests do not acquire a Streamlit dependency.
     try:
         import streamlit as st
         for name in ("FMP_API_KEY", "FINANCIAL_MODELING_PREP_API_KEY"):
@@ -78,8 +76,6 @@ class NewsArticle:
 
 
 class NewsProvider(ABC):
-    """Contract implemented only by official, credentialed provider APIs."""
-
     name: str
 
     @abstractmethod
@@ -88,8 +84,6 @@ class NewsProvider(ABC):
 
 
 class AlpacaNewsProvider(NewsProvider):
-    """Temporary fallback using Alpaca's official Market Data news endpoint."""
-
     name = "Alpaca (temporary fallback)"
 
     def __init__(self, client, *, page_budget: int = 20):
@@ -132,37 +126,30 @@ class AlpacaNewsProvider(NewsProvider):
 
 
 class MarketDataNewsProvider(AlpacaNewsProvider):
-    """Normalize news obtained through the provider-neutral market-data seam."""
-
     def __init__(self, provider, *, page_budget: int = 20):
         super().__init__(provider, page_budget=page_budget)
         self.provider_label = getattr(provider, "provider_name", provider.__class__.__name__)
         self.name = f"{self.provider_label} news"
 
     def fetch(self, *, since: datetime, symbols: Iterable[str] = ()) -> list[NewsArticle]:
-        # Provider implementations own vendor paging and request limits.
         raw = self.client.news(since, limit=self.page_budget * 50,
                                symbols=sorted(set(symbols)) or None, sort="asc")
         return [article for item in raw if (article := self._normalize(item))]
 
 
 class FMPNewsProvider(NewsProvider):
-    """Official Financial Modeling Prep stock-news and press-release adapter.
-
-    Walter already uses FMP for share-structure fundamentals. When an FMP key is
-    configured, this adapter provides the structured ticker/headline/time/source
-    metadata that Webull OpenAPI does not expose. No headline-to-ticker inference
-    is performed: only provider-supplied symbol metadata is retained.
-    """
+    """Official FMP stock-news and press-release adapter for catalyst evidence."""
 
     name = "Financial Modeling Prep news"
     BASE_URL = "https://financialmodelingprep.com/stable"
     BATCH_SIZE = 20
+    FRESHNESS = timedelta(hours=6)
 
-    def __init__(self, api_key: str, *, timeout: int = 12, session=None):
+    def __init__(self, api_key: str, *, timeout: int = 12, session=None, now=None):
         self.api_key = str(api_key or "").strip()
         self.timeout = timeout
         self.session = session or requests.Session()
+        self.now = now or (lambda: datetime.now(UTC))
         self.request_count = 0
 
     @staticmethod
@@ -196,13 +183,9 @@ class FMPNewsProvider(NewsProvider):
         ).strip()
         stable_id = item.get("id") or url or f"{endpoint}:{created.isoformat()}:{_headline_key(headline)}"
         return NewsArticle(
-            id=str(stable_id),
-            headline=headline,
-            created_at=created,
+            id=str(stable_id), headline=headline, created_at=created,
             updated_at=_utc(item.get("updated_at") or item.get("updatedDate")),
-            symbols=symbols,
-            source=source or "FMP",
-            url=str(url) if url else None,
+            symbols=symbols, source=source or "FMP", url=str(url) if url else None,
             provider="Financial Modeling Prep",
         )
 
@@ -210,7 +193,7 @@ class FMPNewsProvider(NewsProvider):
         params = {
             "symbols": ",".join(symbols),
             "from": since.astimezone(UTC).date().isoformat(),
-            "to": datetime.now(UTC).date().isoformat(),
+            "to": self.now().astimezone(UTC).date().isoformat(),
             "page": 0,
             "limit": 100,
             "apikey": self.api_key,
@@ -235,22 +218,19 @@ class FMPNewsProvider(NewsProvider):
         ))
         if not self.api_key:
             raise RuntimeError("FMP news credential is not configured")
+        since = max(since.astimezone(UTC), self.now().astimezone(UTC) - self.FRESHNESS)
         batches = [wanted[i:i + self.BATCH_SIZE] for i in range(0, len(wanted), self.BATCH_SIZE)] or [[]]
         self.request_count = 0
         output: list[NewsArticle] = []
         for batch in batches:
             if not batch:
                 continue
-            # Stock news catches publisher feeds such as market-news wires; press
-            # releases adds the direct company-announcement lane requested by Walter.
             output.extend(self._request("news/stock", batch, since))
             output.extend(self._request("news/press-releases", batch, since))
         return output
 
 
 class CredentialPendingNewsProvider(NewsProvider):
-    """Explicit non-activation guard for enterprise providers under evaluation."""
-
     def __init__(self, name: str):
         self.name = name
 
@@ -259,14 +239,10 @@ class CredentialPendingNewsProvider(NewsProvider):
 
 
 class UnavailableNewsProvider(NewsProvider):
-    """Explicit provider seam when the selected market-data API has no news feed."""
-
     def __init__(self, name: str, reason: str):
         self.name, self.reason = name, reason
 
     def fetch(self, *, since: datetime, symbols: Iterable[str] = ()) -> list[NewsArticle]:
-        # An empty result keeps scanning operational without silently contacting
-        # another market-data vendor. Diagnostics retain the missing capability.
         return []
 
 
@@ -275,14 +251,10 @@ class NewsService:
 
     def __init__(self, providers: Iterable[NewsProvider], *, state_path=DEFAULT_STATE_PATH, now=None):
         configured = list(providers)
-        # Webull OpenAPI has no raw article feed. If Walter already has an FMP
-        # credential, transparently use FMP's official structured news endpoints
-        # before the explicit unavailable seam. This preserves the provider-neutral
-        # contract and never imports or calls Alpaca from a Live Webull scan.
         if configured and all(isinstance(provider, UnavailableNewsProvider) for provider in configured):
             api_key = _configured_fmp_api_key()
             if api_key:
-                configured.insert(0, FMPNewsProvider(api_key))
+                configured.insert(0, FMPNewsProvider(api_key, now=now))
         self.providers = configured
         self.state_path = Path(state_path)
         self.now = now or (lambda: datetime.now(UTC))
@@ -339,7 +311,6 @@ class NewsService:
     ) -> list[dict]:
         cached = self._cached()
         prior = _utc(self._state.get("last_successful_fetch"))
-        # A small overlap protects articles updated at the exact cursor boundary.
         since = (
             self.now() - initial_lookback
             if force_lookback
@@ -371,6 +342,14 @@ class NewsService:
             break
 
         combined = self._deduplicate([*cached, *fresh])
+        if self.metrics["active_provider"] == FMPNewsProvider.name:
+            cutoff = self.now().astimezone(UTC) - FMPNewsProvider.FRESHNESS
+            wanted = set(requested_symbols)
+            combined = [
+                article for article in combined
+                if article.created_at >= cutoff
+                and (not wanted or bool(wanted.intersection(article.symbols)))
+            ]
         self.metrics["articles_received"] += len(fresh)
         self.metrics["articles_without_symbols"] += sum(not article.symbols for article in fresh)
         self.metrics["unique_symbols_discovered"] = len({s for article in combined for s in article.symbols})
@@ -398,7 +377,6 @@ class NewsService:
 
 
 def symbol_news_evidence(news_items: Iterable[dict]) -> dict[str, dict]:
-    """Retain every article and compute corroboration without changing ranking."""
     output: dict[str, dict] = {}
     for article in news_items:
         seen = _utc(article.get("created_at") or article.get("updated_at"))
@@ -433,7 +411,6 @@ def ticker_inspection(
     analyzed,
     records,
 ) -> dict:
-    """Explain one ticker's complete news-to-final-disposition path."""
     symbol = str(symbol or "").strip().upper()
     articles = [item for item in news_items or [] if symbol in {str(s).upper() for s in item.get("symbols") or []}]
     stage2 = next((item for item in stage2_rejections or [] if item.get("symbol") == symbol), None)
