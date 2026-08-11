@@ -1,11 +1,8 @@
 """Route fresh material-news movers around the squeeze-only float ceiling.
 
-Walter keeps its published eight-stage contract unchanged. The free-float stage
-performs a catalyst preflight so a fresh, material company-specific event from a
-trusted source can classify a larger-float name into the Catalyst Momentum lane
-before the squeeze-only ceiling is enforced. The formal Catalyst Assessment then
-consumes the cached preflight decisions, so news is fetched once and the audit
-trail retains Walter's existing stage order.
+Walter keeps its published eight-stage contract unchanged. Catalyst evidence is
+preflighted only to classify the free-float strategy lane; the formal Catalyst
+Assessment still owns catalyst membership and failures.
 """
 from __future__ import annotations
 
@@ -18,7 +15,6 @@ _INSTALLED = False
 
 
 def _material_catalyst(record: Mapping[str, object]) -> bool:
-    """Require trusted structured news, a headline, and a material positive score."""
     try:
         score = float(record.get("catalyst_score") or 0)
     except (TypeError, ValueError):
@@ -35,7 +31,7 @@ def _material_catalyst(record: Mapping[str, object]) -> bool:
 
 
 def install() -> None:
-    """Install the two-lane catalyst preflight once before Walter is constructed."""
+    """Install catalyst-aware float routing without changing stage contracts."""
     global _INSTALLED
     if _INSTALLED:
         return
@@ -54,30 +50,39 @@ def install() -> None:
         catalyst_cache: dict[str, architecture.Decision] = {}
 
         def catalyst_preflight_float(candidates):
-            """Fetch catalyst evidence once, then enforce float by strategy lane."""
-            catalyst_decisions = dict(catalyst_stage(candidates))
+            """Preflight catalyst evidence, but let float own only float membership."""
+            # If catalyst itself is broken, do not mislabel that failure as a
+            # Free-Float failure. Fall back to the ordinary float stage; Stage 5
+            # will execute catalyst normally and architecture will attribute the
+            # technical failure to Catalyst Assessment.
+            try:
+                raw = dict(catalyst_stage([dict(item) for item in candidates]))
+            except Exception:
+                return float_stage(candidates)
+
+            expected = {self._symbol(item) for item in candidates}
+            # A preflight must never weaken the architecture's every-and-only
+            # membership rule. If the provider adds/removes symbols, leave the
+            # ordinary float result untouched and let Stage 5 enforce the contract.
+            if set(raw) != expected:
+                return float_stage(candidates)
+
             hydrated = []
             for item in candidates:
                 symbol = self._symbol(item)
-                decision = catalyst_decisions.get(symbol)
-                if decision is None:
-                    raise architecture.ArchitectureViolation(
-                        f"Catalyst preflight must decide candidate {symbol}"
-                    )
+                decision = raw[symbol]
                 catalyst_cache[symbol] = decision
                 record = dict(item)
                 record.update(decision.updates)
                 hydrated.append(record)
 
             decisions = dict(float_stage(hydrated))
+            if set(decisions) != expected:
+                return decisions
+
             for item in hydrated:
                 symbol = self._symbol(item)
-                decision = decisions.get(symbol)
-                if decision is None:
-                    continue
-
-                # Never use catalyst routing to excuse missing/unverified float.
-                # The exception is only for a KNOWN float above the squeeze ceiling.
+                decision = decisions[symbol]
                 over_squeeze_ceiling = (
                     not decision.passed
                     and "exceeds configured limit" in str(decision.reason).lower()
@@ -108,18 +113,14 @@ def install() -> None:
             return decisions
 
         def cached_catalyst(candidates):
-            """Publish the already-fetched catalyst evidence at Stage 5."""
-            missing = [
-                item for item in candidates
-                if self._symbol(item) not in catalyst_cache
-            ]
-            if missing:
-                fresh = dict(catalyst_stage(missing))
-                catalyst_cache.update(fresh)
-            return {
-                self._symbol(item): catalyst_cache[self._symbol(item)]
-                for item in candidates
-            }
+            """Publish cached evidence only when it exactly covers Stage 5 input."""
+            symbols = [self._symbol(item) for item in candidates]
+            if all(symbol in catalyst_cache for symbol in symbols):
+                return {symbol: catalyst_cache[symbol] for symbol in symbols}
+            # Missing cache means the preflight could not safely classify the
+            # candidate. Execute the real stage so errors and membership
+            # violations are attributed to Catalyst Assessment.
+            return catalyst_stage(candidates)
 
         self.free_float = catalyst_preflight_float
         self.catalyst = cached_catalyst
