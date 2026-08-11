@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 import importlib
 import json
 import logging
@@ -12,6 +12,7 @@ from threading import Lock
 import time
 from typing import Iterable
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
+from zoneinfo import ZoneInfo
 
 
 HTTP_HOST = "https://api.webull.com"
@@ -106,6 +107,30 @@ def _wait_for_history_bar_slot() -> None:
 def _invalid_history_symbol(exc: Exception) -> bool:
     message = f"{type(exc).__name__}: {exc}".upper()
     return "INVALID_SYMBOL" in message or ("417" in message and "SYMBOL" in message)
+
+
+def _clamp_future_session_start(parsed: datetime, *, now: datetime | None = None) -> datetime:
+    """Move an impossible future intraday start to the latest prior U.S. weekday.
+
+    Walter anchors current-session history at 04:00 America/New_York. Between
+    midnight and 04:00 ET that anchor is still in the future, so Webull correctly
+    returns an empty current-session batch. Preserve the intended prior market
+    session instead of sending an impossible start time. Historical-profile calls
+    carry an explicit end_time and therefore do not use this correction.
+    """
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    now = now or datetime.now(timezone.utc)
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=timezone.utc)
+    if parsed <= now:
+        return parsed
+
+    eastern = ZoneInfo("America/New_York")
+    candidate = parsed.astimezone(eastern) - timedelta(days=1)
+    while candidate.weekday() >= 5:
+        candidate -= timedelta(days=1)
+    return candidate.astimezone(parsed.tzinfo)
 
 
 class TracedHTTPTransport:
@@ -316,6 +341,8 @@ class WebullSDKClient:
             if isinstance(value, str):
                 try:
                     parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+                    if key == "start_time" and not normalized.get("end_time"):
+                        parsed = _clamp_future_session_start(parsed)
                     normalized[key] = int(parsed.timestamp() * 1000)
                 except ValueError:
                     pass
