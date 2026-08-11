@@ -1,6 +1,7 @@
 """Diagnostics for Arrow-backed Streamlit tables."""
 from __future__ import annotations
 import inspect
+import json
 import logging
 from functools import wraps
 from typing import Any
@@ -37,6 +38,18 @@ def log_arrow_violations(value: Any, *, dataframe_name: str) -> list[dict[str, A
     for violation in violations:
         LOGGER.error("ARROW_SERIALIZATION_VIOLATION %r", violation)
     return violations
+
+def _arrow_safe_table_value(value: Any) -> Any:
+    if isinstance(value, (dict, list, tuple, set)):
+        return json.dumps(value, sort_keys=True, default=str)
+    return value
+
+def _arrow_safe_frame(value: Any, violating_columns: set[str]) -> pd.DataFrame:
+    frame = value.copy() if isinstance(value, pd.DataFrame) else pd.DataFrame(value)
+    for column in frame.columns:
+        if str(column) in violating_columns:
+            frame[column] = frame[column].map(_arrow_safe_table_value)
+    return frame
 
 def instrument_streamlit_tables(streamlit_module: Any) -> None:
     """Log serialization problems without mutating the value handed to Streamlit."""
