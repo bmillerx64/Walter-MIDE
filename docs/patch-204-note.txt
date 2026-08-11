@@ -1,0 +1,1 @@
+Patch 204: normalize Webull history end_time to epoch milliseconds so end-dated batch history requests use the SDK's expected argument format and avoid unnecessary single-symbol fallback.
