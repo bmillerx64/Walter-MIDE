@@ -11,8 +11,10 @@ class Store:
 
 def _pipeline(records, *, catalyst_scores):
     store = Store()
+    calls = {"catalyst": 0}
 
     def catalyst(items):
+        calls["catalyst"] += 1
         decisions = {}
         for item in items:
             symbol = item["symbol"]
@@ -55,15 +57,15 @@ def _pipeline(records, *, catalyst_scores):
         publish=lambda items: None,
     )
     result = architecture.run()
-    return architecture, result
+    return architecture, result, calls
 
 
-def test_route_places_catalyst_before_free_float_in_production_contract():
-    assert STAGES[3:5] == ("Catalyst Assessment", "Free-Float Gate")
+def test_published_architecture_order_remains_unchanged():
+    assert STAGES[3:5] == ("Free-Float Gate", "Catalyst Assessment")
 
 
 def test_low_float_candidate_remains_normal_squeeze_lane():
-    architecture, result = _pipeline(
+    architecture, result, calls = _pipeline(
         [{"symbol": "TINY", "price": 1.0, "float_shares": 2_000_000}],
         catalyst_scores={"TINY": 0},
     )
@@ -71,10 +73,11 @@ def test_low_float_candidate_remains_normal_squeeze_lane():
     assert record.get("float_gate_bypass") is not True
     assert record.get("strategy_lane") != "CATALYST_MOMENTUM"
     assert record["terminal_outcome"] == "Qualified and Ranked"
+    assert calls["catalyst"] == 1
 
 
 def test_plag_style_larger_float_with_material_catalyst_reaches_participation():
-    architecture, result = _pipeline(
+    architecture, result, calls = _pipeline(
         [{"symbol": "PLAG", "price": 1.0, "float_shares": 11_500_000}],
         catalyst_scores={"PLAG": 9},
     )
@@ -83,14 +86,17 @@ def test_plag_style_larger_float_with_material_catalyst_reaches_participation():
     assert record["float_gate_bypass"] is True
     assert record["squeeze_eligible"] is False
     assert record["terminal_outcome"] == "Qualified and Ranked"
+    assert record["headline"].startswith("PLAG announces")
     stages = [step["stage"] for step in record["architecture_audit"]]
-    assert stages.index("Catalyst Assessment") < stages.index("Free-Float Gate")
+    assert stages.index("Free-Float Gate") < stages.index("Catalyst Assessment")
     assert "Participation Assessment" in stages
     assert "Expansion Assessment" in stages
+    # The Stage-5 catalyst assessment consumes the Stage-4 preflight cache.
+    assert calls["catalyst"] == 1
 
 
 def test_larger_float_without_material_catalyst_is_still_rejected():
-    architecture, result = _pipeline(
+    architecture, result, calls = _pipeline(
         [{"symbol": "BIG", "price": 1.0, "float_shares": 11_500_000}],
         catalyst_scores={"BIG": 0},
     )
@@ -98,10 +104,11 @@ def test_larger_float_without_material_catalyst_is_still_rejected():
     assert record.get("float_gate_bypass") is not True
     assert record["terminal_outcome"] == "Rejected"
     assert record["terminal_stage"] == "Free-Float Gate"
+    assert calls["catalyst"] == 1
 
 
 def test_weak_headline_score_does_not_bypass_float_gate():
-    architecture, result = _pipeline(
+    architecture, result, calls = _pipeline(
         [{"symbol": "WEAK", "price": 1.0, "float_shares": 11_500_000}],
         catalyst_scores={"WEAK": 6.9},
     )
@@ -109,3 +116,49 @@ def test_weak_headline_score_does_not_bypass_float_gate():
     assert record.get("float_gate_bypass") is not True
     assert record["terminal_outcome"] == "Rejected"
     assert record["terminal_stage"] == "Free-Float Gate"
+    assert calls["catalyst"] == 1
+
+
+def test_unavailable_float_is_never_excused_by_catalyst_lane():
+    calls = {"catalyst": 0}
+
+    def catalyst(items):
+        calls["catalyst"] += 1
+        return {
+            item["symbol"]: Decision(
+                True,
+                "Catalyst",
+                "assessed",
+                {"headline": "Material news", "catalyst_score": 10},
+            )
+            for item in items
+        }
+
+    def unavailable_float(items):
+        return {
+            item["symbol"]: Decision(
+                False, "Free Float", "Usable free-float value unavailable"
+            )
+            for item in items
+        }
+
+    passing = lambda items: {
+        item["symbol"]: Decision(True, "assessment", "passed") for item in items
+    }
+    architecture = WalterArchitectureV1(
+        policy=ArchitecturePolicy(0.05, 5.0, 3_500_000),
+        discover=lambda: [{"symbol": "UNKNOWN", "price": 1.0}],
+        catalyst=catalyst,
+        free_float=unavailable_float,
+        participation=passing,
+        expansion=passing,
+        rank=lambda items: list(items),
+        store=Store(),
+        publish=lambda items: None,
+    )
+    result = architecture.run()
+    record = next(item for item in result if item["symbol"] == "UNKNOWN")
+    assert record.get("float_gate_bypass") is not True
+    assert record["terminal_outcome"] == "Rejected"
+    assert record["terminal_stage"] == "Free-Float Gate"
+    assert calls["catalyst"] == 1
