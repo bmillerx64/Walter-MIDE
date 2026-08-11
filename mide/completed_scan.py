@@ -10,14 +10,21 @@ from typing import Any, MutableMapping
 COMPLETED_SCAN_KEY = "completed_scan"
 SCAN_CONTEXT_KEY = "scan_context"
 
+_INFORMATIONAL_WARNING_PREFIXES = (
+    "Skipped unsupported Webull snapshot symbol",
+    "FMP free-float unavailable for",
+    "Free-float refresh unresolved for",
+)
+
 
 @dataclass(frozen=True)
 class CompletedScan:
     """One atomic scan result shared by every post-scan dashboard view.
 
-    The contained records, warnings, and diagnostics intentionally retain their
-    identities.  Views must observe this object; they must not reconstruct a
-    provider (or infer one from the currently selected control) when rendering.
+    Records and diagnostics retain the completed run's evidence.  Benign symbol
+    skips and fail-closed free-float coverage notices are preserved in
+    ``diagnostics['data_quality_notices']`` instead of being mislabeled as API
+    warnings in Data Validation.
     """
 
     provider: str | None
@@ -28,6 +35,20 @@ class CompletedScan:
     prefilter_count: int
     completed_at: datetime
     source_label: str
+
+    def __post_init__(self) -> None:
+        notices = []
+        operational = []
+        for warning in self.warnings:
+            text = str(warning)
+            if text.startswith(_INFORMATIONAL_WARNING_PREFIXES):
+                notices.append(text)
+            else:
+                operational.append(text)
+        if notices:
+            existing = list(self.diagnostics.get("data_quality_notices") or [])
+            self.diagnostics["data_quality_notices"] = existing + notices
+        object.__setattr__(self, "warnings", operational)
 
     @property
     def pipeline_sources(self) -> list[dict[str, Any]]:
