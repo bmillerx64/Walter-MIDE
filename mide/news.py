@@ -20,6 +20,17 @@ NEGATIVE = {
 }
 
 MATERIAL_CATALYST_SCORE = 7
+TRUSTED_CATALYST_SOURCE_TERMS = (
+    "pr newswire",
+    "business wire",
+    "globenewswire",
+    "globe newswire",
+    "accesswire",
+    "reuters",
+    "benzinga",
+    "tipranks",
+    "company press release",
+)
 
 
 def classify_headline(headline: str):
@@ -35,6 +46,11 @@ def classify_headline(headline: str):
             score += weight
             flags.append(phrase)
     return max(-40, min(30, score)), flags
+
+
+def trusted_catalyst_source(source: str) -> bool:
+    value = str(source or "").strip().casefold()
+    return any(term in value for term in TRUSTED_CATALYST_SOURCE_TERMS)
 
 
 def _news_timestamp(item: dict) -> datetime | None:
@@ -55,9 +71,9 @@ def index_news(news_items):
     """Choose the freshest material event per symbol, not merely the last headline.
 
     A neutral follow-up article should not hide a still-fresh contract, approval,
-    award, trial result, or other material event.  When multiple material events
+    award, trial result, or other material event. When multiple material events
     exist, the newest one wins, so a later financing/offering headline can still
-    supersede an earlier positive catalyst.  If no material event exists, Walter
+    supersede an earlier positive catalyst. If no material event exists, Walter
     falls back to the newest headline exactly as before.
     """
     grouped: dict[str, list[dict]] = {}
@@ -65,6 +81,10 @@ def index_news(news_items):
         dt = _news_timestamp(item) or datetime.now(timezone.utc)
         headline = item.get("headline", "")
         catalyst, flags = classify_headline(headline)
+        source = str(item.get("source") or item.get("author") or "").strip()
+        evidence_flags = list(flags)
+        if trusted_catalyst_source(source):
+            evidence_flags.append("source_quality:trusted")
         for raw_symbol in item.get("symbols", []) or []:
             symbol = str(raw_symbol or "").strip().upper()
             if not symbol:
@@ -73,9 +93,9 @@ def index_news(news_items):
                 "headline": headline,
                 "created_at": dt,
                 "catalyst_score": catalyst,
-                "flags": flags,
+                "flags": evidence_flags,
                 "url": item.get("url", ""),
-                "source": item.get("source") or item.get("author") or "",
+                "source": source,
                 "provider": item.get("provider") or "",
             })
 
@@ -136,6 +156,10 @@ def recent_wire_news_log(
     output = []
     for symbol, article in sorted(newest.items()):
         snapshot = (snapshots or {}).get(symbol)
+        prefilter = (
+            prefilter_decision(symbol, snapshot, settings)["passed"]
+            if False else None
+        )
         prefilter = (
             prefilter_decision(symbol, snapshot, settings)
             if snapshot is not None
