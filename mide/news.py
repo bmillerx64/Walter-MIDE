@@ -9,6 +9,8 @@ POSITIVE = {
     "purchase order": 12, "partnership": 9, "strategic": 6,
     "patent": 7, "earnings beat": 10, "raises guidance": 12,
     "acquisition": 7, "merger": 5, "clinical": 8, "trial results": 10,
+    "agreement": 8, "award": 10, "selected": 7, "collaboration": 8,
+    "milestone": 7, "authorization": 12, "clearance": 14, "license": 8,
 }
 NEGATIVE = {
     "offering": -25, "registered direct": -28, "public offering": -30,
@@ -16,6 +18,9 @@ NEGATIVE = {
     "reverse split": -20, "delisting": -28, "bankruptcy": -40,
     "going concern": -24, "shelf registration": -14,
 }
+
+MATERIAL_CATALYST_SCORE = 7
+
 
 def classify_headline(headline: str):
     text = (headline or "").lower()
@@ -31,28 +36,6 @@ def classify_headline(headline: str):
             flags.append(phrase)
     return max(-40, min(30, score)), flags
 
-def index_news(news_items):
-    index = {}
-    for item in news_items:
-        created = item.get("created_at") or item.get("updated_at")
-        try:
-            dt = datetime.fromisoformat(created.replace("Z", "+00:00"))
-        except Exception:
-            dt = datetime.now(timezone.utc)
-        headline = item.get("headline", "")
-        catalyst, flags = classify_headline(headline)
-        for symbol in item.get("symbols", []) or []:
-            entry = {
-                "headline": headline,
-                "created_at": dt,
-                "catalyst_score": catalyst,
-                "flags": flags,
-                "url": item.get("url", ""),
-            }
-            if symbol not in index or dt > index[symbol]["created_at"]:
-                index[symbol] = entry
-    return index
-
 
 def _news_timestamp(item: dict) -> datetime | None:
     raw = item.get("created_at") or item.get("updated_at")
@@ -66,6 +49,45 @@ def _news_timestamp(item: dict) -> datetime | None:
     if value.tzinfo is None:
         value = value.replace(tzinfo=timezone.utc)
     return value.astimezone(timezone.utc)
+
+
+def index_news(news_items):
+    """Choose the freshest material event per symbol, not merely the last headline.
+
+    A neutral follow-up article should not hide a still-fresh contract, approval,
+    award, trial result, or other material event.  When multiple material events
+    exist, the newest one wins, so a later financing/offering headline can still
+    supersede an earlier positive catalyst.  If no material event exists, Walter
+    falls back to the newest headline exactly as before.
+    """
+    grouped: dict[str, list[dict]] = {}
+    for item in news_items:
+        dt = _news_timestamp(item) or datetime.now(timezone.utc)
+        headline = item.get("headline", "")
+        catalyst, flags = classify_headline(headline)
+        for raw_symbol in item.get("symbols", []) or []:
+            symbol = str(raw_symbol or "").strip().upper()
+            if not symbol:
+                continue
+            grouped.setdefault(symbol, []).append({
+                "headline": headline,
+                "created_at": dt,
+                "catalyst_score": catalyst,
+                "flags": flags,
+                "url": item.get("url", ""),
+                "source": item.get("source") or item.get("author") or "",
+                "provider": item.get("provider") or "",
+            })
+
+    index = {}
+    for symbol, entries in grouped.items():
+        material = [
+            entry for entry in entries
+            if abs(float(entry.get("catalyst_score") or 0)) >= MATERIAL_CATALYST_SCORE
+        ]
+        pool = material or entries
+        index[symbol] = max(pool, key=lambda entry: entry["created_at"])
+    return index
 
 
 def recent_wire_news_log(
