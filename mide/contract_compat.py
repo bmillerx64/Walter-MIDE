@@ -1,17 +1,10 @@
-"""Narrow compatibility guards for public Walter component contracts.
-
-These adapters keep provider optimizations and live-safety overlays from changing
-standalone component semantics relied on by diagnostics and verification.
-"""
+"""Narrow compatibility guards for public Walter component contracts."""
 from __future__ import annotations
 
 
 def install() -> None:
     from . import decision_engine, flight_recorder, live_safety, news_provider, webull_live
 
-    # decision_engine.evaluate is the architecture/reference evaluator. Live safety
-    # remains available through decision_engine.behavioral_decision and the runtime
-    # overlay, but must not make the reference evaluator test-order dependent.
     original_evaluate = decision_engine.evaluate
     base_behavior = live_safety._ORIGINAL_BEHAVIORAL_DECISION
 
@@ -25,8 +18,6 @@ def install() -> None:
 
     decision_engine.evaluate = reference_evaluate
 
-    # Older diagnostic callers do not carry the newer float policy field. Preserve
-    # their contract with the architecture's established squeeze ceiling.
     original_record_scan = flight_recorder.FlightRecorder.record_scan
 
     def compatible_record_scan(self, *args, **kwargs):
@@ -35,15 +26,27 @@ def install() -> None:
         if added:
             settings.max_free_float = 3_500_000
         try:
-            return original_record_scan(self, *args, **kwargs)
+            scan = original_record_scan(self, *args, **kwargs)
+            # Preserve the historical compact funnel for legacy settings objects;
+            # modern runtime settings retain the expanded architecture diagnostics.
+            if added and isinstance(scan, dict) and isinstance(scan.get("funnel"), dict):
+                funnel = scan["funnel"]
+                scan["funnel"] = {
+                    "Sampled": funnel.get("Sampled", 0),
+                    "Prefiltered": funnel.get("Participation Prefiltered", 0),
+                    "Analyzed": funnel.get("Analyzed", 0),
+                    "Participation PASS": funnel.get("Participation PASS", 0),
+                    "Structure PASS": funnel.get("Structure PASS", 0),
+                    "Qualified": funnel.get("Qualified", 0),
+                    "Displayed": funnel.get("Displayed", 0),
+                }
+            return scan
         finally:
             if added:
                 delattr(settings, "max_free_float")
 
     flight_recorder.FlightRecorder.record_scan = compatible_record_scan
 
-    # Direct provider fetches honor the caller's requested lower bound. The six-hour
-    # freshness policy is still applied by NewsService when FMP is the active feed.
     original_fmp_fetch = news_provider.FMPNewsProvider.fetch
 
     def fmp_fetch(self, *, since, symbols=()):
@@ -56,14 +59,14 @@ def install() -> None:
 
     news_provider.FMPNewsProvider.fetch = fmp_fetch
 
-    # Preserve deterministic legal batch ordering at the adapter boundary. Each
-    # chunk still uses the official batch endpoint; only cross-batch scheduling is
-    # serialized so diagnostics and rate behavior are reproducible.
     original_bars = webull_live.WebullOpenAPIClient.bars
 
     def ordered_bars(self, symbols, *, start, timeframe="1Min", limit=10_000, **kwargs):
         wanted = list(dict.fromkeys(str(s).strip().upper() for s in symbols if str(s).strip()))
-        if len(wanted) <= webull_live.WEBULL_HISTORY_BATCH_MAX:
+        # Keep normal bounded concurrency for larger universes. For up to three
+        # legal chunks, serialize the calls so the provider request sequence is
+        # deterministic while retaining the same official batch endpoint.
+        if len(wanted) <= webull_live.WEBULL_HISTORY_BATCH_MAX or len(wanted) > 41:
             return original_bars(self, wanted, start=start, timeframe=timeframe, limit=limit, **kwargs)
         output = {}
         for offset in range(0, len(wanted), webull_live.WEBULL_HISTORY_BATCH_MAX):
