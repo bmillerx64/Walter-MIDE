@@ -1,11 +1,11 @@
 """Route fresh material-news movers around the squeeze-only float ceiling.
 
-Walter keeps its published eight-stage contract unchanged.  The free-float
-stage performs a catalyst preflight so a fresh, material company-specific event
-can classify a larger-float name into the Catalyst Momentum lane before the
-squeeze-only ceiling is enforced.  The formal Catalyst Assessment then consumes
-the cached preflight decisions, so news is fetched once and the audit trail
-retains Walter's existing stage order.
+Walter keeps its published eight-stage contract unchanged. The free-float stage
+performs a catalyst preflight so a fresh, material company-specific event from a
+trusted source can classify a larger-float name into the Catalyst Momentum lane
+before the squeeze-only ceiling is enforced. The formal Catalyst Assessment then
+consumes the cached preflight decisions, so news is fetched once and the audit
+trail retains Walter's existing stage order.
 """
 from __future__ import annotations
 
@@ -13,18 +13,24 @@ from typing import Mapping
 
 
 CATALYST_MOMENTUM_MIN_SCORE = 7.0
+TRUSTED_SOURCE_FLAG = "source_quality:trusted"
 _INSTALLED = False
 
 
 def _material_catalyst(record: Mapping[str, object]) -> bool:
-    """Require both structured headline evidence and a material catalyst score."""
+    """Require trusted structured news, a headline, and a material positive score."""
     try:
         score = float(record.get("catalyst_score") or 0)
     except (TypeError, ValueError):
         score = 0.0
+    flags = {
+        str(flag or "").strip().casefold()
+        for flag in (record.get("news_flags") or [])
+    }
     return (
         bool(str(record.get("headline") or "").strip())
         and score >= CATALYST_MOMENTUM_MIN_SCORE
+        and TRUSTED_SOURCE_FLAG in flags
     )
 
 
@@ -88,11 +94,12 @@ def install() -> None:
                 decisions[symbol] = architecture.Decision(
                     True,
                     "Catalyst Momentum Route",
-                    "Known free float exceeds squeeze ceiling; fresh material catalyst routed to momentum analysis",
+                    "Known free float exceeds squeeze ceiling; trusted fresh material catalyst routed to momentum analysis",
                     updates,
                     evidence={
                         "catalyst_score": float(item.get("catalyst_score") or 0),
                         "headline": str(item.get("headline") or ""),
+                        "source_quality": "trusted",
                         "squeeze_float_limit": getattr(self.policy, "max_free_float", None),
                         "strategy_lane": "CATALYST_MOMENTUM",
                     },
