@@ -64,11 +64,11 @@ def _normalize_snapshot_float(snapshot: dict) -> float | None:
 def _webull_enrich_free_float(self, snapshots: dict[str, dict], symbols) -> dict[str, dict]:
     """Resolve authoritative free-float evidence for Live Webull snapshots.
 
-    Webull's stock snapshot payload does not reliably expose float shares.  The
-    production pipeline already calls ``client.enrich_free_float`` after FMP; this
-    adapter makes that generic fallback available in Live Webull mode. Existing
-    provider float fields are normalized first, including ``float_millions``.
-    Only unresolved symbols are sent to Yahoo Finance.
+    Webull's stock snapshot payload does not reliably expose float shares. The
+    production pipeline calls ``client.enrich_free_float`` after FMP; this adapter
+    supplies Yahoo Finance only for still-unresolved symbols. Most importantly,
+    unresolved float is fail-closed: Walter must not promote an unknown-float name
+    through a squeeze-oriented low-float gate.
     """
     wanted = []
     normalized = 0
@@ -84,8 +84,8 @@ def _webull_enrich_free_float(self, snapshots: dict[str, dict], symbols) -> dict
         else:
             wanted.append(symbol)
 
-    values = {}
-    errors = {}
+    values: dict[str, float] = {}
+    errors: dict[str, str] = {}
     if wanted:
         provider = YahooFinanceFloatProvider(timeout=5, max_workers=24)
         values, errors = provider.lookup_many(wanted)
@@ -98,26 +98,40 @@ def _webull_enrich_free_float(self, snapshots: dict[str, dict], symbols) -> dict
                 "Yahoo Finance defaultKeyStatistics.floatShares.raw"
             )
 
+    # The app-level decision helper historically treats missing float as a PASS.
+    # Do not allow that permissive fallback to defeat the architecture's Free-
+    # Float Gate. Mark unresolved names with +inf so the existing numeric ceiling
+    # rejects them deterministically while retaining explicit diagnostics.
+    unresolved = [symbol for symbol in wanted if symbol not in values]
+    for symbol in unresolved:
+        snapshot = snapshots.get(symbol)
+        if not isinstance(snapshot, dict):
+            continue
+        snapshot["float_shares"] = float("inf")
+        snapshot["free_float_verified"] = False
+        snapshot["free_float_verification_status"] = "unavailable-reject"
+        snapshot["free_float_source"] = "unresolved after FMP/Yahoo; fail closed"
+
     self.diagnostics["free_float_fallback_requested"] = len(wanted)
     self.diagnostics["free_float_fallback_resolved"] = len(values)
     self.diagnostics["free_float_snapshot_normalized"] = normalized
-    self.diagnostics["free_float_fallback_failed"] = len(errors)
-    if errors:
+    self.diagnostics["free_float_fallback_failed"] = len(unresolved)
+    self.diagnostics["free_float_fail_closed"] = len(unresolved)
+    if unresolved:
         sample = "; ".join(
-            f"{key}: {value}" for key, value in list(errors.items())[:3]
+            f"{key}: {errors.get(key, 'no usable float returned')}"
+            for key in unresolved[:3]
         )
         self.warnings.append(
-            f"Free-float fallback unresolved for {len(errors)}/{len(wanted)} symbols"
+            f"Free-float unresolved and rejected for {len(unresolved)}/{len(wanted)} symbols"
             + (f" ({sample})" if sample else "")
         )
     return snapshots
 
 
 # ``app.py`` intentionally invokes free-float enrichment through the provider
-# contract. LiveWebullProvider did not implement that hook, which meant symbols
-# with unavailable FMP data were allowed through the permissive unverified path.
-# Install the missing provider hook at import time without changing market-data
-# acquisition, ranking, or trading logic.
+# contract. Install the missing provider hook at import time without changing
+# market-data acquisition, ranking, or trading logic.
 if not hasattr(LiveWebullProvider, "enrich_free_float"):
     LiveWebullProvider.enrich_free_float = _webull_enrich_free_float
 
