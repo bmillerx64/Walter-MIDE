@@ -1,5 +1,6 @@
 from types import SimpleNamespace
 
+from mide.discovery import prefilter_snapshots
 from mide.flight_recorder import prefilter_decision
 
 
@@ -24,6 +25,13 @@ def test_large_price_move_survives_even_when_snapshot_volume_is_temporarily_miss
     result = prefilter_decision("MOVE", snapshot(price=1.20, prev_close=1.0, volume=0), SETTINGS)
     assert result["passed"] is True
     assert result["reason"] == "passed prefilter via price move"
+
+
+def test_discovery_uses_installed_gain_or_participation_prefilter():
+    selected = prefilter_snapshots(
+        {"MOVE": snapshot(price=1.20, prev_close=1.0, volume=0)}, SETTINGS
+    )
+    assert [item["symbol"] for item in selected] == ["MOVE"]
 
 
 def test_high_participation_survives_without_three_percent_gain():
