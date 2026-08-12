@@ -35,7 +35,7 @@ def test_high_participation_survives_without_three_percent_gain():
 def test_quiet_symbol_still_fails_broad_prefilter():
     result = prefilter_decision("QUIET", snapshot(price=1.01, prev_close=1.0, volume=20_000), SETTINGS)
     assert result["passed"] is False
-    assert result["failed_rule"] == "Price move and participation both below thresholds"
+    assert result["failed_rule"] == "Percent change and average volume below thresholds"
 
 
 def test_price_ceiling_is_unchanged():
