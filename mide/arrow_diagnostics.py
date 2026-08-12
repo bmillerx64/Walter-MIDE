@@ -1,4 +1,4 @@
-"""Diagnostics for Arrow-backed Streamlit tables."""
+"""Diagnostics and safety for Arrow-backed Streamlit tables."""
 from __future__ import annotations
 import inspect
 import json
@@ -52,7 +52,14 @@ def _arrow_safe_frame(value: Any, violating_columns: set[str]) -> pd.DataFrame:
     return frame
 
 def instrument_streamlit_tables(streamlit_module: Any) -> None:
-    """Log serialization problems without mutating the value handed to Streamlit."""
+    """Log Arrow problems and safely normalize only columns that cannot serialize.
+
+    Walter's diagnostics contain heterogeneous Python values by design.  Streamlit
+    delegates dataframe transport to PyArrow, which rejects mixed object columns.
+    Keep ordinary numeric/string columns untouched; for a column proven invalid,
+    stringify container values and, if necessary, stringify the whole column as a
+    final display-only fallback.  The source dataframe is never mutated.
+    """
     for method_name in ("dataframe", "table"):
         original = getattr(streamlit_module, method_name)
         if getattr(original, "_walter_arrow_diagnostic", False): continue
@@ -60,8 +67,20 @@ def instrument_streamlit_tables(streamlit_module: Any) -> None:
         def inspected(value=None, *args, _original=original, _name=method_name, **kwargs):
             caller = inspect.currentframe().f_back
             location = f"{caller.f_code.co_filename}:{caller.f_lineno}"
-            log_arrow_violations(value, dataframe_name=f"st.{_name} at {location}")
-            return _original(value, *args, **kwargs)
+            violations = log_arrow_violations(value, dataframe_name=f"st.{_name} at {location}")
+            display_value = value
+            if violations:
+                violating_columns = {item["column"] for item in violations}
+                display_value = _arrow_safe_frame(value, violating_columns)
+                try:
+                    pa.Table.from_pandas(display_value)
+                except (pa.ArrowInvalid, pa.ArrowTypeError):
+                    for column in display_value.columns:
+                        if str(column) in violating_columns:
+                            display_value[column] = display_value[column].map(
+                                lambda item: "" if _is_missing(item) else str(item)
+                            )
+            return _original(display_value, *args, **kwargs)
         inspected._walter_arrow_diagnostic = True
         setattr(streamlit_module, method_name, inspected)
 

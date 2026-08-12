@@ -20,7 +20,7 @@ def test_diagnostic_identifies_column_values_and_python_types():
     ]
 
 
-def test_streamlit_instrumentation_preserves_value_and_logs_failure(caplog):
+def test_streamlit_instrumentation_repairs_value_and_logs_failure(caplog):
     class Streamlit:
         def __init__(self):
             self.received = None
@@ -41,6 +41,8 @@ def test_streamlit_instrumentation_preserves_value_and_logs_failure(caplog):
         result = streamlit.dataframe(frame, hide_index=True)
 
     assert result == "rendered"
-    assert streamlit.received is frame
+    assert streamlit.received is not frame
+    assert streamlit.received["mixed"].tolist() == ["2.0", "unknown"]
+    assert frame["mixed"].tolist() == [2.0, "unknown"]
     assert "ARROW_SERIALIZATION_VIOLATION" in caplog.text
     assert "'column': 'mixed'" in caplog.text
