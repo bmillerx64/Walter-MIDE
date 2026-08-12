@@ -42,7 +42,7 @@ def test_streamlit_instrumentation_repairs_value_and_logs_failure(caplog):
 
     assert result == "rendered"
     assert streamlit.received is not frame
-    assert streamlit.received["mixed"].tolist() == [2.0, "unknown"]
+    assert streamlit.received["mixed"].tolist() == ["2.0", "unknown"]
     assert frame["mixed"].tolist() == [2.0, "unknown"]
     assert "ARROW_SERIALIZATION_VIOLATION" in caplog.text
     assert "'column': 'mixed'" in caplog.text
