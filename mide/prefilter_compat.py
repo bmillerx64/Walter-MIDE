@@ -60,7 +60,9 @@ def install() -> None:
                 f"[{settings.min_price:g}, {settings.max_price:g}]"
             )
         elif pct_change < settings.min_pct_change and volume < settings.min_day_volume:
-            failed_rule = "Price move and participation both below thresholds"
+            # Preserve the recorder's historical label for compatibility.  The
+            # behavior is still OR semantics: only symbols failing both routes stop.
+            failed_rule = "Percent change and average volume below thresholds"
             failed_metrics = [
                 {
                     "metric": "pct_change",
