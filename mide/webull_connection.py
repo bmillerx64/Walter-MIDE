@@ -1,4 +1,11 @@
-"""Deployed, credentialed Webull validation used by Diagnostics."""
+"""Deployed, credentialed Webull validation used by Diagnostics.
+
+This module is imported immediately after ``mide.webull_live`` by the deployed
+Streamlit app.  Live Webull currently runs in snapshot-only mode, so an explicit
+scan must refresh the REST snapshot instead of reusing the prior scan's cached
+price/volume data.  The small compatibility patch below keeps streaming mode's
+cache behavior unchanged while making snapshot-only scans genuinely live.
+"""
 
 from __future__ import annotations
 
@@ -6,6 +13,40 @@ from time import perf_counter
 from typing import Callable, Iterable
 
 from .webull_sdk import SNAPSHOT_OPERATION
+from .webull_live import LiveWebullProvider
+
+
+_ORIGINAL_LIVE_WEBULL_SNAPSHOTS = LiveWebullProvider.snapshots
+
+
+def _fresh_live_webull_snapshots(self: LiveWebullProvider, symbols: Iterable[str]) -> dict:
+    """Refresh REST market data for every manual scan in snapshot-only mode.
+
+    ``LiveWebullProvider.snapshots`` historically refreshed only when a symbol
+    was missing from the cache.  With streaming deliberately disabled in the
+    deployed app, that made later scans reuse the first scan's intraday volume,
+    price, bid/ask, and previous-close snapshot.  A cached 08:30 scan could
+    therefore drive a 10:30 prefilter and collapse Walter's live funnel.
+
+    Streaming mode is intentionally untouched: its cache is updated by live
+    events and the original snapshot method remains authoritative there.
+    """
+    wanted = list(dict.fromkeys(
+        str(symbol).strip().upper() for symbol in symbols if str(symbol).strip()
+    ))
+    if wanted and not getattr(self, "_enable_streaming", False):
+        self.initialize_quotes(wanted)
+        diagnostics = self.diagnostics.setdefault("webull_stream", {})
+        diagnostics["snapshot_refresh_mode"] = "rest_each_scan"
+        diagnostics["snapshot_refresh_symbols"] = len(wanted)
+    return _ORIGINAL_LIVE_WEBULL_SNAPSHOTS(self, wanted)
+
+
+# Apply exactly once.  Streamlit hot reloads modules during deploys, and a guard
+# avoids wrapping the method repeatedly inside the same process.
+if not getattr(LiveWebullProvider.snapshots, "_walter_fresh_each_scan", False):
+    _fresh_live_webull_snapshots._walter_fresh_each_scan = True
+    LiveWebullProvider.snapshots = _fresh_live_webull_snapshots
 
 
 def run_connection_test(*, app_key: str, app_secret: str,
