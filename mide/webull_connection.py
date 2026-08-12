@@ -1,10 +1,10 @@
 """Deployed, credentialed Webull validation used by Diagnostics.
 
 This module is imported immediately after ``mide.webull_live`` by the deployed
-Streamlit app.  Live Webull currently runs in snapshot-only mode, so an explicit
+Streamlit app. Live Webull currently runs in snapshot-only mode, so an explicit
 scan must refresh the REST snapshot instead of reusing the prior scan's cached
-price/volume data.  The small compatibility patch below keeps streaming mode's
-cache behavior unchanged while making snapshot-only scans genuinely live.
+price/volume data. The compatibility patch also preserves last-known snapshot
+fields when a later REST response is temporarily sparse.
 """
 
 from __future__ import annotations
@@ -19,31 +19,60 @@ from .webull_live import LiveWebullProvider
 _ORIGINAL_LIVE_WEBULL_SNAPSHOTS = LiveWebullProvider.snapshots
 
 
+def _merge_snapshot_continuity(previous: dict, current: dict) -> dict:
+    """Keep last-known values only where a fresh snapshot omitted them."""
+    merged = dict(previous or {})
+    merged.update(current or {})
+    for section in ("latestTrade", "latestQuote", "dailyBar", "prevDailyBar"):
+        old_values = (previous or {}).get(section) or {}
+        new_values = (current or {}).get(section) or {}
+        values = dict(old_values)
+        for key, value in new_values.items():
+            if value is not None:
+                values[key] = value
+        if values:
+            merged[section] = values
+    return merged
+
+
 def _fresh_live_webull_snapshots(self: LiveWebullProvider, symbols: Iterable[str]) -> dict:
-    """Refresh REST market data for every manual scan in snapshot-only mode.
+    """Refresh every manual scan without letting sparse refreshes erase evidence.
 
-    ``LiveWebullProvider.snapshots`` historically refreshed only when a symbol
-    was missing from the cache.  With streaming deliberately disabled in the
-    deployed app, that made later scans reuse the first scan's intraday volume,
-    price, bid/ask, and previous-close snapshot.  A cached 08:30 scan could
-    therefore drive a 10:30 prefilter and collapse Walter's live funnel.
-
-    Streaming mode is intentionally untouched: its cache is updated by live
-    events and the original snapshot method remains authoritative there.
+    Webull can return a complete snapshot on one request and omit volume,
+    previous-close, or quote fields on a later request. ``initialize_quotes``
+    correctly refreshes live values, but replacing the whole snapshot with that
+    sparse response can make every symbol fail the broad prefilter on the next
+    scan. Preserve prior values only for fields the fresh response omitted; a
+    real fresh value (including zero) always wins.
     """
     wanted = list(dict.fromkeys(
         str(symbol).strip().upper() for symbol in symbols if str(symbol).strip()
     ))
     if wanted and not getattr(self, "_enable_streaming", False):
+        with self._lock:
+            previous = {
+                symbol: dict(self._snapshot_cache.get(symbol, {}))
+                for symbol in wanted
+            }
         self.initialize_quotes(wanted)
+        preserved = 0
+        with self._lock:
+            for symbol in wanted:
+                old = previous.get(symbol) or {}
+                fresh = self._snapshot_cache.get(symbol) or {}
+                if not old or not fresh:
+                    continue
+                merged = _merge_snapshot_continuity(old, fresh)
+                if merged != fresh:
+                    preserved += 1
+                    self._snapshot_cache[symbol] = merged
         diagnostics = self.diagnostics.setdefault("webull_stream", {})
-        diagnostics["snapshot_refresh_mode"] = "rest_each_scan"
+        diagnostics["snapshot_refresh_mode"] = "rest_each_scan_with_continuity"
         diagnostics["snapshot_refresh_symbols"] = len(wanted)
+        diagnostics["snapshot_continuity_preserved_symbols"] = preserved
     return _ORIGINAL_LIVE_WEBULL_SNAPSHOTS(self, wanted)
 
 
-# Apply exactly once.  Streamlit hot reloads modules during deploys, and a guard
-# avoids wrapping the method repeatedly inside the same process.
 if not getattr(LiveWebullProvider.snapshots, "_walter_fresh_each_scan", False):
     _fresh_live_webull_snapshots._walter_fresh_each_scan = True
     LiveWebullProvider.snapshots = _fresh_live_webull_snapshots
