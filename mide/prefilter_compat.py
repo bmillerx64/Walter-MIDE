@@ -2,10 +2,33 @@
 
 The prefilter is a cheap discovery gate, not the final participation gate.
 A symbol should survive when it has either a meaningful price move OR meaningful
-session participation.  Downstream bar analysis, participation, structure, float,
+session participation. Downstream bar analysis, participation, structure, float,
 and entry-state logic remain responsible for trade qualification.
+
+Webull resets current-session volume after the extended session closes. During
+that closed-session boundary a literal zero is not evidence that a symbol had no
+participation during the completed session. Walter therefore treats zero volume
+as unavailable only while the shared market clock says Market Closed; normal
+pre-market, live-market, and after-hours semantics are unchanged.
 """
 from __future__ import annotations
+
+
+def _closed_session_volume(volume: float, previous: dict) -> tuple[float, bool]:
+    """Use completed-session volume when Webull has rolled today's volume to zero."""
+    if volume != 0:
+        return volume, False
+    try:
+        from .time_service import market_phase_at
+        if market_phase_at() != "Market Closed":
+            return volume, False
+    except Exception:
+        return volume, False
+    try:
+        previous_volume = float(previous.get("v") or 0)
+    except (TypeError, ValueError):
+        previous_volume = 0.0
+    return (previous_volume, previous_volume > 0)
 
 
 def install() -> None:
@@ -22,7 +45,8 @@ def install() -> None:
 
         price = float(trade.get("p") or daily.get("c") or 0)
         prev_close = float(previous.get("c") or 0)
-        volume = float(daily.get("v") or 0)
+        raw_volume = float(daily.get("v") or 0)
+        volume, closed_session_fallback = _closed_session_volume(raw_volume, previous)
         pct_change = ((price / prev_close) - 1) * 100 if prev_close else 0.0
         bid = float(quote.get("bp") or 0)
         ask = float(quote.get("ap") or 0)
@@ -43,6 +67,8 @@ def install() -> None:
             "price": price,
             "pct_change": pct_change,
             "volume": volume,
+            "raw_session_volume": raw_volume,
+            "closed_session_volume_fallback": closed_session_fallback,
             "dollar_volume": dollar_volume,
             "spread_pct": spread,
         }
@@ -60,8 +86,6 @@ def install() -> None:
                 f"[{settings.min_price:g}, {settings.max_price:g}]"
             )
         elif pct_change < settings.min_pct_change and volume < settings.min_day_volume:
-            # Preserve the recorder's historical label for compatibility.  The
-            # behavior is still OR semantics: only symbols failing both routes stop.
             failed_rule = "Percent change and average volume below thresholds"
             failed_metrics = [
                 {
@@ -85,6 +109,8 @@ def install() -> None:
             failed_rule = None
             failed_metrics = []
             route = "price move" if pct_change >= settings.min_pct_change else "participation"
+            if closed_session_fallback and route == "participation":
+                route = "completed-session participation"
             reason = f"passed prefilter via {route}"
 
         return {
