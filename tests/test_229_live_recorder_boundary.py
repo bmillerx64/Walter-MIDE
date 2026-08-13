@@ -50,7 +50,7 @@ def test_record_scan_persists_replayable_decision_time_evidence(tmp_path):
 
     assert persisted == scan
     assert verify_decision_time_evidence(evidence)
-    assert evidence["decision_inputs"]["price"] == 1.50
+    assert evidence["price"] == 1.50
 
     replay = replay_from_recorder(recorder, scan_id=scan["scan_id"], symbol="ABC")
     assert replay["integrity_verified"] is True
