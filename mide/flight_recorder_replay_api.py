@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from mide.flight_replay import ReplayNotAvailable, replay_recorded_symbol
+from mide.replay_explanation import explain_replay
 
 
 def replay_from_recorder(recorder, *, scan_id: str, symbol: str) -> dict:
@@ -27,3 +28,13 @@ def replay_latest_from_recorder(recorder, symbol: str) -> dict:
         if path and path.get("decision_time_evidence"):
             return replay_recorded_symbol(scan, symbol)
     raise ReplayNotAvailable(f"no replayable Flight Recorder evidence found for {symbol}")
+
+
+def explain_from_recorder(recorder, *, scan_id: str, symbol: str) -> dict:
+    """Explain one historical decision using only its integrity-verified replay."""
+    return explain_replay(replay_from_recorder(recorder, scan_id=scan_id, symbol=symbol))
+
+
+def explain_latest_from_recorder(recorder, symbol: str) -> dict:
+    """Explain the newest replayable occurrence of a symbol without live-data access."""
+    return explain_replay(replay_latest_from_recorder(recorder, symbol))
