@@ -7,6 +7,7 @@ import json
 from pathlib import Path
 from uuid import uuid4
 
+from mide.flight_recorder_writer import persist_replayable_scan
 from mide.trade_outcomes import TradeOutcomeStore
 
 STAGES = (
@@ -428,9 +429,7 @@ class FlightRecorder:
             scan["recent_wire_news"] = recent_news_log
         if expansion_candidate_ledger is not None:
             scan["expansion_candidate_ledger"] = list(expansion_candidate_ledger)
-        with self.path.open("a", encoding="utf-8") as handle:
-            handle.write(json.dumps(scan, default=str) + "\n")
-        return scan
+        return persist_replayable_scan(self, scan, records)
 
     def latest_scan(self) -> dict | None:
         if not self.path.exists():
