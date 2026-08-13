@@ -1,8 +1,4 @@
-"""Diagnostic-only readiness consistency telemetry.
-
-GS235 records when Walter's workflow label and its current trigger evidence disagree.
-It never changes qualification, ranking, state, scores, or recommendations.
-"""
+"""Diagnostic-only readiness consistency telemetry."""
 from __future__ import annotations
 
 
@@ -21,9 +17,7 @@ def readiness_consistency(record: dict) -> dict:
         "current_entry_evidence_known": actionable_known or trigger_known,
         "current_entry_evidence_ready": current_ready,
         "entry_readiness_mismatch": mismatch,
-        "entry_readiness_audit": (
-            "workflow-ready/current-evidence-not-ready" if mismatch else "consistent-or-unknown"
-        ),
+        "entry_readiness_audit": "workflow-ready/current-evidence-not-ready" if mismatch else "consistent-or-unknown",
     }
 
 
@@ -33,14 +27,18 @@ def enrich_records(records) -> None:
 
 
 def install() -> None:
-    """Attach audit fields to records immediately before Flight Recorder persistence."""
     from . import flight_recorder
     original = flight_recorder.FlightRecorder.record_scan
     if getattr(original, "_gs235_readiness_audit", False):
         return
 
     def audited_record_scan(self, *args, **kwargs):
-        enrich_records(kwargs.get("records"))
+        records = kwargs.get("records")
+        if records is not None:
+            copied_records = [dict(record) for record in records]
+            enrich_records(copied_records)
+            kwargs = dict(kwargs)
+            kwargs["records"] = copied_records
         return original(self, *args, **kwargs)
 
     audited_record_scan._gs235_readiness_audit = True
