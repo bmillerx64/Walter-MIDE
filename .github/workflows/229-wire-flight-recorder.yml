@@ -1,0 +1,48 @@
+name: 229 wire flight recorder
+
+on:
+  push:
+    branches:
+      - gold-standard/229-flight-recorder-live-boundary
+
+permissions:
+  contents: write
+
+jobs:
+  wire:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: gold-standard/229-flight-recorder-live-boundary
+      - name: Wire replayable production persistence
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path('mide/flight_recorder.py')
+          text = path.read_text()
+          import_line = 'from mide.flight_recorder_writer import persist_replayable_scan\n'
+          anchor = 'from mide.trade_outcomes import TradeOutcomeStore\n'
+          if import_line not in text:
+              text = text.replace(anchor, import_line + anchor, 1)
+
+          old = '''        with self.path.open("a", encoding="utf-8") as handle:\n            handle.write(json.dumps(scan, default=str) + "\\n")\n        return scan\n'''
+          new = '        return persist_replayable_scan(self, scan, records)\n'
+          if old in text:
+              text = text.replace(old, new, 1)
+          elif new not in text:
+              raise SystemExit('229 persistence boundary not found')
+          path.write_text(text)
+          PY
+      - name: Commit branch patch
+        run: |
+          if git diff --quiet -- mide/flight_recorder.py; then
+            echo "229 already wired"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add mide/flight_recorder.py
+          git commit -m "Wire FlightRecorder production persistence to replayable writer"
+          git push origin HEAD:gold-standard/229-flight-recorder-live-boundary
