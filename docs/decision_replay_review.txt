@@ -1,0 +1,1 @@
+Reviewer focus: verify no live-data imports/calls, integrity verification occurs before explanation, and replay output cannot mutate production state.
