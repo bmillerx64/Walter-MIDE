@@ -170,6 +170,9 @@ def inject_css():
     .control-stat-label {font-size:.62rem;letter-spacing:.08em;text-transform:uppercase;color:#8291a5;font-weight:900;white-space:nowrap}
     .control-stat-value {font-size:.96rem;color:#f8fafc;font-weight:950;margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-variant-numeric:tabular-nums}
     .control-live{color:#4ade80}.control-demo{color:#facc15}
+    .scan-trust {display:grid;grid-template-columns:minmax(250px,1.5fr) repeat(3,minmax(100px,.5fr));gap:10px;align-items:center;background:#0b131d;border:1px solid #334155;border-left:6px solid var(--trust-color);border-radius:10px;padding:10px 14px;margin:-3px 0 12px}
+    .scan-trust-title {color:var(--trust-color);font-size:.94rem;font-weight:950;letter-spacing:.04em}.scan-trust-reason{color:#cbd5e1;font-size:.78rem;margin-top:2px}
+    .scan-trust-stat span{display:block;color:#8291a5;font-size:.6rem;font-weight:900;letter-spacing:.08em;text-transform:uppercase}.scan-trust-stat b{color:#f8fafc;font-size:1rem;font-variant-numeric:tabular-nums}
     .market-day {display:grid;grid-template-columns:minmax(240px,1.25fr) minmax(330px,2fr);gap:14px;align-items:center;background:#0b131d;border:1px solid #334155;border-left:6px solid var(--market-color);border-radius:11px;padding:11px 15px;margin:-2px 0 12px}
     .market-day-title {font-size:.65rem;letter-spacing:.13em;color:#94a3b8;font-weight:950}
     .market-day-mode {font-size:1.28rem;color:var(--market-color);font-weight:950;margin:2px 0}
@@ -549,6 +552,40 @@ def mission_control_header_markup(
         f"{html.escape(BUILD.git_sha)} · {html.escape(BUILD.built_at)}</div></div>"
         "<div class='control-engine'>Market Intelligence Decision Engine</div></div>"
         f"<div class='control-strip'>{strip}</div>{funnel}</div>"
+    )
+
+
+def data_integrity_markup(report: dict) -> str:
+    """Render a compact, presentation-only scan-trust summary."""
+    appearances = {
+        "HEALTHY SCAN": ("🟢", "#4ade80"),
+        "VALID EMPTY PASS": ("🔵", "#60a5fa"),
+        "DEGRADED DATA": ("🟠", "#f59e0b"),
+        "PROVIDER / PIPELINE FAILURE": ("🔴", "#f87171"),
+    }
+    status = str(report.get("status", "DEGRADED DATA"))
+    icon, color = appearances.get(status, ("🟠", "#f59e0b"))
+
+    def percentage(value: object) -> str:
+        if value is None:
+            return "N/A"
+        return f"{float(value):.0f}%"
+
+    trust = percentage(report.get("trust_score", 0))
+    integrity = percentage(report.get("record_integrity_pct"))
+    freshness = percentage(report.get("freshness_pct"))
+    unique = int(report.get("unique_symbols", 0) or 0)
+    records = int(report.get("record_count", 0) or 0)
+    reason = html.escape(str(report.get("status_reason", "No diagnostic reason available.")))
+    return (
+        f"<div class='scan-trust' style='--trust-color:{color}'>"
+        "<div><div class='scan-trust-title'>"
+        f"{icon} SCAN TRUST — {html.escape(status)} · {trust}</div>"
+        f"<div class='scan-trust-reason'>{reason}</div></div>"
+        f"<div class='scan-trust-stat'><span>Integrity</span><b>{integrity}</b></div>"
+        f"<div class='scan-trust-stat'><span>Freshness</span><b>{freshness}</b></div>"
+        f"<div class='scan-trust-stat'><span>Unique / records</span><b>{unique} / {records}</b></div>"
+        "</div>"
     )
 
 

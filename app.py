@@ -204,6 +204,7 @@ from mide.escalation import (
     escalation_snapshot,
     escalation_state_changes,
 )
+from mide.data_integrity import scan_integrity_report
 from mide.ui import (
     inject_css,
     radar_table,
@@ -220,6 +221,7 @@ from mide.ui import (
     render_live_opportunity_feed,
     render_escalation_engine,
     mission_control_header_markup,
+    data_integrity_markup,
     decision_funnel_markup,
     market_session_quality_markup,
     walter_mission_control,
@@ -740,6 +742,7 @@ with startup_step("loading secrets"):
 memory_checkpoint("settings initialization", object_name="Settings")
 
 mission_header_slot = st.empty()
+scan_trust_slot = st.empty()
 market_session_slot = st.empty()
 early_setup_slot = st.empty()
 mission_plan_slot = st.empty()
@@ -1977,6 +1980,14 @@ with mission_header_slot:
         ),
         unsafe_allow_html=True,
     )
+integrity_report = scan_integrity_report(
+    records,
+    live=mode.startswith("Live "),
+    funnel_counts=scan_diagnostics.get("funnel_counts", {}),
+    provider_diagnostics=None,
+)
+with scan_trust_slot:
+    st.markdown(data_integrity_markup(integrity_report), unsafe_allow_html=True)
 with market_session_slot:
     st.markdown(
         market_session_quality_markup(actionable_records), unsafe_allow_html=True
