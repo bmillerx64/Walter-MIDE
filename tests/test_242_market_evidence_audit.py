@@ -32,9 +32,10 @@ def test_stale_evidence_is_caution_not_trusted():
     assert report["fresh"] is False
 
 
-def test_missing_decision_evidence_is_visible():
+def test_missing_decision_evidence_is_visible_and_insufficient():
     report = market_evidence_report(_record(vwap_value=None, supertrend_bullish=None), scan_timestamp="2026-08-13T20:00:30+00:00")
-    assert report["status"] == "CAUTION"
+    assert report["status"] == "INSUFFICIENT"
+    assert report["trusted"] is False
     assert "vwap_value" in report["missing_fields"]
     assert "supertrend_bullish" in report["missing_fields"]
 
