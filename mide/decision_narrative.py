@@ -9,6 +9,8 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 
+from mide.candidate_evidence import candidate_evidence_report, candidate_evidence_summary
+
 
 ASSESSMENT_STAGES = (
     "Catalyst Assessment",
@@ -102,6 +104,7 @@ def build_decision_narrative(
     evidence = ranking.get("evidence") or {}
     positives, negatives = _factor_lines(record)
     readiness, upgrade = _entry_summary(evidence)
+    evidence_report = candidate_evidence_report(record)
     qualified = _latest_audit(record, "Mission Ranking and Publication")
     qualification = (
         str(qualified.get("reason")) if qualified
@@ -131,6 +134,8 @@ def build_decision_narrative(
         "ranking_change_explanation": rank_change,
         "why_removed": removal,
         "evidence_source": "architecture_audit and ranking_history",
+        "evidence_trust": evidence_report,
+        "evidence_trust_summary": candidate_evidence_summary(record),
     }
 
 
