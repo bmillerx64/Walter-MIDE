@@ -1,0 +1,6 @@
+INVARIANTS
+- historical evidence is immutable
+- integrity failure rejects replay
+- replay has no market-data dependency
+- replay has no trading side effects
+- recorded production status remains distinct from explanatory replay state
