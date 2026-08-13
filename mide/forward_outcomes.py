@@ -49,6 +49,7 @@ def measure_forward_outcome(evidence: dict, bars: list[dict], *, horizon_minutes
     if not eligible:
         raise InvalidOutcomeWindow("no strictly forward bars exist inside the requested horizon")
 
+    eligible.sort(key=lambda item: item[0])
     highs = [float(bar.get("high", bar.get("h"))) for _, bar in eligible]
     lows = [float(bar.get("low", bar.get("l"))) for _, bar in eligible]
     closes = [float(bar.get("close", bar.get("c"))) for _, bar in eligible]
