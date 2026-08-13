@@ -1,0 +1,2 @@
+Decision Replay contract version: 1
+Evidence schema dependency: 1

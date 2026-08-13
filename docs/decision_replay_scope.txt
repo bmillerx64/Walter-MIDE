@@ -1,0 +1,1 @@
+Scope: explain a single frozen scan decision deterministically. Out of scope: rescanning, backtesting, outcome attribution, threshold optimization, or live candidate selection.

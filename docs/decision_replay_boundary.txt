@@ -1,0 +1,1 @@
+Boundary remains forensic-only; no production decision behavior changed.

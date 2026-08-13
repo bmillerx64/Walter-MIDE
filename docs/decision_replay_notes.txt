@@ -1,0 +1,1 @@
+Gold Standard stage: deterministic replay foundation. Production Flight Recorder integration intentionally follows in a separate reviewable change.

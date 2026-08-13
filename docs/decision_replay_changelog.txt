@@ -1,0 +1,1 @@
+v1: deterministic, integrity-verified replay primitive and regression coverage.
