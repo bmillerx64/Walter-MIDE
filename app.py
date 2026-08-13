@@ -1985,6 +1985,7 @@ integrity_report = scan_integrity_report(
     live=mode.startswith("Live "),
     funnel_counts=scan_diagnostics.get("funnel_counts", {}),
     provider_diagnostics=None,
+    scan_completed=completed_scan is not None,
 )
 with scan_trust_slot:
     st.markdown(data_integrity_markup(integrity_report), unsafe_allow_html=True)

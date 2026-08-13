@@ -4,6 +4,7 @@ from copy import deepcopy
 from datetime import datetime, timedelta, timezone
 
 from mide.data_integrity import (
+    STATUS_AWAITING,
     STATUS_DEGRADED,
     STATUS_EMPTY,
     STATUS_FAILURE,
@@ -42,6 +43,26 @@ def report(records, funnel=None, **kwargs):
 def test_healthy_records_and_positive_universe_are_healthy():
     result = report([good_record()])
     assert result["status"] == STATUS_HEALTHY
+    assert result["trust_score"] == 100
+
+
+def test_zero_records_without_a_completed_scan_are_unmeasured_not_100_percent():
+    result = scan_integrity_report([], live=True, scan_completed=False, now=NOW)
+    assert result["status"] == STATUS_AWAITING
+    assert result["trust_score"] is None
+    assert result["record_integrity_pct"] is None
+    assert result["freshness_pct"] is None
+    assert result["record_count"] == 0
+    assert result["unique_symbols"] == 0
+    assert result["status_reason"] == "No completed scan has been measured yet."
+
+
+def test_live_eighteen_of_eighteen_healthy_records_still_score_100_percent():
+    records = [good_record(f"W{i:02d}") for i in range(18)]
+    result = report(records, {"universe": 18, "monitored": 18})
+    assert result["status"] == STATUS_HEALTHY
+    assert result["record_count"] == 18
+    assert result["unique_symbols"] == 18
     assert result["trust_score"] == 100
 
 
@@ -116,4 +137,3 @@ def test_integrity_functions_never_mutate_inputs():
     assert records == original
     scan_integrity_report(records, live=True, funnel_counts={"universe": 10}, now=NOW)
     assert records == original
-

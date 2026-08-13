@@ -10,6 +10,7 @@ STATUS_HEALTHY = "HEALTHY SCAN"
 STATUS_EMPTY = "VALID EMPTY PASS"
 STATUS_DEGRADED = "DEGRADED DATA"
 STATUS_FAILURE = "PROVIDER / PIPELINE FAILURE"
+STATUS_AWAITING = "AWAITING SCAN"
 
 REQUIRED_RECORD_FIELDS = ("symbol", "price", "volume", "timestamp")
 DECISION_EVIDENCE_FIELDS = (
@@ -164,11 +165,31 @@ def scan_integrity_report(
     funnel_counts: dict | None = None,
     provider_diagnostics: dict | None = None,
     now: datetime | None = None,
+    scan_completed: bool | None = None,
 ) -> dict:
     """Classify scan trust without affecting any scanner decision."""
     record_list = list(records)
     aggregate = records_integrity(record_list, now=now)
     source_funnel = funnel_counts or {}
+    measured = scan_completed if scan_completed is not None else bool(
+        record_list or funnel_counts is not None or provider_diagnostics is not None
+    )
+    if not measured:
+        return {
+            "status": STATUS_AWAITING,
+            "status_reason": "No completed scan has been measured yet.",
+            "trust_score": None,
+            "live": live,
+            "funnel": {},
+            **aggregate,
+            "record_integrity_pct": None,
+            "freshness_pct": None,
+            "warnings": [],
+            "failures": [],
+            "empty_pass": False,
+            "provider_failure": False,
+            "measured": False,
+        }
     funnel_keys = (
         "universe", "tradability", "price", "free_float", "stage_3_analysis",
         "monitored", "entry_ready", "free_float_lookup_failures",
@@ -262,4 +283,5 @@ def scan_integrity_report(
         "failures": failures,
         "empty_pass": empty_pass,
         "provider_failure": provider_failure,
+        "measured": True,
     }
