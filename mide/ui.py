@@ -558,6 +558,7 @@ def mission_control_header_markup(
 def data_integrity_markup(report: dict) -> str:
     """Render a compact, presentation-only scan-trust summary."""
     appearances = {
+        "AWAITING SCAN": ("⚪", "#94a3b8"),
         "HEALTHY SCAN": ("🟢", "#4ade80"),
         "VALID EMPTY PASS": ("🔵", "#60a5fa"),
         "DEGRADED DATA": ("🟠", "#f59e0b"),
@@ -571,7 +572,11 @@ def data_integrity_markup(report: dict) -> str:
             return "N/A"
         return f"{float(value):.0f}%"
 
-    trust = percentage(report.get("trust_score", 0))
+    trust = (
+        "NOT YET MEASURED"
+        if status == "AWAITING SCAN"
+        else percentage(report.get("trust_score"))
+    )
     integrity = percentage(report.get("record_integrity_pct"))
     freshness = percentage(report.get("freshness_pct"))
     unique = int(report.get("unique_symbols", 0) or 0)
@@ -584,7 +589,7 @@ def data_integrity_markup(report: dict) -> str:
         f"<div class='scan-trust-reason'>{reason}</div></div>"
         f"<div class='scan-trust-stat'><span>Integrity</span><b>{integrity}</b></div>"
         f"<div class='scan-trust-stat'><span>Freshness</span><b>{freshness}</b></div>"
-        f"<div class='scan-trust-stat'><span>Unique / records</span><b>{unique} / {records}</b></div>"
+        f"<div class='scan-trust-stat'><span>Unique / Records</span><b>{unique} / {records}</b></div>"
         "</div>"
     )
 

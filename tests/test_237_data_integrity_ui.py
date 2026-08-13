@@ -1,10 +1,30 @@
 from mide.data_integrity import (
+    STATUS_AWAITING,
     STATUS_DEGRADED,
     STATUS_EMPTY,
     STATUS_FAILURE,
     STATUS_HEALTHY,
 )
 from mide.ui import data_integrity_markup
+
+
+def test_scan_trust_markup_renders_pre_scan_as_explicitly_unmeasured():
+    markup = data_integrity_markup(
+        {
+            "status": STATUS_AWAITING,
+            "trust_score": None,
+            "record_integrity_pct": None,
+            "freshness_pct": None,
+            "unique_symbols": 0,
+            "record_count": 0,
+            "status_reason": "No completed scan has been measured yet.",
+        }
+    )
+    assert "SCAN TRUST — AWAITING SCAN · NOT YET MEASURED" in markup
+    assert "Integrity</span><b>N/A" in markup
+    assert "Freshness</span><b>N/A" in markup
+    assert "Unique / Records</span><b>0 / 0" in markup
+    assert "No completed scan has been measured yet." in markup
 
 
 def test_scan_trust_markup_renders_all_statuses_and_scores():
