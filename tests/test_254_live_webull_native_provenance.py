@@ -4,6 +4,7 @@ from mide.webull_live import LiveWebullProvider
 
 def test_live_webull_pipeline_provenance_reports_no_alpaca_after_cutover():
     provider = object.__new__(LiveWebullProvider)
+    provider._walter_native_universe_active = True
     rows = provider.pipeline_sources()
 
     universe = rows[0]
