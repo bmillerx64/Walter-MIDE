@@ -6,6 +6,8 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, MutableMapping
 
+from mide.live_evidence_observation import live_evidence_observation
+
 
 COMPLETED_SCAN_KEY = "completed_scan"
 SCAN_CONTEXT_KEY = "scan_context"
@@ -48,6 +50,11 @@ class CompletedScan:
         if notices:
             existing = list(self.diagnostics.get("data_quality_notices") or [])
             self.diagnostics["data_quality_notices"] = existing + notices
+        # GS243 observes the already-completed candidate records.  The report is
+        # detached from those records and has no role in any scanner decision.
+        self.diagnostics["live_evidence_observation"] = live_evidence_observation(
+            self.records, scan_timestamp=self.completed_at
+        )
         object.__setattr__(self, "warnings", operational)
 
     @property

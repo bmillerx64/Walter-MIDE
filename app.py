@@ -159,6 +159,7 @@ from mide.completed_scan import (
     scan_context,
     store_completed_scan,
 )
+from mide.live_evidence_observation import render_live_evidence_diagnostics
 memory_checkpoint("providers import", object_name="mide.webull_live")
 from mide.news import index_news
 from mide.news_provider import (
@@ -2294,6 +2295,12 @@ if active_tab == "Radar":
                 )
 if active_tab == "Diagnostics":
     view_scan = completed_scan_for_view(st.session_state, "Diagnostics")
+    evidence_report = (
+        view_scan.diagnostics.get("live_evidence_observation") if view_scan else None
+    )
+    if evidence_report is not None:
+        render_live_evidence_diagnostics(st, evidence_report)
+        st.divider()
     st.subheader("WEBULL SDK RUNTIME INSPECTION")
     st.caption(
         "Temporary read-only inspection of the SDK installed in this Streamlit runtime. "
