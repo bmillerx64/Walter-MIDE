@@ -1,9 +1,8 @@
 """Deployed, credentialed Webull validation used by Diagnostics.
 
-This module is imported immediately after ``mide.webull_live`` by the deployed
-Streamlit app. Live Webull refreshes REST snapshots on every explicit scan and,
-from GS253 forward, obtains its live symbol universe exclusively from Webull's
-native market-attention feeds rather than an Alpaca symbol master.
+Live Webull refreshes REST snapshots on every explicit scan and obtains its live
+symbol universe from Webull's native market-attention feeds. There is no runtime
+fallback to an Alpaca symbol master in the Live Webull discovery operation.
 """
 
 from __future__ import annotations
@@ -17,10 +16,10 @@ from .webull_native_radar import RADAR_FEEDS, fetch_native_radar, radar_probe_ro
 
 
 _ORIGINAL_LIVE_WEBULL_SNAPSHOTS = LiveWebullProvider.snapshots
+_ORIGINAL_LIVE_WEBULL_PIPELINE_SOURCES = LiveWebullProvider.pipeline_sources
 
 
 def _merge_snapshot_continuity(previous: dict, current: dict) -> dict:
-    """Keep last-known values only where a fresh snapshot omitted them."""
     merged = dict(previous or {})
     merged.update(current or {})
     for section in ("latestTrade", "latestQuote", "dailyBar", "prevDailyBar"):
@@ -36,16 +35,12 @@ def _merge_snapshot_continuity(previous: dict, current: dict) -> dict:
 
 
 def _fresh_live_webull_snapshots(self: LiveWebullProvider, symbols: Iterable[str]) -> dict:
-    """Refresh every manual scan without letting sparse refreshes erase evidence."""
     wanted = list(dict.fromkeys(
         str(symbol).strip().upper() for symbol in symbols if str(symbol).strip()
     ))
     if wanted and not getattr(self, "_enable_streaming", False):
         with self._lock:
-            previous = {
-                symbol: dict(self._snapshot_cache.get(symbol, {}))
-                for symbol in wanted
-            }
+            previous = {symbol: dict(self._snapshot_cache.get(symbol, {})) for symbol in wanted}
         self.initialize_quotes(wanted)
         preserved = 0
         with self._lock:
@@ -71,12 +66,7 @@ if not getattr(LiveWebullProvider.snapshots, "_walter_fresh_each_scan", False):
 
 
 def _webull_native_assets(self: LiveWebullProvider) -> list[dict]:
-    """Return the rotating Webull-native attention universe for Live Webull.
-
-    This is intentionally fail-closed. Live Webull must never fall back to the
-    legacy Alpaca symbol master: if Webull native discovery is unavailable, the
-    scan stops at universe discovery with the exact Webull error visible.
-    """
+    """Return Webull's rotating native attention universe, fail-closed."""
     report = fetch_native_radar(self)
     feeds = report.get("feeds", {})
     failed = [
@@ -102,6 +92,8 @@ def _webull_native_assets(self: LiveWebullProvider) -> list[dict]:
             "webull_native_sources": list(item.get("sources") or []),
             "webull_native_ranks": dict(item.get("ranks") or {}),
         })
+    if not assets:
+        raise RuntimeError("Webull native discovery returned zero symbols after deduplication")
 
     diagnostics = self.diagnostics.setdefault("webull_native_discovery", {})
     diagnostics.update({
@@ -111,15 +103,16 @@ def _webull_native_assets(self: LiveWebullProvider) -> list[dict]:
         "feed_count": len(feeds),
         "unique_symbols": len(assets),
         "feed_status": {
-            name: {
-                "status": feed.get("status"),
-                "returned": len(feed.get("rows") or []),
-                "error": feed.get("error") or "",
-            }
+            name: {"status": feed.get("status"), "returned": len(feed.get("rows") or []),
+                   "error": feed.get("error") or ""}
             for name, feed in feeds.items()
         },
     })
     self.diagnostics["broad_source"] = "Webull native market attention"
+    self.diagnostics.setdefault("market_data_sources", {})["universe_provider"] = (
+        "Webull OpenAPI SDK native radar"
+    )
+    self._walter_native_universe_active = True
     return assets
 
 
@@ -127,27 +120,68 @@ _webull_native_assets._walter_webull_native_discovery = True
 LiveWebullProvider.assets = _webull_native_assets
 
 
-def _radar_failure_rows(error: str, latency_ms: float) -> list[dict]:
-    """Surface unavailable native-radar capability without breaking snapshot tests."""
+def _native_pipeline_rows() -> list[dict[str, str]]:
     return [
         {
-            "Test": f"Native radar — {feed.label}",
-            "Status": "FAIL",
-            "Provider": "Webull OpenAPI SDK",
-            "Endpoint / SDK operation": f"screener.{feed.operation}",
-            "Request count": 0,
-            "Returned symbol count": 0,
-            "First 10 returned symbols": "",
-            "Latency ms": latency_ms,
-            "Actual exception / API error": error,
-        }
+            "Stage": "Universe (market attention)",
+            "Actual provider": "Webull OpenAPI SDK",
+            "Endpoint / operation": "screener.get_gainers_losers + screener.get_most_active",
+            "Code path": "build_seed_symbols → LiveWebullProvider.assets → Webull native radar",
+            "Alpaca used": "No",
+        },
+        {
+            "Stage": "Quote / snapshot retrieval",
+            "Actual provider": "Webull OpenAPI SDK",
+            "Endpoint / operation": SNAPSHOT_OPERATION + " (≤100 symbols; US_STOCK)",
+            "Code path": "LiveWebullProvider.initialize_quotes → WebullOpenAPIClient.snapshots",
+            "Alpaca used": "No",
+        },
+        {
+            "Stage": "Streaming quotes", "Actual provider": "Webull OpenAPI SDK",
+            "Endpoint / operation": "Official SDK market-data stream",
+            "Code path": "LiveWebullProvider.ensure_stream → official SDK stream", "Alpaca used": "No",
+        },
+        {
+            "Stage": "News", "Actual provider": "None (provider abstraction)",
+            "Endpoint / operation": "No raw Webull article feed in current pipeline",
+            "Code path": "NewsService → provider abstraction", "Alpaca used": "No",
+        },
+        {
+            "Stage": "VWAP / volume calculations",
+            "Actual provider": "Webull OpenAPI SDK + Walter local calculations",
+            "Endpoint / operation": "SDK stock bars; Walter session calculations",
+            "Code path": "analyze_candidates → LiveWebullProvider.bars", "Alpaca used": "No",
+        },
+        {
+            "Stage": "Scanning / filtering", "Actual provider": "Walter local pipeline",
+            "Endpoint / operation": "In-process gates, scoring, ranking, and filtering",
+            "Code path": "WalterArchitectureV1.run → Walter analysis", "Alpaca used": "No",
+        },
+    ]
+
+
+def _webull_native_pipeline_sources(self: LiveWebullProvider) -> list[dict[str, str]]:
+    """Show native provenance after the native discovery call has actually run."""
+    if not getattr(self, "_walter_native_universe_active", False):
+        return _ORIGINAL_LIVE_WEBULL_PIPELINE_SOURCES(self)
+    return _native_pipeline_rows()
+
+
+LiveWebullProvider.pipeline_sources = _webull_native_pipeline_sources
+
+
+def _radar_failure_rows(error: str, latency_ms: float) -> list[dict]:
+    return [
+        {"Test": f"Native radar — {feed.label}", "Status": "FAIL",
+         "Provider": "Webull OpenAPI SDK", "Endpoint / SDK operation": f"screener.{feed.operation}",
+         "Request count": 0, "Returned symbol count": 0, "First 10 returned symbols": "",
+         "Latency ms": latency_ms, "Actual exception / API error": error}
         for feed in RADAR_FEEDS
     ]
 
 
 def run_connection_test(*, app_key: str, app_secret: str,
                         eligible_symbols: Iterable[str], client_factory: Callable) -> list[dict]:
-    """Exercise SDK initialization, snapshots, and Webull native-radar access."""
     symbols = list(dict.fromkeys(str(s).strip().upper() for s in eligible_symbols if str(s).strip()))
     rows = []
 
@@ -155,11 +189,9 @@ def run_connection_test(*, app_key: str, app_secret: str,
         returned = sorted(returned)
         rows.append({
             "Test": name, "Status": "FAIL" if error else "PASS",
-            "Provider": "Webull OpenAPI SDK",
-            "Endpoint / SDK operation": SNAPSHOT_OPERATION,
+            "Provider": "Webull OpenAPI SDK", "Endpoint / SDK operation": SNAPSHOT_OPERATION,
             "Request count": (requested + 99) // 100 if requested else 0,
-            "Returned symbol count": len(returned),
-            "First 10 returned symbols": ", ".join(returned[:10]),
+            "Returned symbol count": len(returned), "First 10 returned symbols": ", ".join(returned[:10]),
             "Latency ms": round((perf_counter() - started) * 1000, 2),
             "Actual exception / API error": error,
         })
@@ -177,10 +209,8 @@ def run_connection_test(*, app_key: str, app_secret: str,
         result("SDK client initialization", started, error=f"{type(exc).__name__}: {exc}")
         return rows
 
-    cases = [("HYFM snapshot", ["HYFM"]),
-             ("10-symbol batch", symbols[:10]),
-             ("100-symbol batch", symbols[:100]),
-             ("Full eligible-universe batching", symbols)]
+    cases = [("HYFM snapshot", ["HYFM"]), ("10-symbol batch", symbols[:10]),
+             ("100-symbol batch", symbols[:100]), ("Full eligible-universe batching", symbols)]
     for name, requested_symbols in cases:
         started = perf_counter()
         returned = {}
