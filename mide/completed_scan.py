@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, MutableMapping
 
+from mide.evidence_readiness import evidence_readiness_report
 from mide.live_evidence_observation import live_evidence_observation
 
 
@@ -23,7 +24,7 @@ _INFORMATIONAL_WARNING_PREFIXES = (
 class CompletedScan:
     """One atomic scan result shared by every post-scan dashboard view.
 
-    Records and diagnostics retain the completed run's evidence.  Benign symbol
+    Records and diagnostics retain the completed run's evidence. Benign symbol
     skips and fail-closed free-float coverage notices are preserved in
     ``diagnostics['data_quality_notices']`` instead of being mislabeled as API
     warnings in Data Validation.
@@ -50,11 +51,17 @@ class CompletedScan:
         if notices:
             existing = list(self.diagnostics.get("data_quality_notices") or [])
             self.diagnostics["data_quality_notices"] = existing + notices
-        # GS243 observes the already-completed candidate records.  The report is
+
+        # GS243 observes the already-completed candidate records. The report is
         # detached from those records and has no role in any scanner decision.
-        self.diagnostics["live_evidence_observation"] = live_evidence_observation(
+        observation = live_evidence_observation(
             self.records, scan_timestamp=self.completed_at
         )
+        self.diagnostics["live_evidence_observation"] = observation
+
+        # GS245 snapshots the GS244 operator-readiness verdict beside the exact
+        # completed-scan evidence that produced it. This remains diagnostics-only.
+        self.diagnostics["evidence_readiness"] = evidence_readiness_report(observation)
         object.__setattr__(self, "warnings", operational)
 
     @property
@@ -67,8 +74,8 @@ class ScanContext:
     """The sole session-scoped owner of Walter's live runtime.
 
     Streamlit executes ``app.py`` from top to bottom for every widget event and
-    timer tick.  Consequently no provider, pipeline, or result kept in an app
-    local is durable.  This object is placed in ``session_state`` once and owns
+    timer tick. Consequently no provider, pipeline, or result kept in an app
+    local is durable. This object is placed in ``session_state`` once and owns
     both the reusable runtime objects and the last *successfully completed*
     immutable result.
     """
@@ -79,15 +86,8 @@ class ScanContext:
 
 
 def scan_context(state: MutableMapping[str, Any]) -> ScanContext:
-    """Return the session's authoritative context, creating it only once.
-
-    The small migration branch preserves a completed scan created by an older
-    deployed app version during Streamlit hot reload.
-    """
+    """Return the session's authoritative context, creating it only once."""
     context = state.get(SCAN_CONTEXT_KEY)
-    # Streamlit may reload this module while retaining session_state.  An object
-    # created by the previous class definition is still a valid context even
-    # though ``isinstance`` would reject it after that reload.
     if all(hasattr(context, name) for name in (
         "completed_scan", "provider_instance", "pipeline"
     )):
@@ -104,9 +104,6 @@ def store_completed_scan(
     """Atomically publish a completed scan and its compatibility aliases."""
     context = scan_context(state)
     context.completed_scan = scan
-    # One compatibility pointer supports a safe rolling deployment.  Derived
-    # result fields are deliberately not copied into session_state: copying was
-    # the second mutable runtime that could be reset independently on reruns.
     state[COMPLETED_SCAN_KEY] = scan
     return scan
 
@@ -114,12 +111,7 @@ def store_completed_scan(
 def publish_scan_result(
     state: MutableMapping[str, Any], scan: CompletedScan
 ) -> CompletedScan | None:
-    """Publish only a genuinely completed run, preserving prior evidence.
-
-    The live pipeline's recovery boundary annotates an interrupted run with
-    ``scan_completed=False``.  Such a run is not an empty-universe scan and must
-    never replace the last completed result with misleading zero counts.
-    """
+    """Publish only a genuinely completed run, preserving prior evidence."""
     if (scan.diagnostics.get("scan_completed", True) is False
             or scan.symbols_sampled == 0):
         return completed_scan_for_view(state, "failed scan")
