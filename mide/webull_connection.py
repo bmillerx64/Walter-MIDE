@@ -1,10 +1,9 @@
 """Deployed, credentialed Webull validation used by Diagnostics.
 
 This module is imported immediately after ``mide.webull_live`` by the deployed
-Streamlit app. Live Webull currently runs in snapshot-only mode, so an explicit
-scan must refresh the REST snapshot instead of reusing the prior scan's cached
-price/volume data. The compatibility patch also preserves last-known snapshot
-fields when a later REST response is temporarily sparse.
+Streamlit app. Live Webull refreshes REST snapshots on every explicit scan and,
+from GS253 forward, obtains its live symbol universe exclusively from Webull's
+native market-attention feeds rather than an Alpaca symbol master.
 """
 
 from __future__ import annotations
@@ -37,15 +36,7 @@ def _merge_snapshot_continuity(previous: dict, current: dict) -> dict:
 
 
 def _fresh_live_webull_snapshots(self: LiveWebullProvider, symbols: Iterable[str]) -> dict:
-    """Refresh every manual scan without letting sparse refreshes erase evidence.
-
-    Webull can return a complete snapshot on one request and omit volume,
-    previous-close, or quote fields on a later request. ``initialize_quotes``
-    correctly refreshes live values, but replacing the whole snapshot with that
-    sparse response can make every symbol fail the broad prefilter on the next
-    scan. Preserve prior values only for fields the fresh response omitted; a
-    real fresh value (including zero) always wins.
-    """
+    """Refresh every manual scan without letting sparse refreshes erase evidence."""
     wanted = list(dict.fromkeys(
         str(symbol).strip().upper() for symbol in symbols if str(symbol).strip()
     ))
@@ -77,6 +68,63 @@ def _fresh_live_webull_snapshots(self: LiveWebullProvider, symbols: Iterable[str
 if not getattr(LiveWebullProvider.snapshots, "_walter_fresh_each_scan", False):
     _fresh_live_webull_snapshots._walter_fresh_each_scan = True
     LiveWebullProvider.snapshots = _fresh_live_webull_snapshots
+
+
+def _webull_native_assets(self: LiveWebullProvider) -> list[dict]:
+    """Return the rotating Webull-native attention universe for Live Webull.
+
+    This is intentionally fail-closed. Live Webull must never fall back to the
+    legacy Alpaca symbol master: if Webull native discovery is unavailable, the
+    scan stops at universe discovery with the exact Webull error visible.
+    """
+    report = fetch_native_radar(self)
+    feeds = report.get("feeds", {})
+    failed = [
+        f"{name}: {feed.get('error') or 'unavailable'}"
+        for name, feed in feeds.items()
+        if feed.get("status") != "PASS"
+    ]
+    if failed:
+        raise RuntimeError("Webull native discovery unavailable — " + "; ".join(failed))
+
+    assets = []
+    for item in report.get("symbols", []):
+        symbol = str(item.get("symbol") or "").strip().upper()
+        if not symbol:
+            continue
+        assets.append({
+            "symbol": symbol,
+            "name": item.get("name") or "",
+            "tradable": True,
+            "status": "active",
+            "exchange": item.get("exchange") or "",
+            "otc": False,
+            "webull_native_sources": list(item.get("sources") or []),
+            "webull_native_ranks": dict(item.get("ranks") or {}),
+        })
+
+    diagnostics = self.diagnostics.setdefault("webull_native_discovery", {})
+    diagnostics.update({
+        "provider": "Webull OpenAPI SDK",
+        "mode": "native_market_attention",
+        "alpaca_universe_used": False,
+        "feed_count": len(feeds),
+        "unique_symbols": len(assets),
+        "feed_status": {
+            name: {
+                "status": feed.get("status"),
+                "returned": len(feed.get("rows") or []),
+                "error": feed.get("error") or "",
+            }
+            for name, feed in feeds.items()
+        },
+    })
+    self.diagnostics["broad_source"] = "Webull native market attention"
+    return assets
+
+
+_webull_native_assets._walter_webull_native_discovery = True
+LiveWebullProvider.assets = _webull_native_assets
 
 
 def _radar_failure_rows(error: str, latency_ms: float) -> list[dict]:
@@ -144,8 +192,6 @@ def run_connection_test(*, app_key: str, app_secret: str,
             result(name, started, requested=len(requested_symbols), returned=returned,
                    error=f"{type(exc).__name__}: {exc}")
 
-    # GS252: credentialed proof of the replacement discovery source. These four
-    # calls are read-only and do not feed the current production funnel yet.
     radar_started = perf_counter()
     try:
         radar_report = fetch_native_radar(client)
