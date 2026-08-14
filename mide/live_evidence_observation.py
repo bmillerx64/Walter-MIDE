@@ -12,6 +12,11 @@ from typing import Any
 
 from mide.market_evidence_audit import market_evidence_report
 from mide.evidence_readiness_diagnostics import render_evidence_readiness_diagnostics
+from mide.evidence_readiness_history import readiness_history
+from mide.session_readiness_telemetry import (
+    render_session_readiness_diagnostics,
+    session_readiness_report,
+)
 
 
 _ELEVATED_STATES = {
@@ -150,3 +155,11 @@ def render_live_evidence_diagnostics(ui: Any, report: Mapping[str, Any]) -> None
         if row.get("coherence_failures"):
             reasons.append("incoherent " + ", ".join(row["coherence_failures"]))
         ui.warning(f"{symbol}: {row.get('evidence_status', 'non-TRUSTED')} · " + ("; ".join(reasons) or "evidence not trusted"))
+
+    # GS250: surface GS248 history through GS249 at the existing Diagnostics call site.
+    state = getattr(ui, "session_state", None)
+    if state is not None:
+        render_session_readiness_diagnostics(
+            ui,
+            session_readiness_report(readiness_history(state)),
+        )
