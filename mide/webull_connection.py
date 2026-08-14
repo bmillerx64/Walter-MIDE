@@ -16,6 +16,7 @@ from .webull_native_radar import RADAR_FEEDS, fetch_native_radar, radar_probe_ro
 
 
 _ORIGINAL_LIVE_WEBULL_SNAPSHOTS = LiveWebullProvider.snapshots
+_ORIGINAL_LIVE_WEBULL_PIPELINE_SOURCES = LiveWebullProvider.pipeline_sources
 
 
 def _merge_snapshot_continuity(previous: dict, current: dict) -> dict:
@@ -111,6 +112,7 @@ def _webull_native_assets(self: LiveWebullProvider) -> list[dict]:
     self.diagnostics.setdefault("market_data_sources", {})["universe_provider"] = (
         "Webull OpenAPI SDK native radar"
     )
+    self._walter_native_universe_active = True
     return assets
 
 
@@ -118,8 +120,7 @@ _webull_native_assets._walter_webull_native_discovery = True
 LiveWebullProvider.assets = _webull_native_assets
 
 
-def _webull_native_pipeline_sources(self: LiveWebullProvider) -> list[dict[str, str]]:
-    """Literal provider provenance for the post-cutover Live Webull path."""
+def _native_pipeline_rows() -> list[dict[str, str]]:
     return [
         {
             "Stage": "Universe (market attention)",
@@ -136,34 +137,34 @@ def _webull_native_pipeline_sources(self: LiveWebullProvider) -> list[dict[str, 
             "Alpaca used": "No",
         },
         {
-            "Stage": "Streaming quotes",
-            "Actual provider": "Webull OpenAPI SDK",
+            "Stage": "Streaming quotes", "Actual provider": "Webull OpenAPI SDK",
             "Endpoint / operation": "Official SDK market-data stream",
-            "Code path": "LiveWebullProvider.ensure_stream → official SDK stream",
-            "Alpaca used": "No",
+            "Code path": "LiveWebullProvider.ensure_stream → official SDK stream", "Alpaca used": "No",
         },
         {
-            "Stage": "News",
-            "Actual provider": "None (provider abstraction)",
+            "Stage": "News", "Actual provider": "None (provider abstraction)",
             "Endpoint / operation": "No raw Webull article feed in current pipeline",
-            "Code path": "NewsService → provider abstraction",
-            "Alpaca used": "No",
+            "Code path": "NewsService → provider abstraction", "Alpaca used": "No",
         },
         {
             "Stage": "VWAP / volume calculations",
             "Actual provider": "Webull OpenAPI SDK + Walter local calculations",
             "Endpoint / operation": "SDK stock bars; Walter session calculations",
-            "Code path": "analyze_candidates → LiveWebullProvider.bars",
-            "Alpaca used": "No",
+            "Code path": "analyze_candidates → LiveWebullProvider.bars", "Alpaca used": "No",
         },
         {
-            "Stage": "Scanning / filtering",
-            "Actual provider": "Walter local pipeline",
+            "Stage": "Scanning / filtering", "Actual provider": "Walter local pipeline",
             "Endpoint / operation": "In-process gates, scoring, ranking, and filtering",
-            "Code path": "WalterArchitectureV1.run → Walter analysis",
-            "Alpaca used": "No",
+            "Code path": "WalterArchitectureV1.run → Walter analysis", "Alpaca used": "No",
         },
     ]
+
+
+def _webull_native_pipeline_sources(self: LiveWebullProvider) -> list[dict[str, str]]:
+    """Show native provenance after the native discovery call has actually run."""
+    if not getattr(self, "_walter_native_universe_active", False):
+        return _ORIGINAL_LIVE_WEBULL_PIPELINE_SOURCES(self)
+    return _native_pipeline_rows()
 
 
 LiveWebullProvider.pipeline_sources = _webull_native_pipeline_sources
@@ -171,14 +172,10 @@ LiveWebullProvider.pipeline_sources = _webull_native_pipeline_sources
 
 def _radar_failure_rows(error: str, latency_ms: float) -> list[dict]:
     return [
-        {
-            "Test": f"Native radar — {feed.label}", "Status": "FAIL",
-            "Provider": "Webull OpenAPI SDK",
-            "Endpoint / SDK operation": f"screener.{feed.operation}",
-            "Request count": 0, "Returned symbol count": 0,
-            "First 10 returned symbols": "", "Latency ms": latency_ms,
-            "Actual exception / API error": error,
-        }
+        {"Test": f"Native radar — {feed.label}", "Status": "FAIL",
+         "Provider": "Webull OpenAPI SDK", "Endpoint / SDK operation": f"screener.{feed.operation}",
+         "Request count": 0, "Returned symbol count": 0, "First 10 returned symbols": "",
+         "Latency ms": latency_ms, "Actual exception / API error": error}
         for feed in RADAR_FEEDS
     ]
 
@@ -192,11 +189,9 @@ def run_connection_test(*, app_key: str, app_secret: str,
         returned = sorted(returned)
         rows.append({
             "Test": name, "Status": "FAIL" if error else "PASS",
-            "Provider": "Webull OpenAPI SDK",
-            "Endpoint / SDK operation": SNAPSHOT_OPERATION,
+            "Provider": "Webull OpenAPI SDK", "Endpoint / SDK operation": SNAPSHOT_OPERATION,
             "Request count": (requested + 99) // 100 if requested else 0,
-            "Returned symbol count": len(returned),
-            "First 10 returned symbols": ", ".join(returned[:10]),
+            "Returned symbol count": len(returned), "First 10 returned symbols": ", ".join(returned[:10]),
             "Latency ms": round((perf_counter() - started) * 1000, 2),
             "Actual exception / API error": error,
         })
