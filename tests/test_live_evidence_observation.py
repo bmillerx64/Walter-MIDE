@@ -117,7 +117,9 @@ def test_observation_and_completed_scan_do_not_mutate_candidates_or_decisions():
     assert records == before
     assert scan.records == before
     assert scan.diagnostics["decision"] == "unchanged"
-    assert scan.diagnostics["live_evidence_observation"] == report
+    stored_observation = scan.diagnostics["live_evidence_observation"]
+    assert {key: value for key, value in stored_observation.items() if key != "readiness_snapshot"} == report
+    assert stored_observation["readiness_snapshot"] is scan.diagnostics["evidence_readiness"]
 
 
 class FakeColumn:
@@ -162,7 +164,12 @@ class FakeUi:
 
 def test_diagnostics_rendering_handles_empty_observations():
     ui = FakeUi()
-    render_live_evidence_diagnostics(ui, observe([]))
+    scan = CompletedScan(
+        provider="WEBULL", records=[], diagnostics={}, warnings=[],
+        symbols_sampled=0, prefilter_count=0,
+        completed_at=SCAN_TIME, source_label="test",
+    )
+    render_live_evidence_diagnostics(ui, scan.diagnostics["live_evidence_observation"])
     assert len(ui.column_groups) == 2
     assert ui.column_groups[0][0].metrics == [("Readiness", "UNMEASURED")]
     assert ui.column_groups[1][0].metrics == [("Evidence Reliability %", "N/A")]

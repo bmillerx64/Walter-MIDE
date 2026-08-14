@@ -11,7 +11,6 @@ from datetime import datetime
 from typing import Any
 
 from mide.market_evidence_audit import market_evidence_report
-from mide.evidence_readiness import evidence_readiness_report
 from mide.evidence_readiness_diagnostics import render_evidence_readiness_diagnostics
 
 
@@ -119,11 +118,12 @@ def live_evidence_summary(report: Mapping[str, Any]) -> str:
 
 
 def render_live_evidence_diagnostics(ui: Any, report: Mapping[str, Any]) -> None:
-    """Render compact Diagnostics-only output, including GS244 readiness."""
-    # CompletedScan snapshots this same deterministic readiness report beside the
-    # evidence report. Rendering it here keeps the existing Diagnostics call site
-    # stable while exposing the 99% operator target; it remains non-decisional.
-    render_evidence_readiness_diagnostics(ui, evidence_readiness_report(report))
+    """Render the exact completed-scan evidence and stored readiness snapshot."""
+    readiness = report.get("readiness_snapshot")
+    if isinstance(readiness, Mapping):
+        render_evidence_readiness_diagnostics(ui, readiness)
+    else:
+        ui.info("Evidence readiness snapshot unavailable for this completed scan.")
     ui.subheader("Live Evidence Reliability")
     ui.caption(live_evidence_summary(report))
     columns = ui.columns(5)
