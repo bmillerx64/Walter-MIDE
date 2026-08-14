@@ -19,9 +19,30 @@ OPERATIONS = {
     "public_symbol_fallback": "GET Nasdaq Trader nasdaqlisted.txt and otherlisted.txt",
 }
 
+WEBULL_OPERATIONS = {
+    "assets": "screener.get_gainers_losers + screener.get_most_active (Webull OpenAPI SDK)",
+    "movers": "screener.get_gainers_losers (Webull OpenAPI SDK)",
+    "most_actives": "screener.get_most_active (Webull OpenAPI SDK)",
+}
+
 
 def _normal(raw):
     return str(raw or "").strip().upper()
+
+
+def _operation_for(client, method_name: str) -> str:
+    """Report the operation actually used by the selected provider.
+
+    Historically this diagnostic keyed only on the generic method name
+    ``assets`` and therefore displayed Alpaca /v2/assets even when the selected
+    Live Webull provider had already replaced ``assets()`` with Webull native
+    radar discovery.  Provenance must describe the runtime provider, not the
+    legacy abstraction name.
+    """
+    provider = str(getattr(client, "provider_name", client.__class__.__name__) or "")
+    if "webull" in provider.casefold():
+        return WEBULL_OPERATIONS.get(method_name, f"Webull OpenAPI SDK: {method_name}")
+    return OPERATIONS.get(method_name, method_name)
 
 
 class UniverseVerification:
@@ -57,9 +78,10 @@ class UniverseVerification:
         valid = [item for item in normalized if is_valid_us_symbol(item)]
         duplicates = len(valid) - len(set(valid))
         provider = getattr(self.client, "provider_name", self.client.__class__.__name__)
+        operation = _operation_for(self.client, method_name)
         source = {
             "source_name": source_name, "provider": provider,
-            "provider_method": method_name, "api_endpoint_or_operation": OPERATIONS[method_name],
+            "provider_method": method_name, "api_endpoint_or_operation": operation,
             "request_parameters": dict(parameters), "pagination_or_batching": "single request",
             "raw_objects_returned": len(objects), "raw_unique_symbols_returned": len(set(valid)),
             "duplicate_symbols_within_source": duplicates,
@@ -68,7 +90,8 @@ class UniverseVerification:
             ],
             "truncation_or_api_limit_warnings": ([
                 "requested top=100 is clamped to the Alpaca endpoint maximum of 50"
-            ] if method_name == "most_actives" and int(parameters.get("top", 0)) > 50 else []),
+            ] if "alpaca" in str(provider).casefold()
+               and method_name == "most_actives" and int(parameters.get("top", 0)) > 50 else []),
             "elapsed_ms": round(elapsed, 3),
         }
         self.report["sources"].append(source)
@@ -76,7 +99,7 @@ class UniverseVerification:
         if provider not in metadata["provider_names"]:
             metadata["provider_names"].append(provider)
         metadata["provider_methods_called"].append({
-            "method": method_name, "operation": OPERATIONS[method_name]
+            "method": method_name, "operation": operation
         })
         for raw, symbol in zip(raw_symbols, normalized):
             self._observations.append({"raw": raw, "symbol": symbol, "source": source_name})
@@ -115,10 +138,6 @@ class UniverseVerification:
             grouped = row.get("affected_symbols_grouped_by_reason", {})
             documented |= {symbol for values in grouped.values() for symbol in values}
             self.report["pre_price_transitions"].append(row)
-        # Invalid observations have no valid normalized symbol and are accounted
-        # separately. Every valid provider symbol must be admitted or transitioned.
-        # Universe Construction is non-filtering: documenting a transition does
-        # not make removal of a valid provider symbol acceptable.
         unexplained = sorted((raw_unique - final) | (final - raw_unique))
         entered = final if entered_price_gate is None else set(entered_price_gate)
         reason_by_symbol = {
