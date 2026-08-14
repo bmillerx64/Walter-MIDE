@@ -17,6 +17,7 @@ from .webull_native_radar import RADAR_FEEDS, fetch_native_radar, radar_probe_ro
 
 
 _ORIGINAL_LIVE_WEBULL_SNAPSHOTS = LiveWebullProvider.snapshots
+_ORIGINAL_PIPELINE_SOURCES = LiveWebullProvider.pipeline_sources
 
 
 def _merge_snapshot_continuity(previous: dict, current: dict) -> dict:
@@ -125,6 +126,29 @@ def _webull_native_assets(self: LiveWebullProvider) -> list[dict]:
 
 _webull_native_assets._walter_webull_native_discovery = True
 LiveWebullProvider.assets = _webull_native_assets
+
+
+def _webull_only_pipeline_sources(self: LiveWebullProvider) -> list[dict[str, str]]:
+    """Report literal provider provenance after the GS253 discovery cutover."""
+    rows = _ORIGINAL_PIPELINE_SOURCES(self)
+    for row in rows:
+        if row.get("Stage") == "Universe (tradable symbol list)":
+            row.update({
+                "Actual provider": "Webull OpenAPI SDK",
+                "Endpoint / operation": (
+                    "Native screener: top gainers / 5-minute movers / relative volume / volume"
+                ),
+                "Code path": (
+                    "build_seed_symbols → LiveWebullProvider.assets → "
+                    "webull_native_radar.fetch_native_radar"
+                ),
+                "Alpaca used": "No",
+            })
+    return rows
+
+
+_webull_only_pipeline_sources._walter_webull_native_discovery = True
+LiveWebullProvider.pipeline_sources = _webull_only_pipeline_sources
 
 
 def _radar_failure_rows(error: str, latency_ms: float) -> list[dict]:
