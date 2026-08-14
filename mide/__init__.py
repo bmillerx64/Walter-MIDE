@@ -1,5 +1,11 @@
 from .version import __version__
 
+from .fmp_bootstrap import activate_streamlit_fmp_secret as _activate_streamlit_fmp_secret  # noqa: E402
+
+# Normalize an already-configured Streamlit FMP secret before any news provider
+# is constructed. The helper exposes only presence and never logs the value.
+_activate_streamlit_fmp_secret()
+
 from . import data_validation_cleanup as _data_validation_cleanup  # noqa: F401,E402
 from .prefilter_compat import install as _install_prefilter_compat  # noqa: E402
 
