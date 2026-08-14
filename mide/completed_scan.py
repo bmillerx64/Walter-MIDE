@@ -7,6 +7,7 @@ from datetime import datetime
 from typing import Any, MutableMapping
 
 from mide.evidence_readiness import evidence_readiness_report
+from mide.evidence_readiness_history import append_readiness_history
 from mide.live_evidence_observation import live_evidence_observation
 
 
@@ -109,6 +110,7 @@ def store_completed_scan(
     context = scan_context(state)
     context.completed_scan = scan
     state[COMPLETED_SCAN_KEY] = scan
+    append_readiness_history(state, scan)
     return scan
 
 
