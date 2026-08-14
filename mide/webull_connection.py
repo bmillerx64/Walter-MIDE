@@ -14,7 +14,7 @@ from typing import Callable, Iterable
 
 from .webull_sdk import SNAPSHOT_OPERATION
 from .webull_live import LiveWebullProvider
-from .webull_native_radar import fetch_native_radar, radar_probe_rows
+from .webull_native_radar import RADAR_FEEDS, fetch_native_radar, radar_probe_rows
 
 
 _ORIGINAL_LIVE_WEBULL_SNAPSHOTS = LiveWebullProvider.snapshots
@@ -79,6 +79,24 @@ if not getattr(LiveWebullProvider.snapshots, "_walter_fresh_each_scan", False):
     LiveWebullProvider.snapshots = _fresh_live_webull_snapshots
 
 
+def _radar_failure_rows(error: str, latency_ms: float) -> list[dict]:
+    """Surface unavailable native-radar capability without breaking snapshot tests."""
+    return [
+        {
+            "Test": f"Native radar — {feed.label}",
+            "Status": "FAIL",
+            "Provider": "Webull OpenAPI SDK",
+            "Endpoint / SDK operation": f"screener.{feed.operation}",
+            "Request count": 0,
+            "Returned symbol count": 0,
+            "First 10 returned symbols": "",
+            "Latency ms": latency_ms,
+            "Actual exception / API error": error,
+        }
+        for feed in RADAR_FEEDS
+    ]
+
+
 def run_connection_test(*, app_key: str, app_secret: str,
                         eligible_symbols: Iterable[str], client_factory: Callable) -> list[dict]:
     """Exercise SDK initialization, snapshots, and Webull native-radar access."""
@@ -129,10 +147,15 @@ def run_connection_test(*, app_key: str, app_secret: str,
     # GS252: credentialed proof of the replacement discovery source. These four
     # calls are read-only and do not feed the current production funnel yet.
     radar_started = perf_counter()
-    radar_report = fetch_native_radar(client)
-    radar_rows = radar_probe_rows(radar_report)
-    elapsed_ms = round((perf_counter() - radar_started) * 1000, 2)
-    for radar_row in radar_rows:
-        radar_row["Latency ms"] = elapsed_ms
-        rows.append(radar_row)
+    try:
+        radar_report = fetch_native_radar(client)
+        radar_rows = radar_probe_rows(radar_report)
+    except Exception as exc:
+        latency_ms = round((perf_counter() - radar_started) * 1000, 2)
+        radar_rows = _radar_failure_rows(f"{type(exc).__name__}: {exc}", latency_ms)
+    else:
+        latency_ms = round((perf_counter() - radar_started) * 1000, 2)
+        for radar_row in radar_rows:
+            radar_row["Latency ms"] = latency_ms
+    rows.extend(radar_rows)
     return rows
