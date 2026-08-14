@@ -1,6 +1,6 @@
 """Completed-scan market-evidence observation (GS243).
 
-This module is deliberately downstream of Walter's decisions.  It reads candidate
+This module is deliberately downstream of Walter's decisions. It reads candidate
 records, delegates evidence classification to GS241, and returns detached
 diagnostics; it never gates, ranks, scores, or mutates a candidate.
 """
@@ -11,6 +11,8 @@ from datetime import datetime
 from typing import Any
 
 from mide.market_evidence_audit import market_evidence_report
+from mide.evidence_readiness import evidence_readiness_report
+from mide.evidence_readiness_diagnostics import render_evidence_readiness_diagnostics
 
 
 _ELEVATED_STATES = {
@@ -98,8 +100,6 @@ def live_evidence_observation(
     }
 
 
-# Report-shaped naming mirrors ``market_evidence_report`` and gives callers a
-# clear public entry point while retaining the GS243 observation terminology.
 live_evidence_report = live_evidence_observation
 
 
@@ -119,7 +119,11 @@ def live_evidence_summary(report: Mapping[str, Any]) -> str:
 
 
 def render_live_evidence_diagnostics(ui: Any, report: Mapping[str, Any]) -> None:
-    """Render compact Diagnostics-only output, including safe empty scans."""
+    """Render compact Diagnostics-only output, including GS244 readiness."""
+    # CompletedScan snapshots this same deterministic readiness report beside the
+    # evidence report. Rendering it here keeps the existing Diagnostics call site
+    # stable while exposing the 99% operator target; it remains non-decisional.
+    render_evidence_readiness_diagnostics(ui, evidence_readiness_report(report))
     ui.subheader("Live Evidence Reliability")
     ui.caption(live_evidence_summary(report))
     columns = ui.columns(5)
