@@ -14,6 +14,7 @@ from typing import Callable, Iterable
 
 from .webull_sdk import SNAPSHOT_OPERATION
 from .webull_live import LiveWebullProvider
+from .webull_native_radar import fetch_native_radar, radar_probe_rows
 
 
 _ORIGINAL_LIVE_WEBULL_SNAPSHOTS = LiveWebullProvider.snapshots
@@ -80,7 +81,7 @@ if not getattr(LiveWebullProvider.snapshots, "_walter_fresh_each_scan", False):
 
 def run_connection_test(*, app_key: str, app_secret: str,
                         eligible_symbols: Iterable[str], client_factory: Callable) -> list[dict]:
-    """Exercise SDK initialization and all required snapshot batch shapes."""
+    """Exercise SDK initialization, snapshots, and Webull native-radar access."""
     symbols = list(dict.fromkeys(str(s).strip().upper() for s in eligible_symbols if str(s).strip()))
     rows = []
 
@@ -124,4 +125,14 @@ def run_connection_test(*, app_key: str, app_secret: str,
         except Exception as exc:
             result(name, started, requested=len(requested_symbols), returned=returned,
                    error=f"{type(exc).__name__}: {exc}")
+
+    # GS252: credentialed proof of the replacement discovery source. These four
+    # calls are read-only and do not feed the current production funnel yet.
+    radar_started = perf_counter()
+    radar_report = fetch_native_radar(client)
+    radar_rows = radar_probe_rows(radar_report)
+    elapsed_ms = round((perf_counter() - radar_started) * 1000, 2)
+    for radar_row in radar_rows:
+        radar_row["Latency ms"] = elapsed_ms
+        rows.append(radar_row)
     return rows
