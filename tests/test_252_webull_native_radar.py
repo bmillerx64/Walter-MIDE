@@ -140,6 +140,30 @@ def test_connection_test_surfaces_native_radar_rows_after_snapshot_validation():
     assert radar_rows[0]["Endpoint / SDK operation"] == "screener.get_gainers_losers"
 
 
+def test_connection_test_preserves_snapshot_validation_when_screener_is_absent():
+    class SnapshotOnlyClient:
+        def __init__(self, *_args):
+            pass
+
+        def snapshots(self, symbols):
+            return {symbol: {} for symbol in symbols}
+
+    rows = run_connection_test(
+        app_key="key",
+        app_secret="secret",
+        eligible_symbols=[f"S{index}" for index in range(12)],
+        client_factory=SnapshotOnlyClient,
+    )
+
+    assert rows[0]["Test"] == "Credential loading"
+    assert rows[1]["Test"] == "SDK client initialization"
+    assert rows[2]["Test"] == "HYFM snapshot"
+    radar_rows = [row for row in rows if row["Test"].startswith("Native radar")]
+    assert len(radar_rows) == 4
+    assert all(row["Status"] == "FAIL" for row in radar_rows)
+    assert all("get_gainers_losers/get_most_active" in row["Actual exception / API error"] for row in radar_rows)
+
+
 def test_missing_screener_fails_closed():
     class NoScreener:
         pass
