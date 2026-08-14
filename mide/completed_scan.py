@@ -57,11 +57,15 @@ class CompletedScan:
         observation = live_evidence_observation(
             self.records, scan_timestamp=self.completed_at
         )
-        self.diagnostics["live_evidence_observation"] = observation
 
         # GS245 snapshots the GS244 operator-readiness verdict beside the exact
-        # completed-scan evidence that produced it. This remains diagnostics-only.
-        self.diagnostics["evidence_readiness"] = evidence_readiness_report(observation)
+        # completed-scan evidence that produced it. GS247 also binds that same
+        # snapshot to the observation consumed by Diagnostics, preventing display
+        # time recomputation while preserving the existing Diagnostics call site.
+        readiness = evidence_readiness_report(observation)
+        observation["readiness_snapshot"] = readiness
+        self.diagnostics["live_evidence_observation"] = observation
+        self.diagnostics["evidence_readiness"] = readiness
         object.__setattr__(self, "warnings", operational)
 
     @property
