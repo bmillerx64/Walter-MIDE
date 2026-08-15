@@ -20,3 +20,7 @@ _install_contract_compat()
 from .readiness_audit import install as _install_readiness_audit  # noqa: E402
 
 _install_readiness_audit()
+
+from .gs257_runtime import install as _install_gs257_runtime  # noqa: E402
+
+_install_gs257_runtime()
