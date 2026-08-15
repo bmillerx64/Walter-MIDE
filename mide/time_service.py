@@ -55,10 +55,17 @@ def eastern_time(value: datetime | str | None = None) -> datetime:
 
 
 def market_phase_at(value: datetime | None = None) -> str:
-    """Return the U.S. market phase from the shared Eastern market clock."""
-    now = eastern_time(value)
-    current_time = now.time()
+    """Return Walter's U.S. equity market phase from the shared Eastern clock.
 
+    Weekends are always closed. Intraday phase labels are only meaningful on
+    Monday through Friday; exchange holidays remain a separate calendar concern.
+    """
+    now = eastern_time(value)
+
+    if now.weekday() >= 5:
+        return "Market Closed"
+
+    current_time = now.time()
     if PRE_MARKET_START <= current_time < LIVE_MARKET_START:
         return "Pre-Market"
     if LIVE_MARKET_START <= current_time < AFTER_HOURS_START:
