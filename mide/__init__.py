@@ -24,3 +24,7 @@ _install_readiness_audit()
 from .gs257_runtime import install as _install_gs257_runtime  # noqa: E402
 
 _install_gs257_runtime()
+
+from .gs258_cutover import install as _install_gs258_cutover  # noqa: E402
+
+_install_gs258_cutover()
