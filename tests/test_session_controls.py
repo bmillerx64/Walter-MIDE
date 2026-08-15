@@ -102,15 +102,14 @@ def test_manual_request_is_pending_until_scan_execution_actually_begins():
     assert state[SCAN_RUNNING_KEY] is True
 
 
-def test_reruns_never_silently_switch_the_selected_provider():
+def test_reruns_repair_legacy_alpaca_state_without_reactivating_alpaca():
     state = {}
     initialize_session_controls(state, default_mode="Live Webull")
     state[DATA_MODE_KEY] = "Live Alpaca"
     select_data_mode(state)
-    assert state[PROVIDER_KEY] == "ALPACA"
+    assert state[DATA_MODE_KEY] == "Demo"
+    assert state[PROVIDER_KEY] is None
 
-    for default in ("Live Webull", "Demo", "Live Alpaca"):
-        initialize_session_controls(state, default_mode=default)
-
-    assert state[DATA_MODE_KEY] == "Live Alpaca"
-    assert state[PROVIDER_KEY] == "ALPACA"
+    initialize_session_controls(state, default_mode="Live Webull")
+    assert state[DATA_MODE_KEY] == "Demo"
+    assert state[PROVIDER_KEY] is None

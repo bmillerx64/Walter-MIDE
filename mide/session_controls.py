@@ -13,11 +13,11 @@ SCAN_RUNNING_KEY = "scan_in_progress"
 SCAN_REQUESTED_KEY = "scan_requested"
 STOP_REQUESTED_KEY = "scan_stop_requested"
 
+VALID_DATA_MODES = {"Live Webull", "Demo"}
+
 
 def provider_for_mode(mode: str) -> str | None:
-    """Return the provider represented by a live mode without a fallback."""
-    if mode == "Live Alpaca":
-        return "ALPACA"
+    """Return the only supported live provider; legacy Alpaca state is inert."""
     if mode == "Live Webull":
         return "WEBULL"
     return None
@@ -30,10 +30,15 @@ def initialize_session_controls(
 
     This function runs before any scan execution starts on each Streamlit script
     run. The process watchdog, rather than a value left over from a prior script
-    execution, is authoritative during reruns.
+    execution, is authoritative during reruns. Any persisted pre-GS258 Alpaca
+    selection is repaired before a scan can be requested.
     """
-    state.setdefault(DATA_MODE_KEY, default_mode)
-    state.setdefault(PROVIDER_KEY, provider_for_mode(state[DATA_MODE_KEY]))
+    safe_default = default_mode if default_mode in VALID_DATA_MODES else "Demo"
+    current_mode = state.get(DATA_MODE_KEY, safe_default)
+    if current_mode not in VALID_DATA_MODES:
+        current_mode = safe_default
+    state[DATA_MODE_KEY] = current_mode
+    state[PROVIDER_KEY] = provider_for_mode(current_mode)
     # Keep repair deployments manual until Webull credentials and entitlements
     # have passed the deployed connection test.
     state.setdefault(AUTO_SCAN_KEY, False)
@@ -46,8 +51,12 @@ def initialize_session_controls(
 
 
 def select_data_mode(state: MutableMapping[str, Any]) -> None:
-    """Persist an explicit data-mode widget change and its exact provider."""
-    state[PROVIDER_KEY] = provider_for_mode(state[DATA_MODE_KEY])
+    """Persist a supported data-mode widget change and its exact provider."""
+    mode = state.get(DATA_MODE_KEY)
+    if mode not in VALID_DATA_MODES:
+        state[DATA_MODE_KEY] = "Demo"
+        mode = "Demo"
+    state[PROVIDER_KEY] = provider_for_mode(mode)
 
 
 def request_scan(state: MutableMapping[str, Any]) -> None:
