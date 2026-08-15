@@ -40,3 +40,7 @@ _install_gs261_provenance()
 from .gs262_discovery_fidelity import install as _install_gs262_discovery_fidelity  # noqa: E402
 
 _install_gs262_discovery_fidelity()
+
+from .gs263_discovery_gate import install as _install_gs263_discovery_gate  # noqa: E402
+
+_install_gs263_discovery_gate()
