@@ -32,3 +32,7 @@ _install_gs258_cutover()
 from .gs259_ui_cleanup import install as _install_gs259_ui_cleanup  # noqa: E402
 
 _install_gs259_ui_cleanup()
+
+from .gs261_provenance import install as _install_gs261_provenance  # noqa: E402
+
+_install_gs261_provenance()
