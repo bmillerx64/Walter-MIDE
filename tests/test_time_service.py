@@ -56,3 +56,19 @@ def test_market_banner_phase_boundaries():
 
     for eastern_datetime, expected_banner in boundary_cases:
         assert market_clock(eastern_datetime).banner_text == expected_banner
+
+
+def test_weekend_is_always_market_closed_regardless_of_clock_time():
+    saturday_cases = [
+        datetime(2026, 8, 15, 4, 0, 0),
+        datetime(2026, 8, 15, 10, 16, 0),
+        datetime(2026, 8, 15, 16, 30, 0),
+    ]
+    sunday_cases = [
+        datetime(2026, 8, 16, 9, 30, 0),
+        datetime(2026, 8, 16, 19, 59, 59),
+    ]
+
+    for eastern_datetime in saturday_cases + sunday_cases:
+        assert market_phase_at(eastern_datetime) == "Market Closed"
+        assert market_clock(eastern_datetime).phase == "Market Closed"
