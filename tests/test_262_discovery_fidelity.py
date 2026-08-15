@@ -1,3 +1,5 @@
+import importlib
+
 import mide  # noqa: F401
 from mide import webull_native_radar as radar
 
@@ -20,9 +22,15 @@ class _Screener:
         return rows
 
 
+def _fresh_radar():
+    """Reload the production module so GS262 is tested independently of prior test monkey-patches."""
+    return importlib.reload(radar)
+
+
 def test_gs262_scans_only_top20_day_gainers_and_top20_absolute_volume():
+    native_radar = _fresh_radar()
     client = _Screener()
-    report = radar.fetch_native_radar(client)
+    report = native_radar.fetch_native_radar(client)
 
     assert report["discovery_contract"] == "WEBULL_TOP20_DAY_GAINERS_PLUS_TOP20_ABSOLUTE_VOLUME"
     assert report["maximum_pre_dedupe_symbols"] == 40
@@ -35,7 +43,8 @@ def test_gs262_scans_only_top20_day_gainers_and_top20_absolute_volume():
 
 
 def test_gs262_preserves_entry_reason_and_excludes_other_radar_feeds():
-    report = radar.fetch_native_radar(_Screener())
+    native_radar = _fresh_radar()
+    report = native_radar.fetch_native_radar(_Screener())
     by_symbol = {row["symbol"]: row for row in report["symbols"]}
 
     assert by_symbol["G01"]["sources"] == ["day_gainers", "absolute_volume"]
