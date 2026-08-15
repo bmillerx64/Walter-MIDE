@@ -36,3 +36,7 @@ _install_gs259_ui_cleanup()
 from .gs261_provenance import install as _install_gs261_provenance  # noqa: E402
 
 _install_gs261_provenance()
+
+from .gs262_discovery_fidelity import install as _install_gs262_discovery_fidelity  # noqa: E402
+
+_install_gs262_discovery_fidelity()
