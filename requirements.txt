@@ -1,3 +1,6 @@
+# GS265: dependency manifest touch forces Streamlit Cloud to rebuild the Python runtime
+# after authoritative market-clock changes, preventing stale imported modules from
+# surviving a hot app rerun across deployments.
 streamlit==1.59.2
 pandas==2.3.3
 numpy==2.5.1
