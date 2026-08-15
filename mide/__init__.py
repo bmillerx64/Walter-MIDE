@@ -28,3 +28,7 @@ _install_gs257_runtime()
 from .gs258_cutover import install as _install_gs258_cutover  # noqa: E402
 
 _install_gs258_cutover()
+
+from .gs259_ui_cleanup import install as _install_gs259_ui_cleanup  # noqa: E402
+
+_install_gs259_ui_cleanup()
