@@ -154,8 +154,10 @@ from mide.session_controls import (
 )
 from mide.completed_scan import (
     CompletedScan,
+    LAST_SCAN_FAILURE_KEY,
     completed_scan_for_view,
     publish_scan_result,
+    record_scan_failure,
     scan_context,
     store_completed_scan,
 )
@@ -1019,6 +1021,29 @@ def arm_live_clock_engine(
     retry_seconds: int = 5,
 ) -> None:
     """Keep dashboard clocks live and trigger scheduled scans without showing a timer."""
+    # A timed fragment requests a rerun over the existing websocket.
+    # A browser ``location.reload()`` creates a new Streamlit session and loses
+    # the completed scan and persistent controls along with its session_state.
+    if enabled:
+        interval = retry_seconds if last_scan_attempt and (
+            not last_updated or last_scan_attempt > last_updated
+        ) else refresh_seconds
+        interval = max(1, int(interval))
+        tick_key = "_walter_live_scan_fragment_tick"
+
+        @st.fragment(run_every=timedelta(seconds=interval))
+        def request_session_preserving_rerun() -> None:
+            now = datetime.now().astimezone()
+            previous = st.session_state.get(tick_key)
+            if previous is None:
+                st.session_state[tick_key] = now
+            elif (now - previous).total_seconds() >= interval * 0.9:
+                st.session_state[tick_key] = now
+                st.rerun(scope="app")
+
+        request_session_preserving_rerun()
+    else:
+        st.session_state.pop("_walter_live_scan_fragment_tick", None)
     updated_ms = int(last_updated.timestamp() * 1000) if last_updated else 0
     attempt_ms = int(last_scan_attempt.timestamp() * 1000) if last_scan_attempt else 0
     baseline_ms = max(updated_ms, attempt_ms)
@@ -1087,11 +1112,8 @@ def arm_live_clock_engine(
               ? attemptedAt + retryMs
               : (updatedAt ? updatedAt + refreshMs : now);
             if (!scanState && now < deadline) return;
-            if (!scanState) {{
-              scanState = {{startedAt: now, baselineUpdatedAt: baselineAt}};
-              root.sessionStorage.setItem(scanKey, JSON.stringify(scanState));
-              root.setTimeout(() => root.location.reload(), 80);
-            }}
+            // The timed Streamlit fragment above owns reruns. Never use
+            // location.reload here: that starts a new server session.
           }};
           tick();
           root.__walterLiveClockInterval = root.setInterval(tick, 1000);
@@ -1898,6 +1920,11 @@ if mode.startswith("Live ") and should_scan and not st.session_state[STOP_REQUES
         else:
             st.session_state.scan_failure_count += 1
             actual_failure = warnings[-1] if warnings else "Unknown provider failure"
+            record_scan_failure(
+                st.session_state, message=actual_failure,
+                attempted_at=st.session_state.last_scan_attempt,
+                diagnostics=diagnostics,
+            )
             st.error(
                 f"Scan stopped; the last successful scan remains displayed. {actual_failure}"
             )
@@ -1906,6 +1933,10 @@ if mode.startswith("Live ") and should_scan and not st.session_state[STOP_REQUES
         st.info("Another Walter session is scanning. This session will retry automatically.")
     except Exception as exc:
         st.session_state.scan_failure_count += 1
+        record_scan_failure(
+            st.session_state, message=f"{type(exc).__name__}: {exc}",
+            attempted_at=st.session_state.last_scan_attempt,
+        )
         log(f"Scan failed: {type(exc).__name__}: {exc}")
         st.error(f"Live scan could not complete: {exc}")
         st.info(
@@ -1923,6 +1954,12 @@ with flight_recorder_download_slot:
     )
 
 completed_scan = completed_scan_for_view(st.session_state, "Radar")
+last_scan_failure = st.session_state.get(LAST_SCAN_FAILURE_KEY)
+if last_scan_failure:
+    st.error(
+        "Latest scan attempt failed; the last successful scan remains displayed. "
+        + str(last_scan_failure["message"])
+    )
 records = completed_scan.records if completed_scan else []
 api_warnings = completed_scan.warnings if completed_scan else []
 scan_diagnostics = completed_scan.diagnostics if completed_scan else {}

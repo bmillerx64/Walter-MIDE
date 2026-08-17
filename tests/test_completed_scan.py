@@ -2,6 +2,7 @@ from datetime import datetime, timezone
 
 from mide.completed_scan import (
     CompletedScan,
+    LAST_SCAN_FAILURE_KEY,
     completed_scan_for_view,
     publish_scan_result,
     scan_context,
@@ -141,3 +142,55 @@ def test_context_survives_streamlit_hot_reload_class_identity_change():
     previous = PreviousDeploymentContext()
     state["scan_context"] = previous
     assert scan_context(state) is previous
+
+
+def _scan(symbol: str, *, sampled: int = 34, completed: bool = True):
+    return CompletedScan(
+        provider="WEBULL", records=[{"symbol": symbol}] if sampled else [],
+        diagnostics={"scan_completed": completed},
+        warnings=[] if completed and sampled else ["fresh discovery was empty"],
+        symbols_sampled=sampled, prefilter_count=6 if sampled else 0,
+        completed_at=datetime.now(timezone.utc), source_label="Live WEBULL",
+    )
+
+
+def test_successful_scan_survives_ordinary_streamlit_rerun():
+    state = {}
+    first = _scan("FIRST")
+    publish_scan_result(state, first)
+
+    initialize_session_controls(state, default_mode="Live Webull", scan_running=False)
+
+    assert completed_scan_for_view(state, "rerun") is first
+
+
+def test_auto_scan_begin_keeps_completed_result_visible_until_publication():
+    state = {}
+    first = _scan("FIRST")
+    publish_scan_result(state, first)
+
+    initialize_session_controls(state, default_mode="Live Webull", scan_running=True)
+
+    assert completed_scan_for_view(state, "pending auto scan") is first
+
+
+def test_failed_or_empty_auto_scan_preserves_result_and_surfaces_failure():
+    state = {}
+    first = _scan("FIRST")
+    publish_scan_result(state, first)
+
+    assert publish_scan_result(state, _scan("", sampled=0)) is first
+    assert completed_scan_for_view(state, "failed auto scan") is first
+    assert state[LAST_SCAN_FAILURE_KEY]["message"] == "fresh discovery was empty"
+
+
+def test_successful_auto_scan_atomically_replaces_completed_result():
+    state = {}
+    first = _scan("FIRST")
+    second = _scan("SECOND", sampled=35)
+    publish_scan_result(state, first)
+
+    assert completed_scan_for_view(state, "pending") is first
+    assert publish_scan_result(state, second) is second
+    assert completed_scan_for_view(state, "complete") is second
+    assert state[LAST_SCAN_FAILURE_KEY] is None

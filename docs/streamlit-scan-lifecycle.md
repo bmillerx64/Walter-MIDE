@@ -1,7 +1,8 @@
 # Streamlit scan lifecycle
 
 Streamlit retains `st.session_state` for a browser session but executes `app.py`
-from top to bottom on every widget callback, timer reload, and scan completion.
+from top to bottom on every widget callback, session-preserving timer rerun, and
+scan completion.
 Module locals (`records`, `scan_diagnostics`, and `updated`) therefore exist only
 for one execution and must always be derived from the session's `ScanContext`.
 
@@ -57,3 +58,21 @@ object. Hot reload also rejected retained objects by exact class identity.
 
 Publication is now transactional: only a completed attempt can replace the
 context's completed scan, and all post-scan views resolve that one object.
+
+## Auto-scan rerun incident
+
+The original browser clock used `window.parent.location.reload()` when a scan
+became due. That was a page navigation, not a Streamlit rerun: it opened a new
+websocket/server session whose `session_state` had no `ScanContext`, completed
+scan, selected mode, or enabled auto-scan value. Session defaults therefore
+rendered the exact zero/unmeasured/disabled state even though the preceding
+scan had succeeded.
+
+Auto-scan is now driven by Streamlit's timed fragment and `st.rerun(scope="app")`,
+which reruns the app in the existing session. Starting an attempt changes only
+the transient running/request flags. A failed, interrupted, or zero-universe
+attempt records `last_scan_failure` separately and cannot replace the completed
+scan. Publication of a later successful scan swaps the single completed object
+and clears that failure atomically. The auto-scan key is initialized only when
+absent, so timer reruns preserve it; only the toggle callback or Stop action can
+turn it off.
