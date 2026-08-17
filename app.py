@@ -1019,7 +1019,7 @@ def arm_live_clock_engine(
           const setText = (id, value) => {{ const el = node(id); if (el) el.textContent = value; }};
           const marketNow = now => {{
             const parts = new Intl.DateTimeFormat('en-US', {{
-              timeZone: 'America/New_York', hour: 'numeric', minute: '2-digit',
+              timeZone: 'America/New_York', weekday: 'short', hour: 'numeric', minute: '2-digit',
               second: '2-digit', hour12: true, timeZoneName: 'short'
             }}).formatToParts(now);
             const value = type => parts.find(part => part.type === type)?.value || '';
@@ -1027,11 +1027,13 @@ def arm_live_clock_engine(
             const minute = Number(value('minute'));
             const isPm = value('dayPeriod') === 'PM';
             const hour24 = hour + (isPm ? 12 : 0);
+            const weekday = value('weekday');
+            const isWeekend = weekday === 'Sat' || weekday === 'Sun';
             let phase = 'Market Closed';
             const clockMinutes = hour24 * 60 + minute;
-            if (clockMinutes >= 240 && clockMinutes < 570) phase = 'Pre-Market';
-            else if (clockMinutes >= 570 && clockMinutes < 960) phase = 'Live Market';
-            else if (clockMinutes >= 960 && clockMinutes < 1200) phase = 'After-Hours';
+            if (!isWeekend && clockMinutes >= 240 && clockMinutes < 570) phase = 'Pre-Market';
+            else if (!isWeekend && clockMinutes >= 570 && clockMinutes < 960) phase = 'Live Market';
+            else if (!isWeekend && clockMinutes >= 960 && clockMinutes < 1200) phase = 'After-Hours';
             return {{
               text: `${{value('hour')}}:${{value('minute')}}:${{value('second')}} ${{value('dayPeriod')}} ${{value('timeZoneName')}}`,
               phase
