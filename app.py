@@ -422,6 +422,26 @@ def reuse_session_universe_cache(provider_name: str) -> bool:
     return provider_name.upper() != "WEBULL"
 
 
+def resolve_scan_universe(
+    session_state, cache_key: str, provider_name: str, discover
+) -> tuple[list[str], dict]:
+    """Resolve one scan's universe without caching Webull's rotating radar."""
+    cached = session_state.get("walter_session_universe_cache", {})
+    if reuse_session_universe_cache(provider_name):
+        cached_entry = cached.get(cache_key)
+        if cached_entry:
+            return cached_entry["seeds"], cached_entry["reasons"]
+
+    seeds, reasons = discover()
+    if not seeds:
+        raise RuntimeError("Universe discovery returned zero eligible symbols")
+    if reuse_session_universe_cache(provider_name):
+        session_state["walter_session_universe_cache"] = {
+            cache_key: {"seeds": list(seeds), "reasons": dict(reasons)}
+        }
+    return seeds, reasons
+
+
 def persist_selected_alert_voice() -> None:
     """Persist the selected widget voice and queue its audible confirmation."""
     selected = canonical_voice_identifier(
@@ -1170,7 +1190,6 @@ def _run_live_pipeline(
             f"{datetime.now().astimezone().date().isoformat()}:{settings.feed}:"
             f"{provider_name.upper()}:{id(build_seed_symbols)}"
         )
-        cached = st.session_state.get("walter_session_universe_cache", {})
         universe_started = perf_counter()
         try:
             # Webull's native gainers/volume lists are the live discovery feed,
@@ -1180,37 +1199,24 @@ def _run_live_pipeline(
             # native response must instead fail this scan so the last completed
             # scan remains displayed; it must never replace or masquerade as a
             # fresh discovery result.
-            cached_entry = cached.get(cache_key) if reuse_session_universe_cache(
-                provider_name
-            ) else None
-            if cached_entry:
-                seeds, reasons = cached_entry["seeds"], cached_entry["reasons"]
+            def fresh_discovery():
                 if isinstance(client, LiveWebullProvider):
                     logging.getLogger(__name__).info(
-                        "Webull universe construction exit before HTTP request: "
-                        "session universe cache hit key=%s cached_symbol_count=%s "
-                        "first_10_returned_symbols=%s",
-                        cache_key, len(seeds), list(seeds[:10]),
-                    )
-            else:
-                if isinstance(client, LiveWebullProvider):
-                    logging.getLogger(__name__).info(
-                        "Webull universe construction cache miss: invoking "
+                        "Webull universe construction: invoking fresh "
                         "build_seed_symbols → LiveWebullProvider.assets → "
                         "WebullOpenAPIClient.assets"
                     )
                 discovery_parameters = inspect.signature(build_seed_symbols).parameters
                 if "universe_verification" in discovery_parameters:
-                    seeds, reasons = build_seed_symbols(
+                    return build_seed_symbols(
                         client, settings, [], universe_verification=universe_verification
                     )
-                else:  # Test/deployment compatibility for an injected legacy callable.
-                    seeds, reasons = build_seed_symbols(client, settings, [])
-                if reuse_session_universe_cache(provider_name):
-                    cached = {
-                        cache_key: {"seeds": list(seeds), "reasons": dict(reasons)}
-                    }
-                    st.session_state.walter_session_universe_cache = cached
+                # Test/deployment compatibility for an injected legacy callable.
+                return build_seed_symbols(client, settings, [])
+
+            seeds, reasons = resolve_scan_universe(
+                st.session_state, cache_key, provider_name, fresh_discovery
+            )
         except Exception as exc:
             record_provider_failure(
                 client.diagnostics, provider="Alpaca Trading API", operation="universe discovery",
