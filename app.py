@@ -417,6 +417,31 @@ def alert_voice_for_session(session_state=None) -> str:
     )
 
 
+def reuse_session_universe_cache(provider_name: str) -> bool:
+    """Whether discovery is a stable symbol master that is safe to cache daily."""
+    return provider_name.upper() != "WEBULL"
+
+
+def resolve_scan_universe(
+    session_state, cache_key: str, provider_name: str, discover
+) -> tuple[list[str], dict]:
+    """Resolve one scan's universe without caching Webull's rotating radar."""
+    cached = session_state.get("walter_session_universe_cache", {})
+    if reuse_session_universe_cache(provider_name):
+        cached_entry = cached.get(cache_key)
+        if cached_entry:
+            return cached_entry["seeds"], cached_entry["reasons"]
+
+    seeds, reasons = discover()
+    if not seeds:
+        raise RuntimeError("Universe discovery returned zero eligible symbols")
+    if reuse_session_universe_cache(provider_name):
+        session_state["walter_session_universe_cache"] = {
+            cache_key: {"seeds": list(seeds), "reasons": dict(reasons)}
+        }
+    return seeds, reasons
+
+
 def persist_selected_alert_voice() -> None:
     """Persist the selected widget voice and queue its audible confirmation."""
     selected = canonical_voice_identifier(
@@ -1161,41 +1186,39 @@ def _run_live_pipeline(
     def discover():
         # Catalyst retrieval deliberately does not happen here. Discovery sources
         # alone establish the immutable membership of this scan.
-        # Callable identity keeps injected/test discovery providers isolated while
-        # the stable production callable still reuses one universe all session.
+        # Callable identity keeps injected/test discovery providers isolated when
+        # a stable provider's universe is reused for the session.
         cache_key = (
             f"{datetime.now().astimezone().date().isoformat()}:{settings.feed}:"
             f"{provider_name.upper()}:{id(build_seed_symbols)}"
         )
-        cached = st.session_state.get("walter_session_universe_cache", {})
         universe_started = perf_counter()
         try:
-            cached_entry = cached.get(cache_key)
-            if cached_entry:
-                seeds, reasons = cached_entry["seeds"], cached_entry["reasons"]
+            # Webull's native gainers/volume lists are the live discovery feed,
+            # not a daily symbol master.  Reusing their first session result on
+            # timer reruns freezes the universe (often at 36 deduplicated names)
+            # and lets later quote refreshes scan a stale list.  A failed/empty
+            # native response must instead fail this scan so the last completed
+            # scan remains displayed; it must never replace or masquerade as a
+            # fresh discovery result.
+            def fresh_discovery():
                 if isinstance(client, LiveWebullProvider):
                     logging.getLogger(__name__).info(
-                        "Webull universe construction exit before HTTP request: "
-                        "session universe cache hit key=%s cached_symbol_count=%s "
-                        "first_10_returned_symbols=%s",
-                        cache_key, len(seeds), list(seeds[:10]),
-                    )
-            else:
-                if isinstance(client, LiveWebullProvider):
-                    logging.getLogger(__name__).info(
-                        "Webull universe construction cache miss: invoking "
+                        "Webull universe construction: invoking fresh "
                         "build_seed_symbols → LiveWebullProvider.assets → "
                         "WebullOpenAPIClient.assets"
                     )
                 discovery_parameters = inspect.signature(build_seed_symbols).parameters
                 if "universe_verification" in discovery_parameters:
-                    seeds, reasons = build_seed_symbols(
+                    return build_seed_symbols(
                         client, settings, [], universe_verification=universe_verification
                     )
-                else:  # Test/deployment compatibility for an injected legacy callable.
-                    seeds, reasons = build_seed_symbols(client, settings, [])
-                cached = {cache_key: {"seeds": list(seeds), "reasons": dict(reasons)}}
-                st.session_state.walter_session_universe_cache = cached
+                # Test/deployment compatibility for an injected legacy callable.
+                return build_seed_symbols(client, settings, [])
+
+            seeds, reasons = resolve_scan_universe(
+                st.session_state, cache_key, provider_name, fresh_discovery
+            )
         except Exception as exc:
             record_provider_failure(
                 client.diagnostics, provider="Alpaca Trading API", operation="universe discovery",

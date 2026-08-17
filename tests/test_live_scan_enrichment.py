@@ -10,6 +10,7 @@ from app import (
     alert_voice_for_session,
     price_gate_savings_metrics,
     print_scan_stage_counts,
+    resolve_scan_universe,
     run_live,
 )
 from mide.completed_scan import CompletedScan
@@ -47,6 +48,79 @@ class DummyClient:
             }
             for symbol in symbols
         }
+
+
+def test_consecutive_webull_scans_always_perform_fresh_discovery():
+    state = {"walter_session_universe_cache": {
+        "today": {"seeds": ["STALE"], "reasons": {"STALE": ["cached"]}}
+    }}
+    results = iter([
+        (["FIRST"], {"FIRST": ["fresh one"]}),
+        (["SECOND"], {"SECOND": ["fresh two"]}),
+    ])
+    calls = []
+
+    def discover():
+        calls.append(True)
+        return next(results)
+
+    assert resolve_scan_universe(state, "today", "WEBULL", discover)[0] == ["FIRST"]
+    assert resolve_scan_universe(state, "today", "WEBULL", discover)[0] == ["SECOND"]
+    assert len(calls) == 2
+
+
+def test_webull_rerun_does_not_publish_stale_session_universe_as_zero_result():
+    previous_scan = {
+        "symbols": 35, "prefiltered": 8, "candidates": 3,
+        "focus": 2, "escalating": 2,
+    }
+    stale_symbols = [f"OLD{index}" for index in range(35)]
+    fresh_symbols = [f"NEW{index}" for index in range(35)]
+    state = {
+        "completed_scan": previous_scan,
+        "walter_session_universe_cache": {
+            "today": {"seeds": stale_symbols, "reasons": {}}
+        },
+    }
+
+    seeds, _ = resolve_scan_universe(
+        state, "today", "WEBULL", lambda: (fresh_symbols, {})
+    )
+
+    assert seeds == fresh_symbols
+    assert not set(seeds) & set(stale_symbols)
+    assert state["completed_scan"] is previous_scan
+
+
+@pytest.mark.parametrize("failure", ["empty", "exception"])
+def test_failed_fresh_webull_discovery_never_substitutes_stale_cache(failure):
+    stale = {"today": {"seeds": ["STALE"], "reasons": {"STALE": ["cached"]}}}
+    state = {"walter_session_universe_cache": stale}
+
+    def discover():
+        if failure == "exception":
+            raise ConnectionError("native radar unavailable")
+        return [], {}
+
+    expected = ConnectionError if failure == "exception" else RuntimeError
+    with pytest.raises(expected):
+        resolve_scan_universe(state, "today", "WEBULL", discover)
+    assert state["walter_session_universe_cache"] is stale
+
+
+def test_non_webull_provider_still_reuses_session_universe_cache():
+    state = {}
+    calls = []
+
+    def discover():
+        calls.append(True)
+        return ["STABLE"], {"STABLE": ["symbol master"]}
+
+    first = resolve_scan_universe(state, "today", "ALPACA", discover)
+    second = resolve_scan_universe(state, "today", "ALPACA", discover)
+
+    assert first == second
+    assert len(calls) == 1
 
 
 def test_price_gate_savings_quantifies_symbols_batches_and_observed_time():
