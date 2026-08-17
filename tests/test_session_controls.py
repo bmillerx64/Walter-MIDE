@@ -39,6 +39,30 @@ def test_auto_scan_stays_off_across_reruns():
     assert state[AUTO_SCAN_KEY] is False
 
 
+def test_auto_scan_stays_enabled_across_timer_generated_reruns():
+    state = {}
+    initialize_session_controls(state, default_mode="Live Webull")
+    state[AUTO_SCAN_KEY] = True
+    update_auto_scan(state)
+
+    initialize_session_controls(state, default_mode="Live Webull", scan_running=False)
+    initialize_session_controls(state, default_mode="Live Webull", scan_running=True)
+
+    assert state[AUTO_SCAN_KEY] is True
+
+
+def test_explicit_user_disable_still_disables_auto_scan():
+    state = {}
+    initialize_session_controls(state, default_mode="Live Webull")
+    state[AUTO_SCAN_KEY] = True
+    update_auto_scan(state)
+
+    state[AUTO_SCAN_KEY] = False
+    update_auto_scan(state)
+
+    assert state[AUTO_SCAN_KEY] is False
+
+
 def test_explicitly_reenabling_auto_scan_clears_a_previous_stop():
     state = {}
     initialize_session_controls(state, default_mode="Live Alpaca")

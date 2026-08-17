@@ -13,6 +13,7 @@ from mide.live_evidence_observation import live_evidence_observation
 
 COMPLETED_SCAN_KEY = "completed_scan"
 SCAN_CONTEXT_KEY = "scan_context"
+LAST_SCAN_FAILURE_KEY = "last_scan_failure"
 
 _INFORMATIONAL_WARNING_PREFIXES = (
     "Skipped unsupported Webull snapshot symbol",
@@ -110,6 +111,7 @@ def store_completed_scan(
     context = scan_context(state)
     context.completed_scan = scan
     state[COMPLETED_SCAN_KEY] = scan
+    state[LAST_SCAN_FAILURE_KEY] = None
     append_readiness_history(state, scan)
     return scan
 
@@ -120,8 +122,28 @@ def publish_scan_result(
     """Publish only a genuinely completed run, preserving prior evidence."""
     if (scan.diagnostics.get("scan_completed", True) is False
             or scan.symbols_sampled == 0):
+        state[LAST_SCAN_FAILURE_KEY] = {
+            "attempted_at": scan.completed_at,
+            "message": (
+                scan.warnings[-1] if scan.warnings
+                else "The scan completed without a fresh symbol universe."
+            ),
+            "diagnostics": scan.diagnostics,
+        }
         return completed_scan_for_view(state, "failed scan")
     return store_completed_scan(state, scan)
+
+
+def record_scan_failure(
+    state: MutableMapping[str, Any], *, message: str,
+    attempted_at: datetime, diagnostics: dict[str, Any] | None = None,
+) -> None:
+    """Persist an attempt failure independently of the completed result."""
+    state[LAST_SCAN_FAILURE_KEY] = {
+        "attempted_at": attempted_at,
+        "message": message,
+        "diagnostics": diagnostics or {},
+    }
 
 
 def completed_scan_for_view(
