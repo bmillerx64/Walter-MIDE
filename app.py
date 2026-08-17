@@ -417,6 +417,11 @@ def alert_voice_for_session(session_state=None) -> str:
     )
 
 
+def reuse_session_universe_cache(provider_name: str) -> bool:
+    """Whether discovery is a stable symbol master that is safe to cache daily."""
+    return provider_name.upper() != "WEBULL"
+
+
 def persist_selected_alert_voice() -> None:
     """Persist the selected widget voice and queue its audible confirmation."""
     selected = canonical_voice_identifier(
@@ -1159,8 +1164,8 @@ def _run_live_pipeline(
     def discover():
         # Catalyst retrieval deliberately does not happen here. Discovery sources
         # alone establish the immutable membership of this scan.
-        # Callable identity keeps injected/test discovery providers isolated while
-        # the stable production callable still reuses one universe all session.
+        # Callable identity keeps injected/test discovery providers isolated when
+        # a stable provider's universe is reused for the session.
         cache_key = (
             f"{datetime.now().astimezone().date().isoformat()}:{settings.feed}:"
             f"{provider_name.upper()}:{id(build_seed_symbols)}"
@@ -1168,7 +1173,16 @@ def _run_live_pipeline(
         cached = st.session_state.get("walter_session_universe_cache", {})
         universe_started = perf_counter()
         try:
-            cached_entry = cached.get(cache_key)
+            # Webull's native gainers/volume lists are the live discovery feed,
+            # not a daily symbol master.  Reusing their first session result on
+            # timer reruns freezes the universe (often at 36 deduplicated names)
+            # and lets later quote refreshes scan a stale list.  A failed/empty
+            # native response must instead fail this scan so the last completed
+            # scan remains displayed; it must never replace or masquerade as a
+            # fresh discovery result.
+            cached_entry = cached.get(cache_key) if reuse_session_universe_cache(
+                provider_name
+            ) else None
             if cached_entry:
                 seeds, reasons = cached_entry["seeds"], cached_entry["reasons"]
                 if isinstance(client, LiveWebullProvider):
@@ -1192,8 +1206,11 @@ def _run_live_pipeline(
                     )
                 else:  # Test/deployment compatibility for an injected legacy callable.
                     seeds, reasons = build_seed_symbols(client, settings, [])
-                cached = {cache_key: {"seeds": list(seeds), "reasons": dict(reasons)}}
-                st.session_state.walter_session_universe_cache = cached
+                if reuse_session_universe_cache(provider_name):
+                    cached = {
+                        cache_key: {"seeds": list(seeds), "reasons": dict(reasons)}
+                    }
+                    st.session_state.walter_session_universe_cache = cached
         except Exception as exc:
             record_provider_failure(
                 client.diagnostics, provider="Alpaca Trading API", operation="universe discovery",

@@ -10,6 +10,7 @@ from app import (
     alert_voice_for_session,
     price_gate_savings_metrics,
     print_scan_stage_counts,
+    reuse_session_universe_cache,
     run_live,
 )
 from mide.completed_scan import CompletedScan
@@ -47,6 +48,12 @@ class DummyClient:
             }
             for symbol in symbols
         }
+
+
+def test_webull_rotating_discovery_is_never_reused_from_session_cache():
+    assert reuse_session_universe_cache("WEBULL") is False
+    assert reuse_session_universe_cache("webull") is False
+    assert reuse_session_universe_cache("ALPACA") is True
 
 
 def test_price_gate_savings_quantifies_symbols_batches_and_observed_time():
