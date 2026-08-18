@@ -681,7 +681,7 @@ class LiveWebullProvider(WebullProvider):
             now_ms = time.time_ns() // 1_000_000
             with self._lock:
                 for symbol in wanted:
-                    if symbol in self.cache:
+                    if symbol in self.cache or symbol in self._snapshot_cache:
                         continue
                     radar = native_prices.get(symbol)
                     if radar is None:
@@ -697,11 +697,14 @@ class LiveWebullProvider(WebullProvider):
                         if change_ratio is not None and change_ratio != -100
                         else None
                     )
+                    prev_daily = {"v": None}
+                    if prev_close is not None:
+                        prev_daily["c"] = prev_close
                     snapshot = {
                         "latestTrade": {"p": price},
                         "latestQuote": {},
                         "dailyBar": {"c": price, "v": volume, "h": price, "l": price},
-                        "prevDailyBar": {"c": prev_close, "v": None},
+                        "prevDailyBar": prev_daily,
                         "market_data_provider": "Webull native radar fallback",
                     }
                     self._snapshot_cache[symbol] = snapshot

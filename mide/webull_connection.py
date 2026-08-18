@@ -103,6 +103,7 @@ def _webull_native_assets(self: LiveWebullProvider) -> list[dict]:
         if str(item.get("symbol") or "").strip() and item.get("price") is not None
     }
 
+    diagnostics = self.diagnostics.setdefault("webull_native_discovery", {})
     diagnostics.update({
         "provider": "Webull OpenAPI SDK",
         "mode": "native_market_attention",
