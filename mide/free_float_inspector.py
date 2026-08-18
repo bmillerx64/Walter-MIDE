@@ -70,19 +70,18 @@ def _webull_enrich_free_float(
     *,
     max_free_float: float = 50_000_000,
 ) -> dict[str, dict]:
-    """Verify only apparent low-float names and fail closed when evidence is absent.
+    """Resolve and conservatively verify free float for the post-price-gate cohort.
 
-    FMP/cache evidence is the broad primary source.  Yahoo is a narrow freshness
-    check only for names that *appear* to be at or below the configured squeeze
-    ceiling.  Querying Yahoo for the entire post-price-gate universe caused a
-    guaranteed request storm and HTTP 429 responses.  Names already above the
-    ceiling cannot become eligible by a conservative refresh, so they need no
-    Yahoo request.  Names with no primary float evidence fail closed immediately.
+    Existing FMP/cache evidence remains the preferred source. Yahoo is used as a
+    secondary source for names with no primary evidence and as a freshness check
+    for apparent low-float names. A symbol fails closed only when neither source
+    can establish a usable float, or when a low-float freshness check cannot be
+    completed. Names already above the configured ceiling need no Yahoo request.
     """
     threshold = max(0.0, float(max_free_float))
     wanted = []
     existing: dict[str, float] = {}
-    refresh_symbols: list[str] = []
+    lookup_symbols: list[str] = []
     normalized = 0
 
     for symbol in dict.fromkeys(str(s or "").strip().upper() for s in symbols if s):
@@ -91,20 +90,25 @@ def _webull_enrich_free_float(
             continue
         wanted.append(symbol)
         shares = _normalize_snapshot_float(snapshot)
-        if shares is not None:
-            existing[symbol] = shares
-            normalized += 1
-            if shares <= threshold:
-                refresh_symbols.append(symbol)
+        if shares is None:
+            # Webull snapshots do not carry company float fundamentals. Missing
+            # primary evidence is therefore a reason to use the established
+            # secondary source, not an automatic terminal rejection.
+            lookup_symbols.append(symbol)
+            continue
+        existing[symbol] = shares
+        normalized += 1
+        if shares <= threshold:
+            lookup_symbols.append(symbol)
 
     values: dict[str, float] = {}
     errors: dict[str, str] = {}
-    if refresh_symbols:
+    if lookup_symbols:
         provider = YahooFinanceFloatProvider(
             timeout=5,
-            max_workers=min(8, len(refresh_symbols)),
+            max_workers=min(8, len(lookup_symbols)),
         )
-        values, errors = provider.lookup_many(refresh_symbols)
+        values, errors = provider.lookup_many(lookup_symbols)
 
     resolved = 0
     failed_closed = 0
@@ -118,11 +122,29 @@ def _webull_enrich_free_float(
             continue
 
         prior = existing.get(symbol)
+        refreshed = values.get(symbol)
+        try:
+            refreshed = float(refreshed) if refreshed is not None else None
+        except (TypeError, ValueError):
+            refreshed = None
+
         if prior is None:
+            if refreshed is not None and refreshed > 0:
+                snapshot["float_shares"] = refreshed
+                snapshot["shares_float"] = refreshed
+                snapshot["free_float"] = refreshed
+                snapshot["free_float_source"] = (
+                    "Yahoo Finance defaultKeyStatistics.floatShares.raw secondary resolution"
+                )
+                snapshot["free_float_verified"] = True
+                snapshot["free_float_verification_status"] = "verified-secondary-source"
+                resolved += 1
+                continue
+
             snapshot["float_shares"] = float("inf")
             snapshot["shares_float"] = float("inf")
             snapshot["free_float"] = float("inf")
-            snapshot["free_float_source"] = "primary float unresolved; fail closed"
+            snapshot["free_float_source"] = "primary and secondary float unresolved; fail closed"
             snapshot["free_float_verified"] = False
             snapshot["free_float_verification_status"] = "unavailable-reject"
             failed_closed += 1
@@ -141,12 +163,6 @@ def _webull_enrich_free_float(
             resolved += 1
             continue
 
-        refreshed = values.get(symbol)
-        try:
-            refreshed = float(refreshed) if refreshed is not None else None
-        except (TypeError, ValueError):
-            refreshed = None
-
         if refreshed is not None and refreshed > 0:
             chosen = max(prior, refreshed)
             if abs(prior - refreshed) > 1:
@@ -162,7 +178,7 @@ def _webull_enrich_free_float(
             snapshot["free_float_verification_status"] = "verified-live-refresh"
             resolved += 1
         else:
-            # A stale low float is precisely the dangerous case.  If the narrow
+            # A stale low float is precisely the dangerous case. If the narrow
             # freshness check cannot confirm it, reject rather than trusting it.
             snapshot["float_shares"] = float("inf")
             snapshot["shares_float"] = float("inf")
@@ -173,9 +189,9 @@ def _webull_enrich_free_float(
             failed_closed += 1
             refresh_failed += 1
 
-    self.diagnostics["free_float_fallback_requested"] = len(refresh_symbols)
+    self.diagnostics["free_float_fallback_requested"] = len(lookup_symbols)
     self.diagnostics["free_float_fallback_resolved"] = sum(
-        1 for symbol in refresh_symbols if symbol in values
+        1 for symbol in lookup_symbols if symbol in values
     )
     self.diagnostics["free_float_snapshot_normalized"] = normalized
     self.diagnostics["free_float_fallback_failed"] = len(errors)
@@ -184,8 +200,6 @@ def _webull_enrich_free_float(
     self.diagnostics["free_float_refresh_failed"] = refresh_failed
     self.diagnostics["free_float_provider_conflicts"] = conflicts
     self.diagnostics["free_float_refresh_ceiling"] = threshold
-    # Coverage gaps are data-quality diagnostics, not API-warning spam.  The
-    # safety consequence is already explicit: every unresolved name fails closed.
     return snapshots
 
 
