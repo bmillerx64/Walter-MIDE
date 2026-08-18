@@ -145,13 +145,11 @@ class WebullOpenAPIClient:
         if len(wanted) > MAX_SNAPSHOT_SYMBOLS:
             raise ValueError("Webull snapshot requests are limited to 100 symbols")
         raw_response = None
-        _snap_error: Exception | None = None
         try:
             raw_response = self.sdk.stock_snapshot(
                 wanted, extended_hours=self.extended_hours_enabled) if wanted else []
             rows = self._rows(raw_response)
         except Exception as exc:
-            _snap_error = exc
             _debug_log.log_snapshot_attempt(
                 symbols=wanted,
                 raw_response=raw_response,

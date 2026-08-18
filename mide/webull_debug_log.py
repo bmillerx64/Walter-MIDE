@@ -159,9 +159,9 @@ def log_snapshot_attempt(
 
     if not passed:
         error_detail = f"{type(error).__name__}: {error}" if error else "normalization returned None"
-    elif normalized is not None:
+    else:
         # Check for symbols that were requested but not returned.
-        missing_symbols = [s for s in symbols if s not in (normalized or {})]
+        missing_symbols = [s for s in symbols if s not in normalized]
         if missing_symbols:
             missing_fields = [f"symbol not in response: {s}" for s in missing_symbols[:10]]
 

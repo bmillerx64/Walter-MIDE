@@ -3161,5 +3161,5 @@ if active_tab == "Webull Debug":
                 if _entry.get("missing_fields"):
                     st.warning("Missing/invalid fields: " + "; ".join(_entry["missing_fields"]))
                 st.write("**Raw Webull response** (credentials redacted):")
-                st.json(_entry.get("raw_response"))
+                st.json(_entry.get("raw_response") or {})
 
