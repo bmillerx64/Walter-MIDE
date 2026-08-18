@@ -68,3 +68,34 @@ def test_missing_screener_fails_closed():
     try: fetch_native_radar(object())
     except RuntimeError as exc: assert "get_gainers_losers/get_most_active" in str(exc)
     else: raise AssertionError("Expected missing screener to fail closed")
+
+def test_rvol_all_below_gain_threshold_is_not_a_feed_failure():
+    """RVOL symbols with <2% gain are filtered out; zero post-filter rows is
+    a normal dead-tape condition and must not mark the feed as FAIL."""
+    class LowGainScreener(FakeScreener):
+        def get_most_active(self, **kwargs):
+            self.calls.append(("get_most_active", kwargs))
+            if kwargs.get("rank_type") == "RELATIVE_VOLUME_10D":
+                # All RVOL symbols are flat / declining — below the 2% threshold
+                return {"result": [{"ticker_symbol": f"RX{i}", "last_price": 1.0+i,
+                                    "pct_change": 0.5, "total_volume": 100_000*i, "rvol": 5.0+i}
+                                   for i in range(1, 4)]}
+            prefix = "V"
+            return {"result": [{"ticker_symbol": f"{prefix}{i}", "last_price": 2.0+i,
+                                "pct_change": 5.0+i, "total_volume": 200_000*i, "rvol": 3.0+i}
+                               for i in range(1, 4)]}
+
+    client = FakeLiveClient()
+    client._snapshot_client.sdk.sdk_client.screener = LowGainScreener()
+    report = fetch_native_radar(client)
+    # relative_volume API responded fine; filtered result is zero — must still be PASS
+    assert report["feeds"]["relative_volume"]["status"] == "PASS"
+    assert report["feeds"]["relative_volume"]["rows"] == []
+    # Other feeds are unaffected; overall availability is still True
+    assert report["feeds"]["day_gainers"]["status"] == "PASS"
+    assert report["feeds"]["absolute_volume"]["status"] == "PASS"
+    assert report["all_feeds_available"] is True
+    # Universe symbols come from the two non-RVOL feeds
+    symbols = {s["symbol"] for s in report["symbols"]}
+    assert symbols  # day_gainers + absolute_volume contribute symbols
+    assert not any(s.startswith("RX") for s in symbols)
