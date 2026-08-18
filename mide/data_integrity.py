@@ -158,6 +158,26 @@ def _explicit_provider_failure(provider_diagnostics: dict | None) -> bool:
     )
 
 
+def _empty_pass_reason(funnel: dict) -> str:
+    stage_labels = (
+        ("price", "Price Gate"),
+        ("tradability", "Validity Gate"),
+        ("free_float", "Free-Float Gate"),
+        ("stage_3_analysis", "Catalyst Assessment"),
+        ("monitored", "Participation Assessment"),
+        ("entry_ready", "Expansion Assessment"),
+        ("candidates", "Mission Ranking"),
+        ("candidate_count", "Mission Ranking"),
+    )
+    for key, label in stage_labels:
+        if key not in funnel:
+            continue
+        count = funnel.get(key)
+        if count == 0:
+            return f"No symbols survived {label}."
+    return "Upstream data arrived, but no symbols passed downstream filters."
+
+
 def scan_integrity_report(
     records: Iterable[dict],
     *,
@@ -256,7 +276,7 @@ def scan_integrity_report(
         reason = warnings[0]
     elif empty_pass:
         status = STATUS_EMPTY
-        reason = "Upstream data arrived, but no symbols passed downstream filters."
+        reason = _empty_pass_reason(funnel)
     else:
         status = STATUS_HEALTHY
         reason = "Upstream data and record quality checks passed."

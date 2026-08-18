@@ -2009,8 +2009,52 @@ def _run_live_pipeline(
     client.diagnostics["pipeline_timing_summary"] = timing_summary
     state["scan_stage_counts"]["final_candidates"] = len(ranked)
     client.diagnostics["scan_stage_counts"] = dict(state["scan_stage_counts"])
+    stage_trace = {
+        str(item.get("stage")): item
+        for item in architecture.trace
+        if isinstance(item, dict) and item.get("stage")
+    }
+    free_float_gate = stage_trace.get("Free-Float Gate", {})
+    free_float_evaluated = int(
+        free_float_gate.get(
+            "input_count",
+            stage_trace.get("Validity Gate", {}).get("output_count", 0),
+        )
+        or 0
+    )
+    free_float_passed = int(free_float_gate.get("output_count", 0) or 0)
+    free_float_failed = max(0, free_float_evaluated - free_float_passed)
+    free_float_lookup_failures = sum(
+        1
+        for item in ledger
+        if str(item.get("terminal_stage")) == "Free-Float Gate"
+        and "unavailable" in str(item.get("terminal_reason") or "").lower()
+    )
     client.diagnostics["funnel_counts"] = {
-        "universe": state["scan_stage_counts"].get("universe_discovered", 0),
+        "universe": int(
+            stage_trace.get("Universe Construction", {}).get(
+                "output_count", state["scan_stage_counts"].get("universe_discovered", 0)
+            )
+            or 0
+        ),
+        "price": int(stage_trace.get("Price Gate", {}).get("output_count", 0) or 0),
+        "tradability": int(stage_trace.get("Validity Gate", {}).get("output_count", 0) or 0),
+        "free_float": free_float_passed,
+        "free_float_evaluated": free_float_evaluated,
+        "free_float_failed": free_float_failed,
+        "free_float_lookup_failures": free_float_lookup_failures,
+        "free_float_actual_failures": max(
+            0, free_float_failed - free_float_lookup_failures
+        ),
+        "stage_3_analysis": int(
+            stage_trace.get("Catalyst Assessment", {}).get("output_count", 0) or 0
+        ),
+        "monitored": int(
+            stage_trace.get("Participation Assessment", {}).get("output_count", 0) or 0
+        ),
+        "entry_ready": int(
+            stage_trace.get("Expansion Assessment", {}).get("output_count", 0) or 0
+        ),
         "snapshots_requested": state["scan_stage_counts"].get("snapshot_requests_sent", 0),
         "snapshots_received": state["scan_stage_counts"].get("snapshot_records_received", 0),
         # data_integrity checks for both "prefilter_count" and "prefiltered" in
@@ -3426,4 +3470,3 @@ if active_tab == "Webull Debug":
                     st.warning("Missing/invalid fields: " + "; ".join(_entry["missing_fields"]))
                 st.write("**Raw Webull response** (credentials redacted):")
                 st.json(_entry.get("raw_response") or {})
-

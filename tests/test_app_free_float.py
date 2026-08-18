@@ -3,9 +3,10 @@ from mide.config import Settings
 
 
 def test_known_free_float_at_ceiling_passes_as_verified():
+    ceiling = Settings().max_free_float
     decision = free_float_decision(
-        {"symbol": "ATMAX", "float_shares": 3_500_000},
-        Settings().max_free_float,
+        {"symbol": "ATMAX", "float_shares": ceiling},
+        ceiling,
     )
 
     assert decision.passed is True
@@ -15,9 +16,10 @@ def test_known_free_float_at_ceiling_passes_as_verified():
 
 
 def test_known_free_float_above_ceiling_is_rejected():
+    ceiling = Settings().max_free_float
     decision = free_float_decision(
-        {"symbol": "OVER", "free_float": 3_500_001},
-        Settings().max_free_float,
+        {"symbol": "OVER", "free_float": ceiling + 1},
+        ceiling,
     )
 
     assert decision.passed is False

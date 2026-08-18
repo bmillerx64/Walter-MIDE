@@ -13,11 +13,14 @@ def _provider():
 
 def test_live_webull_normalizes_float_millions_to_share_count_without_network():
     provider = _provider()
-    snapshots = {"FRTT": {"float_millions": 4.28}}
+    # Keep this fixture above the current 50M squeeze ceiling so the test remains
+    # focused on normalization and does not intentionally trigger the narrow
+    # Yahoo freshness check used for apparent low-float names.
+    snapshots = {"FRTT": {"float_millions": 54.28}}
 
     provider.enrich_free_float(snapshots, ["FRTT"])
 
-    assert snapshots["FRTT"]["float_shares"] == 4_280_000
+    assert snapshots["FRTT"]["float_shares"] == 54_280_000
     assert provider.diagnostics["free_float_snapshot_normalized"] == 1
     assert provider.diagnostics["free_float_fallback_requested"] == 0
 
@@ -35,13 +38,14 @@ def test_live_webull_refreshes_only_apparent_low_float(monkeypatch):
     provider = _provider()
     snapshots = {
         "LOW": {"float_shares": 2_500_000},
-        "HIGH": {"float_shares": 12_000_000},
+        # Above the current 50M ceiling, so it must not trigger a Yahoo refresh.
+        "HIGH": {"float_shares": 120_000_000},
     }
 
     provider.enrich_free_float(snapshots, ["LOW", "HIGH"])
 
     assert snapshots["LOW"]["float_shares"] == 5_200_000.0
-    assert snapshots["HIGH"]["float_shares"] == 12_000_000.0
+    assert snapshots["HIGH"]["float_shares"] == 120_000_000.0
     assert provider.diagnostics["free_float_fallback_requested"] == 1
     assert provider.diagnostics["free_float_fallback_resolved"] == 1
 
