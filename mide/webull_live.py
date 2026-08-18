@@ -388,6 +388,9 @@ class LiveWebullProvider(WebullProvider):
             "bars_provider": "Webull OpenAPI SDK",
             "streaming_provider": "Webull OpenAPI SDK",
         }
+        # Populated by the native-radar assets() call so initialize_quotes can
+        # fall back to radar prices when the REST snapshot returns no data.
+        self._native_radar_prices: dict[str, dict] = {}
         self._bootstrap = bootstrap
         self._snapshot_client = rest_client or WebullOpenAPIClient(
             app_key, app_secret, sdk_client=sdk_client,
@@ -668,6 +671,55 @@ class LiveWebullProvider(WebullProvider):
             len(submitted), snapshot_rows_decoded, snapshot_rows_normalized,
             len(self._snapshot_cache), d["symbols_missing_prices"],
         )
+        # Fall back to native radar prices for symbols where the REST snapshot
+        # returned no valid price data.  The radar already carries price,
+        # change_ratio (in percent), and volume from the discovery feeds, so we
+        # can reconstruct a minimal snapshot that lets prefilter_snapshots run.
+        native_prices = self._native_radar_prices
+        if native_prices:
+            fallback_count = 0
+            now_ms = time.time_ns() // 1_000_000
+            with self._lock:
+                for symbol in wanted:
+                    if symbol in self.cache or symbol in self._snapshot_cache:
+                        continue
+                    radar = native_prices.get(symbol)
+                    if radar is None:
+                        continue
+                    price = _number(radar.get("price"))
+                    if price is None:
+                        continue
+                    volume = _number(radar.get("volume"))
+                    change_ratio = _number(radar.get("change_ratio"))
+                    # change_ratio is in percent (e.g. 50.33 for +50.33 %)
+                    prev_close = (
+                        price / (1 + change_ratio / 100)
+                        if change_ratio is not None and change_ratio != -100
+                        else None
+                    )
+                    prev_daily = {"v": None}
+                    if prev_close is not None:
+                        prev_daily["c"] = prev_close
+                    snapshot = {
+                        "latestTrade": {"p": price},
+                        "latestQuote": {},
+                        "dailyBar": {"c": price, "v": volume, "h": price, "l": price},
+                        "prevDailyBar": prev_daily,
+                        "market_data_provider": "Webull native radar fallback",
+                    }
+                    self._snapshot_cache[symbol] = snapshot
+                    self.cache[symbol] = CachedMarketData(
+                        price, volume, None, None, now_ms, now_ms
+                    )
+                    fallback_count += 1
+            if fallback_count:
+                d["native_radar_fallback_symbols"] = fallback_count
+                d["symbols_missing_prices"] = len(set(wanted) - set(self.cache))
+                LOGGER.info(
+                    "WEBULL native radar fallback applied fallback_symbols=%s "
+                    "remaining_missing=%s",
+                    fallback_count, d["symbols_missing_prices"],
+                )
         # Snapshot completion is a hard ordering boundary before any optional
         # subscription. The obsolete hand-written token bootstrap is deliberately
         # absent: only the official SDK may initialize a stream.

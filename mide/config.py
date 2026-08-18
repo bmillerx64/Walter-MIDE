@@ -4,7 +4,7 @@ import os
 @dataclass(frozen=True)
 class Settings:
     min_price: float = 0.05
-    max_price: float = 5.00
+    max_price: float = 50.00
     max_free_float: int = 3_500_000
     include_etfs: bool = False
     min_pct_change: float = 3.0
