@@ -25,6 +25,16 @@ subscription errors. Deployments whose approved OpenAPI application uses a
 regional streaming bootstrap may set `WEBULL_STREAM_BOOTSTRAP_URL`; this value
 is an endpoint, never a credential.
 
+## Guardrails workflow
+
+Repository policy now lives in [`docs/AGENT_POLICY.md`](docs/AGENT_POLICY.md).
+New pull requests automatically load `.github/pull_request_template.md`, which
+requires authors to confirm provider, scan-trust, completed-scan, runtime, pin,
+test, and rollback expectations. `.github/workflows/policy-guardrails.yml` runs
+on pull requests and pushes to `main` to enforce the `python-3.13` runtime pin,
+protect the `webull-openapi-python-sdk` pin, reject suspicious Live Webull
+fallback wiring, and block direct logging of Webull secret values.
+
 ## Walter 2.19 — Structure Engine
 
 Walter now ranks the charts a trader should stop and open. The Structure Score
