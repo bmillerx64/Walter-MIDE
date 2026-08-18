@@ -79,6 +79,7 @@ def test_guardrail_files_are_tracked_in_repo_contract():
     assert "pull_request" in workflow
     assert "branches:" in workflow
     assert "python-version: '3.13'" in workflow
+    assert "contents: read" in workflow
     assert "approved-sdk-upgrade" in workflow or "approved-sdk-upgrade" in (
         REPO_ROOT / "scripts/policy_guardrails.py"
     ).read_text(encoding="utf-8")
