@@ -140,12 +140,14 @@ def fetch_native_radar(client: Any) -> dict[str, Any]:
             if status_code is not None and int(status_code) >= 400: raise RuntimeError(f"Webull screener HTTP {status_code}")
             normalized = [_normalize_row(row, rank=i, source=feed) for i, row in enumerate(_rows(raw), start=1)]
             normalized = [row for row in normalized if row["symbol"]][:20]
+            if not normalized: raise RuntimeError(f"Webull {feed.label} returned zero ranking rows; raw_type={type(raw).__name__}")
             # The relative-volume feed surfaces names with anomalous activity
             # regardless of direction.  Apply a minimum gain filter so that
             # flat or declining names do not enter the candidate universe.
+            # Zero rows after this filter is a normal market condition (dead tape
+            # / no gainers on RVOL) — do not treat it as a feed failure.
             if key == "relative_volume":
                 normalized = [row for row in normalized if _rvol_gain_filter(row)]
-            if not normalized: raise RuntimeError(f"Webull {feed.label} returned zero ranking rows; raw_type={type(raw).__name__}")
             feeds[key] = {"label": feed.label, "status": "PASS", "error": "", "rows": normalized}
             for row in normalized:
                 symbol = row["symbol"]

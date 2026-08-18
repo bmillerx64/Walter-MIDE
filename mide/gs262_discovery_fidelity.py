@@ -47,12 +47,14 @@ def install() -> None:
                     for index, row in enumerate(radar._rows(raw), start=1)
                 ]
                 rows = [row for row in rows if row["symbol"]][:20]
-                # Apply minimum gain filter for the relative-volume feed so flat
-                # or declining names do not enter the candidate universe.
-                if key == "relative_volume":
-                    rows = [row for row in rows if radar._rvol_gain_filter(row)]
                 if not rows:
                     raise RuntimeError(f"Webull {feed.label} returned zero ranking rows")
+                # Apply minimum gain filter for the relative-volume feed so flat
+                # or declining names do not enter the candidate universe.
+                # Zero rows after this filter is a normal dead-tape condition —
+                # do not treat it as a feed failure.
+                if key == "relative_volume":
+                    rows = [row for row in rows if radar._rvol_gain_filter(row)]
                 feeds[key] = {"label": feed.label, "status": "PASS", "error": "", "rows": rows}
                 for row in rows:
                     symbol = row["symbol"]
