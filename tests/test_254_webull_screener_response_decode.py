@@ -19,10 +19,13 @@ class LiveProviderShape:
 def test_native_radar_decodes_official_response_json_through_live_wrapper_graph():
     report=fetch_native_radar(LiveProviderShape())
     assert report["all_feeds_available"] is True
-    assert report["unique_symbols"]==2
-    assert {row["symbol"] for row in report["symbols"]}=={"GAIN","VOL"}
+    # day_gainers → GAIN (change_ratio 42.0 >= 2.0 filter is N/A for non-RVOL feeds)
+    # absolute_volume → VOL
+    # relative_volume → RVOL (change_ratio 42.0 >= RVOL_DISCOVERY_MIN_GAIN_PCT 2.0 → passes filter)
+    assert {row["symbol"] for row in report["symbols"]}=={"GAIN","VOL","RVOL"}
     assert report["feeds"]["day_gainers"]["rows"][0]["price"]==1.25
-    assert report["feeds"]["relative_volume"]["status"]=="NOT_SCANNED"
+    assert report["feeds"]["relative_volume"]["status"]=="PASS"
+    assert report["feeds"]["five_minute_movers"]["status"]=="NOT_SCANNED"
 
 def test_native_radar_fails_closed_when_scanned_responses_have_no_rows():
     class EmptyResponse:
@@ -33,8 +36,7 @@ def test_native_radar_fails_closed_when_scanned_responses_have_no_rows():
         def get_most_active(self,**_kwargs): return EmptyResponse()
     report=fetch_native_radar(EmptyScreener())
     assert report["all_feeds_available"] is False and report["unique_symbols"]==0
-    for key in ("day_gainers","absolute_volume"):
+    for key in ("day_gainers","absolute_volume","relative_volume"):
         assert report["feeds"][key]["status"]=="FAIL"
         assert "zero ranking rows" in report["feeds"][key]["error"]
-    for key in ("five_minute_movers","relative_volume"):
-        assert report["feeds"][key]["status"]=="NOT_SCANNED"
+    assert report["feeds"]["five_minute_movers"]["status"]=="NOT_SCANNED"

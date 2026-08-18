@@ -482,7 +482,7 @@ def analyze_candidates(client, candidates, news_index, discovery_reasons):
             {
                 "30s": thirty_second_frame,
                 "1m": session,
-                "5m": resample_ohlcv(session, "5min"),
+                "3m": resample_ohlcv(session, "3min"),
             }
         )
 
