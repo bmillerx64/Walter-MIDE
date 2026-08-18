@@ -1740,21 +1740,15 @@ def _run_live_pipeline(
         # Aggregate raw snapshot price/volume signals for the market session panel.
         # This allows market quality to be assessed even when no candidates survive
         # the prefilter.
-        _sm_pct = [
-            d["measured_values"]["pct_change"]
-            for d in prefilter_decisions.values()
-            if d["measured_values"].get("price", 0) > 0
-        ]
-        _sm_vol = [
-            d["measured_values"]["volume"]
-            for d in prefilter_decisions.values()
-            if d["measured_values"].get("price", 0) > 0
-        ]
-        _sm_dvol = [
-            d["measured_values"]["dollar_volume"]
-            for d in prefilter_decisions.values()
-            if d["measured_values"].get("price", 0) > 0
-        ]
+        _sm_pct = []
+        _sm_vol = []
+        _sm_dvol = []
+        for d in prefilter_decisions.values():
+            mv = d["measured_values"]
+            if mv.get("price", 0) > 0:
+                _sm_pct.append(mv["pct_change"])
+                _sm_vol.append(mv["volume"])
+                _sm_dvol.append(mv["dollar_volume"])
         state["snapshot_market_metrics"] = {
             "symbol_count": len(eligible_snapshots),
             "avg_pct_change": round(sum(_sm_pct) / len(_sm_pct), 2) if _sm_pct else 0.0,
@@ -2019,8 +2013,11 @@ def _run_live_pipeline(
         "universe": state["scan_stage_counts"].get("universe_discovered", 0),
         "snapshots_requested": state["scan_stage_counts"].get("snapshot_requests_sent", 0),
         "snapshots_received": state["scan_stage_counts"].get("snapshot_records_received", 0),
+        # data_integrity checks for both "prefilter_count" and "prefiltered" in
+        # funnel_keys / downstream_keys, so both aliases must be populated.
         "prefilter_count": state["scan_stage_counts"].get("prefilter_output", 0),
         "prefiltered": state["scan_stage_counts"].get("prefilter_output", 0),
+        # Same: "candidates" and "candidate_count" are both read by data_integrity.
         "candidates": len(ranked),
         "candidate_count": len(ranked),
     }
