@@ -616,7 +616,7 @@ def decision_funnel_markup(record: dict) -> str:
     )
 
 
-def market_session_quality(records: list[dict]) -> dict:
+def market_session_quality(records: list[dict], *, snapshot_metrics: dict | None = None) -> dict:
     """Summarize session-wide scanner evidence without changing candidate ranking."""
     records = actionable_candidate_records(records)
     counts = scanner_v2_dashboard_counts(records)
@@ -637,6 +637,63 @@ def market_session_quality(records: list[dict]) -> dict:
     news_symbols = sum(
         bool(str(record.get("headline") or "").strip()) for record in records
     )
+
+    if not records and snapshot_metrics and snapshot_metrics.get("symbol_count", 0) > 0:
+        # No candidates survived the pipeline; derive a broad market signal from
+        # raw snapshot price/volume data so the panel reflects real market activity
+        # rather than showing a trivial zero computed from an empty input set.
+        n = snapshot_metrics["symbol_count"]
+        pct_above = snapshot_metrics.get("symbols_above_pct_threshold", 0)
+        vol_above = snapshot_metrics.get("symbols_above_volume_threshold", 0)
+        avg_pct = snapshot_metrics.get("avg_pct_change", 0.0)
+        avg_dvol = snapshot_metrics.get("avg_dollar_volume", 0.0)
+        # Normalise: what fraction of the scanned universe shows any momentum or volume.
+        activity_ratio = (pct_above + vol_above) / (2 * n)
+        # Mild bonus for average move size (cap at 10% gain = full bonus).
+        pct_bonus = min(avg_pct / 10.0, 1.0) * 10
+        # Mild bonus for dollar volume ($500K average = full bonus).
+        dvol_bonus = min(avg_dvol / 500_000, 1.0) * 10
+        confidence = round(max(0, min(100, activity_ratio * 80 + pct_bonus + dvol_bonus)))
+        if confidence >= 75:
+            mode, guidance, color = (
+                "🟢 MOMENTUM DAY",
+                "Trade strong setups aggressively.",
+                "#4ade80",
+            )
+        elif confidence >= 55:
+            mode, guidance, color = "🟡 SELECTIVE DAY", "Trade only A setups.", "#facc15"
+        elif confidence >= 35:
+            mode, guidance, color = (
+                "🟠 CHOPPY DAY",
+                "Be patient. Reduce position size.",
+                "#fb923c",
+            )
+        elif confidence > 0:
+            mode, guidance, color = (
+                "🔴 DEAD TAPE",
+                "Protect capital. Avoid forcing trades.",
+                "#f87171",
+            )
+        else:
+            mode, guidance, color = (
+                "🔇 QUIET MARKET",
+                "No active setups. Stand aside.",
+                "#94a3b8",
+            )
+        return {
+            "mode": mode,
+            "guidance": guidance,
+            "color": color,
+            "confidence": confidence,
+            "qualified": 0,
+            "strengthening": 0,
+            "entry_ready": 0,
+            "average_participation": 0,
+            "average_expansion": 0,
+            "news_symbols": 0,
+            "snapshot_based": True,
+        }
+
     # All inputs are already-produced scanner evidence. Count caps prevent a large
     # universe alone from overstating the quality of the trading environment.
     confidence = round(
@@ -682,17 +739,31 @@ def market_session_quality(records: list[dict]) -> dict:
     }
 
 
-def market_session_quality_markup(records: list[dict]) -> str:
+def market_session_quality_markup(records: list[dict], *, snapshot_metrics: dict | None = None) -> str:
     """Build the compact Today's Market panel from aggregate session evidence."""
-    session = market_session_quality(records)
-    metrics = (
-        ("Qualified", session["qualified"]),
-        ("Strengthening", session["strengthening"]),
-        ("Entry Ready", session["entry_ready"]),
-        ("Avg Participation", f'{session["average_participation"]}%'),
-        ("Avg Expansion", f'{session["average_expansion"]}%'),
-        ("News Symbols", session["news_symbols"]),
-    )
+    session = market_session_quality(records, snapshot_metrics=snapshot_metrics)
+    if session.get("snapshot_based") and snapshot_metrics:
+        # Show raw snapshot signals; pipeline scores are not available.
+        n = snapshot_metrics.get("symbol_count", 0)
+        metrics = (
+            ("Symbols Scanned", n),
+            ("Movers ≥ {}%".format(int(snapshot_metrics.get("pct_change_threshold", 3))),
+             snapshot_metrics.get("symbols_above_pct_threshold", 0)),
+            ("Vol ≥ {}K".format(int(snapshot_metrics.get("volume_threshold", 100_000) // 1000)),
+             snapshot_metrics.get("symbols_above_volume_threshold", 0)),
+            ("Avg Move", f'{snapshot_metrics.get("avg_pct_change", 0.0):.1f}%'),
+            ("Max Move", f'{snapshot_metrics.get("max_pct_change", 0.0):.1f}%'),
+            ("Avg $ Vol", f'${snapshot_metrics.get("avg_dollar_volume", 0):,.0f}'),
+        )
+    else:
+        metrics = (
+            ("Qualified", session["qualified"]),
+            ("Strengthening", session["strengthening"]),
+            ("Entry Ready", session["entry_ready"]),
+            ("Avg Participation", f'{session["average_participation"]}%'),
+            ("Avg Expansion", f'{session["average_expansion"]}%'),
+            ("News Symbols", session["news_symbols"]),
+        )
     metric_html = "".join(
         f"<div class='market-day-metric'><span>{html.escape(label)}</span><b>{html.escape(str(value))}</b></div>"
         for label, value in metrics
