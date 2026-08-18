@@ -37,9 +37,9 @@ def test_prefilter_patch_is_idempotent_and_preserves_or_semantics():
         "prevDailyBar": {"c": 1.00},
     }
     too_expensive = {
-        "latestTrade": {"p": 5.01},
+        "latestTrade": {"p": 50.01},
         "dailyBar": {"v": 1_000_000},
-        "prevDailyBar": {"c": 4.00},
+        "prevDailyBar": {"c": 40.00},
     }
 
     assert patched("MOVE", mover, settings)["passed"] is True

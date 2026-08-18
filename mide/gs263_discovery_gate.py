@@ -48,6 +48,13 @@ def install() -> None:
         if not assets:
             raise RuntimeError("Webull native discovery returned zero symbols after deduplication")
 
+        # Cache radar prices for initialize_quotes fallback when REST snapshot
+        # returns no usable data (e.g. API format mismatch or transient failure).
+        self._native_radar_prices = {
+            str(item.get("symbol") or "").strip().upper(): item
+            for item in report.get("symbols", [])
+            if str(item.get("symbol") or "").strip() and item.get("price") is not None
+        }
         diagnostics = self.diagnostics.setdefault("webull_native_discovery", {})
         diagnostics.update({
             "provider": "Webull OpenAPI SDK",
