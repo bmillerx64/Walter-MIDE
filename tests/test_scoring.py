@@ -1353,7 +1353,7 @@ def test_participation_surge_detects_quiet_to_institutional_transition_without_n
 
     assert ranked[0]["participation_surge_detected"] is True
     assert ranked[0]["participation_surge_alert"] == "Participation Surge Detected"
-    assert surge["participation_score"] >= 72
+    assert surge["participation_score"] >= 60
     assert surge["current_phase"] == ranked[0]["market_phase"]
     assert ranked[0]["alert_event"] is True
     assert "Participation Surge" in " ".join(ranked[0]["reasons"])
@@ -1579,11 +1579,10 @@ def test_trigger_diagnostics_explain_failed_conditions():
         "participation",
         "supertrend_flip",
         "vwap",
-        "not_extended",
         "expansion_beginning",
     ]
-    assert "Price 9.7% above VWAP (Maximum entry range = 2%)" in diagnostics["reasons"]
-    assert "ST Flip 14 minutes ago (Fail; max 180 sec)" in diagnostics["reasons"]
+    assert "Price 9.7% above VWAP (Maximum entry range = 2.0%)" in diagnostics["reasons"]
+    assert "ST Flip 14 minutes ago (Fail; max 10 minutes)" in diagnostics["reasons"]
     assert (
         "Participation Surge 29/100 (Below trigger threshold)" in diagnostics["reasons"]
     )
@@ -1623,10 +1622,10 @@ def test_trigger_diagnostics_yes_when_all_conditions_pass():
 
     assert ranked[0]["trigger"] == "YES"
     assert diagnostics["failed_conditions"] == []
-    assert "ST Flip 90 seconds ago (Pass <180 sec)" in diagnostics["reasons"]
-    assert "VWAP Distance +0.6% (Pass 0–2%)" in diagnostics["reasons"]
-    assert "Participation Surge 100/100 (Pass ≥72)" in diagnostics["reasons"]
-    assert "Expansion Quality 82/100 (Pass ≥58)" in diagnostics["reasons"]
+    assert "ST Flip 90 seconds ago (Pass <10 minutes)" in diagnostics["reasons"]
+    assert "VWAP Distance +0.6% (Pass -0.75% to +2.0%)" in diagnostics["reasons"]
+    assert "Participation Surge 100/100 (Pass ≥60)" in diagnostics["reasons"]
+    assert "Expansion Quality 82/100 (Pass ≥55)" in diagnostics["reasons"]
 
 
 def test_scanner_v2_scores_clean_structure_when_participation_is_weak():
@@ -1886,7 +1885,7 @@ def test_extended_symbol_remains_strengthening_but_is_not_entry_ready():
     assert result["qualified_for_entry"] is False
     assert result["qualified_for_alert"] is False
     assert result["qualified_for_ranking"] == result["qualified_for_entry"]
-    assert "not_extended" in result["trigger_diagnostics"]["failed_conditions"]
+    assert "vwap" in result["trigger_diagnostics"]["failed_conditions"]
     assert any("Entry blocked: extended" in item for item in result["cautions"])
 
 
@@ -1916,7 +1915,6 @@ def test_entry_ready_requires_the_unchanged_trigger_rule_set():
         "participation",
         "supertrend_flip",
         "vwap",
-        "not_extended",
         "expansion_beginning",
     ]
     assert "supertrend_flip" in before["failed_conditions"]

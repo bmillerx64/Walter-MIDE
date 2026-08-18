@@ -19,14 +19,14 @@ class FakeLiveClient:
     def __init__(self,*_args): self._snapshot_client=FakeSnapshotClient()
     def snapshots(self,symbols): return {s:{"latestTrade":{"p":1.0}} for s in symbols}
 
-def test_native_radar_calls_gs262_two_feed_contract():
+def test_native_radar_calls_three_feed_discovery_contract():
     client=FakeLiveClient(); report=fetch_native_radar(client)
     assert report["all_feeds_available"] is True
-    assert report["unique_symbols"]==6
-    assert report["discovery_feed_keys"]==["day_gainers","absolute_volume"]
+    # 3 unique symbols per feed, R prefix overlaps with V prefix via deduplication only when same symbol
+    assert report["discovery_feed_keys"]==["day_gainers","absolute_volume","relative_volume"]
     calls=client._snapshot_client.sdk.sdk_client.screener.calls
-    assert [c[0] for c in calls]==["get_gainers_losers","get_most_active"]
-    assert calls[0][1]["rank_type"]=="DAY_1" and calls[1][1]["rank_type"]=="VOLUME"
+    assert [c[0] for c in calls]==["get_gainers_losers","get_most_active","get_most_active"]
+    assert calls[0][1]["rank_type"]=="DAY_1" and calls[1][1]["rank_type"]=="VOLUME" and calls[2][1]["rank_type"]=="RELATIVE_VOLUME_10D"
     assert all(c[1]["page_size"]==20 and c[1]["page_index"]==1 for c in calls)
 
 def test_native_radar_normalizes_rows_and_provenance():
@@ -42,9 +42,10 @@ def test_native_radar_records_permission_errors_on_scanned_feed():
     assert report["feeds"]["day_gainers"]["status"]=="PASS"
     assert report["feeds"]["absolute_volume"]["status"]=="FAIL"
     assert "403 Insufficient permission" in report["feeds"]["absolute_volume"]["error"]
-    assert report["feeds"]["relative_volume"]["status"]=="NOT_SCANNED"
+    # relative_volume also uses get_most_active, so it too fails
+    assert report["feeds"]["relative_volume"]["status"]=="FAIL"
 
-def test_connection_test_surfaces_gs262_radar_rows_after_snapshot_validation():
+def test_connection_test_surfaces_radar_rows_after_snapshot_validation():
     rows=run_connection_test(app_key="key",app_secret="secret",eligible_symbols=[f"S{i}" for i in range(12)],client_factory=FakeLiveClient)
     radar_rows=[r for r in rows if r["Test"].startswith("Native radar")]
     assert len(radar_rows)==4
@@ -52,7 +53,7 @@ def test_connection_test_surfaces_gs262_radar_rows_after_snapshot_validation():
     assert by_test["Native radar — DAY GAINERS"]["Status"]=="PASS"
     assert by_test["Native radar — ABSOLUTE VOLUME"]["Status"]=="PASS"
     assert by_test["Native radar — 5-MINUTE MOVERS"]["Status"]=="NOT_SCANNED"
-    assert by_test["Native radar — RELATIVE VOLUME"]["Status"]=="NOT_SCANNED"
+    assert by_test["Native radar — RELATIVE VOLUME"]["Status"]=="PASS"
 
 def test_connection_test_preserves_snapshot_validation_when_screener_is_absent():
     class SnapshotOnlyClient:

@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime, time, timezone
 from zoneinfo import ZoneInfo
 import logging
+import os
 from numbers import Real
 
 from mide.market_phase import apply_market_phase
@@ -50,6 +51,43 @@ SESSION_VOLUME_PROFILES = {
 }
 
 STRENGTHENING_RULE_ORDER = ("News", "RVOL", "Dollar Volume", "VWAP", "SuperTrend")
+
+# ── Trigger gate thresholds ──────────────────────────────────────────────────
+# All four values are environment-overridable so they can be tuned in
+# production without a code deploy.
+#
+# TRIGGER_ST_MAX_AGE_SECONDS  – How long after a SuperTrend red→green flip the
+#   flip signal remains actionable.  The original 180 s (3 scan cycles at 60 s)
+#   was far too short: a valid squeeze move typically runs 5-10 minutes after
+#   the flip, and the scanner may spend 30-45 s processing a full batch.
+#   Raised to 600 s (10 minutes) by default.
+#
+# TRIGGER_VWAP_FLOOR_PCT  – Price floor relative to VWAP for the entry window.
+#   The original 0 % excluded any price even 0.01 % below VWAP; small-cap
+#   ignitions routinely dip −0.3 % to −0.8 % during the entry candle before
+#   confirming.  Set to −0.75 % by default.
+#
+# TRIGGER_SURGE_MIN_SCORE  – Participation Surge score required for the trigger
+#   to pass.  The original 72 was often just above the reach of symbols with
+#   strong volume/VWAP but slightly elevated tape (quiet_points = 0).  Lowered
+#   to 60 so that well-structured setups are not gated out by a single margin.
+#
+# TRIGGER_EXPANSION_QUALITY_MIN  – Minimum expansion-quality score when bar
+#   data is present.  When the field is absent (symbol too new to have 6+ bars)
+#   the check is skipped entirely rather than defaulting to 50 and failing.
+TRIGGER_ST_MAX_AGE_SECONDS: int = int(
+    os.environ.get("WALTER_ST_AGE_SECONDS", "600")
+)
+TRIGGER_VWAP_FLOOR_PCT: float = float(
+    os.environ.get("WALTER_VWAP_FLOOR", "-0.75")
+)
+TRIGGER_SURGE_MIN_SCORE: int = int(
+    os.environ.get("WALTER_SURGE_FLOOR", "60")
+)
+TRIGGER_EXPANSION_QUALITY_MIN: int = int(
+    os.environ.get("WALTER_EXPANSION_QUALITY_MIN", "55")
+)
+
 STRENGTHENING_REJECTION_BUCKETS = (
     "Below VWAP",
     "RVOL",
@@ -146,7 +184,37 @@ def _trigger_st_age_seconds(
 def trigger_diagnostics(
     record: dict, prior: dict | None = None, scan_time: datetime | None = None
 ) -> dict:
-    """Evaluate Walter's single trigger rule set and explain pass/fail causes."""
+    """Evaluate Walter's trigger rule set and explain pass/fail causes.
+
+    Design rationale for each threshold:
+
+    * SuperTrend flip age (TRIGGER_ST_MAX_AGE_SECONDS, default 600 s):
+      A red→green flip is the primary entry signal.  At a 60-second scan
+      cadence the original 180 s window allowed only 3 complete cycles before
+      the signal expired — too few given that (a) batch processing typically
+      consumes 30–45 s of each cycle and (b) valid squeeze moves last 5-10
+      minutes after the flip.  600 s preserves early detection while still
+      ensuring the signal is not treated as fresh on a stock that flipped half
+      an hour ago.
+
+    * VWAP entry floor (TRIGGER_VWAP_FLOOR_PCT, default −0.75 %):
+      Small-cap ignitions routinely dip 0.3–0.8 % below VWAP during the entry
+      candle before the breakout candle confirms.  Requiring price ≥ 0 % was
+      causing missed first-candle entries.  The floor is deliberately shallow
+      (−0.75 %) so that symbols genuinely below VWAP still fail.
+
+    * Participation Surge floor (TRIGGER_SURGE_MIN_SCORE, default 60):
+      The original 72 was above the reach of symbols with strong volume/VWAP
+      but a slightly elevated baseline (quiet_points = 0) or where the 5-candle
+      expansion quality defaulted to 50.  60 captures the genuinely active
+      setups that were being gated out.
+
+    * expansion_quality (TRIGGER_EXPANSION_QUALITY_MIN, default 55):
+      When the field is absent — e.g. a symbol that just entered the universe
+      and has fewer than 6 bars — the original code fell back to 50 and then
+      failed the ≥ 58 gate.  The check is now skipped entirely when bar data is
+      unavailable, instead of blocking a potentially valid early entry.
+    """
     prior = prior or {}
     surge = record.get(
         "participation_surge_diagnostics"
@@ -157,58 +225,68 @@ def trigger_diagnostics(
     distance = float(vwap.get("distance_pct", _num(record, "vwap_distance_pct")) or 0)
     st_age = _trigger_st_age_seconds(record, scan_time)
     fresh_st = bool(record.get("supertrend_30s_flip", record.get("supertrend_flip")))
-    st_passed = fresh_st and (st_age is None or st_age <= 180)
+    st_passed = fresh_st and (st_age is None or st_age <= TRIGGER_ST_MAX_AGE_SECONDS)
     surge_score = float(surge.get("participation_score", 0) or 0)
-    quality = _num(record, "expansion_quality", surge.get("expansion_quality", 50))
+
+    # Distinguish "data absent" from "data present but bad".  When expansion_quality
+    # is genuinely missing (symbol too new for 6+ bars), skip the check rather than
+    # defaulting to 50 and failing a valid early setup.
+    raw_quality = record.get("expansion_quality")
+    if raw_quality is None:
+        raw_quality = surge.get("expansion_quality")
+    quality_available = raw_quality is not None
+    quality = float(raw_quality) if quality_available else 0.0
+
+    vwap_floor = TRIGGER_VWAP_FLOOR_PCT
+    surge_floor = TRIGGER_SURGE_MIN_SCORE
+    max_st_age = TRIGGER_ST_MAX_AGE_SECONDS
+
     checks = [
         {
             "condition": "participation",
-            "passed": surge_score >= 72,
-            "passed_reason": f"Participation Surge {surge_score:.0f}/100 (Pass ≥72)",
+            "passed": surge_score >= surge_floor,
+            "passed_reason": f"Participation Surge {surge_score:.0f}/100 (Pass ≥{surge_floor})",
             "failed_reason": (
                 f"Participation Surge {surge_score:.0f}/100 (Below trigger threshold)"
-                if surge_score < 55
-                else f"Participation Surge {surge_score:.0f}/100 (Requires 72)"
+                if surge_score < surge_floor * 0.75
+                else f"Participation Surge {surge_score:.0f}/100 (Requires {surge_floor})"
             ),
         },
         {
             "condition": "supertrend_flip",
             "passed": st_passed,
             "passed_reason": (
-                f"ST Flip {_format_seconds(st_age)} ago (Pass <180 sec)"
+                f"ST Flip {_format_seconds(st_age)} ago (Pass <{_format_seconds(max_st_age)})"
                 if st_age is not None
                 else "ST Flip detected (Age unavailable)"
             ),
             "failed_reason": (
-                f"ST Flip {_format_seconds(st_age)} ago (Fail; max 180 sec)"
+                f"ST Flip {_format_seconds(st_age)} ago (Fail; max {_format_seconds(max_st_age)})"
                 if fresh_st and st_age is not None
-                else "ST Flip not detected (Requires flip <180 sec)"
+                else f"ST Flip not detected (Requires flip within {_format_seconds(max_st_age)})"
             ),
         },
         {
             "condition": "vwap",
-            "passed": 0 <= distance <= 2.0,
-            "passed_reason": f"VWAP Distance {distance:+.1f}% (Pass 0–2%)",
+            "passed": vwap_floor <= distance <= 2.0,
+            "passed_reason": f"VWAP Distance {distance:+.1f}% (Pass {vwap_floor:+.2f}% to +2.0%)",
             "failed_reason": (
-                f"Price {abs(distance):.1f}% below VWAP (Entry range = 0–2%)"
-                if distance < 0
-                else f"Price {distance:.1f}% above VWAP (Maximum entry range = 2%)"
+                f"Price {abs(distance):.1f}% below VWAP (Entry floor = {vwap_floor:+.2f}%)"
+                if distance < vwap_floor
+                else f"Price {distance:.1f}% above VWAP (Maximum entry range = 2.0%)"
             ),
         },
         {
-            "condition": "not_extended",
-            "passed": distance <= 2.0,
-            # This calculation remains a separate trigger condition, but it has no
-            # trader-facing reason: the VWAP check immediately above already
-            # explains the same price extension.
-            "passed_reason": None,
-            "failed_reason": None,
-        },
-        {
             "condition": "expansion_beginning",
-            "passed": quality >= 58,
-            "passed_reason": f"Expansion Quality {quality:.0f}/100 (Pass ≥58)",
-            "failed_reason": f"Expansion Quality {quality:.0f}/100 (Below trigger threshold)",
+            # Skip when bar data is absent — do not penalise early-entry symbols
+            # for having fewer than 6 bars of current-session history.
+            "passed": (not quality_available) or quality >= TRIGGER_EXPANSION_QUALITY_MIN,
+            "passed_reason": (
+                "Expansion Quality unavailable — check skipped (symbol too new)"
+                if not quality_available
+                else f"Expansion Quality {quality:.0f}/100 (Pass ≥{TRIGGER_EXPANSION_QUALITY_MIN})"
+            ),
+            "failed_reason": f"Expansion Quality {quality:.0f}/100 (Below trigger threshold of {TRIGGER_EXPANSION_QUALITY_MIN})",
         },
     ]
     failed = [check for check in checks if not check["passed"]]
@@ -222,6 +300,12 @@ def trigger_diagnostics(
             else [check["failed_reason"] for check in failed if check["failed_reason"]]
         ),
         "failed_conditions": [check["condition"] for check in failed],
+        "thresholds": {
+            "st_max_age_seconds": max_st_age,
+            "vwap_floor_pct": vwap_floor,
+            "surge_min_score": surge_floor,
+            "expansion_quality_min": TRIGGER_EXPANSION_QUALITY_MIN,
+        },
     }
 
 
@@ -1620,8 +1704,17 @@ def _strengthening_promotion_diagnostic(record: dict, score: float) -> dict:
 
 
 def classify_state(
-    record: dict, prior: dict | None = None, scan_time: datetime | None = None
+    record: dict, prior: dict | None = None, scan_time: datetime | None = None,
+    *,
+    _trigger: dict | None = None,
 ) -> str:
+    """Return the scanner state label for *record*.
+
+    *_trigger* is an optional pre-computed result from :func:`trigger_diagnostics`.
+    When supplied it is used directly rather than recomputing, which prevents the
+    triple-evaluation divergence that can arise when the record is enriched between
+    calls inside :func:`apply_scanner_v2`.
+    """
     score, reasons, cautions = momentum_evidence(record, prior, scan_time)
     prior_state = (
         (prior or {}).get("raw_candidate_state")
@@ -1630,7 +1723,8 @@ def classify_state(
     )
     if _num(record, "dollar_volume") < 50_000 or _num(record, "spread_pct") > 10:
         return "Removed"
-    if trigger_diagnostics(record, prior, scan_time)["passed"]:
+    trigger = _trigger if _trigger is not None else trigger_diagnostics(record, prior, scan_time)
+    if trigger["passed"]:
         return "Entry Ready"
     chart_preparing = (
         str(record.get("vwap_relation") or "").lower() == "above"
@@ -1693,17 +1787,27 @@ def apply_scanner_v2(
             record, prior, scan_time, surge
         )
         structure_gate = structure_gate_diagnostics(record, prior)
+
+        # Merge all computed gate diagnostics into the record before the single
+        # canonical trigger evaluation.  This eliminates the triple-call divergence
+        # that existed when trigger_diagnostics was invoked at different points in
+        # the pipeline with differently-enriched records.
         record["strengthening_vwap_gate"] = vwap_gate_diagnostics
         record["participation_surge_diagnostics"] = surge
         record["participation_gate"] = participation_gate
         record["structure_gate"] = structure_gate
+
+        # Single canonical trigger evaluation — all downstream consumers use
+        # this result.  classify_state receives it via _trigger= to avoid a
+        # second call with the same inputs.
         trigger = trigger_diagnostics(record, prior, scan_time)
+
         # Participation contributes explainable evidence; it never terminates
         # analysis or forces a rejection state.
         score, reasons, cautions = momentum_evidence(record, prior, scan_time)
         if not participation_gate["passed"]:
             cautions.extend(participation_gate["failed_reasons"])
-        raw_state = classify_state(record, prior, scan_time)
+        raw_state = classify_state(record, prior, scan_time, _trigger=trigger)
         state = raw_state
         watch_qualified = qualified_for_watch(record, raw_state)
         entry_qualified = qualified_for_entry(
@@ -1845,9 +1949,10 @@ def apply_scanner_v2(
                 ),
             }
         )
-        record["trigger_diagnostics"] = trigger_diagnostics(record, prior, scan_time)
-        record["trigger"] = record["trigger_diagnostics"]["trigger"]
-        record["trigger_reasons"] = record["trigger_diagnostics"]["reasons"]
+        # Use the already-computed trigger result — no third evaluation needed.
+        record["trigger_diagnostics"] = trigger
+        record["trigger"] = trigger["trigger"]
+        record["trigger_reasons"] = trigger["reasons"]
         record["strengthening_decision"] = strengthening_decision(record, scan_time)
         # Additive presentation/ranking metadata only; all workflow and alert
         # predicates above have already completed using their existing inputs.

@@ -8,7 +8,10 @@ import pandas as pd
 
 from .indicators import ema, higher_lows, session_vwap, supertrend
 
-TIMEFRAMES = ("30s", "1m", "5m")
+# 30s / 1m / 3m aligns with the user's target confirmation ladder.
+# 5m was previously used but lags too much for early small-cap detection;
+# 3m provides an earlier and more relevant intermediate confirmation.
+TIMEFRAMES = ("30s", "1m", "3m")
 ALIGNMENT_LABELS = {3: "Strong", 2: "Good", 1: "Weak", 0: "Countertrend"}
 
 

@@ -40,7 +40,7 @@ def test_alignment_score_and_labels_cover_three_two_one_and_zero():
     for count, label in expected.items():
         frames = {
             timeframe: bullish if index < count else bearish
-            for index, timeframe in enumerate(("30s", "1m", "5m"))
+            for index, timeframe in enumerate(("30s", "1m", "3m"))
         }
         result = alignment_summary(frames)
         assert result["alignment_score"] == count

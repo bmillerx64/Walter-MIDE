@@ -1,9 +1,12 @@
 """GS262: make Walter's live discovery universe match the intended Webull radar.
 
-The live scan is seeded only from the current top-20 day gainers and top-20
-absolute-volume leaders.  This is discovery-source fidelity only; downstream
-prefilters, scoring, qualification, catalyst evidence, alerts and execution are
-unchanged.
+The scan universe is seeded from feeds listed in
+``webull_native_radar.DISCOVERY_FEED_KEYS``.  Downstream pre-filters, scoring,
+qualification, catalyst evidence, alerts, and execution are unchanged.
+
+Originally only day_gainers + absolute_volume were scanned (GS262 v1).  The
+three-feed extension (+ relative_volume) was added to surface early-ignition
+small-caps that rank on RVOL before appearing in the gainers list.
 """
 from __future__ import annotations
 
@@ -15,9 +18,10 @@ def install() -> None:
     if getattr(current, "_gs262_discovery_fidelity", False):
         return
 
-    wanted_keys = ("day_gainers", "absolute_volume")
-
+    # Read feed keys and contract from the canonical constants so this patch
+    # stays in sync with webull_native_radar.py without duplicating logic.
     def fidelity_fetch_native_radar(client):
+        wanted_keys = radar.DISCOVERY_FEED_KEYS
         screener = radar._resolve_screener(client)
         feed_by_key = {feed.key: feed for feed in radar.RADAR_FEEDS}
         feeds = {}
@@ -43,6 +47,10 @@ def install() -> None:
                     for index, row in enumerate(radar._rows(raw), start=1)
                 ]
                 rows = [row for row in rows if row["symbol"]][:20]
+                # Apply minimum gain filter for the relative-volume feed so flat
+                # or declining names do not enter the candidate universe.
+                if key == "relative_volume":
+                    rows = [row for row in rows if radar._rvol_gain_filter(row)]
                 if not rows:
                     raise RuntimeError(f"Webull {feed.label} returned zero ranking rows")
                 feeds[key] = {"label": feed.label, "status": "PASS", "error": "", "rows": rows}
@@ -64,12 +72,10 @@ def install() -> None:
                 feeds[key] = {"label": feed.label, "status": "FAIL",
                               "error": f"{type(exc).__name__}: {exc}", "rows": []}
 
-        # Preserve explicit diagnostics for feeds deliberately excluded from the
-        # scan so the UI/logs can explain why a symbol did or did not enter.
         for feed in radar.RADAR_FEEDS:
             if feed.key not in wanted_keys:
                 feeds[feed.key] = {"label": feed.label, "status": "NOT_SCANNED",
-                                   "error": "Excluded by GS262 discovery contract", "rows": []}
+                                   "error": "Not included in current discovery contract", "rows": []}
 
         symbols = list(deduped.values())
         return {
@@ -77,11 +83,13 @@ def install() -> None:
             "unique_symbols": len(symbols),
             "symbols": symbols,
             "all_feeds_available": all(feeds[key]["status"] == "PASS" for key in wanted_keys),
-            "discovery_contract": "WEBULL_TOP20_DAY_GAINERS_PLUS_TOP20_ABSOLUTE_VOLUME",
+            "discovery_contract": radar.DISCOVERY_CONTRACT,
             "discovery_feed_keys": list(wanted_keys),
-            "maximum_pre_dedupe_symbols": 40,
+            "maximum_pre_dedupe_symbols": len(wanted_keys) * 20,
             "pages_requested_per_feed": 1,
+            "rvol_discovery_min_gain_pct": radar.RVOL_DISCOVERY_MIN_GAIN_PCT,
         }
 
     fidelity_fetch_native_radar._gs262_discovery_fidelity = True
     radar.fetch_native_radar = fidelity_fetch_native_radar
+

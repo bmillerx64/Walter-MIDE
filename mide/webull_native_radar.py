@@ -1,8 +1,22 @@
 """Read-only Webull native market-attention discovery.
 
-GS262 intentionally seeds Walter only from Webull's current top-20 DAY_1 gainers
-and top-20 absolute VOLUME leaders. Five-minute movers and relative-volume are
-retained in RADAR_FEEDS for diagnostics/history but are explicitly NOT_SCANNED.
+Universe seeding uses three complementary feeds:
+
+* DAY_GAINERS  – top-20 by % change today; captures names that are already
+  running and draws in breakout continuations.
+* ABSOLUTE_VOLUME – top-20 by raw share volume; catches high-float names with
+  institutional participation that may not lead on % change.
+* RELATIVE_VOLUME – top-20 by 10-day RVOL; catches early-ignition small-caps
+  whose absolute volume is still modest but whose relative surge is the first
+  detectable signal of accumulation.  This is the primary pre-ignition feed.
+
+Five-minute movers are retained in RADAR_FEEDS for diagnostics/history but
+are NOT included in DISCOVERY_FEED_KEYS because they duplicate day-gainers
+for already-running symbols and add noise without early-detection benefit.
+
+The relative_volume feed requires a minimum +2 % gain filter enforced during
+snapshot enrichment to prevent low-float names with unusual but directionless
+activity from being promoted as candidates.
 """
 from __future__ import annotations
 
@@ -28,8 +42,18 @@ RADAR_FEEDS = (
     RadarFeed("absolute_volume", "ABSOLUTE VOLUME", "get_most_active",
               {"category": "US_STOCK", "rank_type": "VOLUME", "sort_by": "VOLUME", "direction": "DESC", "page_index": 1, "page_size": 20}),
 )
-DISCOVERY_FEED_KEYS = ("day_gainers", "absolute_volume")
-DISCOVERY_CONTRACT = "WEBULL_TOP20_DAY_GAINERS_PLUS_TOP20_ABSOLUTE_VOLUME"
+
+# relative_volume is added as the third discovery feed to surface pre-ignition
+# names before they reach the top of the day-gainers list.  All three feeds are
+# de-duplicated in fetch_native_radar so a symbol appearing in multiple feeds
+# counts once.
+DISCOVERY_FEED_KEYS = ("day_gainers", "absolute_volume", "relative_volume")
+DISCOVERY_CONTRACT = "WEBULL_TOP20_DAY_GAINERS_PLUS_TOP20_ABSOLUTE_VOLUME_PLUS_TOP20_RELATIVE_VOLUME"
+
+# Minimum intraday gain a relative-volume discovery must show before it is
+# treated as a directional candidate.  Prevents flat-tape names with unusual
+# volume from being promoted unnecessarily.
+RVOL_DISCOVERY_MIN_GAIN_PCT: float = 2.0
 
 
 def _plain(value: Any) -> Any:
@@ -89,6 +113,17 @@ def _normalize_row(row: dict[str, Any], *, rank: int, source: RadarFeed) -> dict
             "source_feed": source.key, "source_label": source.label}
 
 
+def _rvol_gain_filter(row: dict[str, Any], min_gain_pct: float = RVOL_DISCOVERY_MIN_GAIN_PCT) -> bool:
+    """Return True if the row should enter the candidate universe from the RVOL feed.
+
+    Rows where ``change_ratio`` is absent (None) are allowed through so that
+    Stage 2 can apply its own price/float filters with full data.  Rows with a
+    known ratio below *min_gain_pct* are excluded — the relative-volume feed
+    surfaces both gainers and decliners; we only want gainers.
+    """
+    change_ratio = row.get("change_ratio")
+    return change_ratio is None or change_ratio >= min_gain_pct
+
 def fetch_native_radar(client: Any) -> dict[str, Any]:
     screener = _resolve_screener(client)
     feed_by_key = {feed.key: feed for feed in RADAR_FEEDS}
@@ -105,6 +140,11 @@ def fetch_native_radar(client: Any) -> dict[str, Any]:
             if status_code is not None and int(status_code) >= 400: raise RuntimeError(f"Webull screener HTTP {status_code}")
             normalized = [_normalize_row(row, rank=i, source=feed) for i, row in enumerate(_rows(raw), start=1)]
             normalized = [row for row in normalized if row["symbol"]][:20]
+            # The relative-volume feed surfaces names with anomalous activity
+            # regardless of direction.  Apply a minimum gain filter so that
+            # flat or declining names do not enter the candidate universe.
+            if key == "relative_volume":
+                normalized = [row for row in normalized if _rvol_gain_filter(row)]
             if not normalized: raise RuntimeError(f"Webull {feed.label} returned zero ranking rows; raw_type={type(raw).__name__}")
             feeds[key] = {"label": feed.label, "status": "PASS", "error": "", "rows": normalized}
             for row in normalized:
@@ -118,12 +158,13 @@ def fetch_native_radar(client: Any) -> dict[str, Any]:
             feeds[key] = {"label": feed.label, "status": "FAIL", "error": f"{type(exc).__name__}: {exc}", "rows": []}
     for feed in RADAR_FEEDS:
         if feed.key not in DISCOVERY_FEED_KEYS:
-            feeds[feed.key] = {"label": feed.label, "status": "NOT_SCANNED", "error": "Excluded by GS262 discovery contract", "rows": []}
+            feeds[feed.key] = {"label": feed.label, "status": "NOT_SCANNED", "error": "Not included in current discovery contract", "rows": []}
     symbols = list(deduped.values())
     return {"feeds": feeds, "unique_symbols": len(symbols), "symbols": symbols,
             "all_feeds_available": all(feeds[k]["status"] == "PASS" for k in DISCOVERY_FEED_KEYS),
             "discovery_contract": DISCOVERY_CONTRACT, "discovery_feed_keys": list(DISCOVERY_FEED_KEYS),
-            "maximum_pre_dedupe_symbols": 40, "pages_requested_per_feed": 1}
+            "maximum_pre_dedupe_symbols": 60, "pages_requested_per_feed": 1,
+            "rvol_discovery_min_gain_pct": RVOL_DISCOVERY_MIN_GAIN_PCT}
 
 
 def radar_probe_rows(report: dict[str, Any]) -> list[dict[str, Any]]:

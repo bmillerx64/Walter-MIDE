@@ -59,8 +59,12 @@ def _number(record: dict, *keys: str, default: float = 0.0) -> float:
 
 
 def _participation_floor(record: dict) -> tuple[bool, str]:
-    """Require real session participation or unmistakable multi-window ignition."""
-    rvol = _number(record, "rvol_proxy", "rvol", "relative_volume", default=0.0)
+    """Require real session participation or unmistakable multi-window ignition.
+
+    RVOL defaults to 1.0 (market average) when the field is absent so that a
+    missing data point is treated neutrally rather than as zero participation.
+    """
+    rvol = _number(record, "rvol_proxy", "rvol", "relative_volume", default=1.0)
     volume_1m = _number(record, "volume_acceleration_1m", "volume_acceleration", default=0.0)
     volume_3m = _number(record, "volume_acceleration_3m", "volume_acceleration", default=0.0)
     dollar_1m = _number(record, "dollar_flow_acceleration_1m", default=0.0)
