@@ -50,13 +50,38 @@ def test_live_webull_refreshes_only_apparent_low_float(monkeypatch):
     assert provider.diagnostics["free_float_fallback_resolved"] == 1
 
 
-def test_live_webull_fails_closed_without_primary_float_and_does_not_query_yahoo(monkeypatch):
+def test_live_webull_resolves_missing_primary_float_from_secondary(monkeypatch):
     class FakeYahoo:
         def __init__(self, *args, **kwargs):
             pass
 
         def lookup_many(self, symbols):
-            raise AssertionError("Yahoo must not be called for primary-float misses")
+            assert list(symbols) == ["UNKNOWN"]
+            return {"UNKNOWN": 8_400_000.0}, {}
+
+    monkeypatch.setattr(free_float_inspector, "YahooFinanceFloatProvider", FakeYahoo)
+    provider = _provider()
+    snapshots = {"UNKNOWN": {}}
+
+    provider.enrich_free_float(snapshots, ["UNKNOWN"])
+
+    assert snapshots["UNKNOWN"]["float_shares"] == 8_400_000.0
+    assert snapshots["UNKNOWN"]["free_float_verified"] is True
+    assert snapshots["UNKNOWN"]["free_float_verification_status"] == "verified-secondary-source"
+    assert provider.diagnostics["free_float_fail_closed"] == 0
+    assert provider.diagnostics["free_float_unresolved_primary"] == 0
+    assert provider.diagnostics["free_float_fallback_requested"] == 1
+    assert provider.diagnostics["free_float_fallback_resolved"] == 1
+
+
+def test_live_webull_fails_closed_when_primary_and_secondary_float_unresolved(monkeypatch):
+    class FakeYahoo:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def lookup_many(self, symbols):
+            assert list(symbols) == ["UNKNOWN"]
+            return {}, {"UNKNOWN": "rate limited"}
 
     monkeypatch.setattr(free_float_inspector, "YahooFinanceFloatProvider", FakeYahoo)
     provider = _provider()
@@ -69,7 +94,7 @@ def test_live_webull_fails_closed_without_primary_float_and_does_not_query_yahoo
     assert snapshots["UNKNOWN"]["free_float_verification_status"] == "unavailable-reject"
     assert provider.diagnostics["free_float_fail_closed"] == 1
     assert provider.diagnostics["free_float_unresolved_primary"] == 1
-    assert provider.diagnostics["free_float_fallback_requested"] == 0
+    assert provider.diagnostics["free_float_fallback_requested"] == 1
 
 
 def test_live_webull_fails_closed_when_low_float_refresh_is_unresolved(monkeypatch):
