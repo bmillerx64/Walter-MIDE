@@ -18,9 +18,7 @@ from mide.time_service import format_eastern_time
 from mide.early_setup import top_timing_setups
 
 
-def inject_css():
-    st.markdown(
-        """
+DASHBOARD_CSS = """
     <style>
     .block-container {padding-top: 1.1rem; max-width: 1450px;}
     .mide-card {background:#111821;border:1px solid #253143;border-radius:12px;
@@ -165,10 +163,10 @@ def inject_css():
     .control-heading {display:flex;align-items:flex-end;justify-content:space-between;gap:14px;flex-wrap:wrap}
     .control-title {font-size:1.55rem;line-height:1.15;font-weight:950;color:#f8fafc}.control-version{font-size:.84rem;color:#7dd3fc;font-weight:900;margin-top:3px}
     .control-engine {font-size:.78rem;letter-spacing:.08em;text-transform:uppercase;color:#94a3b8;font-weight:850}
-    .control-strip {display:grid;grid-template-columns:repeat(9,minmax(84px,1fr));gap:7px;margin-top:13px}
+    .control-strip {display:grid;grid-template-columns:repeat(auto-fit,minmax(128px,1fr));gap:7px;margin-top:13px}
     .control-stat {background:#0c121a;border:1px solid #253244;border-radius:8px;padding:8px 9px;min-width:0}
     .control-stat-label {font-size:.62rem;letter-spacing:.08em;text-transform:uppercase;color:#8291a5;font-weight:900;white-space:nowrap}
-    .control-stat-value {font-size:.96rem;color:#f8fafc;font-weight:950;margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-variant-numeric:tabular-nums}
+    .control-stat-value {font-size:.96rem;color:#f8fafc;font-weight:950;margin-top:3px;white-space:normal;overflow-wrap:anywhere;line-height:1.2;font-variant-numeric:tabular-nums}
     .control-live{color:#4ade80}.control-demo{color:#facc15}
     .scan-trust {display:grid;grid-template-columns:minmax(250px,1.5fr) repeat(3,minmax(100px,.5fr));gap:10px;align-items:center;background:#0b131d;border:1px solid #334155;border-left:6px solid var(--trust-color);border-radius:10px;padding:10px 14px;margin:-3px 0 12px}
     .scan-trust-title {color:var(--trust-color);font-size:.94rem;font-weight:950;letter-spacing:.04em}.scan-trust-reason{color:#cbd5e1;font-size:.78rem;margin-top:2px}
@@ -178,20 +176,21 @@ def inject_css():
     .market-day-mode {font-size:1.28rem;color:var(--market-color);font-weight:950;margin:2px 0}
     .market-day-guidance {font-size:.9rem;color:#e2e8f0;font-weight:850}
     .market-day-confidence {font-size:.72rem;letter-spacing:.08em;text-transform:uppercase;color:#94a3b8;font-weight:900}.market-day-confidence b{font-size:1.25rem;color:#f8fafc;margin-left:5px}
-    .market-day-metrics {display:grid;grid-template-columns:repeat(6,minmax(72px,1fr));gap:6px;margin-top:7px}
+    .market-day-metrics {display:grid;grid-template-columns:repeat(auto-fit,minmax(110px,1fr));gap:6px;margin-top:7px}
     .market-day-metric {border-left:1px solid #334155;padding-left:8px}.market-day-metric span{display:block;font-size:.58rem;line-height:1.15;text-transform:uppercase;letter-spacing:.06em;color:#8291a5;font-weight:850}.market-day-metric b{font-size:.9rem;color:#f8fafc;font-variant-numeric:tabular-nums}
     .escalation-card {background:#0b131d;border:1px solid #334155;border-left:6px solid var(--escalation-color);border-radius:11px;padding:13px 15px;margin:8px 0}
     .escalation-top {display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap}
     .escalation-symbol {font-size:1.35rem;font-weight:950;color:#f8fafc}.escalation-state {font-weight:950;color:var(--escalation-color)}
     .escalation-trend {font-size:.82rem;color:#cbd5e1;font-weight:800}.escalation-details {display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:9px}
     .escalation-list {list-style:none;padding:0;margin:5px 0 0;display:grid;gap:3px;font-size:.83rem}.delta-up{color:#86efac}.delta-down{color:#fca5a5}
-    @media(max-width:1050px){.control-strip{grid-template-columns:repeat(3,1fr)}}
-    @media(max-width:760px){.mission-grid{grid-template-columns:1fr}.control-strip{grid-template-columns:repeat(2,1fr)}.market-day{grid-template-columns:1fr}.market-day-metrics{grid-template-columns:repeat(3,1fr)}}
+    @media(max-width:760px){.mission-grid{grid-template-columns:1fr}.market-day{grid-template-columns:1fr}}
     @media(max-width:760px){.escalation-details{grid-template-columns:1fr}}
     </style>
-    """,
-        unsafe_allow_html=True,
-    )
+    """
+
+
+def inject_css():
+    st.markdown(DASHBOARD_CSS, unsafe_allow_html=True)
 
 
 def play_alert(sound_path: str, phrase: str, voice_name: str = ""):
