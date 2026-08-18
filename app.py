@@ -1581,10 +1581,11 @@ def _run_live_pipeline(
                     raise RuntimeError(
                         f"Webull market data unavailable: {exc}"
                     ) from exc
-        client.diagnostics.setdefault("webull_stock_data_cache", {}).update(
-            active=used_cached_webull_data,
-            cache_path=str(WEBULL_STOCK_CACHE_PATH),
-        )
+        if isinstance(client, LiveWebullProvider):
+            client.diagnostics.setdefault("webull_stock_data_cache", {}).update(
+                active=used_cached_webull_data,
+                cache_path=str(WEBULL_STOCK_CACHE_PATH),
+            )
         state["snapshots"] = snapshots
         state["scan_stage_counts"]["snapshot_records_received"] = len(snapshots)
         refreshed = {item["symbol"]: item for item in snapshot_identity_records(snapshots)}
