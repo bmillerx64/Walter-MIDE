@@ -113,6 +113,17 @@ def _normalize_row(row: dict[str, Any], *, rank: int, source: RadarFeed) -> dict
             "source_feed": source.key, "source_label": source.label}
 
 
+def _rvol_gain_filter(row: dict[str, Any], min_gain_pct: float = RVOL_DISCOVERY_MIN_GAIN_PCT) -> bool:
+    """Return True if the row should enter the candidate universe from the RVOL feed.
+
+    Rows where ``change_ratio`` is absent (None) are allowed through so that
+    Stage 2 can apply its own price/float filters with full data.  Rows with a
+    known ratio below *min_gain_pct* are excluded — the relative-volume feed
+    surfaces both gainers and decliners; we only want gainers.
+    """
+    change_ratio = row.get("change_ratio")
+    return change_ratio is None or change_ratio >= min_gain_pct
+
 def fetch_native_radar(client: Any) -> dict[str, Any]:
     screener = _resolve_screener(client)
     feed_by_key = {feed.key: feed for feed in RADAR_FEEDS}
@@ -133,11 +144,7 @@ def fetch_native_radar(client: Any) -> dict[str, Any]:
             # regardless of direction.  Apply a minimum gain filter so that
             # flat or declining names do not enter the candidate universe.
             if key == "relative_volume":
-                normalized = [
-                    row for row in normalized
-                    if (row.get("change_ratio") or 0) >= RVOL_DISCOVERY_MIN_GAIN_PCT
-                    or (row.get("change_ratio") is None)  # keep if gain unavailable; Stage 2 will filter
-                ]
+                normalized = [row for row in normalized if _rvol_gain_filter(row)]
             if not normalized: raise RuntimeError(f"Webull {feed.label} returned zero ranking rows; raw_type={type(raw).__name__}")
             feeds[key] = {"label": feed.label, "status": "PASS", "error": "", "rows": normalized}
             for row in normalized:

@@ -50,11 +50,7 @@ def install() -> None:
                 # Apply minimum gain filter for the relative-volume feed so flat
                 # or declining names do not enter the candidate universe.
                 if key == "relative_volume":
-                    rows = [
-                        row for row in rows
-                        if (row.get("change_ratio") or 0) >= radar.RVOL_DISCOVERY_MIN_GAIN_PCT
-                        or row.get("change_ratio") is None
-                    ]
+                    rows = [row for row in rows if radar._rvol_gain_filter(row)]
                 if not rows:
                     raise RuntimeError(f"Webull {feed.label} returned zero ranking rows")
                 feeds[key] = {"label": feed.label, "status": "PASS", "error": "", "rows": rows}
