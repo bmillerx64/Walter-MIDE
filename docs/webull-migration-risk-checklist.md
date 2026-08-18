@@ -7,7 +7,7 @@ This checklist maps Walter's current Webull integration to official Webull OpenA
 ## Executive summary
 
 - No active runtime import of an unofficial Webull package was found in this repository.
-- The current production path already centers on `webull-openapi-python-sdk==2.0.16`, wrapped by Walter-owned adapters in `/home/runner/work/Walter-MIDE/Walter-MIDE/mide/webull_sdk.py`, `/home/runner/work/Walter-MIDE/Walter-MIDE/mide/webull_live.py`, and `/home/runner/work/Walter-MIDE/Walter-MIDE/mide/webull_native_radar.py`.
+- The current production path already centers on `webull-openapi-python-sdk==2.0.16`, wrapped by Walter-owned adapters in `mide/webull_sdk.py`, `mide/webull_live.py`, and `mide/webull_native_radar.py`.
 - The main migration risk is not a remaining unofficial dependency; it is the set of Walter-authored compatibility layers, response-shape assumptions, entitlement-sensitive discovery calls, and legacy operational expectations still sitting around the official SDK.
 - The most fragile areas are native discovery fail-closed behavior, snapshot/history response-shape drift, invalid-symbol batch poisoning, hard-coded timeout/rate-limit behavior, and optional streaming bootstrap.
 
