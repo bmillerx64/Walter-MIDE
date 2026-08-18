@@ -2545,6 +2545,9 @@ tab_names = [
         "Data validation",
         "Method",
     ]
+_debug_mode = str(st.query_params.get("debug", "")).strip() == "1"
+if _debug_mode:
+    tab_names = tab_names + ["Webull Debug"]
 active_tab = st.radio(
     "View", tab_names, horizontal=True, key="active_dashboard_tab",
     help="Diagnostic views are loaded only when selected to keep memory bounded.",
@@ -3327,3 +3330,59 @@ Scanner V1 is preserved as the classic technical screener. Scanner V2 is an adap
 - **Likely Webull differences:** Webull may source consolidated real-time data, extended-hours/session templates, proprietary tick aggregation, rounding, and configurable indicator presets that can differ from Walter's Alpaca feed and fixed `10, 3.0` SuperTrend settings.
 - **Data limitations:** Walter currently receives Alpaca bars at the configured feed and computes the primary SuperTrend catalyst from the available scan bars; exact Webull matching is limited without Webull's raw bar feed, session settings, extended-hours handling, and confirmed default SuperTrend preset.
 """)
+
+if active_tab == "Webull Debug":
+    from mide.webull_debug_log import read_entries as _read_debug_entries
+    st.subheader("🛠 Webull Debug — Internal Use Only")
+    st.caption(
+        "Hidden diagnostic page. Enable with `?debug=1` in the URL. "
+        "Read-only. No credentials are shown. "
+        "Displays the last 50 raw Webull API snapshots captured during this deployment."
+    )
+    _debug_entries = _read_debug_entries()
+    if not _debug_entries:
+        st.info("No Webull API calls have been logged yet. Run a live scan to populate this view.")
+    else:
+        _fail_count = sum(1 for e in _debug_entries if not e.get("validation_passed"))
+        _fallback_count = sum(1 for e in _debug_entries if e.get("using_fallback_cache"))
+        _c1, _c2, _c3 = st.columns(3)
+        _c1.metric("Total logged calls", len(_debug_entries))
+        _c2.metric("Failed / invalid", _fail_count)
+        _c3.metric("Cache fallbacks used", _fallback_count)
+
+        _filter = st.radio(
+            "Show", ["All", "Failures only", "Cache fallbacks only"],
+            horizontal=True, key="_debug_filter",
+        )
+        _shown = _debug_entries
+        if _filter == "Failures only":
+            _shown = [e for e in _debug_entries if not e.get("validation_passed")]
+        elif _filter == "Cache fallbacks only":
+            _shown = [e for e in _debug_entries if e.get("using_fallback_cache")]
+
+        if not _shown:
+            st.success("No entries match the current filter.")
+        for _idx, _entry in enumerate(_shown):
+            _passed = _entry.get("validation_passed", False)
+            _fallback = _entry.get("using_fallback_cache", False)
+            _ts = _entry.get("fetch_timestamp", "unknown time")
+            _endpoint = _entry.get("endpoint", "unknown")
+            _syms = _entry.get("symbols_requested") or []
+            _sym_label = ", ".join(_syms[:5]) + ("…" if len(_syms) > 5 else "")
+            _status_icon = "✅" if _passed else ("⚠️" if _fallback else "❌")
+            _label = f"{_status_icon} [{_ts}] {_endpoint.upper()} — {_sym_label or '(no symbols)'}"
+            with st.expander(_label, expanded=(_idx == 0 and not _passed)):
+                _meta_cols = st.columns(3)
+                _meta_cols[0].write(f"**Endpoint:** `{_endpoint}`")
+                _meta_cols[0].write(f"**Symbols requested:** {_entry.get('symbol_count', 0)}")
+                _meta_cols[1].write(f"**Symbols returned:** {len(_entry.get('symbols_returned') or [])}")
+                _meta_cols[1].write(f"**Timeframe:** {_entry.get('timeframe') or 'N/A'}")
+                _meta_cols[2].write(f"**Validation passed:** {'Yes' if _passed else 'No'}")
+                _meta_cols[2].write(f"**Cache fallback:** {'Yes' if _fallback else 'No'}")
+                if _entry.get("error_detail"):
+                    st.error(f"Error: {_entry['error_detail']}")
+                if _entry.get("missing_fields"):
+                    st.warning("Missing/invalid fields: " + "; ".join(_entry["missing_fields"]))
+                st.write("**Raw Webull response** (credentials redacted):")
+                st.json(_entry.get("raw_response") or {})
+

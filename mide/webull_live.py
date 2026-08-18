@@ -20,6 +20,7 @@ from .webull_stream_benchmark import Quote
 from .webull_sdk import (HTTP_HOST, MAX_SNAPSHOT_SYMBOLS, SNAPSHOT_OPERATION,
                          STREAM_HOST, WebullSDKClient, _invalid_history_symbol)
 from .startup import log_startup
+from . import webull_debug_log as _debug_log
 
 
 LOGGER = logging.getLogger(__name__)
@@ -143,8 +144,19 @@ class WebullOpenAPIClient:
         wanted = list(dict.fromkeys(str(s).strip().upper() for s in symbols if str(s).strip()))
         if len(wanted) > MAX_SNAPSHOT_SYMBOLS:
             raise ValueError("Webull snapshot requests are limited to 100 symbols")
-        rows = self._rows(self.sdk.stock_snapshot(
-            wanted, extended_hours=self.extended_hours_enabled)) if wanted else []
+        raw_response = None
+        try:
+            raw_response = self.sdk.stock_snapshot(
+                wanted, extended_hours=self.extended_hours_enabled) if wanted else []
+            rows = self._rows(raw_response)
+        except Exception as exc:
+            _debug_log.log_snapshot_attempt(
+                symbols=wanted,
+                raw_response=raw_response,
+                normalized=None,
+                error=exc,
+            )
+            raise
         self.last_snapshot_rows_decoded = len(rows)
         normalized = {}
         for row in rows:
@@ -165,6 +177,12 @@ class WebullOpenAPIClient:
                 "market_data_provider": "Webull OpenAPI SDK",
             }
         self.last_snapshot_rows_normalized = len(normalized)
+        _debug_log.log_snapshot_attempt(
+            symbols=wanted,
+            raw_response=raw_response,
+            normalized=normalized,
+            error=None,
+        )
         return normalized
 
     def bars(self, symbols: Iterable[str], *, start: datetime, timeframe="1Min",

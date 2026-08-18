@@ -75,3 +75,41 @@ so an extended candidate remains visible with an entry blocker.
 records that do not yet contain the new fields. These shims are marked
 `TODO Walter 2.0 Phase 2` at their call sites and should be removed after stored
 records and downstream consumers have migrated.
+
+## Hidden Webull Debug Page
+
+A read-only hidden diagnostic view captures raw Webull API responses (snapshots
+and bars) to help diagnose intermittent ~10 % request failures.
+
+### Enabling debug mode
+
+Append `?debug=1` to the app URL:
+
+```
+https://<your-app>.streamlit.app/?debug=1
+```
+
+A **Webull Debug** tab appears at the right end of the tab bar.  It is not
+visible without the query parameter.
+
+### What the debug page shows
+
+- Total logged calls, failures, and cache-fallback events (last 50 entries).
+- Per-entry: fetch timestamp, endpoint, symbols requested/returned, validation
+  pass/fail, error detail, and missing fields.
+- Raw Webull JSON payload via `st.json` for visual inspection.
+- Filter to show all entries, failures only, or cache-fallback events only.
+
+### On-disk log
+
+Raw payloads are also written to `webull_debug_log.jsonl` in the working
+directory (JSONL ring buffer, last 50 entries).  This file is safe to inspect
+after a deployment even if no debug UI session was open at the time of a
+failure.  All credential-bearing keys (`key`, `secret`, `token`, `password`,
+`auth`, `credential`) are redacted before writing.
+
+### Security notes
+
+- The debug page is read-only; it never triggers a scan or modifies state.
+- No credentials are surfaced — redaction runs before storage and display.
+- Normal users who do not append `?debug=1` see no difference in the UI.
