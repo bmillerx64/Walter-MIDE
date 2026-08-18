@@ -1,5 +1,7 @@
 from mide import ui
 from mide.ui import (
+    DASHBOARD_CSS,
+    inject_css,
     mission_control_header_markup,
     market_session_quality,
     market_session_quality_markup,
@@ -478,6 +480,23 @@ def test_mission_control_header_contains_compact_operational_status():
     assert "id='walter-market-phase'" in markup
     assert "id='walter-auto-scan'" in markup
     assert "Next scan" not in markup
+
+
+def test_inject_css_keeps_dashboard_cards_responsive(monkeypatch):
+    rendered = []
+    monkeypatch.setattr(
+        ui.st,
+        "markdown",
+        lambda body, **kwargs: rendered.append((body, kwargs)),
+    )
+
+    inject_css()
+
+    assert rendered == [(DASHBOARD_CSS, {"unsafe_allow_html": True})]
+    assert "repeat(auto-fit,minmax(128px,1fr))" in DASHBOARD_CSS
+    assert "overflow-wrap:anywhere" in DASHBOARD_CSS
+    assert "repeat(auto-fit,minmax(110px,1fr))" in DASHBOARD_CSS
+    assert "text-overflow:ellipsis" not in DASHBOARD_CSS
 
 
 def test_mission_control_header_tells_the_complete_funnel_story():
