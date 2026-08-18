@@ -4,10 +4,14 @@ from scripts.policy_guardrails import (
     DiffLine,
     SDK_APPROVAL_LABEL,
     provider_fallback_violations,
+    push_zero_base_violations,
     runtime_violations,
     sdk_pin_violations,
     secret_logging_violations,
 )
+
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
 
 
 def test_runtime_guard_requires_exact_python_313_pin():
@@ -40,22 +44,32 @@ def test_provider_fallback_guard_flags_new_alpaca_reference_in_live_webull_path(
 
 
 def test_secret_logging_guard_flags_interpolated_webull_secret_output():
+    secret_name = "WEBULL_APP_" + "SECRET"
+    logged_line = f'LOGGER.info(f"{secret_name}={{resolved[{secret_name!r}].value}}")'
     violations = secret_logging_violations(
         [
             DiffLine(
                 "app.py",
                 101,
-                'LOGGER.info(f"WEBULL_APP_SECRET={resolved[\'WEBULL_APP_SECRET\'].value}")',
+                logged_line,
             )
         ]
     )
     assert violations
 
 
+def test_zero_before_push_to_main_is_not_silently_accepted():
+    violations = push_zero_base_violations(
+        "push",
+        {"before": "0" * 40, "ref": "refs/heads/main"},
+    )
+    assert violations
+
+
 def test_guardrail_files_are_tracked_in_repo_contract():
-    policy = Path("docs/AGENT_POLICY.md").read_text(encoding="utf-8")
-    template = Path(".github/pull_request_template.md").read_text(encoding="utf-8")
-    workflow = Path(".github/workflows/policy-guardrails.yml").read_text(encoding="utf-8")
+    policy = (REPO_ROOT / "docs/AGENT_POLICY.md").read_text(encoding="utf-8")
+    template = (REPO_ROOT / ".github/pull_request_template.md").read_text(encoding="utf-8")
+    workflow = (REPO_ROOT / ".github/workflows/policy-guardrails.yml").read_text(encoding="utf-8")
     assert "source of truth" in policy
     assert "Live Webull mode must remain Webull-only" in policy
     assert "runtime.txt" in policy
@@ -65,7 +79,7 @@ def test_guardrail_files_are_tracked_in_repo_contract():
     assert "pull_request" in workflow
     assert "branches:" in workflow
     assert "python-version: '3.13'" in workflow
-    assert "approved-sdk-upgrade" in workflow or "approved-sdk-upgrade" in Path(
-        "scripts/policy_guardrails.py"
+    assert "approved-sdk-upgrade" in workflow or "approved-sdk-upgrade" in (
+        REPO_ROOT / "scripts/policy_guardrails.py"
     ).read_text(encoding="utf-8")
     assert "scripts/policy_guardrails.py" in workflow

@@ -180,12 +180,25 @@ def load_event(event_path: Path) -> dict:
     return json.loads(event_path.read_text(encoding="utf-8"))
 
 
+def push_zero_base_violations(event_name: str, payload: dict) -> list[str]:
+    if event_name != "push":
+        return []
+    if payload.get("before") != "0" * 40:
+        return []
+    if payload.get("ref") != "refs/heads/main":
+        return []
+    return [
+        "Push event for main reported an all-zero 'before' SHA, so diff-based guardrails "
+        "cannot compare added lines safely. Re-run the push with normal branch history."
+    ]
+
+
 def diff_refs(event_name: str, payload: dict) -> tuple[str | None, str | None]:
     if event_name == "pull_request":
         pull_request = payload.get("pull_request") or {}
         return (
-            (((pull_request.get("base") or {}).get("sha"))),
-            (((pull_request.get("head") or {}).get("sha"))),
+            (pull_request.get("base") or {}).get("sha"),
+            (pull_request.get("head") or {}).get("sha"),
         )
     if event_name == "push":
         before = payload.get("before")
@@ -220,6 +233,7 @@ def main(argv: list[str]) -> int:
     added_lines = load_added_lines(base_ref, head_ref)
 
     violations = [
+        *push_zero_base_violations(args.event_name, payload),
         *runtime_violations(runtime_text),
         *sdk_pin_violations(
             requirements_text,
