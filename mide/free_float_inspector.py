@@ -68,7 +68,7 @@ def _webull_enrich_free_float(
     snapshots: dict[str, dict],
     symbols,
     *,
-    max_free_float: float = 3_500_000,
+    max_free_float: float = 50_000_000,
 ) -> dict[str, dict]:
     """Verify only apparent low-float names and fail closed when evidence is absent.
 

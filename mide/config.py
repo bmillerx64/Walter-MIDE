@@ -5,7 +5,7 @@ import os
 class Settings:
     min_price: float = 0.05
     max_price: float = 50.00
-    max_free_float: int = 3_500_000
+    max_free_float: int = 50_000_000
     include_etfs: bool = False
     min_pct_change: float = 3.0
     min_day_volume: int = 100_000
@@ -22,13 +22,16 @@ class Settings:
     @classmethod
     def from_mapping(cls, mapping=None):
         mapping = mapping or {}
+        defaults = cls()
+
         def get(name, default):
             return mapping.get(name, os.getenv(name, default))
+
         return cls(
-            min_price=float(get("MIN_PRICE", 0.05)),
-            max_price=float(get("MAX_PRICE", 5.00)),
-            max_free_float=int(get("MAX_FREE_FLOAT", 3_500_000)),
+            min_price=float(get("MIN_PRICE", defaults.min_price)),
+            max_price=float(get("MAX_PRICE", defaults.max_price)),
+            max_free_float=int(get("MAX_FREE_FLOAT", defaults.max_free_float)),
             include_etfs=str(get("INCLUDE_ETFS", "false")).lower() in {"1", "true", "yes"},
-            refresh_seconds=int(get("SCAN_REFRESH_SECONDS", 60)),
-            feed=str(get("ALPACA_FEED", "iex")).lower(),
+            refresh_seconds=int(get("SCAN_REFRESH_SECONDS", defaults.refresh_seconds)),
+            feed=str(get("ALPACA_FEED", defaults.feed)).lower(),
         )

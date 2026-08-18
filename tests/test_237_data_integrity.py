@@ -74,6 +74,22 @@ def test_zero_filtered_records_are_valid_empty_not_failure():
     assert result["trust_score"] == 100
 
 
+def test_empty_pass_reason_identifies_first_zero_gate():
+    result = report(
+        [],
+        {
+            "universe": 32,
+            "price": 13,
+            "tradability": 13,
+            "free_float": 0,
+            "stage_3_analysis": 0,
+            "monitored": 0,
+        },
+    )
+    assert result["status"] == STATUS_EMPTY
+    assert result["status_reason"] == "No symbols survived Free-Float Gate."
+
+
 def test_live_explicitly_empty_universe_is_failure():
     result = report([], {"universe": 0})
     assert result["status"] == STATUS_FAILURE

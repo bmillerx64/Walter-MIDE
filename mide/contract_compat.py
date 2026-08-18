@@ -24,7 +24,7 @@ def install() -> None:
         settings = kwargs.get("settings")
         added = settings is not None and not hasattr(settings, "max_free_float")
         if added:
-            settings.max_free_float = 3_500_000
+            settings.max_free_float = 50_000_000
         try:
             scan = original_record_scan(self, *args, **kwargs)
             # Preserve the historical compact funnel for legacy settings objects;
