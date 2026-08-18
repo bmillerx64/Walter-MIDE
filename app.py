@@ -1737,6 +1737,28 @@ def _run_live_pipeline(
             decision["reason"] for symbol, decision in prefilter_decisions.items()
             if symbol not in candidate_symbols
         ]
+        # Aggregate raw snapshot price/volume signals for the market session panel.
+        # This allows market quality to be assessed even when no candidates survive
+        # the prefilter.
+        _sm_pct = []
+        _sm_vol = []
+        _sm_dvol = []
+        for d in prefilter_decisions.values():
+            mv = d["measured_values"]
+            if mv.get("price", 0) > 0:
+                _sm_pct.append(mv["pct_change"])
+                _sm_vol.append(mv["volume"])
+                _sm_dvol.append(mv["dollar_volume"])
+        state["snapshot_market_metrics"] = {
+            "symbol_count": len(eligible_snapshots),
+            "avg_pct_change": round(sum(_sm_pct) / len(_sm_pct), 2) if _sm_pct else 0.0,
+            "max_pct_change": round(max(_sm_pct), 2) if _sm_pct else 0.0,
+            "avg_dollar_volume": round(sum(_sm_dvol) / len(_sm_dvol), 0) if _sm_dvol else 0.0,
+            "symbols_above_pct_threshold": sum(p >= settings.min_pct_change for p in _sm_pct),
+            "symbols_above_volume_threshold": sum(v >= settings.min_day_volume for v in _sm_vol),
+            "pct_change_threshold": settings.min_pct_change,
+            "volume_threshold": settings.min_day_volume,
+        }
         snapshot_metrics = []
         for symbol, snap in eligible_snapshots.items():
             snapshot_metrics.append({
@@ -1987,6 +2009,21 @@ def _run_live_pipeline(
     client.diagnostics["pipeline_timing_summary"] = timing_summary
     state["scan_stage_counts"]["final_candidates"] = len(ranked)
     client.diagnostics["scan_stage_counts"] = dict(state["scan_stage_counts"])
+    client.diagnostics["funnel_counts"] = {
+        "universe": state["scan_stage_counts"].get("universe_discovered", 0),
+        "snapshots_requested": state["scan_stage_counts"].get("snapshot_requests_sent", 0),
+        "snapshots_received": state["scan_stage_counts"].get("snapshot_records_received", 0),
+        # data_integrity checks for both "prefilter_count" and "prefiltered" in
+        # funnel_keys / downstream_keys, so both aliases must be populated.
+        "prefilter_count": state["scan_stage_counts"].get("prefilter_output", 0),
+        "prefiltered": state["scan_stage_counts"].get("prefilter_output", 0),
+        # Same: "candidates" and "candidate_count" are both read by data_integrity.
+        "candidates": len(ranked),
+        "candidate_count": len(ranked),
+    }
+    client.diagnostics["snapshot_market_metrics"] = dict(
+        state.get("snapshot_market_metrics") or {}
+    )
     if isinstance(client, LiveWebullProvider):
         client.diagnostics["production_webull_runtime_stages"] = dict(
             state["runtime_stages"]
@@ -2277,7 +2314,11 @@ with scan_trust_slot:
     st.markdown(data_integrity_markup(integrity_report), unsafe_allow_html=True)
 with market_session_slot:
     st.markdown(
-        market_session_quality_markup(actionable_records), unsafe_allow_html=True
+        market_session_quality_markup(
+            actionable_records,
+            snapshot_metrics=scan_diagnostics.get("snapshot_market_metrics"),
+        ),
+        unsafe_allow_html=True,
     )
 with early_setup_slot:
     render_early_setups(records)
