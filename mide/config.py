@@ -31,7 +31,7 @@ class Settings:
             min_price=float(get("MIN_PRICE", defaults.min_price)),
             max_price=float(get("MAX_PRICE", defaults.max_price)),
             max_free_float=int(get("MAX_FREE_FLOAT", defaults.max_free_float)),
-            include_etfs=str(get("INCLUDE_ETFS", "false")).lower() in {"1", "true", "yes"},
+            include_etfs=str(get("INCLUDE_ETFS", defaults.include_etfs)).lower() in {"1", "true", "yes"},
             refresh_seconds=int(get("SCAN_REFRESH_SECONDS", defaults.refresh_seconds)),
             feed=str(get("ALPACA_FEED", defaults.feed)).lower(),
         )
