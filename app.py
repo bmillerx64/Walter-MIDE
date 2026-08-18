@@ -261,6 +261,197 @@ from mide.version import BUILD
 memory_checkpoint("remaining providers and application imports")
 
 
+WEBULL_STOCK_CACHE_PATH = Path(__file__).resolve().parent / "cache" / "webull_stock_data.json"
+WEBULL_CACHE_WARNING_TEXT = "Displaying Cached Data due to API Timeout"
+
+
+class LiveWebullDataError(RuntimeError):
+    """Raised when live Webull stock data is unavailable or malformed."""
+
+
+def _validated_stock_payload(
+    payload: object,
+    *,
+    requested_symbols: list[str] | None = None,
+) -> dict[str, dict]:
+    if not isinstance(payload, dict):
+        raise ValueError(f"expected dict payload, received {type(payload).__name__}")
+    normalized = {
+        str(symbol).strip().upper(): snapshot
+        for symbol, snapshot in payload.items()
+        if is_valid_us_symbol(symbol)
+    }
+    if requested_symbols:
+        normalized = {
+            symbol: normalized[symbol]
+            for symbol in requested_symbols
+            if symbol in normalized
+        }
+    if not normalized:
+        raise ValueError("payload contained no usable symbols")
+    try:
+        records = snapshot_identity_records(normalized)
+    except Exception as exc:
+        raise ValueError(f"snapshot normalization failed: {exc}") from exc
+    usable = []
+    for record in records:
+        try:
+            if float(record.get("price") or 0) > 0:
+                usable.append(record["symbol"])
+        except (TypeError, ValueError):
+            continue
+    if not usable:
+        raise ValueError("payload contained no usable prices")
+    return {symbol: normalized[symbol] for symbol in usable if symbol in normalized}
+
+
+def save_cache(
+    data: object,
+    *,
+    cache_path: Path = WEBULL_STOCK_CACHE_PATH,
+) -> dict[str, dict]:
+    """Persist the latest usable Webull snapshot payload to local JSON cache."""
+    latest = _validated_stock_payload(data)
+    existing = load_cache(cache_path=cache_path) or {}
+    payload = {
+        "saved_at": datetime.now(timezone.utc).isoformat(),
+        "snapshots": {**existing, **latest},
+    }
+    cache_path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = cache_path.with_suffix(".tmp")
+    temporary.write_text(json.dumps(payload, separators=(",", ":")))
+    temporary.replace(cache_path)
+    return latest
+
+
+def load_cache(
+    *,
+    cache_path: Path = WEBULL_STOCK_CACHE_PATH,
+    requested_symbols: list[str] | None = None,
+) -> dict[str, dict] | None:
+    """Load the last successful Webull snapshot payload from local JSON cache."""
+    try:
+        stored = json.loads(cache_path.read_text())
+    except FileNotFoundError:
+        return None
+    except (OSError, ValueError) as exc:
+        logging.getLogger(__name__).warning(
+            "Webull stock cache read failed path=%s error=%s",
+            cache_path,
+            exc,
+        )
+        return None
+    snapshots = stored.get("snapshots") if isinstance(stored, dict) else stored
+    try:
+        return _validated_stock_payload(
+            snapshots,
+            requested_symbols=requested_symbols,
+        )
+    except ValueError as exc:
+        logging.getLogger(__name__).warning(
+            "Webull stock cache invalid path=%s error=%s",
+            cache_path,
+            exc,
+        )
+        return None
+
+
+def fetch_live_with_timeout(
+    fetcher,
+    *,
+    operation: str,
+    requested_symbols: list[str] | None = None,
+) -> dict[str, dict]:
+    """Run a live Webull fetch and fail closed on timeout or malformed payloads."""
+    try:
+        payload = fetcher()
+    except TimeoutError as exc:
+        raise LiveWebullDataError(
+            f"{operation} timed out"
+        ) from exc
+    except Exception as exc:
+        if "timed out" in str(exc).lower():
+            raise LiveWebullDataError(f"{operation} timed out") from exc
+        raise LiveWebullDataError(f"{operation} failed: {type(exc).__name__}: {exc}") from exc
+    try:
+        return _validated_stock_payload(payload, requested_symbols=requested_symbols)
+    except ValueError as exc:
+        raise LiveWebullDataError(
+            f"{operation} returned an unexpected payload: {exc}"
+        ) from exc
+
+
+def get_stock_data_with_fallback(
+    fetcher,
+    *,
+    operation: str,
+    requested_symbols: list[str] | None = None,
+    diagnostics: dict | None = None,
+    cache_path: Path = WEBULL_STOCK_CACHE_PATH,
+) -> tuple[dict[str, dict], bool]:
+    """Return live Webull data or the last successful local cache copy."""
+    logger = logging.getLogger(__name__)
+    try:
+        live = fetch_live_with_timeout(
+            fetcher,
+            operation=operation,
+            requested_symbols=requested_symbols,
+        )
+        save_cache(live, cache_path=cache_path)
+        if diagnostics is not None:
+            diagnostics["webull_stock_data_cache"] = {
+                "active": False,
+                "cache_path": str(cache_path),
+            }
+        return live, False
+    except LiveWebullDataError as exc:
+        cached = load_cache(
+            cache_path=cache_path,
+            requested_symbols=requested_symbols,
+        )
+        if diagnostics is not None:
+            record_provider_failure(
+                diagnostics,
+                provider="Webull OpenAPI SDK",
+                operation=operation,
+                exception=exc,
+                affected_symbols=requested_symbols or [],
+                recovery_action=(
+                    "load last successful local stock-data cache"
+                    if cached
+                    else "fail gracefully because no valid local stock-data cache exists"
+                ),
+            )
+        if cached:
+            logger.warning(
+                "Webull live fetch failed; using cached stock data operation=%s "
+                "symbols_requested=%s cache_path=%s error=%s",
+                operation,
+                len(requested_symbols or []),
+                cache_path,
+                exc,
+            )
+            if diagnostics is not None:
+                diagnostics["webull_stock_data_cache"] = {
+                    "active": True,
+                    "cache_path": str(cache_path),
+                    "fallback_reason": str(exc),
+                    "symbols_loaded": len(cached),
+                }
+            return cached, True
+        logger.error(
+            "Webull live fetch failed with no valid cache operation=%s "
+            "symbols_requested=%s cache_path=%s error=%s",
+            operation,
+            len(requested_symbols or []),
+            cache_path,
+            exc,
+        )
+        raise RuntimeError(
+            "Live Webull data is temporarily unavailable and no valid cached stock data is available."
+        ) from exc
+
+
 def free_float_decision(
     snapshot: dict[str, object], max_free_float: int
 ) -> Decision:
@@ -835,6 +1026,7 @@ with st.sidebar:
     )
     selected_provider = st.session_state[PROVIDER_KEY]
     st.caption(f"Decision Funnel v{BUILD.version} · {BUILD.git_sha}")
+    webull_cache_banner = st.empty()
     scanner_version = "Walter Architecture v1.0"
     auto_refresh = st.toggle(
         "Auto live scan every 60 seconds", key=AUTO_SCAN_KEY,
@@ -1356,17 +1548,43 @@ def _run_live_pipeline(
         symbols = [item["symbol"] for item in records]
         state["scan_stage_counts"]["snapshot_requests_sent"] = len(symbols)
         snapshots = {}
+        used_cached_webull_data = False
         for offset in range(0, len(symbols), settings.batch_size):
             batch = symbols[offset:offset + settings.batch_size]
             try:
-                snapshots.update(client.snapshots(batch))
+                if isinstance(client, LiveWebullProvider):
+                    batch_snapshots, cached = get_stock_data_with_fallback(
+                        lambda batch=batch: client.snapshots(batch),
+                        operation="market data snapshots",
+                        requested_symbols=batch,
+                        diagnostics=client.diagnostics,
+                    )
+                    snapshots.update(batch_snapshots)
+                    used_cached_webull_data = used_cached_webull_data or cached
+                else:
+                    snapshots.update(client.snapshots(batch))
             except Exception as exc:
                 client.warnings.append(f"Snapshot batch unavailable: {exc}")
                 record_provider_failure(
-                    client.diagnostics, provider=("Webull OpenAPI cache" if isinstance(client, LiveWebullProvider) else "Alpaca"), operation="market data snapshots",
-                    exception=exc, affected_symbols=batch,
+                    client.diagnostics,
+                    provider=(
+                        "Webull OpenAPI cache"
+                        if isinstance(client, LiveWebullProvider)
+                        else "Alpaca"
+                    ),
+                    operation="market data snapshots",
+                    exception=exc,
+                    affected_symbols=batch,
                     recovery_action="retain symbols with unusable data evidence",
                 )
+                if isinstance(client, LiveWebullProvider):
+                    raise RuntimeError(
+                        f"Webull market data unavailable: {exc}"
+                    ) from exc
+        client.diagnostics.setdefault("webull_stock_data_cache", {}).update(
+            active=used_cached_webull_data,
+            cache_path=str(WEBULL_STOCK_CACHE_PATH),
+        )
         state["snapshots"] = snapshots
         state["scan_stage_counts"]["snapshot_records_received"] = len(snapshots)
         refreshed = {item["symbol"]: item for item in snapshot_identity_records(snapshots)}
@@ -1955,6 +2173,10 @@ with flight_recorder_download_slot:
 
 completed_scan = completed_scan_for_view(st.session_state, "Radar")
 last_scan_failure = st.session_state.get(LAST_SCAN_FAILURE_KEY)
+if completed_scan and completed_scan.diagnostics.get("webull_stock_data_cache", {}).get("active"):
+    webull_cache_banner.warning(WEBULL_CACHE_WARNING_TEXT)
+else:
+    webull_cache_banner.empty()
 if last_scan_failure:
     st.error(
         "Latest scan attempt failed; the last successful scan remains displayed. "

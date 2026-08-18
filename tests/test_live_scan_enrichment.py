@@ -8,10 +8,13 @@ import pytest
 from app import (
     ALERT_VOICE_SESSION_KEY,
     alert_voice_for_session,
+    get_stock_data_with_fallback,
+    load_cache,
     price_gate_savings_metrics,
     print_scan_stage_counts,
     resolve_scan_universe,
     run_live,
+    save_cache,
 )
 from mide.completed_scan import CompletedScan
 from mide.memory import MemoryStore
@@ -178,6 +181,60 @@ def test_scan_stage_instrumentation_prints_only_the_ordered_counts(capsys):
         "Published\t3\tAAA,BBB,CCC",
         "Dashboard\t2\tAAA,BBB",
     ]
+
+
+def test_save_cache_round_trips_valid_webull_snapshot_payload(tmp_path):
+    cache_path = tmp_path / "cache" / "webull_stock_data.json"
+    snapshots = {
+        "AAA": {
+            "latestTrade": {"p": 10.5},
+            "dailyBar": {"c": 10.5, "v": 1_000},
+        }
+    }
+
+    saved = save_cache(snapshots, cache_path=cache_path)
+
+    assert saved == snapshots
+    assert load_cache(cache_path=cache_path) == snapshots
+
+
+def test_get_stock_data_with_fallback_uses_cached_snapshot_after_timeout(tmp_path):
+    cache_path = tmp_path / "cache" / "webull_stock_data.json"
+    cached = {
+        "AAA": {
+            "latestTrade": {"p": 4.2},
+            "dailyBar": {"c": 4.2, "v": 500},
+        }
+    }
+    save_cache(cached, cache_path=cache_path)
+    diagnostics = {}
+
+    payload, used_cache = get_stock_data_with_fallback(
+        lambda: (_ for _ in ()).throw(TimeoutError("timed out")),
+        operation="market data snapshots",
+        requested_symbols=["AAA"],
+        diagnostics=diagnostics,
+        cache_path=cache_path,
+    )
+
+    assert used_cache is True
+    assert payload == cached
+    assert diagnostics["webull_stock_data_cache"]["active"] is True
+    assert diagnostics["webull_stock_data_cache"]["symbols_loaded"] == 1
+
+
+def test_get_stock_data_with_fallback_fails_cleanly_when_live_payload_is_malformed(tmp_path):
+    with pytest.raises(
+        RuntimeError,
+        match="Live Webull data is temporarily unavailable and no valid cached stock data is available.",
+    ):
+        get_stock_data_with_fallback(
+            lambda: {"AAA": {"latestTrade": {}, "dailyBar": {}}},
+            operation="market data snapshots",
+            requested_symbols=["AAA"],
+            diagnostics={},
+            cache_path=tmp_path / "cache" / "webull_stock_data.json",
+        )
 
 
 def test_run_live_enrichment_path_passes_previous_state(monkeypatch, tmp_path):
