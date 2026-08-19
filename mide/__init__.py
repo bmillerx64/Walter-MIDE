@@ -56,3 +56,7 @@ _install_gs288_fmp_filtering()
 from .gs289_fmp_stock_news_contract import install as _install_gs289_fmp_stock_news_contract  # noqa: E402
 
 _install_gs289_fmp_stock_news_contract()
+
+from .gs292_reevaluation_continuity import install as _install_gs292_reevaluation_continuity  # noqa: E402
+
+_install_gs292_reevaluation_continuity()
