@@ -41,11 +41,18 @@ def install() -> None:
             wanted[index:index + self.BATCH_SIZE]
             for index in range(0, len(wanted), self.BATCH_SIZE)
         ] or [[]]
+
+        # GS287 entitlement boundary: the configured FMP subscription provides
+        # Stock News but not Press Releases. Never schedule an unavailable FMP
+        # endpoint; doing so only adds predictable authorization failures and
+        # latency. Keep this list explicit so future endpoint additions require
+        # an entitlement decision rather than silently expanding acquisition.
+        entitled_endpoints = ("news/stock",)
         jobs = [
             (endpoint, batch)
             for batch in batches
             if batch
-            for endpoint in ("news/stock", "news/press-releases")
+            for endpoint in entitled_endpoints
         ]
         if not jobs:
             return []
