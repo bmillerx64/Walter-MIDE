@@ -7,6 +7,7 @@ from mide.escalation import (
     escalation_alert_phrase,
     escalation_state,
     meaningful_evidence_deltas,
+    momentum_urgency,
     ready_checklist,
     trade_recommendation,
 )
@@ -84,6 +85,71 @@ def test_confidence_trend_and_deltas_compare_immediately_prior_scan():
     ]
 
 
+def test_fresh_multi_signal_improvement_promotes_review_urgency():
+    current = record(
+        candidate_status="Watching",
+        conviction_score=63,
+        participation_score=78,
+        vwap_distance_pct=0.7,
+        volume_acceleration=1.45,
+        rvol=2.2,
+        opportunity_pulse_previous={
+            "candidate_status": "Watching",
+            "conviction_score": 56,
+            "participation_score": 70,
+            "vwap_relation": "above",
+            "vwap_distance_pct": 1.2,
+            "supertrend_bullish": True,
+            "volume_acceleration": 1.15,
+            "rvol": 1.6,
+        },
+    )
+    urgency = momentum_urgency(current)
+    assert urgency["promoted"] is True
+    assert urgency["continuity"] is True
+    assert urgency["vwap_supported"] is True
+    assert urgency["trend_supported"] is True
+    assert "Confidence" in urgency["improving_signals"]
+    assert "Participation" in urgency["improving_signals"]
+    assert escalation_state(current) == WATCH_CLOSELY
+
+
+def test_single_scan_or_unconfirmed_structure_does_not_manufacture_urgency():
+    assert momentum_urgency(record(conviction_score=90))["promoted"] is False
+    current = record(
+        conviction_score=78,
+        participation_score=90,
+        vwap_relation="below",
+        opportunity_pulse_previous={
+            "conviction_score": 70,
+            "participation_score": 82,
+            "vwap_relation": "below",
+            "vwap_distance_pct": 0.9,
+            "supertrend_bullish": True,
+        },
+    )
+    assert momentum_urgency(current)["promoted"] is False
+    assert escalation_state(current) == MONITOR
+
+
+def test_overextension_remains_hard_stop_even_when_momentum_improves():
+    current = record(
+        conviction_score=82,
+        participation_score=92,
+        vwap_distance_pct=5.5,
+        volume_acceleration=1.8,
+        opportunity_pulse_previous={
+            "conviction_score": 70,
+            "participation_score": 82,
+            "vwap_relation": "above",
+            "vwap_distance_pct": 4.5,
+            "supertrend_bullish": True,
+            "volume_acceleration": 1.4,
+        },
+    )
+    assert escalation_state(current) == TOO_EXTENDED
+
+
 def test_alert_only_announces_a_real_escalation_state_change():
     changed = record(
         candidate_status="Strengthening",
@@ -104,6 +170,7 @@ def test_engine_does_not_mutate_scanner_record():
     confidence_trend(source)
     ready_checklist(source)
     meaningful_evidence_deltas(source)
+    momentum_urgency(source)
     assert repr(source) == before
 
 

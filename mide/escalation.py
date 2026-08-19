@@ -1,15 +1,15 @@
 """Walter 2.12 display-only recommendation intelligence.
 
 The engine intentionally consumes completed scanner records and never mutates
-them.  Scanner qualification, ranking, thresholds, and scores remain the source
+them. Scanner qualification, ranking, thresholds, and scores remain the source
 of truth; this module only explains how urgently a trader should review them.
 """
 
 from __future__ import annotations
 
-from mide.timeframe_alignment import alignment_voice
-
 from dataclasses import dataclass
+
+from mide.timeframe_alignment import alignment_voice
 
 ENTRY_WINDOW_OPEN = "Entry Window Open"
 WATCH_CLOSELY = "Watch Closely"
@@ -103,22 +103,6 @@ def trade_recommendation(record: dict) -> dict:
     }
 
 
-def escalation_state(record: dict) -> str:
-    """Translate existing decisions into one display-only escalation state."""
-    distance = _number(record, "vwap_distance_pct")
-    if distance is not None and distance > 5.0:
-        return TOO_EXTENDED
-    state = record.get("candidate_status") or record.get("status")
-    if record.get("qualified_for_entry") is True or state in {
-        "Entry Ready",
-        "EXCEPTIONAL",
-    }:
-        return ENTRY_WINDOW_OPEN
-    if state in {"Strengthening", "ALERT", "WATCH NOW"}:
-        return WATCH_CLOSELY
-    return MONITOR
-
-
 def confidence_trend(record: dict) -> dict:
     """Describe confidence direction from already-computed conviction evidence."""
     current = _number(
@@ -181,7 +165,6 @@ def meaningful_evidence_deltas(record: dict) -> list[dict]:
         delta = current - prior
         if abs(delta) < metric.meaningful_change:
             continue
-        # A smaller positive VWAP distance is an improvement, unlike other metrics.
         improving = delta < 0 if metric.label == "VWAP distance" else delta > 0
         deltas.append(
             {
@@ -194,11 +177,68 @@ def meaningful_evidence_deltas(record: dict) -> list[dict]:
     return deltas
 
 
+def momentum_urgency(record: dict) -> dict:
+    """Detect multi-signal improvement without changing scanner decisions.
+
+    GS293 deliberately requires a fresh prior observation. A symbol is promoted
+    for review only when structure/trend remain supportive and the newest scan
+    shows additional improvement. This prevents a single hot print, stale record,
+    or raw price jump from manufacturing urgency.
+    """
+    previous = record.get("opportunity_pulse_previous") or {}
+    continuity = bool(previous) or int(record.get("consecutive_reevaluations") or 0) >= 2
+    relation = str(record.get("vwap_relation") or "").lower()
+    distance = _number(record, "vwap_distance_pct")
+    vwap_supported = relation == "above" and (distance is None or distance <= 2.0)
+    trend_supported = bool(record.get("supertrend_bullish") or record.get("supertrend_flip"))
+    confidence = confidence_trend(record)
+    deltas = meaningful_evidence_deltas(record)
+    improving = [item for item in deltas if item["direction"] == "improved"]
+    weakening = [item for item in deltas if item["direction"] == "weakened"]
+
+    promoted = bool(
+        continuity
+        and vwap_supported
+        and trend_supported
+        and confidence["direction"] == "Rising"
+        and len(improving) >= 2
+        and len(weakening) <= 1
+    )
+    return {
+        "promoted": promoted,
+        "continuity": continuity,
+        "vwap_supported": vwap_supported,
+        "trend_supported": trend_supported,
+        "confidence_direction": confidence["direction"],
+        "improving_signals": [item["label"] for item in improving],
+        "weakening_signals": [item["label"] for item in weakening],
+    }
+
+
+def escalation_state(record: dict) -> str:
+    """Translate existing decisions plus fresh momentum evidence into urgency."""
+    distance = _number(record, "vwap_distance_pct")
+    if distance is not None and distance > 5.0:
+        return TOO_EXTENDED
+    state = record.get("candidate_status") or record.get("status")
+    if record.get("qualified_for_entry") is True or state in {
+        "Entry Ready",
+        "EXCEPTIONAL",
+    }:
+        return ENTRY_WINDOW_OPEN
+    if state in {"Strengthening", "ALERT", "WATCH NOW"}:
+        return WATCH_CLOSELY
+    if momentum_urgency(record)["promoted"]:
+        return WATCH_CLOSELY
+    return MONITOR
+
+
 def escalation_snapshot(record: dict) -> dict:
     return {
         "symbol": str(record.get("symbol") or "").upper(),
         "state": escalation_state(record),
         "confidence_trend": confidence_trend(record),
+        "urgency": momentum_urgency(record),
         "checklist": ready_checklist(record),
         "recommendation": trade_recommendation(record),
         "deltas": meaningful_evidence_deltas(record),
