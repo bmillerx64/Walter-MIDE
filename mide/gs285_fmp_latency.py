@@ -27,10 +27,10 @@ def install() -> None:
         if not self.api_key:
             raise RuntimeError("FMP news credential is not configured")
 
-        since = max(
-            since.astimezone(UTC),
-            self.now().astimezone(UTC) - self.FRESHNESS,
-        )
+        # Preserve the provider's existing public contract exactly: the provider
+        # records and queries the caller-supplied range. NewsService owns any
+        # downstream six-hour effective-window filtering/diagnostics.
+        since = since.astimezone(UTC)
         self.last_since = since
         self.last_requested_symbols = list(wanted)
         self.endpoints_requested = []
@@ -40,10 +40,11 @@ def install() -> None:
         batches = [
             wanted[index:index + self.BATCH_SIZE]
             for index in range(0, len(wanted), self.BATCH_SIZE)
-        ]
+        ] or [[]]
         jobs = [
             (endpoint, batch)
             for batch in batches
+            if batch
             for endpoint in ("news/stock", "news/press-releases")
         ]
         if not jobs:
@@ -65,6 +66,12 @@ def install() -> None:
                     self.request_failures.append(
                         f"{endpoint} ({len(batch)} symbols): {type(exc).__name__}"
                     )
+
+        # original_request updates these counters from worker threads. Normalize
+        # them after completion so audit provenance remains deterministic and
+        # identical to the prior serial contract.
+        self.request_count = len(jobs)
+        self.endpoints_requested = [endpoint for endpoint, _ in jobs]
 
         if self.request_failures and not output:
             raise RuntimeError("FMP news requests failed within bounded timeout")
