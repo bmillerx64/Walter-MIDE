@@ -32,6 +32,10 @@ def initialize_session_controls(
     run. The process watchdog, rather than a value left over from a prior script
     execution, is authoritative during reruns. Any persisted pre-GS258 Alpaca
     selection is repaired before a scan can be requested.
+
+    When the process watchdog explicitly reports an idle process, clear only
+    transient one-shot scan intent. This prevents a reconnect/reboot from
+    inheriting stale requested/stopped state while preserving persistent choices.
     """
     safe_default = default_mode if default_mode in VALID_DATA_MODES else "Demo"
     current_mode = state.get(DATA_MODE_KEY, safe_default)
@@ -39,15 +43,19 @@ def initialize_session_controls(
         current_mode = safe_default
     state[DATA_MODE_KEY] = current_mode
     state[PROVIDER_KEY] = provider_for_mode(current_mode)
-    # Keep repair deployments manual until Webull credentials and entitlements
-    # have passed the deployed connection test.
     state.setdefault(AUTO_SCAN_KEY, False)
     if scan_running is None:
         state.setdefault(SCAN_RUNNING_KEY, False)
+        state.setdefault(SCAN_REQUESTED_KEY, False)
+        state.setdefault(STOP_REQUESTED_KEY, False)
     else:
         state[SCAN_RUNNING_KEY] = scan_running
-    state.setdefault(SCAN_REQUESTED_KEY, False)
-    state.setdefault(STOP_REQUESTED_KEY, False)
+        if scan_running:
+            state.setdefault(SCAN_REQUESTED_KEY, False)
+            state.setdefault(STOP_REQUESTED_KEY, False)
+        else:
+            state[SCAN_REQUESTED_KEY] = False
+            state[STOP_REQUESTED_KEY] = False
 
 
 def select_data_mode(state: MutableMapping[str, Any]) -> None:
