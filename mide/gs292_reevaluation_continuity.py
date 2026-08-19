@@ -18,9 +18,21 @@ def install() -> None:
 
     def run(self):
         results = original_run(self)
-        scan = self.candidate_ledger.scan_number
+
+        # WalterArchitectureV1.for_runtime() is intentionally a thin dispatch
+        # shell and returns from __init__ before ledger/clock fields are created.
+        # The live scanner already owns its own state in that mode, so GS292 must
+        # be a transparent no-op there rather than assuming architecture-ledger
+        # attributes exist. This preserves the production dispatch contract and
+        # keeps continuity telemetry scoped to completed ledger-backed scans.
+        ledger = getattr(self, "candidate_ledger", None)
+        records = getattr(self, "_ledger", None)
+        if ledger is None or records is None:
+            return results
+
+        scan = ledger.scan_number
         timestamp = self._timestamp()
-        for record in self._ledger.values():
+        for record in records.values():
             current = record.get("discovery_last_seen_scan") == scan
             history = record.setdefault("reevaluation_history", [])
             prior = history[-1] if history else None
