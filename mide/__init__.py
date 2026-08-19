@@ -92,3 +92,7 @@ _install_gs301_catalyst_evidence_handoff()
 from .gs302_stage_purity_enforcement import install as _install_gs302_stage_purity_enforcement  # noqa: E402
 
 _install_gs302_stage_purity_enforcement()
+
+from .gs303_flight_recorder_authoritative_funnel import install as _install_gs303_flight_recorder_authoritative_funnel  # noqa: E402
+
+_install_gs303_flight_recorder_authoritative_funnel()
