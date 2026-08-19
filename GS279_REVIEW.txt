@@ -1,0 +1,1 @@
+Review focus: verify idle watchdog clears only scan_requested/scan_stop_requested; verify active watchdog preserves in-flight intent; verify no scanner modules changed.
