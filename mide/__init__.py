@@ -72,3 +72,7 @@ _install_gs295_escalation_patch()
 from .gs296_first_print_alert_patch import install as _install_gs296_first_print_alert_patch  # noqa: E402
 
 _install_gs296_first_print_alert_patch()
+
+from .gs298_news_seeded_discovery import install as _install_gs298_news_seeded_discovery  # noqa: E402
+
+_install_gs298_news_seeded_discovery()
