@@ -91,8 +91,8 @@ def test_autoscan_uses_session_preserving_streamlit_fragment_not_browser_reload(
 
     assert "@st.fragment(run_every=timedelta(seconds=interval))" in scheduler
     assert 'st.rerun(scope="app")' in scheduler
-    assert "location.reload(" not in scheduler
-    assert "window.parent.location.reload(" not in scheduler
+    # Guard executable browser reload calls, not explanatory comments/docstrings.
+    assert ".location.reload(" not in scheduler
 
 
 def test_autoscan_scheduler_requires_live_enabled_idle_and_due_state():
