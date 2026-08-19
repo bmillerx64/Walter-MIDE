@@ -52,3 +52,7 @@ _install_gs285_fmp_latency()
 from .gs288_fmp_filtering import install as _install_gs288_fmp_filtering  # noqa: E402
 
 _install_gs288_fmp_filtering()
+
+from .gs289_fmp_stock_news_contract import install as _install_gs289_fmp_stock_news_contract  # noqa: E402
+
+_install_gs289_fmp_stock_news_contract()
