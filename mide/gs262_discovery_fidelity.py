@@ -26,6 +26,7 @@ def install() -> None:
         feed_by_key = {feed.key: feed for feed in radar.RADAR_FEEDS}
         feeds = {}
         deduped = {}
+        rejected = []
 
         for key in wanted_keys:
             feed = feed_by_key[key]
@@ -54,7 +55,20 @@ def install() -> None:
                 # Zero rows after this filter is a normal dead-tape condition —
                 # do not treat it as a feed failure.
                 if key == "relative_volume":
-                    rows = [row for row in rows if radar._rvol_gain_filter(row)]
+                    admitted = []
+                    for row in rows:
+                        if radar._rvol_gain_filter(row):
+                            admitted.append(row)
+                        else:
+                            rejected.append({
+                                **row,
+                                "entered_active_candidate_universe": False,
+                                "discovery_rejection_reason": (
+                                    f"relative_volume change_ratio {row['change_ratio']} below "
+                                    f"{radar.RVOL_DISCOVERY_MIN_GAIN_PCT}% minimum"
+                                ),
+                            })
+                    rows = admitted
                 feeds[key] = {"label": feed.label, "status": "PASS", "error": "", "rows": rows}
                 for row in rows:
                     symbol = row["symbol"]
@@ -84,6 +98,7 @@ def install() -> None:
             "feeds": feeds,
             "unique_symbols": len(symbols),
             "symbols": symbols,
+            "rejected_symbols": rejected,
             "all_feeds_available": all(feeds[key]["status"] == "PASS" for key in wanted_keys),
             "discovery_contract": radar.DISCOVERY_CONTRACT,
             "discovery_feed_keys": list(wanted_keys),
@@ -94,4 +109,3 @@ def install() -> None:
 
     fidelity_fetch_native_radar._gs262_discovery_fidelity = True
     radar.fetch_native_radar = fidelity_fetch_native_radar
-
