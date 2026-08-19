@@ -1,0 +1,1 @@
+Required CI: run tests/test_279_reboot_session_stability.py and the complete pytest suite. Do not merge if either fails.
