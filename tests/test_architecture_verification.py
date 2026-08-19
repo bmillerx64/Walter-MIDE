@@ -70,7 +70,7 @@ def test_replay_is_deterministic_and_detects_mission_order_drift():
     }
 
 
-def test_stage_purity_violation_is_recorded_without_changing_decision():
+def test_stage_purity_violation_is_prevented_without_changing_decision():
     def impure(records):
         return {
             row["symbol"]: Decision(True, "Catalyst", "recorded pass", {"mission_rank": 99})
@@ -83,9 +83,10 @@ def test_stage_purity_violation_is_recorded_without_changing_decision():
     report = verify_architecture(
         ledger, architecture.trace, purity_observations=architecture.purity_observations
     )
-    assert not report.contracts["Stage Purity"]
-    assert report.failures[0]["symbols"] == ["PURE"]
-    # Ranking remains authoritative; the diagnostic does not retain the illicit rank.
+    assert report.contracts["Stage Purity"]
+    assert report.failures == []
+    # Ranking remains authoritative because the illicit Catalyst-owned update is
+    # removed before it can mutate the candidate ledger.
     assert ledger[0]["mission_rank"] == 1
 
 
