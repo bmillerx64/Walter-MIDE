@@ -8,7 +8,7 @@ from mide.session_controls import (
 )
 
 
-def test_idle_watchdog_clears_stale_one_shot_scan_state():
+def test_idle_watchdog_preserves_pending_scan_and_clears_stale_stop_state():
     state = {
         DATA_MODE_KEY: "Live Webull",
         PROVIDER_KEY: "WEBULL",
@@ -22,7 +22,9 @@ def test_idle_watchdog_clears_stale_one_shot_scan_state():
     assert state[DATA_MODE_KEY] == "Live Webull"
     assert state[PROVIDER_KEY] == "WEBULL"
     assert state[AUTO_SCAN_KEY] is False
-    assert state[SCAN_REQUESTED_KEY] is False
+    # A pending manual request must survive the immediate Streamlit rerun so
+    # the scan execution path can consume it. Only stale stop intent is reset.
+    assert state[SCAN_REQUESTED_KEY] is True
     assert state[STOP_REQUESTED_KEY] is False
 
 

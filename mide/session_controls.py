@@ -28,10 +28,11 @@ def initialize_session_controls(
 ) -> None:
     """Initialize persistent controls and synchronize actual scan activity.
 
-    The process watchdog is authoritative for whether a scan is actually active.
-    When it explicitly reports an idle process, clear only one-shot scan intent
-    left behind by a reconnect/redeploy. Persistent user choices such as data
-    mode and auto-scan preference remain intact.
+    The process watchdog is authoritative for whether a scan is actually active,
+    but it must not erase a manual scan request that Streamlit just persisted on
+    the widget-triggered rerun.  Idle reconciliation therefore clears only stale
+    stop intent; ``scan_requested`` remains set until scan execution consumes it
+    or ``finish_scan`` clears it.
     """
     safe_default = default_mode if default_mode in VALID_DATA_MODES else "Demo"
     current_mode = state.get(DATA_MODE_KEY, safe_default)
@@ -48,13 +49,13 @@ def initialize_session_controls(
         return
 
     state[SCAN_RUNNING_KEY] = bool(scan_running)
+    state.setdefault(SCAN_REQUESTED_KEY, False)
     if scan_running:
-        state.setdefault(SCAN_REQUESTED_KEY, False)
         state.setdefault(STOP_REQUESTED_KEY, False)
     else:
-        # A new/reconnected Streamlit session must not inherit stale one-shot
-        # intent when the process watchdog confirms there is no active scan.
-        state[SCAN_REQUESTED_KEY] = False
+        # Do not clear SCAN_REQUESTED_KEY here. A Streamlit button callback sets
+        # it immediately before the top-to-bottom rerun, while the watchdog is
+        # still correctly idle because execution has not begun yet.
         state[STOP_REQUESTED_KEY] = False
 
 
