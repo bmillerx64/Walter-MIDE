@@ -151,6 +151,10 @@ class FMPNewsProvider(NewsProvider):
         self.session = session or requests.Session()
         self.now = now or (lambda: datetime.now(UTC))
         self.request_count = 0
+        # Diagnostic-only request provenance. Never includes the API key.
+        self.last_since: datetime | None = None
+        self.last_requested_symbols: list[str] = []
+        self.endpoints_requested: list[str] = []
 
     @staticmethod
     def _symbols(item: dict) -> list[str]:
@@ -199,6 +203,7 @@ class FMPNewsProvider(NewsProvider):
             "apikey": self.api_key,
         }
         self.request_count += 1
+        self.endpoints_requested.append(endpoint)
         response = self.session.get(
             f"{self.BASE_URL}/{endpoint}", params=params, timeout=self.timeout
         )
@@ -219,6 +224,9 @@ class FMPNewsProvider(NewsProvider):
         if not self.api_key:
             raise RuntimeError("FMP news credential is not configured")
         since = max(since.astimezone(UTC), self.now().astimezone(UTC) - self.FRESHNESS)
+        self.last_since = since
+        self.last_requested_symbols = list(wanted)
+        self.endpoints_requested = []
         batches = [wanted[i:i + self.BATCH_SIZE] for i in range(0, len(wanted), self.BATCH_SIZE)] or [[]]
         self.request_count = 0
         output: list[NewsArticle] = []
@@ -268,6 +276,14 @@ class NewsService:
             "provider_failures": 0,
             "articles_without_symbols": 0,
             "request_latency_ms": [],
+            # GS284 diagnostic-only catalyst/news provenance.
+            "requested_symbols": [],
+            "query_since": None,
+            "effective_provider_since": None,
+            "provider_endpoints": [],
+            "symbols_with_articles": [],
+            "symbols_without_articles": [],
+            "newest_articles_by_symbol": {},
         }
 
     def _load(self) -> dict:
@@ -302,6 +318,61 @@ class NewsService:
             ))
         return output
 
+    def _record_symbol_trace(
+        self, requested_symbols: list[str], articles: list[NewsArticle]
+    ) -> None:
+        """Record per-symbol news freshness/classification without changing decisions."""
+        from .news import MATERIAL_CATALYST_SCORE, classify_headline
+
+        now = self.now().astimezone(UTC)
+        trace: dict[str, dict] = {}
+        for symbol in requested_symbols:
+            matches = [article for article in articles if symbol in article.symbols]
+            matches.sort(key=lambda article: article.created_at, reverse=True)
+            material = []
+            for article in matches:
+                score, flags = classify_headline(article.headline)
+                if abs(float(score)) >= MATERIAL_CATALYST_SCORE:
+                    material.append((article, score, flags))
+            newest = matches[0] if matches else None
+            newest_score, newest_flags = (
+                classify_headline(newest.headline) if newest else (0, [])
+            )
+            selected_material = material[0] if material else None
+            trace[symbol] = {
+                "articles_returned": len(matches),
+                "newest_article_at": newest.created_at.isoformat() if newest else None,
+                "newest_article_age_minutes": (
+                    round(max(0.0, (now - newest.created_at).total_seconds()) / 60, 1)
+                    if newest else None
+                ),
+                "newest_headline": newest.headline if newest else None,
+                "newest_source": newest.source if newest else None,
+                "newest_provider": newest.provider if newest else None,
+                "newest_catalyst_score": newest_score if newest else None,
+                "newest_catalyst_flags": list(newest_flags),
+                "material_article_count": len(material),
+                "selected_material_headline": (
+                    selected_material[0].headline if selected_material else None
+                ),
+                "selected_material_at": (
+                    selected_material[0].created_at.isoformat() if selected_material else None
+                ),
+                "selected_material_score": (
+                    selected_material[1] if selected_material else None
+                ),
+                "selected_material_flags": (
+                    list(selected_material[2]) if selected_material else []
+                ),
+            }
+        self.metrics["newest_articles_by_symbol"] = trace
+        self.metrics["symbols_with_articles"] = sorted(
+            symbol for symbol, item in trace.items() if item["articles_returned"]
+        )
+        self.metrics["symbols_without_articles"] = sorted(
+            symbol for symbol, item in trace.items() if not item["articles_returned"]
+        )
+
     def fetch(
         self,
         *,
@@ -317,7 +388,10 @@ class NewsService:
             else (prior - timedelta(minutes=2)) if prior else self.now() - initial_lookback
         )
         requested_symbols = sorted({str(s).strip().upper() for s in symbols if str(s).strip()})
+        self.metrics["requested_symbols"] = list(requested_symbols)
+        self.metrics["query_since"] = since.astimezone(UTC).isoformat()
         fresh: list[NewsArticle] = []
+        active_provider = None
         for provider in self.providers:
             started = perf_counter()
             try:
@@ -339,7 +413,19 @@ class NewsService:
                 self.metrics["requests_made"] += max(1, int(getattr(provider, "request_count", 1)))
                 self.metrics["request_latency_ms"].append(round((perf_counter() - started) * 1000, 1))
             self.metrics["active_provider"] = provider.name
+            active_provider = provider
             break
+
+        if active_provider is not None:
+            provider_since = getattr(active_provider, "last_since", None)
+            self.metrics["effective_provider_since"] = (
+                provider_since.astimezone(UTC).isoformat()
+                if isinstance(provider_since, datetime)
+                else self.metrics["query_since"]
+            )
+            self.metrics["provider_endpoints"] = list(
+                getattr(active_provider, "endpoints_requested", []) or []
+            )
 
         combined = self._deduplicate([*cached, *fresh])
         if self.metrics["active_provider"] == FMPNewsProvider.name:
@@ -353,6 +439,7 @@ class NewsService:
         self.metrics["articles_received"] += len(fresh)
         self.metrics["articles_without_symbols"] += sum(not article.symbols for article in fresh)
         self.metrics["unique_symbols_discovered"] = len({s for article in combined for s in article.symbols})
+        self._record_symbol_trace(requested_symbols, combined)
         if fresh:
             fetched_at = self.now()
             self.metrics["last_successful_fetch"] = fetched_at.isoformat()
