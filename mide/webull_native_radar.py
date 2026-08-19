@@ -127,7 +127,7 @@ def _rvol_gain_filter(row: dict[str, Any], min_gain_pct: float = RVOL_DISCOVERY_
 def fetch_native_radar(client: Any) -> dict[str, Any]:
     screener = _resolve_screener(client)
     feed_by_key = {feed.key: feed for feed in RADAR_FEEDS}
-    feeds, deduped = {}, {}
+    feeds, deduped, rejected = {}, {}, []
     for key in DISCOVERY_FEED_KEYS:
         feed = feed_by_key[key]
         method: Callable[..., Any] | None = getattr(screener, feed.operation, None)
@@ -147,7 +147,20 @@ def fetch_native_radar(client: Any) -> dict[str, Any]:
             # Zero rows after this filter is a normal market condition (dead tape
             # / no gainers on RVOL) — do not treat it as a feed failure.
             if key == "relative_volume":
-                normalized = [row for row in normalized if _rvol_gain_filter(row)]
+                admitted = []
+                for row in normalized:
+                    if _rvol_gain_filter(row):
+                        admitted.append(row)
+                    else:
+                        rejected.append({
+                            **row,
+                            "entered_active_candidate_universe": False,
+                            "discovery_rejection_reason": (
+                                f"relative_volume change_ratio {row['change_ratio']} below "
+                                f"{RVOL_DISCOVERY_MIN_GAIN_PCT}% minimum"
+                            ),
+                        })
+                normalized = admitted
             feeds[key] = {"label": feed.label, "status": "PASS", "error": "", "rows": normalized}
             for row in normalized:
                 symbol = row["symbol"]
@@ -163,6 +176,7 @@ def fetch_native_radar(client: Any) -> dict[str, Any]:
             feeds[feed.key] = {"label": feed.label, "status": "NOT_SCANNED", "error": "Not included in current discovery contract", "rows": []}
     symbols = list(deduped.values())
     return {"feeds": feeds, "unique_symbols": len(symbols), "symbols": symbols,
+            "rejected_symbols": rejected,
             "all_feeds_available": all(feeds[k]["status"] == "PASS" for k in DISCOVERY_FEED_KEYS),
             "discovery_contract": DISCOVERY_CONTRACT, "discovery_feed_keys": list(DISCOVERY_FEED_KEYS),
             "maximum_pre_dedupe_symbols": 60, "pages_requested_per_feed": 1,

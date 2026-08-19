@@ -71,6 +71,9 @@ def install() -> None:
                 }
                 for name, feed in feeds.items()
             },
+            # Preserve discovery-level exclusions rather than silently dropping
+            # them before the live universe adapter can explain what happened.
+            "rejected_symbols": list(report.get("rejected_symbols") or []),
         })
         self.diagnostics["broad_source"] = "Webull native market attention"
         self.diagnostics.setdefault("market_data_sources", {})["universe_provider"] = (

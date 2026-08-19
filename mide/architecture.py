@@ -424,6 +424,8 @@ class WalterArchitectureV1:
                     source, symbol=symbol, candidate_id=symbol,
                     architecture_audit=[], ranking_history=[],
                 )
+                record["discovery_first_seen_at"] = scan_timestamp
+                record["discovery_history"] = []
                 self._ledger[symbol] = record
                 audit_starts[symbol] = 0
             else:
@@ -437,6 +439,35 @@ class WalterArchitectureV1:
                 }
                 record.update(source, symbol=symbol)
                 record.update(protected)
+            record = self._ledger[symbol]
+            prior_seen_scan = record.get("discovery_last_seen_scan")
+            sources = list(record.get("sources") or record.get("discovery_reasons") or [])
+            if not sources and record.get("source"):
+                sources = [record["source"]]
+            record.setdefault("discovery_first_seen_at", scan_timestamp)
+            record["discovery_last_seen_at"] = scan_timestamp
+            record["discovery_last_seen_scan"] = scan_number
+            record["entered_active_candidate_universe"] = True
+            # A provider may return the same symbol through several feeds.  Its
+            # normalized candidate is one observation per refresh, not a false
+            # rediscovery within the same scan.
+            if prior_seen_scan != scan_number:
+                record.setdefault("discovery_history", []).append({
+                    "event": "first_seen" if prior_seen_scan is None else (
+                        "rediscovered" if prior_seen_scan < scan_number - 1 else "refreshed"
+                    ),
+                    "timestamp": scan_timestamp,
+                    "scan": scan_number,
+                    "source_path": sources,
+                    "price": record.get("price"),
+                    "market_state": {
+                        key: record.get(key)
+                        for key in ("change_ratio", "volume", "relative_volume_10d", "market_phase")
+                        if record.get(key) is not None
+                    },
+                    "entered_active_candidate_universe": True,
+                    "rejection_reason": None,
+                })
             for key in ("terminal_outcome", "terminal_stage", "terminal_category", "terminal_reason", "mission_rank"):
                 self._ledger[symbol].pop(key, None)
         candidates = [self._ledger[symbol] for symbol in current_order]
@@ -514,6 +545,7 @@ class WalterArchitectureV1:
         # Today's Mission from an earlier scan.
         for symbol, record in self._ledger.items():
             if symbol not in current_symbols:
+                record["entered_active_candidate_universe"] = False
                 record.pop("mission_rank", None)
                 self._terminal(record, "Rejected", STAGES[0], "Universe", "Not present in current live universe")
                 history = record.setdefault("ranking_history", [])
@@ -525,6 +557,16 @@ class WalterArchitectureV1:
                     "conviction_change": 0.0, "conviction_trend": "→",
                     "reasons": ["removed from live universe"],
                     "evidence": _ranking_evidence(record),
+                })
+                record.setdefault("discovery_history", []).append({
+                    "event": "absent_from_refresh",
+                    "timestamp": scan_timestamp,
+                    "scan": scan_number,
+                    "source_path": [],
+                    "price": None,
+                    "market_state": {},
+                    "entered_active_candidate_universe": False,
+                    "rejection_reason": "Not present in current live universe",
                 })
         self._record_trace(
             STAGES[7], len(candidates), len(ranked), started_at=ranking_started,
