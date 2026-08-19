@@ -1,0 +1,1 @@
+Expected focused result: both GS279 reboot-session tests pass. Full-suite result is authoritative before merge.
