@@ -88,3 +88,7 @@ _install_gs300_fmp_news_pagination()
 from .gs301_catalyst_evidence_handoff import install as _install_gs301_catalyst_evidence_handoff  # noqa: E402
 
 _install_gs301_catalyst_evidence_handoff()
+
+from .gs302_stage_purity_enforcement import install as _install_gs302_stage_purity_enforcement  # noqa: E402
+
+_install_gs302_stage_purity_enforcement()
