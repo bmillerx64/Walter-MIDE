@@ -68,3 +68,7 @@ _install_gs294_fresh_attention_recheck()
 from .gs295_escalation_patch import install as _install_gs295_escalation_patch  # noqa: E402
 
 _install_gs295_escalation_patch()
+
+from .gs296_first_print_alert_patch import install as _install_gs296_first_print_alert_patch  # noqa: E402
+
+_install_gs296_first_print_alert_patch()
