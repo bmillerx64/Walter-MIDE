@@ -76,3 +76,7 @@ _install_gs296_first_print_alert_patch()
 from .gs298_news_seeded_discovery import install as _install_gs298_news_seeded_discovery  # noqa: E402
 
 _install_gs298_news_seeded_discovery()
+
+from .gs299_news_reaction_watch import install as _install_gs299_news_reaction_watch  # noqa: E402
+
+_install_gs299_news_reaction_watch()
