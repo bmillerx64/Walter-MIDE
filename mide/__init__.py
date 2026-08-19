@@ -80,3 +80,7 @@ _install_gs298_news_seeded_discovery()
 from .gs299_news_reaction_watch import install as _install_gs299_news_reaction_watch  # noqa: E402
 
 _install_gs299_news_reaction_watch()
+
+from .gs300_fmp_news_pagination import install as _install_gs300_fmp_news_pagination  # noqa: E402
+
+_install_gs300_fmp_news_pagination()
