@@ -60,3 +60,7 @@ _install_gs289_fmp_stock_news_contract()
 from .gs292_reevaluation_continuity import install as _install_gs292_reevaluation_continuity  # noqa: E402
 
 _install_gs292_reevaluation_continuity()
+
+from .gs294_fresh_attention_recheck import install as _install_gs294_fresh_attention_recheck  # noqa: E402
+
+_install_gs294_fresh_attention_recheck()
