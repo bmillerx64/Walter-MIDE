@@ -64,3 +64,7 @@ _install_gs292_reevaluation_continuity()
 from .gs294_fresh_attention_recheck import install as _install_gs294_fresh_attention_recheck  # noqa: E402
 
 _install_gs294_fresh_attention_recheck()
+
+from .gs295_escalation_patch import install as _install_gs295_escalation_patch  # noqa: E402
+
+_install_gs295_escalation_patch()
