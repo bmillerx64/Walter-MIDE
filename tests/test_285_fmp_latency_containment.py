@@ -1,8 +1,6 @@
 from datetime import datetime, timedelta, timezone
 from time import perf_counter, sleep
 
-import requests
-
 from mide.news_provider import FMPNewsProvider
 
 UTC = timezone.utc
@@ -28,10 +26,8 @@ class SlowSession:
         return FakeResponse([])
 
 
-class PartialFailureSession:
+class SuccessfulSession:
     def get(self, url, *, params, timeout):
-        if url.endswith("press-releases"):
-            raise requests.Timeout("simulated bounded timeout")
         return FakeResponse([{
             "symbol": "AZI",
             "title": "Autozi Internet Technology receives $30M investment",
@@ -45,24 +41,24 @@ def test_fmp_defaults_to_bounded_four_second_http_timeout():
     assert provider.timeout == 4
 
 
-def test_fmp_batches_and_endpoints_run_concurrently():
+def test_fmp_batches_run_concurrently_for_entitled_endpoint():
     session = SlowSession()
     provider = FMPNewsProvider("secret", session=session, now=lambda: NOW)
     symbols = [f"S{i}" for i in range(35)]
     started = perf_counter()
     provider.fetch(since=NOW - timedelta(hours=2), symbols=symbols)
     elapsed = perf_counter() - started
-    assert provider.request_count == 4
-    assert len(session.calls) == 4
+    assert provider.request_count == 2
+    assert len(session.calls) == 2
+    assert all(url.endswith("news/stock") for url, _ in session.calls)
     assert elapsed < 0.38
 
 
-def test_one_fmp_endpoint_failure_preserves_successful_news():
-    provider = FMPNewsProvider("secret", session=PartialFailureSession(), now=lambda: NOW)
+def test_entitled_fmp_endpoint_preserves_successful_news():
+    provider = FMPNewsProvider("secret", session=SuccessfulSession(), now=lambda: NOW)
     articles = provider.fetch(since=NOW - timedelta(hours=2), symbols=["AZI"])
     assert len(articles) == 1
     assert articles[0].symbols == ["AZI"]
-    assert provider.request_count == 2
-    assert len(provider.request_failures) == 1
-    assert "press-releases" in provider.request_failures[0]
+    assert provider.request_count == 1
+    assert provider.request_failures == []
     assert "secret" not in repr(provider.request_failures)
