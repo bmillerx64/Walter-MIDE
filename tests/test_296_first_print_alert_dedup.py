@@ -22,6 +22,16 @@ def first_print(**changes):
         "pct_change": 12.0,
         "price_change_10m_pct": 5.0,
         "headline": "",
+        "discovery_first_seen_at": "2026-08-19T20:00:00+00:00",
+        "discovery_last_seen_at": "2026-08-19T20:00:00+00:00",
+        "discovery_last_seen_scan": 10,
+        "discovery_history": [
+            {
+                "event": "first_seen",
+                "scan": 10,
+                "timestamp": "2026-08-19T20:00:00+00:00",
+            }
+        ],
     }
     record.update(changes)
     return record
@@ -47,6 +57,36 @@ def test_first_print_ignition_is_audible_through_existing_phrase_path():
     phrase = escalation_alert_phrase([first_print()])
     assert "BTCT" in phrase
     assert WATCH_CLOSELY in phrase
+
+
+def test_missing_first_seen_provenance_does_not_hijack_normal_voice_path():
+    record = first_print(
+        discovery_first_seen_at=None,
+        discovery_last_seen_at=None,
+        discovery_history=[],
+    )
+    assert escalation_state_changes([record]) == []
+    assert escalation_alert_phrase([record]) == ""
+
+
+def test_later_refresh_without_prior_pulse_is_not_reannounced_as_new():
+    record = first_print(
+        discovery_last_seen_at="2026-08-19T20:01:00+00:00",
+        discovery_last_seen_scan=11,
+        discovery_history=[
+            {
+                "event": "first_seen",
+                "scan": 10,
+                "timestamp": "2026-08-19T20:00:00+00:00",
+            },
+            {
+                "event": "refreshed",
+                "scan": 11,
+                "timestamp": "2026-08-19T20:01:00+00:00",
+            },
+        ],
+    )
+    assert escalation_state_changes([record]) == []
 
 
 def test_non_ignition_first_print_does_not_create_event():
