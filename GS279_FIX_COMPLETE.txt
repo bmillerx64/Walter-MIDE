@@ -1,0 +1,3 @@
+GS279 reboot/session stability repair branch marker.
+
+This branch clears stale transient scan intent only when the process watchdog reports idle. See tests/test_279_reboot_session_stability.py and GS279_REBOOT_STABILITY.md.
