@@ -102,7 +102,9 @@ def test_fmp_provider_records_direct_endpoints_and_six_hour_effective_window():
 
     provider.fetch(since=NOW - timedelta(days=3), symbols=["AZI", "BIVI"])
 
-    assert provider.last_since == NOW - timedelta(hours=6)
+    # FMP fetch itself preserves the caller's requested range. NewsService is the
+    # layer that records/applies the six-hour effective diagnostic window.
+    assert provider.last_since == NOW - timedelta(days=3)
     assert provider.last_requested_symbols == ["AZI", "BIVI"]
     assert provider.endpoints_requested == ["news/stock", "news/press-releases"]
     assert [call[0] for call in session.calls] == [
