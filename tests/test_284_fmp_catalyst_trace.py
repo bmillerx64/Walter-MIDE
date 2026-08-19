@@ -81,10 +81,11 @@ def test_news_service_records_symbol_freshness_and_classifier_result(tmp_path):
     assert azi["newest_headline"] == (
         "Autozi Internet Technology receives $30M investment"
     )
-    # This is diagnostic evidence, not a behavior change: it exposes that the
-    # current headline classifier does not treat this observed catalyst as material.
-    assert azi["newest_catalyst_score"] == 0
-    assert azi["material_article_count"] == 0
+    # GS288 intentionally classifies an observed receive/secure-style capital
+    # injection headline as material; this trace regression verifies that the
+    # classifier result is preserved in NewsService diagnostics.
+    assert azi["newest_catalyst_score"] == 9
+    assert azi["material_article_count"] == 1
 
     bivi = service.metrics["newest_articles_by_symbol"]["BIVI"]
     assert bivi["newest_article_age_minutes"] == 20.0

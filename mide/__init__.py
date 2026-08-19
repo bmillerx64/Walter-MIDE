@@ -48,3 +48,7 @@ _install_gs263_discovery_gate()
 from .gs285_fmp_latency import install as _install_gs285_fmp_latency  # noqa: E402
 
 _install_gs285_fmp_latency()
+
+from .gs288_fmp_filtering import install as _install_gs288_fmp_filtering  # noqa: E402
+
+_install_gs288_fmp_filtering()
