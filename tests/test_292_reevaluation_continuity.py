@@ -73,3 +73,14 @@ def test_continuity_observability_does_not_change_qualification_or_rank():
         ("ONE", "Mission Ranking and Publication", 1),
         ("TWO", "Price Gate", None),
     ]
+
+
+def test_runtime_dispatch_architecture_remains_transparent_without_ledger_fields():
+    expected = {"scan_completed": True, "candidates": ["RUN"]}
+    arch = WalterArchitectureV1.for_runtime(lambda: expected)
+
+    # Runtime-dispatch instances intentionally do not construct candidate_ledger,
+    # _ledger, or clock. GS292 must preserve that established production contract.
+    assert not hasattr(arch, "candidate_ledger")
+    assert not hasattr(arch, "_ledger")
+    assert arch.run() is expected
