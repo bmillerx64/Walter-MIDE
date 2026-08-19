@@ -28,10 +28,10 @@ def initialize_session_controls(
 ) -> None:
     """Initialize persistent controls and synchronize actual scan activity.
 
-    This function runs before any scan execution starts on each Streamlit script
-    run. The process watchdog, rather than a value left over from a prior script
-    execution, is authoritative during reruns. Any persisted pre-GS258 Alpaca
-    selection is repaired before a scan can be requested.
+    The process watchdog is authoritative for whether a scan is actually active.
+    When it explicitly reports an idle process, clear only one-shot scan intent
+    left behind by a reconnect/redeploy. Persistent user choices such as data
+    mode and auto-scan preference remain intact.
     """
     safe_default = default_mode if default_mode in VALID_DATA_MODES else "Demo"
     current_mode = state.get(DATA_MODE_KEY, safe_default)
@@ -39,15 +39,23 @@ def initialize_session_controls(
         current_mode = safe_default
     state[DATA_MODE_KEY] = current_mode
     state[PROVIDER_KEY] = provider_for_mode(current_mode)
-    # Keep repair deployments manual until Webull credentials and entitlements
-    # have passed the deployed connection test.
     state.setdefault(AUTO_SCAN_KEY, False)
+
     if scan_running is None:
         state.setdefault(SCAN_RUNNING_KEY, False)
+        state.setdefault(SCAN_REQUESTED_KEY, False)
+        state.setdefault(STOP_REQUESTED_KEY, False)
+        return
+
+    state[SCAN_RUNNING_KEY] = bool(scan_running)
+    if scan_running:
+        state.setdefault(SCAN_REQUESTED_KEY, False)
+        state.setdefault(STOP_REQUESTED_KEY, False)
     else:
-        state[SCAN_RUNNING_KEY] = scan_running
-    state.setdefault(SCAN_REQUESTED_KEY, False)
-    state.setdefault(STOP_REQUESTED_KEY, False)
+        # A new/reconnected Streamlit session must not inherit stale one-shot
+        # intent when the process watchdog confirms there is no active scan.
+        state[SCAN_REQUESTED_KEY] = False
+        state[STOP_REQUESTED_KEY] = False
 
 
 def select_data_mode(state: MutableMapping[str, Any]) -> None:

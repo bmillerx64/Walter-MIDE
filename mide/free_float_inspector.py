@@ -70,16 +70,17 @@ def _webull_enrich_free_float(
     *,
     max_free_float: float = 50_000_000,
 ) -> dict[str, dict]:
-    """Resolve and conservatively verify free float for the post-price-gate cohort.
+    """Resolve free float without letting a provider outage zero Walter's universe.
 
-    Existing FMP/cache evidence remains the preferred source. Yahoo is used as a
-    secondary source for names with no primary evidence and as a freshness check
-    for apparent low-float names. A symbol fails closed only when neither source
-    can establish a usable float, or when a low-float freshness check cannot be
-    completed. Names already above the configured ceiling need no Yahoo request.
+    Existing provider/cache evidence remains preferred. Yahoo is a secondary
+    resolver and freshness check. Individual unresolved symbols still fail closed,
+    but a cohort-wide secondary-provider outage is treated as degraded evidence,
+    not proof that every stock has excessive float. This prevents a transient
+    fundamentals outage from turning a healthy live Webull scan into 20+ false
+    terminal rejections at the Free-Float Gate.
     """
     threshold = max(0.0, float(max_free_float))
-    wanted = []
+    wanted: list[str] = []
     existing: dict[str, float] = {}
     lookup_symbols: list[str] = []
     normalized = 0
@@ -91,9 +92,6 @@ def _webull_enrich_free_float(
         wanted.append(symbol)
         shares = _normalize_snapshot_float(snapshot)
         if shares is None:
-            # Webull snapshots do not carry company float fundamentals. Missing
-            # primary evidence is therefore a reason to use the established
-            # secondary source, not an automatic terminal rejection.
             lookup_symbols.append(symbol)
             continue
         existing[symbol] = shares
@@ -110,11 +108,21 @@ def _webull_enrich_free_float(
         )
         values, errors = provider.lookup_many(lookup_symbols)
 
+    resolved_lookup_count = sum(1 for symbol in lookup_symbols if symbol in values)
+    resolution_rate = (
+        resolved_lookup_count / len(lookup_symbols) if lookup_symbols else 1.0
+    )
+    # A single unresolved ticker can be bad symbol evidence. A broad cohort with
+    # almost no resolutions is provider evidence. Do not convert provider failure
+    # into a fabricated +infinity float for every symbol.
+    provider_outage = len(lookup_symbols) >= 5 and resolution_rate < 0.20
+
     resolved = 0
     failed_closed = 0
     conflicts = 0
     unresolved_primary = 0
     refresh_failed = 0
+    degraded_unverified = 0
 
     for symbol in wanted:
         snapshot = snapshots.get(symbol)
@@ -141,6 +149,21 @@ def _webull_enrich_free_float(
                 resolved += 1
                 continue
 
+            unresolved_primary += 1
+            if provider_outage:
+                # Leave float absent. Walter's production float decision treats
+                # unavailable evidence as unverified instead of pretending the
+                # company has infinite float. The safety/audit layer can then show
+                # the provider degradation without erasing the market universe.
+                snapshot.pop("float_shares", None)
+                snapshot.pop("shares_float", None)
+                snapshot.pop("free_float", None)
+                snapshot["free_float_source"] = "secondary float provider outage; unresolved"
+                snapshot["free_float_verified"] = False
+                snapshot["free_float_verification_status"] = "provider-outage-unverified"
+                degraded_unverified += 1
+                continue
+
             snapshot["float_shares"] = float("inf")
             snapshot["shares_float"] = float("inf")
             snapshot["free_float"] = float("inf")
@@ -148,11 +171,8 @@ def _webull_enrich_free_float(
             snapshot["free_float_verified"] = False
             snapshot["free_float_verification_status"] = "unavailable-reject"
             failed_closed += 1
-            unresolved_primary += 1
             continue
 
-        # Already above the configured ceiling: a conservative refresh cannot
-        # make the name eligible, so keep the primary value and avoid the call.
         if prior > threshold:
             snapshot["float_shares"] = prior
             snapshot["shares_float"] = prior
@@ -177,9 +197,18 @@ def _webull_enrich_free_float(
             snapshot["free_float_verified"] = True
             snapshot["free_float_verification_status"] = "verified-live-refresh"
             resolved += 1
+        elif provider_outage:
+            # Preserve known primary evidence during a systemic refresh outage.
+            # The actual float ceiling still applies to that value downstream.
+            snapshot["float_shares"] = prior
+            snapshot["shares_float"] = prior
+            snapshot["free_float"] = prior
+            snapshot["free_float_source"] = "existing float retained; secondary provider outage"
+            snapshot["free_float_verified"] = False
+            snapshot["free_float_verification_status"] = "provider-outage-primary-retained"
+            degraded_unverified += 1
+            refresh_failed += 1
         else:
-            # A stale low float is precisely the dangerous case. If the narrow
-            # freshness check cannot confirm it, reject rather than trusting it.
             snapshot["float_shares"] = float("inf")
             snapshot["shares_float"] = float("inf")
             snapshot["free_float"] = float("inf")
@@ -190,9 +219,7 @@ def _webull_enrich_free_float(
             refresh_failed += 1
 
     self.diagnostics["free_float_fallback_requested"] = len(lookup_symbols)
-    self.diagnostics["free_float_fallback_resolved"] = sum(
-        1 for symbol in lookup_symbols if symbol in values
-    )
+    self.diagnostics["free_float_fallback_resolved"] = resolved_lookup_count
     self.diagnostics["free_float_snapshot_normalized"] = normalized
     self.diagnostics["free_float_fallback_failed"] = len(errors)
     self.diagnostics["free_float_fail_closed"] = failed_closed
@@ -200,6 +227,9 @@ def _webull_enrich_free_float(
     self.diagnostics["free_float_refresh_failed"] = refresh_failed
     self.diagnostics["free_float_provider_conflicts"] = conflicts
     self.diagnostics["free_float_refresh_ceiling"] = threshold
+    self.diagnostics["free_float_provider_outage"] = provider_outage
+    self.diagnostics["free_float_provider_resolution_rate"] = round(resolution_rate, 4)
+    self.diagnostics["free_float_degraded_unverified"] = degraded_unverified
     return snapshots
 
 
