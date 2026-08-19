@@ -12,9 +12,9 @@ class StaticProvider(NewsProvider):
 
     def __init__(self, articles):
         self.articles = list(articles)
-        self.request_count = 2
+        self.request_count = 1
         self.last_since = NOW - timedelta(hours=6)
-        self.endpoints_requested = ["news/stock", "news/press-releases"]
+        self.endpoints_requested = ["news/stock"]
 
     def fetch(self, *, since, symbols=()):
         return list(self.articles)
@@ -68,9 +68,7 @@ def test_news_service_records_symbol_freshness_and_classifier_result(tmp_path):
     assert len(returned) == 2
     assert service.metrics["active_provider"] == "Financial Modeling Prep news"
     assert service.metrics["requested_symbols"] == ["AZI", "BIVI", "NONE"]
-    assert service.metrics["provider_endpoints"] == [
-        "news/stock", "news/press-releases"
-    ]
+    assert service.metrics["provider_endpoints"] == ["news/stock"]
     assert service.metrics["effective_provider_since"] == (
         NOW - timedelta(hours=6)
     ).isoformat()
@@ -106,10 +104,9 @@ def test_fmp_provider_records_direct_endpoints_and_six_hour_effective_window():
     # layer that records/applies the six-hour effective diagnostic window.
     assert provider.last_since == NOW - timedelta(days=3)
     assert provider.last_requested_symbols == ["AZI", "BIVI"]
-    assert provider.endpoints_requested == ["news/stock", "news/press-releases"]
+    assert provider.endpoints_requested == ["news/stock"]
     assert [call[0] for call in session.calls] == [
         "https://financialmodelingprep.com/stable/news/stock",
-        "https://financialmodelingprep.com/stable/news/press-releases",
     ]
     assert all(call[1]["symbols"] == "AZI,BIVI" for call in session.calls)
 
