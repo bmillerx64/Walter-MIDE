@@ -84,7 +84,7 @@ def test_stage_purity_violation_is_prevented_without_changing_decision():
         ledger, architecture.trace, purity_observations=architecture.purity_observations
     )
     assert report.contracts["Stage Purity"]
-    assert report.failures == []
+    assert not report.failures
     # Ranking remains authoritative because the illicit Catalyst-owned update is
     # removed before it can mutate the candidate ledger.
     assert ledger[0]["mission_rank"] == 1
