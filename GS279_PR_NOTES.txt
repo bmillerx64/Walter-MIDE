@@ -1,0 +1,1 @@
+Fix repeated Streamlit reboot/reconnect initialization hang by reconciling transient scan-request state with the authoritative process watchdog. Persistent user controls remain intact. Adds focused regression coverage. No trading semantics changed.
