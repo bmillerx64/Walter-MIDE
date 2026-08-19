@@ -1,0 +1,3 @@
+Changed: mide/session_controls.py
+Added: tests/test_279_reboot_session_stability.py
+Intent: prevent stale transient scan flags from surviving an idle Streamlit reboot/reconnect.
