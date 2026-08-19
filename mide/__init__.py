@@ -84,3 +84,7 @@ _install_gs299_news_reaction_watch()
 from .gs300_fmp_news_pagination import install as _install_gs300_fmp_news_pagination  # noqa: E402
 
 _install_gs300_fmp_news_pagination()
+
+from .gs301_catalyst_evidence_handoff import install as _install_gs301_catalyst_evidence_handoff  # noqa: E402
+
+_install_gs301_catalyst_evidence_handoff()
