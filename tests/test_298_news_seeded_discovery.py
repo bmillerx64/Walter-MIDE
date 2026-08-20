@@ -1,9 +1,11 @@
 from datetime import datetime, timedelta, timezone
 
 from mide.gs298_news_seeded_discovery import (
+    MORNING_MOVER_SEED_REASON,
     NEWS_SEED_REASON,
     fetch_marketwide_stock_news,
     merge_news_seeds,
+    morning_mover_attention_headline,
     select_material_news_seeds,
 )
 from mide.news_provider import NewsArticle
@@ -41,6 +43,8 @@ def test_material_reuters_and_benzinga_headlines_seed_symbols_and_preserve_sourc
     assert by_symbol["BENZ"]["trusted_source"] is True
     assert by_symbol["REUT"]["catalyst_score"] >= 7
     assert by_symbol["BENZ"]["catalyst_score"] >= 7
+    assert by_symbol["REUT"]["seed_type"] == "material_catalyst"
+    assert by_symbol["BENZ"]["attention_only"] is False
 
 
 def test_neutral_negative_stale_and_invalid_symbol_news_do_not_seed():
@@ -74,6 +78,81 @@ def test_newest_material_article_wins_per_symbol_and_merge_does_not_duplicate_na
     assert "NEW" in seeds
     assert [item["symbol"] for item in added] == ["NEW"]
     assert reasons["NEW"] == [f"{NEWS_SEED_REASON}: Benzinga"]
+
+
+def test_fresh_premarket_roundup_can_seed_xos_without_catalyst_credit():
+    selected = select_material_news_seeds(
+        [
+            article(
+                "XOS",
+                "12 Industrials Stocks Moving In Thursday's Pre-Market Session",
+                source="Benzinga",
+                age_minutes=18,
+            )
+        ],
+        now=NOW,
+    )
+    assert len(selected) == 1
+    item = selected[0]
+    assert item["symbol"] == "XOS"
+    assert item["seed_type"] == "morning_mover_attention"
+    assert item["attention_only"] is True
+    assert item["catalyst_score"] < 7
+    seeds, reasons, added = merge_news_seeds([], {}, selected)
+    assert seeds == ["XOS"]
+    assert [row["symbol"] for row in added] == ["XOS"]
+    assert reasons["XOS"] == [f"{MORNING_MOVER_SEED_REASON}: Benzinga"]
+
+
+def test_fresh_healthcare_mover_roundup_can_seed_bivi_for_attention():
+    selected = select_material_news_seeds(
+        [
+            article(
+                "BIVI",
+                "12 Health Care Stocks Moving In Thursday's Pre-Market Session",
+                source="Benzinga",
+                age_minutes=22,
+            )
+        ],
+        now=NOW,
+    )
+    assert [item["symbol"] for item in selected] == ["BIVI"]
+    assert selected[0]["seed_type"] == "morning_mover_attention"
+    assert selected[0]["attention_only"] is True
+
+
+def test_watchlist_and_trading_higher_headlines_are_attention_patterns():
+    assert morning_mover_attention_headline(
+        "Why Webull Shares Are Trading Higher By Around 14%; Here Are 20 Stocks Moving Premarket"
+    )
+    assert morning_mover_attention_headline(
+        "Why These 3 Penny Stocks Are on Investors Radar, 8/20/26"
+    )
+    assert morning_mover_attention_headline("10 Stocks To Watch Before The Opening Bell")
+    assert not morning_mover_attention_headline("Company comments on industry conditions")
+
+
+def test_material_catalyst_beats_newer_roundup_for_same_symbol():
+    selected = select_material_news_seeds(
+        [
+            article(
+                "XOS",
+                "12 Industrials Stocks Moving In Thursday's Pre-Market Session",
+                source="Benzinga",
+                age_minutes=3,
+            ),
+            article(
+                "XOS",
+                "XOS wins U.S. Air Force prototype contract",
+                source="Reuters",
+                age_minutes=20,
+            ),
+        ],
+        now=NOW,
+    )
+    assert len(selected) == 1
+    assert selected[0]["seed_type"] == "material_catalyst"
+    assert "Air Force" in selected[0]["headline"]
 
 
 class FakeResponse:
