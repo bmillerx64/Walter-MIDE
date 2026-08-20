@@ -175,6 +175,30 @@ def opportunity_state(record: dict) -> dict:
     }
 
 
+def _confidence_cue(item: dict) -> str:
+    """Keep the familiar meter cue without creating a second opportunity state."""
+    confidence = int(item.get("confidence", 0) or 0)
+    if confidence >= 75:
+        return "🟡 BUILDING"
+    if confidence >= 60:
+        return "🔵 WATCH"
+    return "🔵 EARLY"
+
+
+def _secondary_gap(record: dict) -> str:
+    """Return one concise reason the secondary is not the primary focus."""
+    distance = _number(record, "vwap_distance_pct") or 0.0
+    participation, _ = _participation(record)
+    relation = str(record.get("vwap_relation") or "").lower()
+    if distance > 2.0:
+        return "Slightly extended."
+    if relation != "above":
+        return "Waiting for VWAP reclaim."
+    if participation is None or participation < 90.0:
+        return "Needs stronger participation."
+    return "Lower current priority than the primary opportunity."
+
+
 def _target_markup(item: dict, role: str, primary: dict | None = None) -> str:
     record = item["record"]
     view = opportunity_state(record)
@@ -187,19 +211,25 @@ def _target_markup(item: dict, role: str, primary: dict | None = None) -> str:
         " · ".join(view["attention_provenance"]) or "Current ranked observation"
     )
     confidence = int(item.get("confidence", 0) or 0)
+    cue = _confidence_cue(item)
     previous = item.get("previous_record") or {}
-    previous_view = opportunity_state(previous) if previous else None
+    # Preserve the established visual transition cue from the scanner's existing
+    # Mission band. It does not promote the unified display state.
     just_opened = bool(
-        view["state"] == WATCH_FOR_ENTRY
-        and previous_view
-        and previous_view["state"] != WATCH_FOR_ENTRY
+        item.get("band") == "trade_soon"
+        and previous
+        and not (
+            str(previous.get("candidate_status") or previous.get("status") or "")
+            in {"Entry Ready", "EXCEPTIONAL"}
+            and (_number(previous, "vwap_distance_pct") or 0.0) <= 2.0
+        )
     )
     pulse_class = " entry-window-pulse" if just_opened else ""
     why_not = ""
     if primary is not None:
         why_not = (
             f"<div class='mission-why-not'><b>WHY NOT #1</b>"
-            f"{html.escape(view['reason'])}</div>"
+            f"{html.escape(_secondary_gap(record))}</div>"
         )
     return (
         f"<div class='mission-target{pulse_class}' style='--mission-color:{view['color']}'>"
@@ -208,6 +238,7 @@ def _target_markup(item: dict, role: str, primary: dict | None = None) -> str:
         f"<div class='mission-band'>CONVICTION</div>"
         f"<div class='mission-window-status' style='color:{view['color']}'>"
         f"{html.escape(view['state'])}</div>"
+        f"<div class='small'>Confidence cue: {html.escape(cue)}</div>"
         f"<div class='opportunity-meter'>"
         f"<div class='opportunity-meter-top'><span class='opportunity-meter-label'>"
         f"Conviction Meter</span><span class='opportunity-meter-value'>{confidence}%</span></div>"
