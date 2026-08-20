@@ -6,7 +6,6 @@ qualification, readiness, thresholds, or execution.
 from __future__ import annotations
 
 import base64
-import html
 import json
 from pathlib import Path
 
@@ -109,15 +108,21 @@ def _speech_component(sound_path: str, phrase: str, voice_name: str = "") -> str
         speak();
       }} else {{
         let attempts = 0;
+        let spoken = false;
+        const speakOnce = () => {{
+          if (spoken) return;
+          spoken = true;
+          speak();
+        }};
         const retry = () => {{
           attempts += 1;
           if ((synth.getVoices && synth.getVoices().length) || attempts >= 8) {{
-            speak();
+            speakOnce();
             return;
           }}
           speechWindow.setTimeout(retry, 125);
         }};
-        if ('onvoiceschanged' in synth) synth.onvoiceschanged = speak;
+        if ('onvoiceschanged' in synth) synth.onvoiceschanged = speakOnce;
         speechWindow.setTimeout(retry, 125);
       }}
     }})();
@@ -126,11 +131,28 @@ def _speech_component(sound_path: str, phrase: str, voice_name: str = "") -> str
 
 
 def install() -> None:
-    """Install unified voice semantics before app.py imports UI/escalation helpers."""
+    """Add unified voice semantics without deleting established alert contracts."""
     from . import escalation, ui
 
-    escalation.escalation_state_changes = unified_state_changes
-    escalation.escalation_alert_phrase = unified_alert_phrase
+    legacy_state_changes = escalation.escalation_state_changes
+    legacy_alert_phrase = escalation.escalation_alert_phrase
+
+    def combined_state_changes(records: list[dict]) -> list[dict]:
+        """Preserve first-print/legacy events; otherwise expose unified transitions."""
+        legacy = legacy_state_changes(records)
+        if legacy:
+            return legacy
+        return unified_state_changes(records)
+
+    def combined_alert_phrase(records: list[dict]) -> str:
+        """Prefer a real unified display transition, then preserve legacy alerts."""
+        phrase = unified_alert_phrase(records)
+        if phrase:
+            return phrase
+        return legacy_alert_phrase(records)
+
+    escalation.escalation_state_changes = combined_state_changes
+    escalation.escalation_alert_phrase = combined_alert_phrase
 
     def play_alert(sound_path: str, phrase: str, voice_name: str = ""):
         if not phrase:
