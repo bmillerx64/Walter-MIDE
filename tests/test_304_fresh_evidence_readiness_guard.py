@@ -30,34 +30,23 @@ def test_stale_entry_window_is_capped_to_watch():
         item,
         {"index": 4, "state": "ENTRY WINDOW", "sentence": "Entry conditions aligned."},
     )
-    assert guarded["state"] == "WATCH"
-    assert guarded["index"] == 1
-    assert guarded["evidence_status"] == "CAUTION"
-    assert guarded["evidence_guarded"] is True
-    assert "stale" in guarded["sentence"].lower()
+    assert guarded == {
+        "index": 1,
+        "state": "WATCH",
+        "sentence": "Market evidence is stale. Refresh before entry.",
+    }
 
 
 def test_trusted_entry_window_remains_entry_window():
     item = _item(_record(age_seconds=30))
-    guarded = evidence_guarded_readiness(
-        item,
-        {"index": 4, "state": "ENTRY WINDOW", "sentence": "Entry conditions aligned."},
-    )
-    assert guarded["state"] == "ENTRY WINDOW"
-    assert guarded["index"] == 4
-    assert guarded["evidence_status"] == "TRUSTED"
-    assert guarded["evidence_guarded"] is False
+    base = {"index": 4, "state": "ENTRY WINDOW", "sentence": "Entry conditions aligned."}
+    assert evidence_guarded_readiness(item, base) == base
 
 
 def test_nontrusted_building_state_is_not_demoted():
     item = _item(_record(age_seconds=600))
-    guarded = evidence_guarded_readiness(
-        item,
-        {"index": 2, "state": "BUILDING", "sentence": "Momentum building."},
-    )
-    assert guarded["state"] == "BUILDING"
-    assert guarded["index"] == 2
-    assert guarded["evidence_guarded"] is False
+    base = {"index": 2, "state": "BUILDING", "sentence": "Momentum building."}
+    assert evidence_guarded_readiness(item, base) == base
 
 
 def test_incomplete_ready_state_is_capped():
@@ -68,8 +57,19 @@ def test_incomplete_ready_state_is_capped():
         {"index": 3, "state": "READY", "sentence": "Momentum confirmed."},
     )
     assert guarded["state"] == "WATCH"
-    assert guarded["evidence_status"] == "CAUTION"
     assert "incomplete" in guarded["sentence"].lower()
+
+
+def test_unknown_freshness_preserves_legacy_presentation_contract():
+    record = {
+        "symbol": "LEGACY",
+        "price": 1.0,
+        "volume": 1_000_000,
+        "vwap_value": 0.98,
+        "supertrend_bullish": True,
+    }
+    base = {"index": 4, "state": "ENTRY WINDOW", "sentence": "Entry conditions aligned."}
+    assert evidence_guarded_readiness(_item(record), base) == base
 
 
 def test_guard_does_not_mutate_candidate_or_base_result():
