@@ -116,3 +116,7 @@ _install_gs309_current_attention_mission()
 from .gs310_unified_opportunity_state import install as _install_gs310_unified_opportunity_state  # noqa: E402
 
 _install_gs310_unified_opportunity_state()
+
+from .gs311_unified_voice import install as _install_gs311_unified_voice  # noqa: E402
+
+_install_gs311_unified_voice()
