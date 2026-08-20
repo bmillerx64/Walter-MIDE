@@ -202,11 +202,14 @@ def _secondary_gap(record: dict) -> str:
 def _target_markup(item: dict, role: str, primary: dict | None = None) -> str:
     record = item["record"]
     view = opportunity_state(record)
-    evidence = "".join(
-        f"<div class='mission-check'>{'✓' if entry['passed'] else '□'} "
-        f"{html.escape(entry['label'])} · {html.escape(entry['detail'])}</div>"
-        for entry in view["evidence"]
-    )
+    evidence_parts = []
+    for index, entry in enumerate(view["evidence"], start=1):
+        label = "SuperTrend Flip" if entry["label"] == "SuperTrend" else entry["label"]
+        evidence_parts.append(
+            f"<div class='mission-check'>{index}. {'✓' if entry['passed'] else '□'} "
+            f"{html.escape(label)} · {html.escape(entry['detail'])}</div>"
+        )
+    evidence = "".join(evidence_parts)
     provenance = (
         " · ".join(view["attention_provenance"]) or "Current ranked observation"
     )
@@ -225,12 +228,11 @@ def _target_markup(item: dict, role: str, primary: dict | None = None) -> str:
         )
     )
     pulse_class = " entry-window-pulse" if just_opened else ""
-    why_not = ""
-    if primary is not None:
-        why_not = (
-            f"<div class='mission-why-not'><b>WHY NOT #1</b>"
-            f"{html.escape(_secondary_gap(record))}</div>"
-        )
+    priority_note = (
+        f"<div class='mission-why-not'><b>WHY #1 TODAY</b>{html.escape(view['reason'])}</div>"
+        if primary is None
+        else f"<div class='mission-why-not'><b>WHY NOT #1</b>{html.escape(_secondary_gap(record))}</div>"
+    )
     return (
         f"<div class='mission-target{pulse_class}' style='--mission-color:{view['color']}'>"
         f"<div class='mission-role'>{html.escape(role)}</div>"
@@ -246,13 +248,14 @@ def _target_markup(item: dict, role: str, primary: dict | None = None) -> str:
         f"aria-valuemax='100' aria-valuenow='{confidence}'>"
         f"<div class='opportunity-meter-fill' style='--opportunity:{confidence}%'></div></div></div>"
         f"<div class='small'>{html.escape(view['reason'])}</div>"
+        f"{priority_note}"
         f"<div class='mission-section-title'>WHY WALTER IS SHOWING IT</div>"
         f"<div class='mission-reason'>✓ {html.escape(provenance)}</div>"
         f"<div class='mission-section-title'>CURRENT EVIDENCE</div>"
         f"<div class='mission-path'>{evidence}</div>"
         f"<div class='mission-section-title'>NEXT</div>"
         f"<div class='small'>{html.escape(view['next_step'])}</div>"
-        f"{why_not}</div>"
+        f"</div>"
     )
 
 
