@@ -108,3 +108,7 @@ _install_gs305_second_wave_attention()
 from .gs307_volume_regime_patch import install as _install_gs307_volume_regime_patch  # noqa: E402
 
 _install_gs307_volume_regime_patch()
+
+from .gs309_current_attention_mission import install as _install_gs309_current_attention_mission  # noqa: E402
+
+_install_gs309_current_attention_mission()
