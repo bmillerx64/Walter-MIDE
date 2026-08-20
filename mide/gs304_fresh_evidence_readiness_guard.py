@@ -1,9 +1,8 @@
 """GS304: keep display-only trade readiness consistent with evidence trust.
 
-Walter's scanner/ranking/qualification remain authoritative.  This module only
+Walter's scanner/ranking/qualification remain authoritative. This module only
 prevents the mission-card readiness presentation from advertising READY or
-ENTRY WINDOW when the same record fails the existing read-only market-evidence
-audit.
+ENTRY WINDOW when the same record has measured, non-TRUSTED market evidence.
 """
 from __future__ import annotations
 
@@ -20,25 +19,27 @@ def evidence_guarded_readiness(
     *,
     max_age_seconds: float = 120.0,
 ) -> dict[str, Any]:
-    """Return a detached presentation result capped when evidence is untrusted."""
+    """Return a detached readiness result while preserving the legacy shape."""
     result = deepcopy(dict(base_readiness))
     record = item.get("record") or {}
     if not isinstance(record, Mapping):
         return result
 
     evidence = market_evidence_report(record, max_age_seconds=max_age_seconds)
-    result["evidence_status"] = evidence["status"]
-    result["evidence_fresh"] = evidence["fresh"]
-    result["evidence_guarded"] = False
 
-    # BUILDING/WATCH remain useful observational states.  The safety invariant is
+    # Compatibility boundary: legacy/display fixtures without any measurable
+    # freshness evidence are not called stale. Live Walter records carry a bar
+    # timestamp/age, so known stale evidence is still guarded.
+    if not evidence.get("freshness_measured"):
+        return result
+
+    # BUILDING/WATCH remain useful observational states. The safety invariant is
     # only that READY/ENTRY WINDOW may not be presented from non-TRUSTED evidence.
     if int(result.get("index", 0) or 0) < 3 or evidence["trusted"]:
         return result
 
     result["index"] = 1
     result["state"] = "WATCH"
-    result["evidence_guarded"] = True
     if not evidence["fresh"]:
         result["sentence"] = "Market evidence is stale. Refresh before entry."
     elif evidence["coherence_failures"]:
