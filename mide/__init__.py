@@ -120,3 +120,7 @@ _install_gs310_unified_opportunity_state()
 from .gs311_unified_voice import install as _install_gs311_unified_voice  # noqa: E402
 
 _install_gs311_unified_voice()
+
+from .gs312_scan_stage_timing import install as _install_gs312_scan_stage_timing  # noqa: E402
+
+_install_gs312_scan_stage_timing()
