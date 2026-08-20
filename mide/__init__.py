@@ -112,3 +112,7 @@ _install_gs307_volume_regime_patch()
 from .gs309_current_attention_mission import install as _install_gs309_current_attention_mission  # noqa: E402
 
 _install_gs309_current_attention_mission()
+
+from .gs310_unified_opportunity_state import install as _install_gs310_unified_opportunity_state  # noqa: E402
+
+_install_gs310_unified_opportunity_state()
