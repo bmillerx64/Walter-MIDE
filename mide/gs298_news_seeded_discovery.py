@@ -80,6 +80,10 @@ def morning_mover_attention_headline(headline: str) -> bool:
     if "stocks" in text and ("premarket" in text or "pre-market" in text):
         if any(token in text for token in ("moving", "higher", "gainers", "watch")):
             return True
+    if "stocks" in text and "investors radar" in text:
+        return True
+    if "stocks" in text and "investors' radar" in text:
+        return True
     if "why" in text and "trading higher" in text:
         return True
     return False
