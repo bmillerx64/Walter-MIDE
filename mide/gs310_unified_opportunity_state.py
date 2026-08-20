@@ -200,24 +200,36 @@ def _secondary_gap(record: dict) -> str:
 
 
 def _target_markup(item: dict, role: str, primary: dict | None = None) -> str:
+    """Render the unified state while preserving Walter's established mission cues."""
+    from . import ui
+
     record = item["record"]
     view = opportunity_state(record)
-    evidence_parts = []
-    for index, entry in enumerate(view["evidence"], start=1):
-        label = "SuperTrend Flip" if entry["label"] == "SuperTrend" else entry["label"]
-        evidence_parts.append(
-            f"<div class='mission-check'>{index}. {'✓' if entry['passed'] else '□'} "
-            f"{html.escape(label)} · {html.escape(entry['detail'])}</div>"
-        )
-    evidence = "".join(evidence_parts)
-    provenance = (
-        " · ".join(view["attention_provenance"]) or "Current ranked observation"
-    )
     confidence = int(item.get("confidence", 0) or 0)
     cue = _confidence_cue(item)
     previous = item.get("previous_record") or {}
-    # Preserve the established visual transition cue from the scanner's existing
-    # Mission band. It does not promote the unified display state.
+
+    conditions = list(item.get("conditions") or [])
+    remaining = sum(not condition.get("passed") for condition in conditions)
+    window = "Now" if remaining == 0 else ("2–5 minutes" if remaining == 1 else "5–15 minutes")
+    checklist = "".join(
+        f"<div class='mission-check'>{index}. {'✓' if condition.get('passed') else '□'} "
+        f"{html.escape(str(condition.get('label') or ''))}</div>"
+        for index, condition in enumerate(conditions, start=1)
+    )
+
+    reasons = "".join(
+        f"<div class='mission-reason'>✓ {html.escape(str(reason))}</div>"
+        for reason in list(item.get("reasons") or [])[:3]
+    )
+    if not reasons:
+        reasons = "<div class='mission-reason'>✓ Current ranked observation</div>"
+
+    previous_confidence = ui.hot_list_priority_score(previous) if previous else confidence
+    delta = confidence - previous_confidence
+    direction = "▲" if delta >= 0 else "▼"
+    delta_class = "meter-delta-up" if delta >= 0 else "meter-delta-down"
+
     just_opened = bool(
         item.get("band") == "trade_soon"
         and previous
@@ -228,11 +240,25 @@ def _target_markup(item: dict, role: str, primary: dict | None = None) -> str:
         )
     )
     pulse_class = " entry-window-pulse" if just_opened else ""
-    priority_note = (
-        f"<div class='mission-why-not'><b>WHY #1 TODAY</b>{html.escape(view['reason'])}</div>"
-        if primary is None
-        else f"<div class='mission-why-not'><b>WHY NOT #1</b>{html.escape(_secondary_gap(record))}</div>"
+
+    if primary is None:
+        priority_markup = (
+            "<div class='mission-section-title'>WHY #1 TODAY</div>"
+            f"<div class='mission-reasons'>{reasons}</div>"
+        )
+    else:
+        priority_markup = (
+            f"<div class='mission-why-not'><b>WHY NOT #1</b>"
+            f"{html.escape(_secondary_gap(record))}</div>"
+        )
+
+    provenance = " · ".join(view["attention_provenance"])
+    provenance_markup = (
+        f"<div class='small'>Attention source: {html.escape(provenance)}</div>"
+        if provenance
+        else ""
     )
+
     return (
         f"<div class='mission-target{pulse_class}' style='--mission-color:{view['color']}'>"
         f"<div class='mission-role'>{html.escape(role)}</div>"
@@ -243,18 +269,19 @@ def _target_markup(item: dict, role: str, primary: dict | None = None) -> str:
         f"<div class='small'>Confidence cue: {html.escape(cue)}</div>"
         f"<div class='opportunity-meter'>"
         f"<div class='opportunity-meter-top'><span class='opportunity-meter-label'>"
-        f"Conviction Meter</span><span class='opportunity-meter-value'>{confidence}%</span></div>"
+        f"Conviction Meter</span><span class='opportunity-meter-value'>{confidence}% "
+        f"<small class='{delta_class}'>{direction} {delta:+d}</small></span></div>"
         f"<div class='opportunity-meter-track' role='progressbar' aria-valuemin='0' "
         f"aria-valuemax='100' aria-valuenow='{confidence}'>"
         f"<div class='opportunity-meter-fill' style='--opportunity:{confidence}%'></div></div></div>"
         f"<div class='small'>{html.escape(view['reason'])}</div>"
-        f"{priority_note}"
-        f"<div class='mission-section-title'>WHY WALTER IS SHOWING IT</div>"
-        f"<div class='mission-reason'>✓ {html.escape(provenance)}</div>"
-        f"<div class='mission-section-title'>CURRENT EVIDENCE</div>"
-        f"<div class='mission-path'>{evidence}</div>"
-        f"<div class='mission-section-title'>NEXT</div>"
+        f"{priority_markup}"
+        f"<div class='mission-section-title'>ENTRY PATH</div>"
+        f"<div class='mission-path'>{checklist}</div>"
+        f"{provenance_markup}"
+        f"<div class='mission-section-title'>GUIDANCE</div>"
         f"<div class='small'>{html.escape(view['next_step'])}</div>"
+        f"<div class='mission-meta'>Estimated: <b>{window}</b></div>"
         f"</div>"
     )
 
