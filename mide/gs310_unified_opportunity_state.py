@@ -1,7 +1,7 @@
 """GS310: one display-only opportunity state for Walter's trader-facing surfaces.
 
 The scanner remains the source of truth for discovery, qualification, ranking,
-readiness, thresholds, and execution.  This module only translates the current
+readiness, thresholds, and execution. This module only translates the current
 record into one concise trader-facing state so Mission and Recommendation do not
 independently describe the same symbol as EARLY, ENTRY WINDOW, WATCH, and NO TRADE.
 """
@@ -38,7 +38,10 @@ def _number(record: dict, *keys: str) -> float | None:
 
 
 def _halted(record: dict) -> bool:
-    if any(record.get(key) is True for key in ("halted", "is_halted", "suspended", "is_suspended")):
+    if any(
+        record.get(key) is True
+        for key in ("halted", "is_halted", "suspended", "is_suspended")
+    ):
         return True
     text = " ".join(
         str(record.get(key) or "")
@@ -90,36 +93,76 @@ def opportunity_state(record: dict) -> dict:
     attention = _attention(record)
 
     evidence = [
-        {"label": "VWAP", "passed": vwap_near, "detail": "Above / within 2%" if vwap_near else ("Above but extended" if vwap_above else "Not above")},
-        {"label": "SuperTrend", "passed": trend, "detail": "Bullish" if trend else "Not confirmed"},
-        {"label": "Participation", "passed": participation_pass, "detail": f"{participation:.0f}/100" if participation is not None else "Unavailable"},
-        {"label": "Expansion", "passed": expansion_pass, "detail": f"{expansion:.0f}/100" if expansion is not None else "Unavailable"},
+        {
+            "label": "VWAP",
+            "passed": vwap_near,
+            "detail": "Above / within 2%"
+            if vwap_near
+            else ("Above but extended" if vwap_above else "Not above"),
+        },
+        {
+            "label": "SuperTrend",
+            "passed": trend,
+            "detail": "Bullish" if trend else "Not confirmed",
+        },
+        {
+            "label": "Participation",
+            "passed": participation_pass,
+            "detail": f"{participation:.0f}/100"
+            if participation is not None
+            else "Unavailable",
+        },
+        {
+            "label": "Expansion",
+            "passed": expansion_pass,
+            "detail": f"{expansion:.0f}/100"
+            if expansion is not None
+            else "Unavailable",
+        },
     ]
 
     if _halted(record):
         state = HALTED
         reason = "Trading is halted or suspended."
-        next_step = "Watch for resumption, then reassess fresh price, VWAP, trend, and volume."
+        next_step = (
+            "Watch for resumption, then reassess fresh price, VWAP, trend, and volume."
+        )
     elif distance is not None and distance > 2.0:
         state = CHASE_WAIT
         reason = f"Price is {distance:.1f}% above VWAP; the move is extended."
-        next_step = "Wait for a reset or constructive pullback toward VWAP before reconsidering."
+        next_step = (
+            "Wait for a reset or constructive pullback toward VWAP before reconsidering."
+        )
     elif vwap_near and trend and participation_pass and expansion_pass:
         state = WATCH_FOR_ENTRY
         reason = "VWAP, trend, participation, and expansion are aligned now."
-        next_step = "Review the chart for the actual entry; Walter is presenting, not authorizing, the trade."
-    elif vwap_above and trend and (participation_pass or expansion_pass or acceleration > 1.0):
+        next_step = (
+            "Review the chart for the actual entry; Walter is presenting, not authorizing, the trade."
+        )
+    elif vwap_above and trend and (
+        participation_pass or expansion_pass or acceleration > 1.0
+    ):
         state = DEVELOPING
         missing = [item["label"] for item in evidence if not item["passed"]]
-        reason = "Constructive price/trend structure is present, but the setup is still developing."
-        next_step = "Need stronger " + " and ".join(missing[:2]).lower() + "." if missing else "Continue monitoring current evidence."
+        reason = (
+            "Constructive price/trend structure is present, but the setup is still developing."
+        )
+        next_step = (
+            "Need stronger " + " and ".join(missing[:2]).lower() + "."
+            if missing
+            else "Continue monitoring current evidence."
+        )
     elif attention:
         state = LOOK_NOW
         reason = "A current attention trigger says this symbol deserves a chart review."
-        next_step = "Open the chart and confirm VWAP, SuperTrend, participation, and expansion."
+        next_step = (
+            "Open the chart and confirm VWAP, SuperTrend, participation, and expansion."
+        )
     else:
         state = DEVELOPING
-        reason = "Walter is still observing the symbol, but no immediate attention trigger is present."
+        reason = (
+            "Walter is still observing the symbol, but no immediate attention trigger is present."
+        )
         next_step = "Keep it in the background until current evidence improves."
 
     return {
@@ -136,23 +179,48 @@ def _target_markup(item: dict, role: str, primary: dict | None = None) -> str:
     record = item["record"]
     view = opportunity_state(record)
     evidence = "".join(
-        f"<div class='mission-check'>{'✓' if entry['passed'] else '□'} {html.escape(entry['label'])} · {html.escape(entry['detail'])}</div>"
+        f"<div class='mission-check'>{'✓' if entry['passed'] else '□'} "
+        f"{html.escape(entry['label'])} · {html.escape(entry['detail'])}</div>"
         for entry in view["evidence"]
     )
-    provenance = " · ".join(view["attention_provenance"]) or "Current ranked observation"
+    provenance = (
+        " · ".join(view["attention_provenance"]) or "Current ranked observation"
+    )
+    confidence = int(item.get("confidence", 0) or 0)
+    previous = item.get("previous_record") or {}
+    previous_view = opportunity_state(previous) if previous else None
+    just_opened = bool(
+        view["state"] == WATCH_FOR_ENTRY
+        and previous_view
+        and previous_view["state"] != WATCH_FOR_ENTRY
+    )
+    pulse_class = " entry-window-pulse" if just_opened else ""
     why_not = ""
     if primary is not None:
-        why_not = f"<div class='mission-why-not'><b>WHY #2</b>{html.escape(view['reason'])}</div>"
+        why_not = (
+            f"<div class='mission-why-not'><b>WHY NOT #1</b>"
+            f"{html.escape(view['reason'])}</div>"
+        )
     return (
-        f"<div class='mission-target' style='--mission-color:{view['color']}'>"
+        f"<div class='mission-target{pulse_class}' style='--mission-color:{view['color']}'>"
         f"<div class='mission-role'>{html.escape(role)}</div>"
         f"<div class='mission-symbol'>{html.escape(item['symbol'])}</div>"
-        f"<div class='mission-window-status' style='color:{view['color']}'>{html.escape(view['state'])}</div>"
+        f"<div class='mission-band'>CONVICTION</div>"
+        f"<div class='mission-window-status' style='color:{view['color']}'>"
+        f"{html.escape(view['state'])}</div>"
+        f"<div class='opportunity-meter'>"
+        f"<div class='opportunity-meter-top'><span class='opportunity-meter-label'>"
+        f"Conviction Meter</span><span class='opportunity-meter-value'>{confidence}%</span></div>"
+        f"<div class='opportunity-meter-track' role='progressbar' aria-valuemin='0' "
+        f"aria-valuemax='100' aria-valuenow='{confidence}'>"
+        f"<div class='opportunity-meter-fill' style='--opportunity:{confidence}%'></div></div></div>"
         f"<div class='small'>{html.escape(view['reason'])}</div>"
         f"<div class='mission-section-title'>WHY WALTER IS SHOWING IT</div>"
         f"<div class='mission-reason'>✓ {html.escape(provenance)}</div>"
-        f"<div class='mission-section-title'>CURRENT EVIDENCE</div><div class='mission-path'>{evidence}</div>"
-        f"<div class='mission-section-title'>NEXT</div><div class='small'>{html.escape(view['next_step'])}</div>"
+        f"<div class='mission-section-title'>CURRENT EVIDENCE</div>"
+        f"<div class='mission-path'>{evidence}</div>"
+        f"<div class='mission-section-title'>NEXT</div>"
+        f"<div class='small'>{html.escape(view['next_step'])}</div>"
         f"{why_not}</div>"
     )
 
@@ -185,19 +253,29 @@ def install() -> None:
         secondary = mission.get("secondary")
         if not primary:
             ui.st.markdown(
-                "<div class='mission-shell'><div class='mission-title'>🎯 OPPORTUNITY BOARD</div>No stock deserves elevated attention right now.</div>",
+                "<div class='mission-shell'><div class='mission-title'>🎯 OPPORTUNITY BOARD</div>"
+                "No stock deserves elevated attention right now.</div>",
                 unsafe_allow_html=True,
             )
             return
         items = [item for item in (primary, secondary) if item]
         states = [opportunity_state(item["record"])["state"] for item in items]
-        summary = " · ".join(f"{item['symbol']}: {state}" for item, state in zip(items, states))
+        summary = " · ".join(
+            f"{item['symbol']}: {state}" for item, state in zip(items, states)
+        )
+        monitoring = ""
+        if WATCH_FOR_ENTRY not in states:
+            monitoring = (
+                "<div class='mission-monitoring'>"
+                "No entry-ready setups. Continue monitoring.</div>"
+            )
         targets = _target_markup(primary, "#1 opportunity")
         if secondary:
             targets += _target_markup(secondary, "#2 opportunity", primary)
         ui.st.markdown(
             f"<div class='mission-shell'><div class='mission-title'>🎯 OPPORTUNITY BOARD</div>"
-            f"<div class='small'>{html.escape(summary)}</div><div class='mission-grid'>{targets}</div></div>",
+            f"{monitoring}<div class='small'>{html.escape(summary)}</div>"
+            f"<div class='mission-grid'>{targets}</div></div>",
             unsafe_allow_html=True,
         )
 
@@ -208,21 +286,30 @@ def install() -> None:
         visible = ui.actionable_candidate_records(records)[:5]
         if not visible:
             ui.st.markdown(
-                "<div class='recommendation-box' style='--recommendation-color:#64748b'><div class='recommendation-label'>NO CURRENT OPPORTUNITY</div><div class='recommendation-message'>Walter has nothing that warrants elevated review right now.</div></div>",
+                "<div class='recommendation-box' style='--recommendation-color:#64748b'>"
+                "<div class='recommendation-label'>NO CURRENT OPPORTUNITY</div>"
+                "<div class='recommendation-message'>"
+                "Walter has nothing that warrants elevated review right now.</div></div>",
                 unsafe_allow_html=True,
             )
             return
         ui.st.subheader("Walter's Opportunity State")
-        ui.st.caption("One interpretation of the same current evidence used on the Opportunity Board.")
+        ui.st.caption(
+            "One interpretation of the same current evidence used on the Opportunity Board."
+        )
         for record in visible:
             view = opportunity_state(record)
             evidence = "".join(
-                f"<li class='{'delta-up' if entry['passed'] else 'delta-down'}'>{'✓' if entry['passed'] else '○'} {html.escape(entry['label'])} · {html.escape(entry['detail'])}</li>"
+                f"<li class='{'delta-up' if entry['passed'] else 'delta-down'}'>"
+                f"{'✓' if entry['passed'] else '○'} {html.escape(entry['label'])} · "
+                f"{html.escape(entry['detail'])}</li>"
                 for entry in view["evidence"]
             )
             ui.st.markdown(
                 f"<div class='recommendation-box' style='--recommendation-color:{view['color']}'>"
-                f"<div class='recommendation-label'>{html.escape(str(record.get('symbol') or '').upper())} · {html.escape(view['state'])}</div>"
+                f"<div class='recommendation-label'>"
+                f"{html.escape(str(record.get('symbol') or '').upper())} · "
+                f"{html.escape(view['state'])}</div>"
                 f"<div class='recommendation-message'>{html.escape(view['reason'])}</div>"
                 f"<ul class='escalation-list'>{evidence}</ul>"
                 f"<div class='small'>Next: {html.escape(view['next_step'])}</div></div>",
