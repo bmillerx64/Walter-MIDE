@@ -96,3 +96,7 @@ _install_gs302_stage_purity_enforcement()
 from .gs303_flight_recorder_authoritative_funnel import install as _install_gs303_flight_recorder_authoritative_funnel  # noqa: E402
 
 _install_gs303_flight_recorder_authoritative_funnel()
+
+from .gs304_fresh_evidence_readiness_guard import install as _install_gs304_fresh_evidence_readiness_guard  # noqa: E402
+
+_install_gs304_fresh_evidence_readiness_guard()
