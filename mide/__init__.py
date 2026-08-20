@@ -104,3 +104,7 @@ _install_gs304_fresh_evidence_readiness_guard()
 from .gs305_second_wave_attention import install as _install_gs305_second_wave_attention  # noqa: E402
 
 _install_gs305_second_wave_attention()
+
+from .gs307_volume_regime_patch import install as _install_gs307_volume_regime_patch  # noqa: E402
+
+_install_gs307_volume_regime_patch()
