@@ -1,4 +1,4 @@
-"""GS311: drive audible attention alerts from Walter's unified display state.
+"""GS311/GS317: drive audible attention alerts from Walter's unified display state.
 
 This module is presentation/alert only. It does not change discovery, ranking,
 qualification, readiness, thresholds, or execution.
@@ -11,6 +11,10 @@ from pathlib import Path
 
 from .gs310_unified_opportunity_state import opportunity_state
 from .timeframe_alignment import alignment_voice
+
+
+VOICE_REQUEST_COUNT_KEY = "_walter_voice_request_count"
+VOICE_LAST_PHRASE_KEY = "_walter_voice_last_requested_phrase"
 
 
 def unified_state_changes(records: list[dict]) -> list[dict]:
@@ -59,7 +63,14 @@ def unified_alert_phrase(records: list[dict]) -> str:
 
 
 def _speech_component(sound_path: str, phrase: str, voice_name: str = "") -> str:
-    """Build browser speech/audio markup using parent speech first, iframe fallback."""
+    """Build resilient browser speech/audio markup.
+
+    Chrome can leave ``speechSynthesis`` paused after a tab/app lifecycle event,
+    and short-lived component frames can allow an utterance object to be garbage
+    collected before playback completes.  Keep the utterance on the selected
+    speech window, explicitly resume a paused synthesizer, and retry voice loading
+    without requiring the selected voice to exist before speaking.
+    """
     encoded = ""
     path = Path(sound_path)
     if path.exists():
@@ -88,35 +99,57 @@ def _speech_component(sound_path: str, phrase: str, voice_name: str = "") -> str
       const synth = speechWindow.speechSynthesis;
       const Utterance = speechWindow.SpeechSynthesisUtterance || window.SpeechSynthesisUtterance;
       if (!Utterance) return;
+
       const utterance = new Utterance(phrase);
       utterance.rate = 0.95;
       utterance.pitch = 0.9;
       utterance.volume = 1.0;
+      speechWindow.__walterActiveUtterance = utterance;
 
-      const speak = () => {{
-        const voices = synth.getVoices ? synth.getVoices() : [];
-        if (preferred && voices.length) {{
-          const voice = voices.find(v =>
-            v.voiceURI === preferred || v.name === preferred || v.name.includes(preferred)
-          );
-          if (voice) utterance.voice = voice;
+      const release = () => {{
+        if (speechWindow.__walterActiveUtterance === utterance) {{
+          speechWindow.__walterActiveUtterance = null;
         }}
-        synth.speak(utterance);
+      }};
+      utterance.onend = release;
+      utterance.onerror = release;
+
+      const chooseVoice = () => {{
+        const voices = synth.getVoices ? synth.getVoices() : [];
+        if (!preferred || !voices.length) return;
+        const preferredLower = preferred.toLowerCase();
+        const voice = voices.find(v =>
+          v.voiceURI === preferred ||
+          v.name === preferred ||
+          v.name.toLowerCase().includes(preferredLower)
+        );
+        if (voice) utterance.voice = voice;
+      }};
+
+      let spoken = false;
+      const speakOnce = () => {{
+        if (spoken) return;
+        spoken = true;
+        chooseVoice();
+        try {{
+          if (synth.paused && synth.resume) synth.resume();
+          if (synth.cancel) synth.cancel();
+          if (synth.resume) synth.resume();
+          synth.speak(utterance);
+        }} catch (_) {{
+          try {{
+            window.speechSynthesis.speak(utterance);
+          }} catch (_) {{}}
+        }}
       }};
 
       if (synth.getVoices && synth.getVoices().length) {{
-        speak();
+        speakOnce();
       }} else {{
         let attempts = 0;
-        let spoken = false;
-        const speakOnce = () => {{
-          if (spoken) return;
-          spoken = true;
-          speak();
-        }};
         const retry = () => {{
           attempts += 1;
-          if ((synth.getVoices && synth.getVoices().length) || attempts >= 8) {{
+          if ((synth.getVoices && synth.getVoices().length) || attempts >= 12) {{
             speakOnce();
             return;
           }}
@@ -157,10 +190,22 @@ def install() -> None:
     def play_alert(sound_path: str, phrase: str, voice_name: str = ""):
         if not phrase:
             return
+        # Server-side request telemetry distinguishes "Walter generated no voice
+        # event" from "the browser received a voice event but did not play it".
+        # It is session-only and contains no trading state mutation.
+        try:
+            ui.st.session_state[VOICE_REQUEST_COUNT_KEY] = int(
+                ui.st.session_state.get(VOICE_REQUEST_COUNT_KEY, 0)
+            ) + 1
+            ui.st.session_state[VOICE_LAST_PHRASE_KEY] = str(phrase)
+        except Exception:
+            pass
         ui.st.components.v1.html(
             _speech_component(sound_path, phrase, voice_name),
-            height=0,
+            height=1,
+            scrolling=False,
         )
 
     play_alert._gs311_unified_voice = True
+    play_alert._gs317_voice_transport_hardening = True
     ui.play_alert = play_alert
