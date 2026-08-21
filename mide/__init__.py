@@ -121,6 +121,10 @@ from .gs311_unified_voice import install as _install_gs311_unified_voice  # noqa
 
 _install_gs311_unified_voice()
 
+from .gs323_direct_user_activation_voice import install as _install_gs323_direct_user_activation_voice  # noqa: E402
+
+_install_gs323_direct_user_activation_voice()
+
 from .gs312_scan_stage_timing import install as _install_gs312_scan_stage_timing  # noqa: E402
 
 _install_gs312_scan_stage_timing()
