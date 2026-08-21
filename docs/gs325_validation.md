@@ -1,1 +1,0 @@
-Validation: regression must fail while app.py contains `window.parent.location.replace` in the startup preference discovery script and pass after replacement with `window.parent.history.replaceState`. Full pytest and Policy Guardrails must remain green before merge.
