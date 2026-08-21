@@ -20,4 +20,4 @@ def test_startup_url_update_preserves_existing_query_parameters():
     source = _app_source()
 
     assert "const params = new URLSearchParams(window.parent.location.search)" in source
-    assert "`${window.parent.location.pathname}?${params}`" in source
+    assert "`${{window.parent.location.pathname}}?${{params}}`" in source
