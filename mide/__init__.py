@@ -136,3 +136,7 @@ _install_gs314_state_consistency()
 from .gs315_news_intelligence import install as _install_gs315_news_intelligence  # noqa: E402
 
 _install_gs315_news_intelligence()
+
+from .gs316_morning_mover_attention_balance import install as _install_gs316_morning_mover_attention_balance  # noqa: E402
+
+_install_gs316_morning_mover_attention_balance()
