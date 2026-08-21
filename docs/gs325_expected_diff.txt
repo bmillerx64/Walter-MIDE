@@ -1,0 +1,1 @@
+Expected production diff: one browser JavaScript statement in app.py changes from a full `window.parent.location.replace(...)` navigation to `window.parent.history.replaceState(null, '', ...)`. Everything else should remain behaviorally identical.
