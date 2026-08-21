@@ -61,3 +61,28 @@ def test_missing_sound_file_does_not_suppress_spoken_phrase():
     assert "<audio" not in markup
     assert "TEST. DEVELOPING." in markup
     assert "synth.speak(utterance)" in markup
+
+
+def test_voice_transport_resumes_stuck_browser_synth_before_speaking():
+    markup = _speech_component("missing-alert.wav", "TEST. WATCH FOR ENTRY.")
+
+    assert "synth.paused" in markup
+    assert "synth.resume()" in markup
+    assert "synth.cancel()" in markup
+    assert markup.index("synth.resume()") < markup.index("synth.speak(utterance)")
+
+
+def test_voice_transport_retains_utterance_until_browser_finishes():
+    markup = _speech_component("missing-alert.wav", "TEST. WATCH FOR ENTRY.")
+
+    assert "speechWindow.__walterActiveUtterance = utterance" in markup
+    assert "utterance.onend = release" in markup
+    assert "utterance.onerror = release" in markup
+
+
+def test_voice_transport_does_not_require_preferred_voice_to_exist():
+    markup = _speech_component("missing-alert.wav", "TEST. LOOK NOW.", "Samantha")
+
+    assert "chooseVoice();" in markup
+    assert "attempts >= 12" in markup
+    assert "speakOnce();" in markup
