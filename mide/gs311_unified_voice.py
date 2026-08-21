@@ -1,4 +1,4 @@
-"""GS311/GS317/GS318/GS319/GS320: drive audible alerts from Walter's unified display state.
+"""GS311/GS317/GS318/GS319/GS320/GS321: drive audible alerts from Walter's unified display state.
 
 This module is presentation/alert only. It does not change discovery, ranking,
 qualification, readiness, thresholds, or execution.
@@ -84,7 +84,13 @@ def unified_alert_phrase(records: list[dict]) -> str:
 
 
 def _speech_component(sound_path: str, phrase: str, voice_name: str = "") -> str:
-    """Build resilient browser speech/audio markup with transport diagnostics."""
+    """Build resilient browser speech markup with visible transport diagnostics.
+
+    GS321 keeps the actual browser transport state inside the component instead
+    of guessing from the server-side request. The replay button repeats the exact
+    same utterance locally, so audio transport can be tested without waiting for
+    a market event or creating a second Walter alert event.
+    """
     encoded = ""
     path = Path(sound_path)
     if path.exists():
@@ -97,12 +103,42 @@ def _speech_component(sound_path: str, phrase: str, voice_name: str = "") -> str
     phrase_json = json.dumps(str(phrase))
     voice_json = json.dumps(str(voice_name or ""))
     return f"""
+    <style>
+      .walter-voice-diag {{
+        box-sizing:border-box; display:flex; align-items:center; gap:8px;
+        height:38px; padding:6px 8px; border:1px solid #334155;
+        border-radius:8px; background:#0b1119; color:#dbe7f4;
+        font:12px -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+      }}
+      .walter-voice-status {{font-weight:800; white-space:nowrap;}}
+      .walter-voice-detail {{color:#94a3b8; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; flex:1;}}
+      .walter-voice-test {{
+        border:1px solid #475569; border-radius:6px; background:#172033;
+        color:#f8fafc; padding:3px 7px; cursor:pointer; font-weight:700;
+      }}
+    </style>
+    <div class="walter-voice-diag" role="status" aria-live="polite">
+      <span id="walter-voice-status" class="walter-voice-status">Voice: initializing</span>
+      <span id="walter-voice-detail" class="walter-voice-detail"></span>
+      <button id="walter-voice-test" class="walter-voice-test" type="button">Replay test</button>
+    </div>
     {audio}
     <script>
     (() => {{
       const phrase = {phrase_json};
       const preferred = {voice_json};
-      if (!phrase) return;
+      const statusNode = document.getElementById('walter-voice-status');
+      const detailNode = document.getElementById('walter-voice-detail');
+      const replayNode = document.getElementById('walter-voice-test');
+      const setStatus = (status, detail = '') => {{
+        if (statusNode) statusNode.textContent = `Voice: ${{status}}`;
+        if (detailNode) detailNode.textContent = detail;
+      }};
+      if (!phrase) {{
+        setStatus('idle', 'No phrase requested');
+        if (replayNode) replayNode.disabled = true;
+        return;
+      }}
 
       let speechWindow = window;
       try {{
@@ -110,6 +146,7 @@ def _speech_component(sound_path: str, phrase: str, voice_name: str = "") -> str
       }} catch (_) {{ speechWindow = window; }}
       if (!('speechSynthesis' in speechWindow)) {{
         console.warn('[Walter voice] speechSynthesis unavailable');
+        setStatus('unavailable', 'Browser Web Speech API is not available');
         return;
       }}
 
@@ -117,62 +154,77 @@ def _speech_component(sound_path: str, phrase: str, voice_name: str = "") -> str
       const Utterance = speechWindow.SpeechSynthesisUtterance || window.SpeechSynthesisUtterance;
       if (!Utterance) {{
         console.warn('[Walter voice] SpeechSynthesisUtterance unavailable');
+        setStatus('unavailable', 'SpeechSynthesisUtterance is not available');
         return;
       }}
 
-      const utterance = new Utterance(phrase);
-      utterance.rate = 0.95;
-      utterance.pitch = 0.9;
-      utterance.volume = 1.0;
-      speechWindow.__walterActiveUtterance = utterance;
-      speechWindow.__walterVoiceTransport = {{
-        phrase,
-        preferred,
-        requestedAt: new Date().toISOString(),
-        status: 'requested',
-      }};
-
-      const release = (status) => {{
-        speechWindow.__walterVoiceTransport = {{
-          ...speechWindow.__walterVoiceTransport,
-          status,
-          completedAt: new Date().toISOString(),
-        }};
-        if (speechWindow.__walterActiveUtterance === utterance) {{
-          speechWindow.__walterActiveUtterance = null;
-        }}
-      }};
-      utterance.onstart = () => {{
-        speechWindow.__walterVoiceTransport = {{
-          ...speechWindow.__walterVoiceTransport,
-          status: 'speaking',
-          startedAt: new Date().toISOString(),
-        }};
-        console.info('[Walter voice] speaking', phrase);
-      }};
-      utterance.onend = () => release('ended');
-      utterance.onerror = (event) => {{
-        console.warn('[Walter voice] synthesis error', event && event.error ? event.error : event);
-        release('error');
-      }};
-
-      const chooseVoice = () => {{
+      const resolveVoice = () => {{
         const voices = synth.getVoices ? synth.getVoices() : [];
-        if (!preferred || !voices.length) return;
+        if (!preferred || !voices.length) return null;
         const preferredLower = preferred.toLowerCase();
-        const voice = voices.find(v =>
+        return voices.find(v =>
           v.voiceURI === preferred ||
           v.name === preferred ||
           v.name.toLowerCase().includes(preferredLower)
-        );
-        if (voice) utterance.voice = voice;
+        ) || null;
       }};
 
-      let spoken = false;
-      const speakOnce = () => {{
-        if (spoken) return;
-        spoken = true;
-        chooseVoice();
+      const speak = (source) => {{
+        const utterance = new Utterance(phrase);
+        utterance.rate = 0.95;
+        utterance.pitch = 0.9;
+        utterance.volume = 1.0;
+        const selectedVoice = resolveVoice();
+        if (selectedVoice) utterance.voice = selectedVoice;
+        const actualVoice = selectedVoice ? selectedVoice.name : (preferred || 'System Default');
+        speechWindow.__walterActiveUtterance = utterance;
+        speechWindow.__walterVoiceTransport = {{
+          phrase,
+          preferred,
+          actualVoice,
+          source,
+          requestedAt: new Date().toISOString(),
+          status: 'requested',
+        }};
+        setStatus('requested', `${{actualVoice}} · ${{source}}`);
+
+        const release = (status) => {{
+          speechWindow.__walterVoiceTransport = {{
+            ...speechWindow.__walterVoiceTransport,
+            status,
+            completedAt: new Date().toISOString(),
+          }};
+          setStatus(status, `${{actualVoice}} · ${{source}}`);
+          if (speechWindow.__walterActiveUtterance === utterance) {{
+            speechWindow.__walterActiveUtterance = null;
+          }}
+        }};
+        const releaseError = (detail) => {{
+          // Keep the established GS318 lifecycle contract literal and layer the
+          // richer diagnostic detail on top of it instead of changing semantics.
+          release('error');
+          speechWindow.__walterVoiceTransport = {{
+            ...speechWindow.__walterVoiceTransport,
+            detail,
+          }};
+          setStatus('error', detail);
+        }};
+        utterance.onstart = () => {{
+          speechWindow.__walterVoiceTransport = {{
+            ...speechWindow.__walterVoiceTransport,
+            status: 'speaking',
+            startedAt: new Date().toISOString(),
+          }};
+          setStatus('speaking', `${{actualVoice}} · ${{source}}`);
+          console.info('[Walter voice] speaking', phrase);
+        }};
+        utterance.onend = () => release('ended');
+        utterance.onerror = (event) => {{
+          const error = event && event.error ? String(event.error) : 'unknown synthesis error';
+          console.warn('[Walter voice] synthesis error', error);
+          releaseError(error);
+        }};
+
         try {{
           if (synth.paused && synth.resume) synth.resume();
           if (synth.cancel) synth.cancel();
@@ -189,7 +241,7 @@ def _speech_component(sound_path: str, phrase: str, voice_name: str = "") -> str
                 window.speechSynthesis.speak(utterance);
               }} catch (fallbackError) {{
                 console.warn('[Walter voice] frame fallback failed', fallbackError);
-                release('error');
+                releaseError(String(fallbackError));
               }}
             }}
           }}, 75);
@@ -199,24 +251,35 @@ def _speech_component(sound_path: str, phrase: str, voice_name: str = "") -> str
             window.speechSynthesis.speak(utterance);
           }} catch (fallbackError) {{
             console.warn('[Walter voice] frame fallback failed', fallbackError);
-            release('error');
+            releaseError(String(fallbackError));
           }}
         }}
       }};
 
+      let initialSpoken = false;
+      const speakInitialOnce = () => {{
+        if (initialSpoken) return;
+        initialSpoken = true;
+        speak('Walter alert');
+      }};
+
+      if (replayNode) {{
+        replayNode.addEventListener('click', () => speak('manual replay'));
+      }}
+
       if (synth.getVoices && synth.getVoices().length) {{
-        speakOnce();
+        speakInitialOnce();
       }} else {{
         let attempts = 0;
         const retry = () => {{
           attempts += 1;
           if ((synth.getVoices && synth.getVoices().length) || attempts >= 12) {{
-            speakOnce();
+            speakInitialOnce();
             return;
           }}
           speechWindow.setTimeout(retry, 125);
         }};
-        if ('onvoiceschanged' in synth) synth.onvoiceschanged = speakOnce;
+        if ('onvoiceschanged' in synth) synth.onvoiceschanged = speakInitialOnce;
         speechWindow.setTimeout(retry, 125);
       }}
     }})();
@@ -269,7 +332,7 @@ def install() -> None:
             )
         ui.st.components.v1.html(
             _speech_component(sound_path, phrase, voice_name),
-            height=1,
+            height=44,
             scrolling=False,
         )
 
@@ -278,4 +341,5 @@ def install() -> None:
     play_alert._gs318_voice_observability = True
     play_alert._gs319_cancel_settle = True
     play_alert._gs320_first_attention = True
+    play_alert._gs321_transport_self_test = True
     ui.play_alert = play_alert
