@@ -124,3 +124,7 @@ _install_gs311_unified_voice()
 from .gs312_scan_stage_timing import install as _install_gs312_scan_stage_timing  # noqa: E402
 
 _install_gs312_scan_stage_timing()
+
+from .gs313_restart_scan_guard import install as _install_gs313_restart_scan_guard  # noqa: E402
+
+_install_gs313_restart_scan_guard()
