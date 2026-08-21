@@ -1,4 +1,4 @@
-"""GS311/GS317/GS318: drive audible alerts from Walter's unified display state.
+"""GS311/GS317/GS318/GS319: drive audible alerts from Walter's unified display state.
 
 This module is presentation/alert only. It does not change discovery, ranking,
 qualification, readiness, thresholds, or execution.
@@ -154,9 +154,23 @@ def _speech_component(sound_path: str, phrase: str, voice_name: str = "") -> str
           if (synth.cancel) synth.cancel();
           if (synth.resume) synth.resume();
           console.info('[Walter voice] request accepted by component', phrase);
-          synth.speak(utterance);
-        }} catch (primaryError) {{
-          console.warn('[Walter voice] parent synth failed; using frame fallback', primaryError);
+          // Chrome can race a newly queued utterance against the preceding cancel().
+          // Give cancellation one event-loop turn to settle before speaking.
+          speechWindow.setTimeout(() => {{
+            try {{
+              synth.speak(utterance);
+            }} catch (primaryError) {{
+              console.warn('[Walter voice] parent synth failed; using frame fallback', primaryError);
+              try {{
+                window.speechSynthesis.speak(utterance);
+              }} catch (fallbackError) {{
+                console.warn('[Walter voice] frame fallback failed', fallbackError);
+                release('error');
+              }}
+            }}
+          }}, 75);
+        }} catch (setupError) {{
+          console.warn('[Walter voice] synth setup failed; using frame fallback', setupError);
           try {{
             window.speechSynthesis.speak(utterance);
           }} catch (fallbackError) {{
@@ -238,4 +252,5 @@ def install() -> None:
     play_alert._gs311_unified_voice = True
     play_alert._gs317_voice_transport_hardening = True
     play_alert._gs318_voice_observability = True
+    play_alert._gs319_cancel_settle = True
     ui.play_alert = play_alert
