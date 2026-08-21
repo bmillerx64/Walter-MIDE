@@ -39,9 +39,38 @@ def test_voice_transition_uses_same_unified_opportunity_state_as_display():
     assert "TEST. WATCH FOR ENTRY." in unified_alert_phrase([current])
 
 
+def test_proven_first_actionable_attention_is_spoken_once_on_first_print():
+    current = _record(
+        discovery_history=[{"scan": 7, "event": "first_seen"}],
+        discovery_last_seen_scan=7,
+    )
+
+    changes = unified_state_changes([current])
+
+    assert changes == [
+        {
+            "symbol": "TEST",
+            "from": "NEW",
+            "to": "WATCH FOR ENTRY",
+            "event": "first_actionable_attention",
+        }
+    ]
+    assert "TEST. WATCH FOR ENTRY." in unified_alert_phrase([current])
+
+
 def test_no_fresh_prior_observation_means_no_repeated_voice_transition():
     assert unified_state_changes([_record()]) == []
     assert unified_alert_phrase([_record()]) == ""
+
+
+def test_compacted_record_without_explicit_first_seen_evidence_does_not_realert():
+    current = _record(
+        discovery_first_seen_at="2026-08-21T13:00:00+00:00",
+        discovery_last_seen_at="2026-08-21T13:05:00+00:00",
+    )
+
+    assert unified_state_changes([current]) == []
+    assert unified_alert_phrase([current]) == ""
 
 
 def test_speech_component_targets_parent_browser_with_iframe_fallback():
