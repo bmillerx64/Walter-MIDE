@@ -28,6 +28,24 @@ DISPLAY_ORDER = (
     HALTED,
 )
 
+# GS310's unified contract depends on evidence that older presentation callers did
+# not necessarily provide.  Keep those legacy/minimal callers on their established
+# behavior rather than manufacturing a unified state from absent evidence.  Live
+# scanner records carry these fields, so current trader-facing output still uses the
+# unified contract.
+_UNIFIED_EVIDENCE_KEYS = frozenset(
+    {
+        "participation_surge_score",
+        "expansion_quality",
+        "vwap_distance_pct",
+    }
+)
+
+
+def _has_unified_evidence(record: dict) -> bool:
+    """True when a record contains enough GS310-era evidence for unified output."""
+    return any(key in record for key in _UNIFIED_EVIDENCE_KEYS)
+
 
 def presentation_contract(record: dict) -> dict:
     """Return the one display state, section, and compatible user action."""
@@ -72,7 +90,12 @@ def install() -> None:
 
     current_sections = ui.scanner_v2_display_sections
     if not getattr(current_sections, "_gs314_state_consistency", False):
+        original_sections = current_sections
+
         def scanner_v2_display_sections(records: list[dict]):
+            actionable = ui.actionable_candidate_records(records)
+            if actionable and not any(_has_unified_evidence(record) for record in actionable):
+                return original_sections(records)
             sections = consistent_display_sections(records)
             return [
                 (WATCH_FOR_ENTRY, sections[WATCH_FOR_ENTRY], True),
@@ -83,7 +106,7 @@ def install() -> None:
             ]
 
         scanner_v2_display_sections._gs314_state_consistency = True
-        scanner_v2_display_sections._gs314_original = current_sections
+        scanner_v2_display_sections._gs314_original = original_sections
         ui.scanner_v2_display_sections = scanner_v2_display_sections
 
     current_card = ui.opportunity_card
@@ -91,6 +114,8 @@ def install() -> None:
         original_card = current_card
 
         def opportunity_card(record: dict):
+            if not _has_unified_evidence(record):
+                return original_card(record)
             detached = deepcopy(record)
             detached["workflow_label"] = presentation_contract(record)["state"]
             return original_card(detached)
@@ -99,11 +124,19 @@ def install() -> None:
         opportunity_card._gs314_original = original_card
         ui.opportunity_card = opportunity_card
 
-    # ``opportunity_card`` resolves this module-global function at call time.
-    # Replacing the UI-local binding keeps the action compatible with the same
-    # presentation state while leaving mide.escalation and scanner logic intact.
-    def trade_recommendation(record: dict) -> dict:
-        return presentation_contract(record)["recommendation"]
+    current_recommendation = ui.trade_recommendation
+    if not getattr(current_recommendation, "_gs314_state_consistency", False):
+        original_recommendation = current_recommendation
 
-    trade_recommendation._gs314_state_consistency = True
-    ui.trade_recommendation = trade_recommendation
+        # ``opportunity_card`` resolves this module-global function at call time.
+        # Replacing the UI-local binding keeps the action compatible with the same
+        # presentation state for GS310-era records while retaining the established
+        # recommendation for legacy/minimal records that lack unified evidence.
+        def trade_recommendation(record: dict) -> dict:
+            if not _has_unified_evidence(record):
+                return original_recommendation(record)
+            return presentation_contract(record)["recommendation"]
+
+        trade_recommendation._gs314_state_consistency = True
+        trade_recommendation._gs314_original = original_recommendation
+        ui.trade_recommendation = trade_recommendation
