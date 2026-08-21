@@ -72,6 +72,25 @@ def test_voice_transport_resumes_stuck_browser_synth_before_speaking():
     assert markup.index("synth.resume()") < markup.index("synth.speak(utterance)")
 
 
+def test_voice_transport_waits_for_cancel_to_settle_before_speaking():
+    markup = _speech_component("missing-alert.wav", "TEST. WATCH FOR ENTRY.")
+
+    assert "speechWindow.setTimeout(() =>" in markup
+    assert "}, 75);" in markup
+    assert markup.index("synth.cancel()") < markup.index("speechWindow.setTimeout(() =>")
+    assert markup.index("speechWindow.setTimeout(() =>") < markup.index("synth.speak(utterance)")
+
+
+def test_voice_transport_retains_async_fallback_after_delayed_primary_speak():
+    markup = _speech_component("missing-alert.wav", "TEST. WATCH FOR ENTRY.")
+
+    delayed_speak = markup.index("synth.speak(utterance)")
+    primary_fallback = markup.index("parent synth failed; using frame fallback")
+    frame_speak = markup.index("window.speechSynthesis.speak(utterance)")
+    assert delayed_speak < primary_fallback < frame_speak
+    assert "synth setup failed; using frame fallback" in markup
+
+
 def test_voice_transport_retains_utterance_until_browser_finishes():
     markup = _speech_component("missing-alert.wav", "TEST. WATCH FOR ENTRY.")
 
