@@ -41,10 +41,10 @@ def test_successful_speech_confirms_arm_and_retains_gs321_diagnostics():
     assert "status: 'speaking'" in markup
 
 
-def test_armed_path_preserves_cancel_settle_and_fallback_contracts():
+def test_armed_path_preserves_settle_and_fallback_without_self_cancellation():
     markup = _speech_component("missing-alert.wav", "TEST. LOOK NOW.")
 
-    assert "synth.cancel()" in markup
+    assert "synth.cancel()" not in markup
     assert "speechWindow.setTimeout(() =>" in markup
     assert "}, 75);" in markup
     assert "synth.speak(utterance)" in markup
