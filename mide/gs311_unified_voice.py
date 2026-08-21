@@ -86,10 +86,9 @@ def unified_alert_phrase(records: list[dict]) -> str:
 def _speech_component(sound_path: str, phrase: str, voice_name: str = "") -> str:
     """Build resilient browser speech markup with visible transport diagnostics.
 
-    GS321 keeps the actual browser transport state inside the component instead
-    of guessing from the server-side request. The replay button repeats the exact
-    same utterance locally, so audio transport can be tested without waiting for
-    a market event or creating a second Walter alert event.
+    GS321 exposes actual browser transport state and a manual replay control.
+    GS322 adds an explicit one-time browser-session arm contract so Chrome/user
+    activation is never silently assumed.
     """
     encoded = ""
     path = Path(sound_path)
@@ -158,6 +157,24 @@ def _speech_component(sound_path: str, phrase: str, voice_name: str = "") -> str
         return;
       }}
 
+      const readStoredArmed = () => {{
+        try {{
+          return speechWindow.sessionStorage &&
+            speechWindow.sessionStorage.getItem('walterVoiceArmed') === '1';
+        }} catch (_) {{
+          return false;
+        }}
+      }};
+      const markArmed = () => {{
+        speechWindow.__walterVoiceArmed = true;
+        try {{
+          if (speechWindow.sessionStorage) {{
+            speechWindow.sessionStorage.setItem('walterVoiceArmed', '1');
+          }}
+        }} catch (_) {{}}
+      }};
+      const isArmed = () => Boolean(speechWindow.__walterVoiceArmed || readStoredArmed());
+
       const resolveVoice = () => {{
         const voices = synth.getVoices ? synth.getVoices() : [];
         if (!preferred || !voices.length) return null;
@@ -185,6 +202,7 @@ def _speech_component(sound_path: str, phrase: str, voice_name: str = "") -> str
           source,
           requestedAt: new Date().toISOString(),
           status: 'requested',
+          armed: isArmed(),
         }};
         setStatus('requested', `${{actualVoice}} · ${{source}}`);
 
@@ -200,8 +218,6 @@ def _speech_component(sound_path: str, phrase: str, voice_name: str = "") -> str
           }}
         }};
         const releaseError = (detail) => {{
-          // Keep the established GS318 lifecycle contract literal and layer the
-          // richer diagnostic detail on top of it instead of changing semantics.
           release('error');
           speechWindow.__walterVoiceTransport = {{
             ...speechWindow.__walterVoiceTransport,
@@ -210,12 +226,15 @@ def _speech_component(sound_path: str, phrase: str, voice_name: str = "") -> str
           setStatus('error', detail);
         }};
         utterance.onstart = () => {{
+          markArmed();
           speechWindow.__walterVoiceTransport = {{
             ...speechWindow.__walterVoiceTransport,
             status: 'speaking',
+            armed: true,
             startedAt: new Date().toISOString(),
           }};
           setStatus('speaking', `${{actualVoice}} · ${{source}}`);
+          if (replayNode) replayNode.textContent = 'Replay test';
           console.info('[Walter voice] speaking', phrase);
         }};
         utterance.onend = () => release('ended');
@@ -263,8 +282,32 @@ def _speech_component(sound_path: str, phrase: str, voice_name: str = "") -> str
         speak('Walter alert');
       }};
 
+      const manualReplayOrArm = () => {{
+        if (!isArmed()) {{
+          markArmed();
+          setStatus('requested', 'user activation · pending alert');
+          speak('manual replay');
+          return;
+        }}
+        speak('manual replay');
+      }};
       if (replayNode) {{
-        replayNode.addEventListener('click', () => speak('manual replay'));
+        replayNode.addEventListener('click', manualReplayOrArm);
+      }}
+
+      if (!isArmed()) {{
+        speechWindow.__walterVoiceTransport = {{
+          phrase,
+          preferred,
+          requestedAt: new Date().toISOString(),
+          status: 'blocked',
+          armed: false,
+          detail: 'user activation required',
+        }};
+        setStatus('blocked', 'Click Enable voice once');
+        if (replayNode) replayNode.textContent = 'Enable voice';
+        console.warn('[Walter voice] blocked pending user activation');
+        return;
       }}
 
       if (synth.getVoices && synth.getVoices().length) {{
@@ -342,4 +385,5 @@ def install() -> None:
     play_alert._gs319_cancel_settle = True
     play_alert._gs320_first_attention = True
     play_alert._gs321_transport_self_test = True
+    play_alert._gs322_browser_session_arm = True
     ui.play_alert = play_alert
