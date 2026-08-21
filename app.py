@@ -1081,7 +1081,7 @@ with st.sidebar:
           let changed = false;
           if (!params.get(voiceParam) && storedVoice) {{ params.set(voiceParam, storedVoice); changed = true; }}
           if (params.get('walter_david_available') !== storedDavidAvailable) {{ params.set('walter_david_available', storedDavidAvailable); changed = true; }}
-          if (changed) window.parent.location.replace(`${{window.parent.location.pathname}}?${{params}}`);
+          if (changed) window.parent.history.replaceState(null, '', `${{window.parent.location.pathname}}?${{params}}`);
         }};
         if ('speechSynthesis' in window) {{
           if (window.speechSynthesis.getVoices().length) discover();
@@ -2688,7 +2688,8 @@ if active_tab == "Diagnostics":
     st.write(f"Distribution installed: **{webull_runtime_report['installed']}**")
     st.write(f"Installed version: **{webull_runtime_report['version'] or 'N/A'}**")
     with st.expander("Distribution files containing webull", expanded=False):
-        st.code("\n".join(webull_runtime_report["webull_files"]) or "(none)")
+        st.code("\
+".join(webull_runtime_report["webull_files"]) or "(none)")
     st.markdown("**Importable top-level modules supplied by the distribution**")
     st.dataframe(
         webull_runtime_report["top_level_modules"],
@@ -2747,7 +2748,8 @@ if active_tab == "Diagnostics":
         losses = universe_report.get("unexplained_losses", [])
         st.markdown(f"**Unexplained losses:** {len(losses)}")
         if losses:
-            st.code("\n".join(losses))
+            st.code("\
+".join(losses))
         with st.expander("Symbol-level universe path", expanded=False):
             st.dataframe(universe_report.get("symbols", []), use_container_width=True,
                          hide_index=True)
