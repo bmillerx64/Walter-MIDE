@@ -1081,7 +1081,7 @@ with st.sidebar:
           let changed = false;
           if (!params.get(voiceParam) && storedVoice) {{ params.set(voiceParam, storedVoice); changed = true; }}
           if (params.get('walter_david_available') !== storedDavidAvailable) {{ params.set('walter_david_available', storedDavidAvailable); changed = true; }}
-          if (changed) window.parent.location.replace(`${{window.parent.location.pathname}}?${{params}}`);
+          if (changed) window.parent.history.replaceState(null, '', `${{window.parent.location.pathname}}?${{params}}`);
         }};
         if ('speechSynthesis' in window) {{
           if (window.speechSynthesis.getVoices().length) discover();
@@ -1737,9 +1737,6 @@ def _run_live_pipeline(
             decision["reason"] for symbol, decision in prefilter_decisions.items()
             if symbol not in candidate_symbols
         ]
-        # Aggregate raw snapshot price/volume signals for the market session panel.
-        # This allows market quality to be assessed even when no candidates survive
-        # the prefilter.
         _sm_pct = []
         _sm_vol = []
         _sm_dvol = []
@@ -1876,8 +1873,6 @@ def _run_live_pipeline(
 
     class RuntimeStore:
         def persist(self, results):
-            # The complete ledger, including rejected candidates, is durable before
-            # Mission Publication makes qualified records visible.
             history.append(results)
 
     def rank(records):
@@ -1905,8 +1900,6 @@ def _run_live_pipeline(
             client.diagnostics, 'state["ranked"]', state["ranked"],
             statement='state["ranked"] = records',
         )
-        # Transitional identity alias for integrations invoked during the scan;
-        # it is the exact pipeline list, never a second result container.
         st.session_state.records = records
 
     architecture = WalterArchitectureV1(
@@ -1933,8 +1926,6 @@ def _run_live_pipeline(
     scan_context(st.session_state).pipeline = architecture
     ledger = architecture.run()
     ranked = state["ranked"]
-    # Entry readiness is an observational view of the already-completed
-    # Expansion decision. It does not add a gate or alter ranking membership.
     state["stage_diagnostics"].append(stage_diagnostic(
         "Entry readiness", ranked, ranked,
         fields=("candidate_status", "qualified_for_entry", "trigger_diagnostics"),
@@ -1943,8 +1934,6 @@ def _run_live_pipeline(
         "Ranking", ranked, ranked,
         fields=("mission_rank", "conviction_score", "participation_score"),
     ))
-    # Outcome measurement is strictly downstream of publication and receives
-    # detached snapshots, never the authoritative candidate objects.
     try:
         MissionOutcomeStore().process_scan(
             [dict(record) for record in ranked],
@@ -2057,11 +2046,8 @@ def _run_live_pipeline(
         ),
         "snapshots_requested": state["scan_stage_counts"].get("snapshot_requests_sent", 0),
         "snapshots_received": state["scan_stage_counts"].get("snapshot_records_received", 0),
-        # data_integrity checks for both "prefilter_count" and "prefiltered" in
-        # funnel_keys / downstream_keys, so both aliases must be populated.
         "prefilter_count": state["scan_stage_counts"].get("prefilter_output", 0),
         "prefiltered": state["scan_stage_counts"].get("prefilter_output", 0),
-        # Same: "candidates" and "candidate_count" are both read by data_integrity.
         "candidates": len(ranked),
         "candidate_count": len(ranked),
     }
@@ -2138,8 +2124,6 @@ def run_live(
                 logging.getLogger(__name__).exception(
                     "Could not update failed live-scan status"
                 )
-        # This is the final containment boundary. A UI, persistence, malformed
-        # response, or unexpected candidate error must never take Walter down.
         diagnostics = {"provider_failures": []}
         record_provider_failure(
             diagnostics, provider="Walter Runtime", operation="live scan",
@@ -2186,8 +2170,6 @@ else:
 if mode.startswith("Live ") and should_scan and not st.session_state[STOP_REQUESTED_KEY]:
     st.session_state.last_scan_attempt = datetime.now().astimezone()
     try:
-        # Resolve the watchdog dynamically: a deployment may have replaced the
-        # module while this Streamlit session still holds older app globals.
         repair_mide_module_links()
         watchdog = importlib.import_module("mide.watchdog").PROCESS_SCAN_WATCHDOG
         records, universe_count, prefiltered, warnings, diagnostics = watchdog.run(
@@ -2242,8 +2224,6 @@ if mode.startswith("Live ") and should_scan and not st.session_state[STOP_REQUES
         st.info(
             "Walter remains online and will retry automatically with backoff."
         )
-# The sidebar slot keeps its original layout position, but the bytes are read
-# only after this run's scan (if any) has finished recording.
 with flight_recorder_download_slot:
     st.download_button(
         "Download Flight Recorder",
@@ -2611,8 +2591,6 @@ if alerts and new_early_symbols and not entry_alert_open:
         alert_voice_for_session(),
     )
 elif alerts and alert_phrase:
-    # Escalation transitions are audible once per distinct scan transition, rather
-    # than replaying whenever Streamlit reruns for an unrelated widget change.
     if (
         not state_change_signature
         or state_change_signature != st.session_state.last_escalation_alert
