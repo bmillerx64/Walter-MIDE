@@ -1,4 +1,4 @@
-"""GS311/GS317/GS318/GS319: drive audible alerts from Walter's unified display state.
+"""GS311/GS317/GS318/GS319/GS320: drive audible alerts from Walter's unified display state.
 
 This module is presentation/alert only. It does not change discovery, ranking,
 qualification, readiness, thresholds, or execution.
@@ -9,17 +9,41 @@ import base64
 import json
 from pathlib import Path
 
+from .gs296_first_print_alert_patch import _explicit_first_observation
 from .gs310_unified_opportunity_state import opportunity_state
 from .gs318_voice_observability import record_voice_request
 from .timeframe_alignment import alignment_voice
 
 
+FIRST_ATTENTION_STATES = {"LOOK NOW", "WATCH FOR ENTRY", "ENTRY WINDOW"}
+
+
 def unified_state_changes(records: list[dict]) -> list[dict]:
-    """Return current unified-opportunity transitions with fresh prior evidence."""
+    """Return current unified-opportunity transitions with fresh prior evidence.
+
+    A proven first observation is also a real transition when Walter's displayed
+    state already warrants attention. This keeps voice aligned with the visible
+    Opportunity Board without manufacturing repeat alerts from compacted records.
+    """
     changes: list[dict] = []
     for record in records:
+        symbol = str(record.get("symbol") or "").upper()
         previous = record.get("opportunity_pulse_previous") or {}
         if not previous:
+            current_state = opportunity_state(record)["state"]
+            if (
+                symbol
+                and current_state in FIRST_ATTENTION_STATES
+                and _explicit_first_observation(record)
+            ):
+                changes.append(
+                    {
+                        "symbol": symbol,
+                        "from": "NEW",
+                        "to": current_state,
+                        "event": "first_actionable_attention",
+                    }
+                )
             continue
         old = opportunity_state(previous)["state"]
         new = opportunity_state(record)["state"]
@@ -27,7 +51,7 @@ def unified_state_changes(records: list[dict]) -> list[dict]:
             continue
         changes.append(
             {
-                "symbol": str(record.get("symbol") or "").upper(),
+                "symbol": symbol,
                 "from": old,
                 "to": new,
             }
@@ -253,4 +277,5 @@ def install() -> None:
     play_alert._gs317_voice_transport_hardening = True
     play_alert._gs318_voice_observability = True
     play_alert._gs319_cancel_settle = True
+    play_alert._gs320_first_attention = True
     ui.play_alert = play_alert
