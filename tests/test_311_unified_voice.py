@@ -92,21 +92,21 @@ def test_missing_sound_file_does_not_suppress_spoken_phrase():
     assert "synth.speak(utterance)" in markup
 
 
-def test_voice_transport_resumes_stuck_browser_synth_before_speaking():
+def test_voice_transport_resumes_stuck_browser_synth_without_cancelling_queue():
     markup = _speech_component("missing-alert.wav", "TEST. WATCH FOR ENTRY.")
 
     assert "synth.paused" in markup
     assert "synth.resume()" in markup
-    assert "synth.cancel()" in markup
+    assert "synth.cancel()" not in markup
     assert markup.index("synth.resume()") < markup.index("synth.speak(utterance)")
 
 
-def test_voice_transport_waits_for_cancel_to_settle_before_speaking():
+def test_voice_transport_keeps_settle_delay_without_self_cancel():
     markup = _speech_component("missing-alert.wav", "TEST. WATCH FOR ENTRY.")
 
     assert "speechWindow.setTimeout(() =>" in markup
     assert "}, 75);" in markup
-    assert markup.index("synth.cancel()") < markup.index("speechWindow.setTimeout(() =>")
+    assert "synth.cancel()" not in markup
     assert markup.index("speechWindow.setTimeout(() =>") < markup.index("synth.speak(utterance)")
 
 

@@ -1,4 +1,4 @@
-"""GS323: preserve Chrome user activation for Walter's one-time voice arm.
+"""GS323/GS324: preserve Chrome user activation and stop self-cancelling voice.
 
 Presentation/alert transport only. No discovery, scoring, qualification,
 readiness, ranking, thresholds, execution, news, or candidate selection changes.
@@ -7,20 +7,19 @@ from __future__ import annotations
 
 
 def install() -> None:
-    """Make the Enable voice click speak immediately in the activated frame.
+    """Make Walter speech deterministic without cancelling its own utterances.
 
-    GS322 correctly requires a one-time gesture, but its shared transport still
-    cancels synthesis and defers speak() by 75ms. Chrome can report that path as
-    ``interrupted`` and the delay needlessly moves the actual speech request away
-    from the click that granted transient user activation.
-
-    Keep the established cancel/settle transport for later automatic alerts and
-    manual replays. Only the first explicit activation click uses the direct path.
+    GS323 keeps the first Enable voice click inside the activated frame. GS324
+    removes ``speechSynthesis.cancel()`` from the remaining automatic/replay
+    transport after deployed Chrome diagnostics proved that path transitions
+    from ``requested`` directly to ``error: interrupted``. Browser speech
+    synthesis already provides a queue; Walter should enqueue, not cancel, its
+    own alerts.
     """
     from . import gs311_unified_voice as voice
 
     prior_component = voice._speech_component
-    if getattr(prior_component, "_gs323_direct_user_activation", False):
+    if getattr(prior_component, "_gs324_no_self_cancel", False):
         return
 
     def direct_activation_component(
@@ -59,7 +58,6 @@ def install() -> None:
 
         try {
           if (synth.paused && synth.resume) synth.resume();
-          if (synth.cancel) synth.cancel();
           if (synth.resume) synth.resume();
           console.info('[Walter voice] request accepted by component', phrase);"""
         markup = markup.replace(normal_transport, direct_transport)
@@ -78,7 +76,14 @@ def install() -> None:
         }""",
         )
 
+        # GS324 safety net: if upstream transport text changes while retaining
+        # the old cancel call, strip it from the rendered browser component.
+        markup = markup.replace(
+            "          if (synth.cancel) synth.cancel();\n",
+            "          // GS324: preserve the browser speech queue; do not self-cancel.\n",
+        )
         return markup
 
     direct_activation_component._gs323_direct_user_activation = True
+    direct_activation_component._gs324_no_self_cancel = True
     voice._speech_component = direct_activation_component

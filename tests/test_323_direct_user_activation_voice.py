@@ -36,13 +36,14 @@ def test_direct_activation_path_preserves_transient_user_gesture():
     assert "activatedSynth.speak(utterance)" in direct_block
 
 
-def test_later_automatic_alerts_keep_existing_cancel_settle_transport():
+def test_later_automatic_alerts_preserve_queue_instead_of_self_cancelling():
     markup = _speech_component("missing-alert.wav", "TEST. WATCH FOR ENTRY.")
 
-    assert "if (synth.cancel) synth.cancel();" in markup
+    assert "synth.cancel()" not in markup
     assert "speechWindow.setTimeout(() =>" in markup
     assert "}, 75);" in markup
     assert "speakInitialOnce();" in markup
+    assert "synth.speak(utterance)" in markup
 
 
 def test_gs322_blocked_and_enable_voice_contract_is_preserved():
