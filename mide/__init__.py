@@ -132,3 +132,7 @@ _install_gs313_restart_scan_guard()
 from .gs314_state_consistency import install as _install_gs314_state_consistency  # noqa: E402
 
 _install_gs314_state_consistency()
+
+from .gs315_news_intelligence import install as _install_gs315_news_intelligence  # noqa: E402
+
+_install_gs315_news_intelligence()
