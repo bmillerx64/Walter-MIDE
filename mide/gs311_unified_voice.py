@@ -188,17 +188,26 @@ def _speech_component(sound_path: str, phrase: str, voice_name: str = "") -> str
         }};
         setStatus('requested', `${{actualVoice}} · ${{source}}`);
 
-        const release = (status, detail = '') => {{
+        const release = (status) => {{
           speechWindow.__walterVoiceTransport = {{
             ...speechWindow.__walterVoiceTransport,
             status,
             completedAt: new Date().toISOString(),
-            detail,
           }};
-          setStatus(status, detail || `${{actualVoice}} · ${{source}}`);
+          setStatus(status, `${{actualVoice}} · ${{source}}`);
           if (speechWindow.__walterActiveUtterance === utterance) {{
             speechWindow.__walterActiveUtterance = null;
           }}
+        }};
+        const releaseError = (detail) => {{
+          // Keep the established GS318 lifecycle contract literal and layer the
+          // richer diagnostic detail on top of it instead of changing semantics.
+          release('error');
+          speechWindow.__walterVoiceTransport = {{
+            ...speechWindow.__walterVoiceTransport,
+            detail,
+          }};
+          setStatus('error', detail);
         }};
         utterance.onstart = () => {{
           speechWindow.__walterVoiceTransport = {{
@@ -213,7 +222,7 @@ def _speech_component(sound_path: str, phrase: str, voice_name: str = "") -> str
         utterance.onerror = (event) => {{
           const error = event && event.error ? String(event.error) : 'unknown synthesis error';
           console.warn('[Walter voice] synthesis error', error);
-          release('error', error);
+          releaseError(error);
         }};
 
         try {{
@@ -232,7 +241,7 @@ def _speech_component(sound_path: str, phrase: str, voice_name: str = "") -> str
                 window.speechSynthesis.speak(utterance);
               }} catch (fallbackError) {{
                 console.warn('[Walter voice] frame fallback failed', fallbackError);
-                release('error', String(fallbackError));
+                releaseError(String(fallbackError));
               }}
             }}
           }}, 75);
@@ -242,7 +251,7 @@ def _speech_component(sound_path: str, phrase: str, voice_name: str = "") -> str
             window.speechSynthesis.speak(utterance);
           }} catch (fallbackError) {{
             console.warn('[Walter voice] frame fallback failed', fallbackError);
-            release('error', String(fallbackError));
+            releaseError(String(fallbackError));
           }}
         }}
       }};
