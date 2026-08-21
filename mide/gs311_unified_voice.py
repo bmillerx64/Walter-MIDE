@@ -1,4 +1,4 @@
-"""GS311/GS317: drive audible attention alerts from Walter's unified display state.
+"""GS311/GS317/GS318: drive audible alerts from Walter's unified display state.
 
 This module is presentation/alert only. It does not change discovery, ranking,
 qualification, readiness, thresholds, or execution.
@@ -10,11 +10,8 @@ import json
 from pathlib import Path
 
 from .gs310_unified_opportunity_state import opportunity_state
+from .gs318_voice_observability import record_voice_request
 from .timeframe_alignment import alignment_voice
-
-
-VOICE_REQUEST_COUNT_KEY = "_walter_voice_request_count"
-VOICE_LAST_PHRASE_KEY = "_walter_voice_last_requested_phrase"
 
 
 def unified_state_changes(records: list[dict]) -> list[dict]:
@@ -63,14 +60,7 @@ def unified_alert_phrase(records: list[dict]) -> str:
 
 
 def _speech_component(sound_path: str, phrase: str, voice_name: str = "") -> str:
-    """Build resilient browser speech/audio markup.
-
-    Chrome can leave ``speechSynthesis`` paused after a tab/app lifecycle event,
-    and short-lived component frames can allow an utterance object to be garbage
-    collected before playback completes.  Keep the utterance on the selected
-    speech window, explicitly resume a paused synthesizer, and retry voice loading
-    without requiring the selected voice to exist before speaking.
-    """
+    """Build resilient browser speech/audio markup with transport diagnostics."""
     encoded = ""
     path = Path(sound_path)
     if path.exists():
@@ -94,25 +84,53 @@ def _speech_component(sound_path: str, phrase: str, voice_name: str = "") -> str
       try {{
         if (window.parent && 'speechSynthesis' in window.parent) speechWindow = window.parent;
       }} catch (_) {{ speechWindow = window; }}
-      if (!('speechSynthesis' in speechWindow)) return;
+      if (!('speechSynthesis' in speechWindow)) {{
+        console.warn('[Walter voice] speechSynthesis unavailable');
+        return;
+      }}
 
       const synth = speechWindow.speechSynthesis;
       const Utterance = speechWindow.SpeechSynthesisUtterance || window.SpeechSynthesisUtterance;
-      if (!Utterance) return;
+      if (!Utterance) {{
+        console.warn('[Walter voice] SpeechSynthesisUtterance unavailable');
+        return;
+      }}
 
       const utterance = new Utterance(phrase);
       utterance.rate = 0.95;
       utterance.pitch = 0.9;
       utterance.volume = 1.0;
       speechWindow.__walterActiveUtterance = utterance;
+      speechWindow.__walterVoiceTransport = {{
+        phrase,
+        preferred,
+        requestedAt: new Date().toISOString(),
+        status: 'requested',
+      }};
 
-      const release = () => {{
+      const release = (status) => {{
+        speechWindow.__walterVoiceTransport = {{
+          ...speechWindow.__walterVoiceTransport,
+          status,
+          completedAt: new Date().toISOString(),
+        }};
         if (speechWindow.__walterActiveUtterance === utterance) {{
           speechWindow.__walterActiveUtterance = null;
         }}
       }};
-      utterance.onend = release;
-      utterance.onerror = release;
+      utterance.onstart = () => {{
+        speechWindow.__walterVoiceTransport = {{
+          ...speechWindow.__walterVoiceTransport,
+          status: 'speaking',
+          startedAt: new Date().toISOString(),
+        }};
+        console.info('[Walter voice] speaking', phrase);
+      }};
+      utterance.onend = () => release('ended');
+      utterance.onerror = (event) => {{
+        console.warn('[Walter voice] synthesis error', event && event.error ? event.error : event);
+        release('error');
+      }};
 
       const chooseVoice = () => {{
         const voices = synth.getVoices ? synth.getVoices() : [];
@@ -135,11 +153,16 @@ def _speech_component(sound_path: str, phrase: str, voice_name: str = "") -> str
           if (synth.paused && synth.resume) synth.resume();
           if (synth.cancel) synth.cancel();
           if (synth.resume) synth.resume();
+          console.info('[Walter voice] request accepted by component', phrase);
           synth.speak(utterance);
-        }} catch (_) {{
+        }} catch (primaryError) {{
+          console.warn('[Walter voice] parent synth failed; using frame fallback', primaryError);
           try {{
             window.speechSynthesis.speak(utterance);
-          }} catch (_) {{}}
+          }} catch (fallbackError) {{
+            console.warn('[Walter voice] frame fallback failed', fallbackError);
+            release('error');
+          }}
         }}
       }};
 
@@ -190,16 +213,22 @@ def install() -> None:
     def play_alert(sound_path: str, phrase: str, voice_name: str = ""):
         if not phrase:
             return
-        # Server-side request telemetry distinguishes "Walter generated no voice
-        # event" from "the browser received a voice event but did not play it".
-        # It is session-only and contains no trading state mutation.
+        request = None
         try:
-            ui.st.session_state[VOICE_REQUEST_COUNT_KEY] = int(
-                ui.st.session_state.get(VOICE_REQUEST_COUNT_KEY, 0)
-            ) + 1
-            ui.st.session_state[VOICE_LAST_PHRASE_KEY] = str(phrase)
+            request = record_voice_request(
+                ui.st.session_state,
+                phrase=str(phrase),
+                voice_name=str(voice_name or ""),
+            )
         except Exception:
-            pass
+            request = None
+        if request:
+            print(
+                "[WALTER VOICE] request "
+                f"#{request['count']} at={request['requested_at']} "
+                f"voice={request['voice'] or 'System Default'} phrase={request['phrase']}",
+                flush=True,
+            )
         ui.st.components.v1.html(
             _speech_component(sound_path, phrase, voice_name),
             height=1,
@@ -208,4 +237,5 @@ def install() -> None:
 
     play_alert._gs311_unified_voice = True
     play_alert._gs317_voice_transport_hardening = True
+    play_alert._gs318_voice_observability = True
     ui.play_alert = play_alert

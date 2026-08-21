@@ -76,8 +76,9 @@ def test_voice_transport_retains_utterance_until_browser_finishes():
     markup = _speech_component("missing-alert.wav", "TEST. WATCH FOR ENTRY.")
 
     assert "speechWindow.__walterActiveUtterance = utterance" in markup
-    assert "utterance.onend = release" in markup
-    assert "utterance.onerror = release" in markup
+    assert "utterance.onend = () => release('ended')" in markup
+    assert "utterance.onerror = (event) =>" in markup
+    assert "release('error')" in markup
 
 
 def test_voice_transport_does_not_require_preferred_voice_to_exist():
