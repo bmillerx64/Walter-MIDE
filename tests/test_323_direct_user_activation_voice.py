@@ -43,7 +43,7 @@ def test_later_automatic_alerts_preserve_queue_instead_of_self_cancelling():
     assert "speechWindow.setTimeout(() =>" in markup
     assert "}, 75);" in markup
     assert "speakInitialOnce();" in markup
-    assert "preserve the browser speech queue" in markup
+    assert "synth.speak(utterance)" in markup
 
 
 def test_gs322_blocked_and_enable_voice_contract_is_preserved():
