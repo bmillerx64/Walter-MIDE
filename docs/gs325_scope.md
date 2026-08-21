@@ -1,0 +1,1 @@
+Scope guard: GS325 is startup/session stability only. Do not alter discovery, scoring, qualification, readiness, ranking, thresholds, execution, news semantics, candidate selection, scan timing, or evidence semantics. Do not change the GS321-GS324 speech transport except for the separate startup URL-persistence navigation in app.py.
