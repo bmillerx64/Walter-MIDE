@@ -87,7 +87,7 @@ def test_speech_component_targets_parent_browser_with_iframe_fallback():
 def test_missing_sound_file_does_not_suppress_spoken_phrase():
     markup = _speech_component("definitely-not-present.wav", "TEST. DEVELOPING.")
 
-    assert "<audio" not in markup
+    assert "<audio autoplay>" not in markup
     assert "TEST. DEVELOPING." in markup
     assert "synth.speak(utterance)" in markup
 
@@ -126,12 +126,51 @@ def test_voice_transport_retains_utterance_until_browser_finishes():
     assert "speechWindow.__walterActiveUtterance = utterance" in markup
     assert "utterance.onend = () => release('ended')" in markup
     assert "utterance.onerror = (event) =>" in markup
-    assert "release('error')" in markup
+    assert "release('error'" in markup
 
 
 def test_voice_transport_does_not_require_preferred_voice_to_exist():
     markup = _speech_component("missing-alert.wav", "TEST. LOOK NOW.", "Samantha")
 
-    assert "chooseVoice();" in markup
+    assert "resolveVoice" in markup
     assert "attempts >= 12" in markup
-    assert "speakOnce();" in markup
+    assert "speakInitialOnce();" in markup
+
+
+def test_voice_transport_exposes_browser_lifecycle_statuses():
+    markup = _speech_component("missing-alert.wav", "TEST. LOOK NOW.", "Samantha")
+
+    assert 'id="walter-voice-status"' in markup
+    assert "Voice: initializing" in markup
+    assert "setStatus('requested'" in markup
+    assert "setStatus('speaking'" in markup
+    assert "release('ended')" in markup
+    assert "release('error'" in markup
+    assert "setStatus('unavailable'" in markup
+
+
+def test_voice_transport_replay_is_manual_and_does_not_create_an_alert_event():
+    markup = _speech_component("missing-alert.wav", "TEST. LOOK NOW.", "Samantha")
+
+    assert 'id="walter-voice-test"' in markup
+    assert "Replay test" in markup
+    assert "replayNode.addEventListener('click'" in markup
+    assert "speak('manual replay')" in markup
+    assert "speak('Walter alert')" in markup
+
+
+def test_voice_transport_reports_requested_and_actual_voice():
+    markup = _speech_component("missing-alert.wav", "TEST. LOOK NOW.", "Samantha")
+
+    assert "actualVoice" in markup
+    assert "preferred" in markup
+    assert "selectedVoice ? selectedVoice.name" in markup
+    assert "System Default" in markup
+
+
+def test_voice_transport_status_is_accessible_and_visible():
+    markup = _speech_component("missing-alert.wav", "TEST. LOOK NOW.")
+
+    assert 'role="status"' in markup
+    assert 'aria-live="polite"' in markup
+    assert "height:38px" in markup
