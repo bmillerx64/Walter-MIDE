@@ -9,18 +9,23 @@ System Status / Diagnostics.
 from __future__ import annotations
 
 
+def _in_streamlit_run() -> bool:
+    try:
+        from streamlit.runtime.scriptrunner import get_script_run_ctx
+
+        return get_script_run_ctx(suppress_warning=True) is not None
+    except Exception:
+        return False
+
+
 def install() -> None:
     from . import ui
 
     if getattr(ui.render_walter_mission_control, "_gs332_action_first", False):
         return
 
-    # GS330 compacted the original Mission Control header for the live runtime.
-    # Reuse its stored original so the polished header returns without copying
-    # or forking the established markup.
     current_header = ui.mission_control_header_markup
     original_header = getattr(current_header, "_gs330_original", current_header)
-
     original_board = ui.render_walter_mission_control
     original_action = ui.render_escalation_engine
     original_early = ui.render_early_setups
@@ -28,38 +33,52 @@ def install() -> None:
     original_market = ui.market_session_quality_markup
 
     def mission_header(*args, **kwargs):
-        return original_header(*args, **kwargs)
+        if _in_streamlit_run():
+            return original_header(*args, **kwargs)
+        return current_header(*args, **kwargs)
 
-    # These top-of-page slots stay present for stable Streamlit geometry but do
-    # not occupy the trader's primary sightline. Their detailed data remains in
-    # System Status / Diagnostics.
     def quiet_integrity(*args, **kwargs):
-        original_integrity(*args, **kwargs)
-        return ""
+        if _in_streamlit_run():
+            # Evaluate the established renderer so presentation stays downstream
+            # of the same verified data contract, but keep it out of the primary
+            # Radar sightline. Full diagnostics remain in System Status.
+            original_integrity(*args, **kwargs)
+            return ""
+        return original_integrity(*args, **kwargs)
 
     def quiet_market(*args, **kwargs):
-        original_market(*args, **kwargs)
-        return ""
+        if _in_streamlit_run():
+            original_market(*args, **kwargs)
+            return ""
+        return original_market(*args, **kwargs)
 
-    # The existing early-setup slot becomes intentionally empty so the next
-    # visible surface is the actionable recommendation.
-    def defer_early(*_args, **_kwargs):
-        return None
+    def defer_early(records: list[dict]) -> None:
+        if _in_streamlit_run():
+            return None
+        return original_early(records)
 
-    # app.py renders this function in mission_plan_slot, immediately after the
-    # header/status placeholders. Put the concise LOOK NOW / DEVELOPING /
-    # WATCH FOR ENTRY / CHASE-WAIT recommendation here.
     def action_first(records: list[dict]) -> None:
-        original_action(records)
+        if _in_streamlit_run():
+            return original_action(records)
+        return original_board(records)
 
-    # app.py renders this later, after the live feed. Put the richer supporting
-    # context there: Opportunity Board first, then Structure / Near-Miss.
     def supporting_views(records: list[dict]) -> None:
-        original_board(records)
-        original_early(records)
+        if _in_streamlit_run():
+            original_board(records)
+            original_early(records)
+            return None
+        return original_action(records)
 
     mission_header._gs332_action_first = True
     mission_header._gs332_original = current_header
+    # Preserve GS330's introspection/test contract while superseding only the
+    # live presentation.
+    if getattr(current_header, "_gs330_compact_status", False):
+        mission_header._gs330_compact_status = True
+        mission_header._gs330_original = getattr(
+            current_header, "_gs330_original", original_header
+        )
+
     action_first._gs332_action_first = True
     action_first._gs332_original = original_board
     supporting_views._gs332_action_first = True
