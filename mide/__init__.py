@@ -144,3 +144,7 @@ _install_gs315_news_intelligence()
 from .gs316_morning_mover_attention_balance import install as _install_gs316_morning_mover_attention_balance  # noqa: E402
 
 _install_gs316_morning_mover_attention_balance()
+
+from .gs326_near_miss_watch import install as _install_gs326_near_miss_watch  # noqa: E402
+
+_install_gs326_near_miss_watch()
