@@ -29,9 +29,41 @@ def test_compact_header_keeps_operator_state_and_omits_funnel_detail():
     assert "Price Gate" not in markup
 
 
-def test_large_verification_panels_are_suppressed_from_radar_top():
-    assert ui.data_integrity_markup({"status": "healthy"}) == ""
-    assert ui.market_session_quality_markup([], snapshot_metrics={}) == ""
+def test_large_verification_panels_are_retained_but_visually_collapsed():
+    trust = ui.data_integrity_markup(
+        {
+            "status": "HEALTHY SCAN",
+            "trust_score": 100,
+            "record_integrity_pct": 100,
+            "freshness_pct": 100,
+            "unique_symbols": 4,
+            "record_count": 4,
+            "status_reason": "Diagnostic only.",
+        }
+    )
+    market = ui.market_session_quality_markup([])
+    assert "display:none" in trust
+    assert "SCAN TRUST" in trust
+    assert "display:none" in market
+    assert "TODAY'S MARKET" in market
+
+
+def test_installed_header_keeps_legacy_funnel_machine_visible_but_screen_hidden():
+    markup = ui.mission_control_header_markup(
+        live=True,
+        market_phase="Live Market",
+        market_time="1:05 PM EDT",
+        symbols_sampled=34,
+        prefilter_count=13,
+        candidate_count=4,
+        focus_count=2,
+        escalation_count=2,
+        auto_scan="Every 60 sec",
+        funnel_counts={"universe": 34, "price": 18, "tradability": 20, "free_float": 13},
+    )
+    assert "34 scanned" in markup
+    assert "display:none" in markup
+    assert "Architecture Funnel" in markup
 
 
 def test_original_diagnostic_renderers_remain_reachable_for_lower_surfaces():
