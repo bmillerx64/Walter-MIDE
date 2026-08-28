@@ -156,3 +156,7 @@ _install_gs330_compact_operator_status()
 from .gs331_scroll_safe_area import install as _install_gs331_scroll_safe_area  # noqa: E402
 
 _install_gs331_scroll_safe_area()
+
+from .gs332_action_first_radar import install as _install_gs332_action_first_radar  # noqa: E402
+
+_install_gs332_action_first_radar()
