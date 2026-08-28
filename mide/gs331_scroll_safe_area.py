@@ -7,9 +7,8 @@ browser showed: both the Radar plane and sidebar have content above the highest
 reachable scroll position.
 
 This patch does not alter container order, hide DOM, reset scroll position, or
-change any scanner/trading behavior. It only restores explicit top breathing room
-for Streamlit's current main/sidebar content containers after the normal dashboard
-CSS is injected.
+change any scanner/trading behavior. It extends Walter's existing dashboard CSS in
+place so the established single ``st.markdown`` injection contract remains intact.
 """
 from __future__ import annotations
 
@@ -33,15 +32,7 @@ SAFE_TOP_CSS = """
 def install() -> None:
     from . import ui
 
-    current = ui.inject_css
-    if getattr(current, "_gs331_scroll_safe_area", False):
+    if getattr(ui, "_gs331_scroll_safe_area_installed", False):
         return
-    original = current
-
-    def inject_css() -> None:
-        original()
-        ui.st.markdown(SAFE_TOP_CSS, unsafe_allow_html=True)
-
-    inject_css._gs331_scroll_safe_area = True
-    inject_css._gs331_original = original
-    ui.inject_css = inject_css
+    ui.DASHBOARD_CSS = ui.DASHBOARD_CSS + SAFE_TOP_CSS
+    ui._gs331_scroll_safe_area_installed = True
