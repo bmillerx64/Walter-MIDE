@@ -2,9 +2,9 @@ from mide import gs331_scroll_safe_area as scroll_safe
 from mide import ui
 
 
-def test_scroll_safe_area_is_installed():
-    assert getattr(ui.inject_css, "_gs331_scroll_safe_area", False)
-    assert callable(ui.inject_css._gs331_original)
+def test_scroll_safe_area_is_installed_into_existing_dashboard_css():
+    assert getattr(ui, "_gs331_scroll_safe_area_installed", False)
+    assert scroll_safe.SAFE_TOP_CSS in ui.DASHBOARD_CSS
 
 
 def test_safe_top_css_overrides_legacy_main_padding_and_covers_sidebar():
