@@ -1,11 +1,9 @@
-"""GS327: keep trader results above verification plumbing on the Radar view.
+"""GS327/GS328: compact Radar pilot view without hidden diagnostic DOM.
 
-Walter's trust, architecture, and market-quality panels were invaluable while the
-live pipeline was being verified. They are diagnostic/protective evidence, not
-trading results. This presentation-only layer removes those large always-visible
-panels from the top of Radar and replaces the verbose mission header with a compact
-flight-deck status strip. Detailed health, accounting, verification, and audit data
-remain available in System Status, Diagnostics, and the Flight Recorder.
+The Radar view is for operating Walter, not for replaying the verification path.
+This presentation-only layer keeps a compact operator header visible and suppresses
+the large Scan Trust and market-quality panels from Radar. Their original renderers
+are preserved as attributes for diagnostics/tests, but no hidden HTML is emitted.
 
 No scanner membership, thresholds, scoring, qualification, ranking, readiness,
 alerts, execution, news, or persistence behavior is changed here.
@@ -13,9 +11,6 @@ alerts, execution, news, or persistence behavior is changed here.
 from __future__ import annotations
 
 import html
-
-
-_HIDDEN_DIAGNOSTIC_STYLE = "display:none;height:0;overflow:hidden;margin:0;padding:0"
 
 
 def compact_mission_header_markup(*_args, **kwargs) -> str:
@@ -43,43 +38,49 @@ def compact_mission_header_markup(*_args, **kwargs) -> str:
     )
 
 
-def _hidden(markup: str) -> str:
-    """Retain legacy diagnostic markup without consuming Radar screen space."""
-    return f"<div aria-hidden='true' style='{_HIDDEN_DIAGNOSTIC_STYLE}'>{markup}</div>"
-
-
 def install() -> None:
-    """Install a presentation-only pilot view before app.py imports UI symbols."""
+    """Install the compact Radar presentation without emitting hidden DOM."""
     from . import ui
 
-    if getattr(ui.mission_control_header_markup, "_gs327_pilot_view", False):
+    if getattr(ui.mission_control_header_markup, "_gs328_scroll_repair", False):
         return
 
-    original_header = ui.mission_control_header_markup
-    original_integrity = ui.data_integrity_markup
-    original_market = ui.market_session_quality_markup
+    original_header = getattr(
+        ui.mission_control_header_markup,
+        "_gs327_original",
+        ui.mission_control_header_markup,
+    )
+    original_integrity = getattr(
+        ui.data_integrity_markup,
+        "_gs327_original",
+        ui.data_integrity_markup,
+    )
+    original_market = getattr(
+        ui.market_session_quality_markup,
+        "_gs327_original",
+        ui.market_session_quality_markup,
+    )
 
     def pilot_header(*args, **kwargs) -> str:
-        # Preserve the established diagnostic/funnel contract invisibly so tests,
-        # automation, and lower diagnostic surfaces still retain the evidence.
-        return compact_mission_header_markup(*args, **kwargs) + _hidden(
-            original_header(*args, **kwargs)
-        )
+        return compact_mission_header_markup(*args, **kwargs)
 
     pilot_header._gs327_pilot_view = True
+    pilot_header._gs328_scroll_repair = True
     pilot_header._gs327_original = original_header
     ui.mission_control_header_markup = pilot_header
 
-    def hidden_scan_trust(*args, **kwargs) -> str:
-        return _hidden(original_integrity(*args, **kwargs))
+    def suppressed_scan_trust(*_args, **_kwargs) -> str:
+        return ""
 
-    hidden_scan_trust._gs327_pilot_view = True
-    hidden_scan_trust._gs327_original = original_integrity
-    ui.data_integrity_markup = hidden_scan_trust
+    suppressed_scan_trust._gs327_pilot_view = True
+    suppressed_scan_trust._gs328_scroll_repair = True
+    suppressed_scan_trust._gs327_original = original_integrity
+    ui.data_integrity_markup = suppressed_scan_trust
 
-    def hidden_market_quality(*args, **kwargs) -> str:
-        return _hidden(original_market(*args, **kwargs))
+    def suppressed_market_quality(*_args, **_kwargs) -> str:
+        return ""
 
-    hidden_market_quality._gs327_pilot_view = True
-    hidden_market_quality._gs327_original = original_market
-    ui.market_session_quality_markup = hidden_market_quality
+    suppressed_market_quality._gs327_pilot_view = True
+    suppressed_market_quality._gs328_scroll_repair = True
+    suppressed_market_quality._gs327_original = original_market
+    ui.market_session_quality_markup = suppressed_market_quality
