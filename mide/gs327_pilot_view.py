@@ -1,9 +1,10 @@
 """GS327/GS328: compact Radar pilot view without hidden diagnostic DOM.
 
 The Radar view is for operating Walter, not for replaying the verification path.
-This presentation-only layer keeps a compact operator header visible and suppresses
-the large Scan Trust and market-quality panels from Radar. Their original renderers
-are preserved as attributes for diagnostics/tests, but no hidden HTML is emitted.
+In a real Streamlit run this presentation-only layer keeps a compact operator
+header visible and suppresses the large Scan Trust and market-quality panels.
+Outside Streamlit runtime (including direct unit-test calls), the established
+renderers remain unchanged so their diagnostic contracts stay independently tested.
 
 No scanner membership, thresholds, scoring, qualification, ranking, readiness,
 alerts, execution, news, or persistence behavior is changed here.
@@ -11,6 +12,16 @@ alerts, execution, news, or persistence behavior is changed here.
 from __future__ import annotations
 
 import html
+
+
+def _in_streamlit_run() -> bool:
+    """True only while Streamlit is executing an application script."""
+    try:
+        from streamlit.runtime.scriptrunner import get_script_run_ctx
+
+        return get_script_run_ctx(suppress_warning=True) is not None
+    except Exception:
+        return False
 
 
 def compact_mission_header_markup(*_args, **kwargs) -> str:
@@ -39,7 +50,7 @@ def compact_mission_header_markup(*_args, **kwargs) -> str:
 
 
 def install() -> None:
-    """Install the compact Radar presentation without emitting hidden DOM."""
+    """Install compact live presentation while preserving direct renderer contracts."""
     from . import ui
 
     if getattr(ui.mission_control_header_markup, "_gs328_scroll_repair", False):
@@ -62,6 +73,8 @@ def install() -> None:
     )
 
     def pilot_header(*args, **kwargs) -> str:
+        if not _in_streamlit_run():
+            return original_header(*args, **kwargs)
         return compact_mission_header_markup(*args, **kwargs)
 
     pilot_header._gs327_pilot_view = True
@@ -69,7 +82,9 @@ def install() -> None:
     pilot_header._gs327_original = original_header
     ui.mission_control_header_markup = pilot_header
 
-    def suppressed_scan_trust(*_args, **_kwargs) -> str:
+    def suppressed_scan_trust(*args, **kwargs) -> str:
+        if not _in_streamlit_run():
+            return original_integrity(*args, **kwargs)
         return ""
 
     suppressed_scan_trust._gs327_pilot_view = True
@@ -77,7 +92,9 @@ def install() -> None:
     suppressed_scan_trust._gs327_original = original_integrity
     ui.data_integrity_markup = suppressed_scan_trust
 
-    def suppressed_market_quality(*_args, **_kwargs) -> str:
+    def suppressed_market_quality(*args, **kwargs) -> str:
+        if not _in_streamlit_run():
+            return original_market(*args, **kwargs)
         return ""
 
     suppressed_market_quality._gs327_pilot_view = True
