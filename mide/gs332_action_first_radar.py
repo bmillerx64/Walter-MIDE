@@ -39,9 +39,6 @@ def install() -> None:
 
     def quiet_integrity(*args, **kwargs):
         if _in_streamlit_run():
-            # Evaluate the established renderer so presentation stays downstream
-            # of the same verified data contract, but keep it out of the primary
-            # Radar sightline. Full diagnostics remain in System Status.
             original_integrity(*args, **kwargs)
             return ""
         return original_integrity(*args, **kwargs)
@@ -71,8 +68,6 @@ def install() -> None:
 
     mission_header._gs332_action_first = True
     mission_header._gs332_original = current_header
-    # Preserve GS330's introspection/test contract while superseding only the
-    # live presentation.
     if getattr(current_header, "_gs330_compact_status", False):
         mission_header._gs330_compact_status = True
         mission_header._gs330_original = getattr(
@@ -89,6 +84,19 @@ def install() -> None:
     quiet_integrity._gs332_original = original_integrity
     quiet_market._gs332_action_first = True
     quiet_market._gs332_original = original_market
+
+    # Preserve GS330 renderer metadata so its existing regression contract
+    # remains intact; GS332 only supersedes what the live app chooses to show.
+    if getattr(original_integrity, "_gs330_compact_status", False):
+        quiet_integrity._gs330_compact_status = True
+        quiet_integrity._gs330_original = getattr(
+            original_integrity, "_gs330_original", original_integrity
+        )
+    if getattr(original_market, "_gs330_compact_status", False):
+        quiet_market._gs330_compact_status = True
+        quiet_market._gs330_original = getattr(
+            original_market, "_gs330_original", original_market
+        )
 
     ui.mission_control_header_markup = mission_header
     ui.data_integrity_markup = quiet_integrity
