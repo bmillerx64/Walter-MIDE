@@ -148,3 +148,7 @@ _install_gs316_morning_mover_attention_balance()
 from .gs326_near_miss_watch import install as _install_gs326_near_miss_watch  # noqa: E402
 
 _install_gs326_near_miss_watch()
+
+from .gs330_compact_operator_status import install as _install_gs330_compact_operator_status  # noqa: E402
+
+_install_gs330_compact_operator_status()
