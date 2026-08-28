@@ -148,3 +148,7 @@ _install_gs316_morning_mover_attention_balance()
 from .gs326_near_miss_watch import install as _install_gs326_near_miss_watch  # noqa: E402
 
 _install_gs326_near_miss_watch()
+
+from .gs327_pilot_view import install as _install_gs327_pilot_view  # noqa: E402
+
+_install_gs327_pilot_view()
