@@ -152,3 +152,7 @@ _install_gs326_near_miss_watch()
 from .gs330_compact_operator_status import install as _install_gs330_compact_operator_status  # noqa: E402
 
 _install_gs330_compact_operator_status()
+
+from .gs331_scroll_safe_area import install as _install_gs331_scroll_safe_area  # noqa: E402
+
+_install_gs331_scroll_safe_area()
