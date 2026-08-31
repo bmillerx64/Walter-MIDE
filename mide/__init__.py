@@ -160,3 +160,7 @@ _install_gs331_scroll_safe_area()
 from .gs332_action_first_radar import install as _install_gs332_action_first_radar  # noqa: E402
 
 _install_gs332_action_first_radar()
+
+from .gs333_extreme_mover_operator_priority import install as _install_gs333_extreme_mover_operator_priority  # noqa: E402
+
+_install_gs333_extreme_mover_operator_priority()
