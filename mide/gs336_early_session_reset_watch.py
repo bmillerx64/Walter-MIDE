@@ -1,9 +1,9 @@
-"""GS336: early-session discipline and constructive reset watch.
+"""GS336/GS337: session discipline, reset watch, and actionable evidence floor.
 
 Presentation-only operator guidance. This module does not change discovery,
 qualification, scoring, thresholds, readiness, ranking, alerts, execution, or
-candidate membership. It only sharpens the language Walter uses for current
-records before 10:30 ET and for post-open constructive rebuilds.
+candidate membership. It sharpens the language Walter uses for current records
+and prevents weak attention evidence from being presented as LOOK NOW.
 """
 from __future__ import annotations
 
@@ -44,16 +44,82 @@ def is_early_session(record: dict | None = None) -> bool:
     return time(9, 30) <= now.time().replace(tzinfo=None) < EARLY_SESSION_CUTOFF
 
 
+def _above_vwap(record: dict) -> bool:
+    distance = _number(record, "vwap_distance_pct")
+    relation = str(record.get("vwap_relation") or "").strip().lower()
+    return (distance is not None and distance >= 0.0) or relation in {
+        "above",
+        "above_vwap",
+        "reclaimed",
+    }
+
+
+def _fresh_catalyst(record: dict) -> bool:
+    headline = str(record.get("headline") or "").strip()
+    if headline:
+        return True
+    for key in ("fresh_news", "news_catalyst", "has_catalyst", "catalyst_confirmed"):
+        if bool(record.get(key)):
+            return True
+    return False
+
+
 def constructive_reset(record: dict) -> bool:
     """Identify a rebuilt setup without granting entry readiness."""
     distance = _number(record, "vwap_distance_pct")
     participation = _number(record, "participation_score", 0.0) or 0.0
     expansion = _number(record, "expansion_score", 0.0) or 0.0
     supertrend = bool(record.get("supertrend_bullish") or record.get("supertrend_flip"))
-    relation = str(record.get("vwap_relation") or "").lower()
-    above_vwap = (distance is not None and distance >= 0.0) or relation in {"above", "above_vwap", "reclaimed"}
+    above_vwap = _above_vwap(record)
     not_extended = distance is None or distance <= 5.0
     return bool(above_vwap and not_extended and supertrend and participation >= 55.0 and expansion >= 55.0)
+
+
+def actionable_attention_floor(record: dict) -> tuple[bool, str]:
+    """Require enough evidence before presentation can say LOOK NOW.
+
+    This is intentionally a presentation guard, not a scanner/qualification gate.
+    The operator rule is simple: LOOK NOW should mean interrupt and inspect, not
+    merely that a chart has one or two constructive features.
+    """
+    if not _above_vwap(record):
+        return False, "below VWAP"
+
+    participation = _number(record, "participation_score", 0.0) or 0.0
+    expansion = _number(record, "expansion_score", 0.0) or 0.0
+    if participation < 35.0:
+        return False, "participation is too weak"
+    if expansion < 50.0:
+        return False, "expansion is too weak"
+
+    volume = _number(record, "volume", 0.0) or 0.0
+    dollar_volume = _number(record, "dollar_volume", 0.0) or 0.0
+    if not _fresh_catalyst(record) and volume < 250_000 and dollar_volume < 250_000:
+        if participation < 55.0 or expansion < 55.0:
+            return False, "no fresh catalyst and volume is still light"
+
+    return True, "actionable attention evidence is present"
+
+
+def guard_actionable_recommendation(record: dict, recommendation):
+    """Downgrade weak LOOK NOW presentation without changing model state."""
+    if not isinstance(recommendation, dict):
+        return recommendation
+    label = str(recommendation.get("label") or "").upper()
+    if "LOOK NOW" not in label:
+        return recommendation
+
+    passed, reason = actionable_attention_floor(record)
+    if passed:
+        return recommendation
+
+    symbol = str(record.get("symbol") or recommendation.get("symbol") or "").strip().upper()
+    return {
+        "symbol": symbol,
+        "label": "MONITOR · EVIDENCE BUILDING",
+        "message": f"Structure may be constructive, but {reason}.",
+        "guidance": "Do not treat this as actionable yet. Wait for price above VWAP plus materially stronger participation and expansion; without a fresh catalyst, require real volume too.",
+    }
 
 
 def operator_override(record: dict) -> dict | None:
@@ -129,8 +195,10 @@ def install() -> None:
         def recommendation_with_session_discipline(record: dict):
             override = record.get("_gs336_operator_override") if isinstance(record, dict) else None
             if isinstance(override, dict):
-                return override
-            return current_recommendation(record)
+                recommendation = override
+            else:
+                recommendation = current_recommendation(record)
+            return guard_actionable_recommendation(record, recommendation)
 
         _inherit_wrapper_contract(recommendation_with_session_discipline, current_recommendation)
         recommendation_with_session_discipline._gs336_early_session_reset_watch = True
