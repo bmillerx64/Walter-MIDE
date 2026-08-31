@@ -122,6 +122,7 @@ def _in_streamlit_run() -> bool:
 def install() -> None:
     """Attach the event lane at data-capture and header-presentation seams."""
     from . import ui
+    from . import webull_connection as connection
     from .webull_live import LiveWebullProvider
 
     global _LATEST_MARKET_EVENTS, _LATEST_ACTIONABLE_SYMBOLS
@@ -149,6 +150,9 @@ def install() -> None:
         assets_with_market_events._gs334_market_event_capture = True
         assets_with_market_events._gs334_original = current_assets
         LiveWebullProvider.assets = assets_with_market_events
+        # GS263 intentionally exposes the same callable through both seams.
+        # Preserve that exact identity contract while adding observation only.
+        connection._webull_native_assets = assets_with_market_events
 
     current_mission = ui.walter_mission_control
     if not getattr(current_mission, "_gs334_market_event_symbols", False):
