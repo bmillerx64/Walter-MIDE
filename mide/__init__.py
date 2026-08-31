@@ -180,3 +180,7 @@ _install_gs338_momentum_ignition_transition()
 from .gs339_preignition_vwap_reclaim import install as _install_gs339_preignition_vwap_reclaim  # noqa: E402
 
 _install_gs339_preignition_vwap_reclaim()
+
+from .gs340_high_liquidity_trend_watch import install as _install_gs340_high_liquidity_trend_watch  # noqa: E402
+
+_install_gs340_high_liquidity_trend_watch()
