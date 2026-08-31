@@ -1,5 +1,8 @@
+from types import SimpleNamespace
+
 from mide import ui
 from mide.gs334_market_event_lane import (
+    completed_scan_market_events,
     market_event_markup,
     market_event_rows,
     visible_market_events,
@@ -58,8 +61,38 @@ def test_gs334_markup_is_explicitly_attention_only():
     assert "normal entry gates still apply" in markup
 
 
+def test_gs335_reads_events_from_authoritative_completed_scan():
+    expected = market_event_rows([
+        _native("WETO", 122.73, 1),
+        _native("CLGN", 92.18, 2),
+        _native("AEHL", 75.14, 3),
+    ])
+    scan = SimpleNamespace(diagnostics={
+        "market_event_lane": {
+            "source": "Webull native DAY_GAINERS",
+            "attention_only": True,
+            "events": expected,
+        }
+    })
+
+    events = completed_scan_market_events({"completed_scan": scan})
+
+    assert [event["symbol"] for event in events] == ["WETO", "CLGN", "AEHL"]
+    assert events == expected
+    assert events is not expected
+
+
+def test_gs335_uses_scan_context_compatibility_path():
+    expected = market_event_rows([_native("WETO", 122.73, 1)])
+    scan = SimpleNamespace(diagnostics={"market_event_lane": {"events": expected}})
+    state = {"scan_context": SimpleNamespace(completed_scan=scan)}
+
+    assert completed_scan_market_events(state) == expected
+
+
 def test_gs334_wrappers_are_installed_without_erasing_prior_contracts():
     assert getattr(ui.mission_control_header_markup, "_gs334_market_event_lane", False)
+    assert getattr(ui.mission_control_header_markup, "_gs335_persistent_market_events", False)
     assert getattr(ui.mission_control_header_markup, "_gs332_action_first", False)
     assert getattr(ui.walter_mission_control, "_gs334_market_event_symbols", False)
     assert getattr(ui.walter_mission_control, "_gs310_unified_state", False)
