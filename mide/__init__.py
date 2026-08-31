@@ -172,3 +172,7 @@ _install_gs334_market_event_lane()
 from .gs336_early_session_reset_watch import install as _install_gs336_early_session_reset_watch  # noqa: E402
 
 _install_gs336_early_session_reset_watch()
+
+from .gs338_momentum_ignition_transition import install as _install_gs338_momentum_ignition_transition  # noqa: E402
+
+_install_gs338_momentum_ignition_transition()
