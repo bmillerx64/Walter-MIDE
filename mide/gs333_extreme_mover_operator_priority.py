@@ -13,7 +13,6 @@ Two operator problems are addressed:
 """
 from __future__ import annotations
 
-from copy import deepcopy
 import html
 from typing import Iterable
 
@@ -157,6 +156,13 @@ def _in_streamlit_run() -> bool:
         return False
 
 
+def _inherit_wrapper_contract(wrapper, wrapped) -> None:
+    """Preserve prior GS introspection contracts when layering presentation wrappers."""
+    for name, value in getattr(wrapped, "__dict__", {}).items():
+        if name.startswith("_gs") and not hasattr(wrapper, name):
+            setattr(wrapper, name, value)
+
+
 def install() -> None:
     from . import ui
 
@@ -180,6 +186,7 @@ def install() -> None:
             return
         current_action(records)
 
+    _inherit_wrapper_contract(render_action_first, current_action)
     render_action_first._gs333_operator_priority = True
     render_action_first._gs333_original = current_action
     ui.render_walter_mission_control = render_action_first
@@ -197,6 +204,7 @@ def install() -> None:
                 return st.sidebar.expander(str(label), *args, **kwargs)
             return current_expander(label, *args, **kwargs)
 
+        _inherit_wrapper_contract(diagnostic_expander, current_expander)
         diagnostic_expander._gs333_diagnostics_sidebar = True
         diagnostic_expander._gs333_original = current_expander
         st.expander = diagnostic_expander
@@ -212,6 +220,7 @@ def install() -> None:
                     return current_play_alert(*args, **kwargs)
             return current_play_alert(*args, **kwargs)
 
+        _inherit_wrapper_contract(play_alert_in_sidebar, current_play_alert)
         play_alert_in_sidebar._gs333_voice_sidebar = True
         play_alert_in_sidebar._gs333_original = current_play_alert
         ui.play_alert = play_alert_in_sidebar
