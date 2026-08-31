@@ -1,25 +1,29 @@
-"""GS334: keep extraordinary live movers visible outside the trade funnel.
+"""GS334/GS335: keep extraordinary live movers visible outside the trade funnel.
 
-Walter's ranked candidate pipeline is intentionally selective.  A symbol can be an
+Walter's ranked candidate pipeline is intentionally selective. A symbol can be an
 important live market event and still fail Participation, Expansion, or another
-trade gate.  That is correct for qualification but incomplete for the operator's
+trade gate. That is correct for qualification but incomplete for the operator's
 situational awareness: a +100% Webull Day Gainer should not disappear from the
 Radar merely because it is not a trade candidate.
 
-GS334 therefore creates a separate, presentation-only market-event lane from the
-already-fetched Webull native Day Gainers data.  It does not add symbols to the
-candidate ledger and does not change discovery membership, gates, scores,
-thresholds, ranking, readiness, alerts, orders, or execution.
+GS334 created a separate, presentation-only market-event lane from the already-
+fetched Webull native Day Gainers data. GS335 makes the completed scan diagnostics
+the authoritative display source so the lane survives Streamlit reruns instead of
+relying on process-local temporary memory. Neither change adds symbols to the
+candidate ledger or changes discovery membership, gates, scores, thresholds,
+ranking, readiness, alerts, orders, or execution.
 """
 from __future__ import annotations
 
 from functools import wraps
 import html
-from typing import Iterable
+from typing import Iterable, Mapping, Any
 
 EXTREME_MOVER_PCT = 75.0
 MARKET_EVENT_LIMIT = 3
 
+# Compatibility/fallback cache only. GS335 renders from CompletedScan diagnostics
+# whenever that durable session-scoped evidence is available.
 _LATEST_MARKET_EVENTS: list[dict] = []
 _LATEST_ACTIONABLE_SYMBOLS: set[str] = set()
 
@@ -64,6 +68,31 @@ def market_event_rows(
         )
     events.sort(key=lambda row: (row["rank"], -row["pct_change"], row["symbol"]))
     return events[: max(0, int(limit))]
+
+
+def completed_scan_market_events(state: Mapping[str, Any] | None) -> list[dict]:
+    """Read the durable GS334 event snapshot from Streamlit session state.
+
+    The completed scan is Walter's authoritative post-scan evidence object. This
+    helper intentionally reads only diagnostics written during discovery and never
+    recomputes eligibility, qualification, scores, or trading state at render time.
+    """
+    if not state:
+        return []
+    scan = state.get("completed_scan")
+    if scan is None:
+        context = state.get("scan_context")
+        scan = getattr(context, "completed_scan", None) if context is not None else None
+    diagnostics = getattr(scan, "diagnostics", None)
+    if not isinstance(diagnostics, dict):
+        return []
+    lane = diagnostics.get("market_event_lane")
+    if not isinstance(lane, dict):
+        return []
+    events = lane.get("events")
+    if not isinstance(events, list):
+        return []
+    return [dict(event) for event in events if isinstance(event, dict)]
 
 
 def visible_market_events(
@@ -117,6 +146,16 @@ def _in_streamlit_run() -> bool:
         return get_script_run_ctx(suppress_warning=True) is not None
     except Exception:
         return False
+
+
+def _streamlit_completed_scan_events() -> list[dict]:
+    """Return session-persistent market events during an active Streamlit run."""
+    try:
+        import streamlit as st
+
+        return completed_scan_market_events(st.session_state)
+    except Exception:
+        return []
 
 
 def install() -> None:
@@ -177,11 +216,17 @@ def install() -> None:
             markup = current_header(*args, **kwargs)
             if not _in_streamlit_run():
                 return markup
+            # GS335: completed-scan evidence is authoritative. The process-local
+            # GS334 cache is retained only as a fallback during the publication
+            # boundary before the first completed scan is available.
+            persisted = _streamlit_completed_scan_events()
+            events = persisted if persisted else _LATEST_MARKET_EVENTS
             return markup + market_event_markup(
-                _LATEST_MARKET_EVENTS,
+                events,
                 _LATEST_ACTIONABLE_SYMBOLS,
             )
 
         header_with_market_events._gs334_market_event_lane = True
+        header_with_market_events._gs335_persistent_market_events = True
         header_with_market_events._gs334_original = current_header
         ui.mission_control_header_markup = header_with_market_events
