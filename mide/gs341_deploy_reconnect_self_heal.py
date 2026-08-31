@@ -34,8 +34,12 @@ def reconnect_rerun_needed(
     return True
 
 
-def request_streamlit_rerun() -> None:
-    """Request a clean app rerun without importing Streamlit at module import."""
+def request_streamlit_rerun() -> bool:
+    """Request a clean app rerun only inside an active Streamlit script context."""
     import streamlit as st
+    from streamlit.runtime.scriptrunner import get_script_run_ctx
 
+    if get_script_run_ctx() is None:
+        return False
     st.rerun()
+    return True
