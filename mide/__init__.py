@@ -168,3 +168,7 @@ _install_gs333_extreme_mover_operator_priority()
 from .gs334_market_event_lane import install as _install_gs334_market_event_lane  # noqa: E402
 
 _install_gs334_market_event_lane()
+
+from .gs336_early_session_reset_watch import install as _install_gs336_early_session_reset_watch  # noqa: E402
+
+_install_gs336_early_session_reset_watch()
