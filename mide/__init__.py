@@ -204,3 +204,7 @@ _install_gs348_st_vwap_operator_priority()
 from .gs349_operator_first_layout import install as _install_gs349_operator_first_layout  # noqa: E402
 
 _install_gs349_operator_first_layout()
+
+from .gs350_download_export_reliability import install as _install_gs350_download_export_reliability  # noqa: E402
+
+_install_gs350_download_export_reliability()
