@@ -216,3 +216,7 @@ _install_gs351_session_rerun_isolation()
 from .gs352_persistent_alert_arm import install as _install_gs352_persistent_alert_arm  # noqa: E402
 
 _install_gs352_persistent_alert_arm()
+
+from .gs353_entry_lock_clarity import install as _install_gs353_entry_lock_clarity  # noqa: E402
+
+_install_gs353_entry_lock_clarity()
