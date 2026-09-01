@@ -6,6 +6,7 @@ qualification, thresholds, readiness, alerts, execution, or orders.
 from __future__ import annotations
 
 import html
+import re
 
 MAX_DEVELOPING_ROWS = 4
 
@@ -23,13 +24,7 @@ def _number(record: dict, *keys: str, default: float | None = None) -> float | N
 
 
 def _diagnostic_number(record: dict, group: str, key: str, *fallback_keys: str, default: float | None = None) -> float | None:
-    """Prefer the same diagnostic snapshot Walter's entry trigger uses.
-
-    GS354: the operator summary must not disagree with the entry-lock chips.  The
-    trigger gate reads strengthening_vwap_gate and participation_surge_diagnostics
-    before the convenience top-level fields, so the summary now follows the same
-    precedence.  This is presentation-only; no decision input is changed.
-    """
+    """Prefer the diagnostic map over convenience top-level fields."""
     diagnostics = record.get(group) or {}
     try:
         value = diagnostics.get(key)
@@ -38,6 +33,58 @@ def _diagnostic_number(record: dict, group: str, key: str, *fallback_keys: str, 
     except (TypeError, ValueError, AttributeError):
         pass
     return _number(record, *fallback_keys, default=default)
+
+
+def _stored_trigger_check(record: dict, condition: str) -> dict | None:
+    """Return the exact trigger check stored with the scanner decision, if any.
+
+    GS358: entry-lock chips intentionally show the stored trigger snapshot rather
+    than recomputing against later-enriched record fields. DEVELOPING NOW must use
+    that same snapshot so the two operator surfaces cannot disagree during a live
+    scan. This helper is display-only and never reevaluates qualification.
+    """
+    trigger = record.get("trigger_diagnostics")
+    if not isinstance(trigger, dict):
+        return None
+    for check in trigger.get("checks") or []:
+        if isinstance(check, dict) and str(check.get("condition") or "") == condition:
+            return check
+    return None
+
+
+def _stored_trigger_number(record: dict, condition: str) -> float | None:
+    """Read one observed value from Walter's stored trigger explanation.
+
+    The current trigger contract stores human-readable reasons but not a separate
+    numeric evidence payload. Parse only the stable operator phrases emitted by
+    scanner_v2.trigger_diagnostics; if a phrase is absent or changes, callers fall
+    back to the existing diagnostic-map path rather than inventing a value.
+    """
+    check = _stored_trigger_check(record, condition)
+    if not check:
+        return None
+    reason_key = "passed_reason" if check.get("passed") else "failed_reason"
+    text = str(check.get(reason_key) or "")
+
+    if condition == "vwap":
+        match = re.search(r"VWAP Distance\s*([+-]?\d+(?:\.\d+)?)%", text)
+        if match:
+            return float(match.group(1))
+        match = re.search(r"Price\s*(\d+(?:\.\d+)?)%\s*below VWAP", text)
+        if match:
+            return -float(match.group(1))
+        match = re.search(r"Price\s*(\d+(?:\.\d+)?)%\s*above VWAP", text)
+        if match:
+            return float(match.group(1))
+    elif condition == "participation":
+        match = re.search(r"Participation Surge\s*([+-]?\d+(?:\.\d+)?)\s*/\s*100", text)
+        if match:
+            return float(match.group(1))
+    elif condition == "expansion_beginning":
+        match = re.search(r"Expansion Quality\s*([+-]?\d+(?:\.\d+)?)\s*/\s*100", text)
+        if match:
+            return float(match.group(1))
+    return None
 
 
 def developing_records(records: list[dict]) -> list[dict]:
@@ -82,23 +129,35 @@ def developing_now_markup(records: list[dict]) -> str:
         symbol = html.escape(symbol_raw)
         price = _number(record, "price")
         pct = _number(record, "pct_change", "percent_change")
-        # GS354: use the exact diagnostic values that feed trigger_diagnostics.
-        vwap = _diagnostic_number(
-            record,
-            "strengthening_vwap_gate",
-            "distance_pct",
-            "vwap_distance_pct",
-            "vwap_distance",
-        )
-        participation = _diagnostic_number(
-            record,
-            "participation_surge_diagnostics",
-            "participation_score",
-            "participation_surge_score",
-            "participation_score",
-            default=0.0,
-        ) or 0.0
-        expansion = _number(record, "expansion_quality", "expansion_score", default=0.0) or 0.0
+
+        # GS358: prefer the exact stored trigger snapshot used by GS353 entry
+        # locks. Fall back to GS354's diagnostic-map precedence for older or
+        # incomplete records that do not contain a stored trigger explanation.
+        vwap = _stored_trigger_number(record, "vwap")
+        if vwap is None:
+            vwap = _diagnostic_number(
+                record,
+                "strengthening_vwap_gate",
+                "distance_pct",
+                "vwap_distance_pct",
+                "vwap_distance",
+            )
+        participation = _stored_trigger_number(record, "participation")
+        if participation is None:
+            participation = _diagnostic_number(
+                record,
+                "participation_surge_diagnostics",
+                "participation_score",
+                "participation_surge_score",
+                "participation_score",
+                default=0.0,
+            )
+        participation = participation or 0.0
+        expansion = _stored_trigger_number(record, "expansion_beginning")
+        if expansion is None:
+            expansion = _number(record, "expansion_quality", "expansion_score", default=0.0)
+        expansion = expansion or 0.0
+
         supertrend = bool(record.get("supertrend_bullish") or record.get("supertrend_flip"))
         label = html.escape(_operator_label(record))
         price_text = f"${price:.4f}" if price is not None else "price n/a"
