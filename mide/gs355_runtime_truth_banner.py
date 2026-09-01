@@ -34,6 +34,7 @@ def runtime_truth_snapshot(state, *, now: datetime | None = None) -> dict[str, A
     from .completed_scan import LAST_SCAN_FAILURE_KEY, completed_scan_for_view
     from .gs347_native_radar_timeout_health import runtime_health
     from .gs351_session_rerun_isolation import SUPPRESSED_RERUNS_KEY
+    from .gs357_history_timeout_containment import runtime_health as history_runtime_health
     from .session_controls import AUTO_SCAN_KEY, SCAN_REQUESTED_KEY, SCAN_RUNNING_KEY
 
     now = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
@@ -44,12 +45,18 @@ def runtime_truth_snapshot(state, *, now: datetime | None = None) -> dict[str, A
     scan_running = bool(state.get(SCAN_RUNNING_KEY, False))
     scan_requested = bool(state.get(SCAN_REQUESTED_KEY, False))
     native = runtime_health()
+    history_health = history_runtime_health()
     failure = state.get(LAST_SCAN_FAILURE_KEY) or {}
     failure_at = _aware_utc(failure.get("attempted_at")) if isinstance(failure, dict) else None
     failure_is_newer = bool(failure_at and (completed_at is None or failure_at > completed_at))
     stale = bool(auto_scan and scan_age is not None and scan_age > STALE_AUTO_SCAN_SECONDS and not scan_running)
 
-    if native.get("state") == "DEGRADED" or failure_is_newer or stale:
+    if (
+        native.get("state") == "DEGRADED"
+        or history_health.get("state") == "DEGRADED"
+        or failure_is_newer
+        or stale
+    ):
         state_label = "DEGRADED"
     elif completed is None:
         state_label = "STARTING"
@@ -59,6 +66,11 @@ def runtime_truth_snapshot(state, *, now: datetime | None = None) -> dict[str, A
     reason = ""
     if native.get("state") == "DEGRADED":
         reason = "Webull native radar degraded"
+    elif history_health.get("state") == "DEGRADED":
+        reason = str(
+            history_health.get("last_timeout_reason")
+            or "Webull history retrieval degraded"
+        )
     elif failure_is_newer:
         reason = str(failure.get("message") or "Latest scan attempt failed")
     elif stale:
@@ -74,6 +86,11 @@ def runtime_truth_snapshot(state, *, now: datetime | None = None) -> dict[str, A
         "scan_requested": scan_requested,
         "webull_native_state": str(native.get("state") or "UNKNOWN"),
         "webull_timeout_count": int(native.get("timeout_count") or 0),
+        "webull_history_state": str(history_health.get("state") or "UNKNOWN"),
+        "webull_history_timeout_count": int(history_health.get("timeout_count") or 0),
+        "webull_history_circuit_seconds": float(
+            history_health.get("circuit_seconds_remaining") or 0.0
+        ),
         "suppressed_reruns": int(state.get(SUPPRESSED_RERUNS_KEY, 0) or 0),
         "last_suppressed_rerun_reason": str(state.get("_walter_last_suppressed_rerun_reason") or ""),
     }
@@ -85,6 +102,8 @@ def _banner_html(snapshot: dict[str, Any]) -> str:
     age = snapshot.get("scan_age_seconds")
     auto = snapshot.get("auto_scan")
     native = snapshot.get("webull_native_state")
+    history_state = snapshot.get("webull_history_state")
+    history_timeouts = snapshot.get("webull_history_timeout_count") or 0
     suppressed = snapshot.get("suppressed_reruns") or 0
     age_text = "no completed scan" if age is None else f"last completed scan {int(age)}s ago"
     mode_text = "auto-scan ON" if auto else "auto-scan OFF"
@@ -101,7 +120,7 @@ body{{margin:0;background:transparent;font-family:-apple-system,BlinkMacSystemFo
 </style></head>
 <body><div id="shell"><span id="state">RUNTIME {state}</span>
 <span id="age" data-age="{0 if age is None else int(age)}" data-auto="{1 if auto else 0}">{age_text}</span>
-<span class="meta"> · {mode_text} · Webull radar {native} · suppressed reruns {suppressed}{reason_html}</span></div>
+<span class="meta"> · {mode_text} · Webull radar {native} · Webull history {history_state}/{history_timeouts} timeouts · suppressed reruns {suppressed}{reason_html}</span></div>
 <script>
 (function(){{
   const ageEl=document.getElementById('age');
