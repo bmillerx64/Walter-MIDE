@@ -208,3 +208,7 @@ _install_gs349_operator_first_layout()
 from .gs350_download_export_reliability import install as _install_gs350_download_export_reliability  # noqa: E402
 
 _install_gs350_download_export_reliability()
+
+from .gs351_session_rerun_isolation import install as _install_gs351_session_rerun_isolation  # noqa: E402
+
+_install_gs351_session_rerun_isolation()
