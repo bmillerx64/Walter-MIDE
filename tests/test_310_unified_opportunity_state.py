@@ -41,11 +41,45 @@ def test_constructive_structure_with_light_participation_is_developing():
     assert "developing" in view["reason"].lower()
 
 
-def test_current_attention_without_confirmed_structure_is_look_now():
+def test_current_attention_just_below_vwap_is_reclaim_watch_not_look_now():
     view = opportunity_state(
         _record(
             vwap_relation="below",
             vwap_distance_pct=-1.0,
+            supertrend_bullish=False,
+            participation_surge_score=30,
+            expansion_quality=30,
+            volume_acceleration=0.7,
+        )
+    )
+
+    assert view["state"] == DEVELOPING
+    assert "reclaim watch" in view["reason"].lower()
+    assert view["attention_provenance"] == ["WEBULL_TOP_MOVER"]
+
+
+def test_far_below_vwap_attention_is_not_elevated_for_entry_review():
+    view = opportunity_state(
+        _record(
+            vwap_relation="below",
+            vwap_distance_pct=-10.5,
+            supertrend_bullish=True,
+            participation_surge_score=90,
+            expansion_quality=80,
+            volume_acceleration=2.0,
+        )
+    )
+
+    assert view["state"] == DEVELOPING
+    assert "will not elevate" in view["reason"].lower()
+    assert "reclaims vwap" in view["next_step"].lower()
+
+
+def test_attention_can_still_surface_look_now_once_vwap_rule_is_satisfied():
+    view = opportunity_state(
+        _record(
+            vwap_relation="above",
+            vwap_distance_pct=0.5,
             supertrend_bullish=False,
             participation_surge_score=30,
             expansion_quality=30,
