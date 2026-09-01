@@ -188,3 +188,7 @@ _install_gs340_high_liquidity_trend_watch()
 from .gs344_emergence_convergence_engine import install as _install_gs344_emergence_convergence_engine  # noqa: E402
 
 _install_gs344_emergence_convergence_engine()
+
+from .gs345_persistent_leader_escalation import install as _install_gs345_persistent_leader_escalation  # noqa: E402
+
+_install_gs345_persistent_leader_escalation()
