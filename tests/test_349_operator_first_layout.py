@@ -1,4 +1,5 @@
 from mide import ui
+from mide import gs348_st_vwap_operator_priority as gs348
 from mide.gs349_operator_first_layout import developing_now_markup, developing_records
 
 
@@ -25,7 +26,6 @@ def test_installed_render_contract_is_operator_first():
 def test_developing_summary_uses_existing_display_sections(monkeypatch):
     dev = _record("DEV")
     ready = _record("READY", state="LOOK NOW")
-
     monkeypatch.setattr(
         ui,
         "scanner_v2_display_sections",
@@ -34,7 +34,6 @@ def test_developing_summary_uses_existing_display_sections(monkeypatch):
             ("DEVELOPING (1)", [dev], True),
         ],
     )
-
     assert developing_records([ready, dev]) == [dev]
 
 
@@ -45,11 +44,7 @@ def test_developing_markup_puts_current_patterns_ahead_of_history(monkeypatch):
         "scanner_v2_display_sections",
         lambda records: [("DEVELOPING (1)", [dev], True)],
     )
-    monkeypatch.setattr(
-        ui,
-        "mission_control_recommendation",
-        lambda record: {"label": "ST/VWAP CROSS · WATCH NOW"},
-    )
+    monkeypatch.setattr(gs348, "active_cross", lambda symbol: symbol == "OLOX")
 
     markup = developing_now_markup([dev])
 
