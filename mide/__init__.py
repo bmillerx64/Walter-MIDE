@@ -196,3 +196,7 @@ _install_gs345_persistent_leader_escalation()
 from .gs347_native_radar_timeout_health import install as _install_gs347_native_radar_timeout_health  # noqa: E402
 
 _install_gs347_native_radar_timeout_health()
+
+from .gs348_st_vwap_operator_priority import install as _install_gs348_st_vwap_operator_priority  # noqa: E402
+
+_install_gs348_st_vwap_operator_priority()
