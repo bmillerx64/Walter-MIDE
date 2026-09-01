@@ -200,3 +200,7 @@ _install_gs347_native_radar_timeout_health()
 from .gs348_st_vwap_operator_priority import install as _install_gs348_st_vwap_operator_priority  # noqa: E402
 
 _install_gs348_st_vwap_operator_priority()
+
+from .gs349_operator_first_layout import install as _install_gs349_operator_first_layout  # noqa: E402
+
+_install_gs349_operator_first_layout()
