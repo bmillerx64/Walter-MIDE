@@ -127,6 +127,18 @@ def opportunity_state(record: dict) -> dict:
         next_step = (
             "Watch for resumption, then reassess fresh price, VWAP, trend, and volume."
         )
+    elif not vwap_above:
+        state = DEVELOPING
+        if distance is not None and abs(distance) <= 2.0:
+            reason = "Price is below VWAP; this is a reclaim watch, not an entry setup."
+            next_step = (
+                "Wait for price to reclaim and hold above VWAP before Walter elevates the setup."
+            )
+        else:
+            reason = "Price is below VWAP; Walter will not elevate it for entry review."
+            next_step = (
+                "No entry review until price reclaims VWAP; then reassess trend, participation, and expansion."
+            )
     elif distance is not None and distance > 2.0:
         state = CHASE_WAIT
         reason = f"Price is {distance:.1f}% above VWAP; the move is extended."
@@ -217,7 +229,6 @@ def _target_markup(item: dict, role: str, primary: dict | None = None) -> str:
         f"{html.escape(str(condition.get('label') or ''))}</div>"
         for index, condition in enumerate(conditions, start=1)
     )
-
     reasons = "".join(
         f"<div class='mission-reason'>✓ {html.escape(str(reason))}</div>"
         for reason in list(item.get("reasons") or [])[:3]
