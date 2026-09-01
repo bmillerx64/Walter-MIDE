@@ -1,18 +1,22 @@
 """Read-only Webull native market-attention discovery.
 
-Universe seeding uses three complementary feeds:
+Universe seeding uses four complementary feeds:
 
 * DAY_GAINERS  – top-20 by % change today; captures names that are already
   running and draws in breakout continuations.
+* 5-MINUTE MOVERS – top-20 by recent five-minute % change; captures abrupt
+  opening-bell and intraday breakouts before they rank highly enough on the
+  slower day-gainer or absolute-volume lists.
 * ABSOLUTE_VOLUME – top-20 by raw share volume; catches high-float names with
   institutional participation that may not lead on % change.
 * RELATIVE_VOLUME – top-20 by 10-day RVOL; catches early-ignition small-caps
   whose absolute volume is still modest but whose relative surge is the first
-  detectable signal of accumulation.  This is the primary pre-ignition feed.
+  detectable signal of accumulation.
 
-Five-minute movers are retained in RADAR_FEEDS for diagnostics/history but
-are NOT included in DISCOVERY_FEED_KEYS because they duplicate day-gainers
-for already-running symbols and add noise without early-detection benefit.
+All four feeds are discovery-only inputs and are de-duplicated before Walter's
+existing price, validity, free-float, catalyst, participation, expansion, and
+mission gates. This widens detection coverage without weakening downstream
+trading or safety thresholds.
 
 The relative_volume feed requires a minimum +2 % gain filter enforced during
 snapshot enrichment to prevent low-float names with unusual but directionless
@@ -43,12 +47,11 @@ RADAR_FEEDS = (
               {"category": "US_STOCK", "rank_type": "VOLUME", "sort_by": "VOLUME", "direction": "DESC", "page_index": 1, "page_size": 20}),
 )
 
-# relative_volume is added as the third discovery feed to surface pre-ignition
-# names before they reach the top of the day-gainers list.  All three feeds are
+# Use all four native attention feeds. They are discovery-only and are
 # de-duplicated in fetch_native_radar so a symbol appearing in multiple feeds
 # counts once.
-DISCOVERY_FEED_KEYS = ("day_gainers", "absolute_volume", "relative_volume")
-DISCOVERY_CONTRACT = "WEBULL_TOP20_DAY_GAINERS_PLUS_TOP20_ABSOLUTE_VOLUME_PLUS_TOP20_RELATIVE_VOLUME"
+DISCOVERY_FEED_KEYS = ("day_gainers", "five_minute_movers", "absolute_volume", "relative_volume")
+DISCOVERY_CONTRACT = "WEBULL_TOP20_DAY_GAINERS_PLUS_TOP20_FIVE_MINUTE_MOVERS_PLUS_TOP20_ABSOLUTE_VOLUME_PLUS_TOP20_RELATIVE_VOLUME"
 
 # Minimum intraday gain a relative-volume discovery must show before it is
 # treated as a directional candidate.  Prevents flat-tape names with unusual
@@ -179,7 +182,7 @@ def fetch_native_radar(client: Any) -> dict[str, Any]:
             "rejected_symbols": rejected,
             "all_feeds_available": all(feeds[k]["status"] == "PASS" for k in DISCOVERY_FEED_KEYS),
             "discovery_contract": DISCOVERY_CONTRACT, "discovery_feed_keys": list(DISCOVERY_FEED_KEYS),
-            "maximum_pre_dedupe_symbols": 60, "pages_requested_per_feed": 1,
+            "maximum_pre_dedupe_symbols": 80, "pages_requested_per_feed": 1,
             "rvol_discovery_min_gain_pct": RVOL_DISCOVERY_MIN_GAIN_PCT}
 
 

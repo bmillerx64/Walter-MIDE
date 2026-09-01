@@ -1,8 +1,9 @@
-"""GS263: accept only the active GS262 discovery feeds at the live-universe gate.
+"""GS263: accept only the active native discovery feeds at the live-universe gate.
 
-GS262 deliberately marks five-minute movers and relative-volume as NOT_SCANNED.
-The older live-universe adapter still treated every non-PASS feed as a provider
-failure, making the GS262 contract impossible to satisfy in production.
+GS343 uses all four Webull attention feeds for discovery: day gainers,
+five-minute movers, absolute volume, and relative volume. The gate validates
+only the feeds identified by the radar report and fails closed if any active
+feed is unavailable.
 """
 from __future__ import annotations
 
@@ -20,7 +21,12 @@ def install() -> None:
         feeds = report.get("feeds", {})
         active_keys = tuple(report.get("discovery_feed_keys") or ())
         if not active_keys:
-            active_keys = ("day_gainers", "absolute_volume")
+            active_keys = (
+                "day_gainers",
+                "five_minute_movers",
+                "absolute_volume",
+                "relative_volume",
+            )
 
         failed = [
             f"{name}: {(feeds.get(name) or {}).get('error') or 'unavailable'}"

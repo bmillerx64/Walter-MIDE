@@ -10,8 +10,6 @@ class Screener:
 def test_native_radar_marks_http_permission_failures():
     report=fetch_native_radar(Screener())
     assert report["all_feeds_available"] is False
-    # All three active feeds fail on HTTP 403
-    for key in ("day_gainers","absolute_volume","relative_volume"):
+    for key in ("day_gainers","five_minute_movers","absolute_volume","relative_volume"):
         assert report["feeds"][key]["status"]=="FAIL"
         assert "HTTP 403" in report["feeds"][key]["error"]
-    assert report["feeds"]["five_minute_movers"]["status"]=="NOT_SCANNED"
