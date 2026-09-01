@@ -212,3 +212,7 @@ _install_gs350_download_export_reliability()
 from .gs351_session_rerun_isolation import install as _install_gs351_session_rerun_isolation  # noqa: E402
 
 _install_gs351_session_rerun_isolation()
+
+from .gs352_persistent_alert_arm import install as _install_gs352_persistent_alert_arm  # noqa: E402
+
+_install_gs352_persistent_alert_arm()
