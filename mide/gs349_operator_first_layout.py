@@ -23,9 +23,7 @@ def _number(record: dict, *keys: str, default: float | None = None) -> float | N
 
 
 def developing_records(records: list[dict]) -> list[dict]:
-    """Return the same DEVELOPING rows Walter already exposes, in UI priority order."""
     from . import ui
-
     rows: list[dict] = []
     for title, section_rows, _expanded in ui.scanner_v2_display_sections(records or []):
         if "DEVELOPING" not in str(title).upper():
@@ -36,28 +34,41 @@ def developing_records(records: list[dict]) -> list[dict]:
     return rows[:MAX_DEVELOPING_ROWS]
 
 
+def _operator_label(record: dict) -> str:
+    try:
+        from . import ui
+        recommendation_fn = getattr(ui, "mission_control_recommendation", None)
+        if callable(recommendation_fn):
+            recommendation = recommendation_fn(record)
+            label = str((recommendation or {}).get("label") or "").strip()
+            if label:
+                return label
+    except Exception:
+        pass
+    try:
+        from .gs348_st_vwap_operator_priority import active_cross
+        if active_cross(str(record.get("symbol") or "")):
+            return "ST/VWAP CROSS · WATCH NOW"
+    except Exception:
+        pass
+    return "DEVELOPING"
+
+
 def developing_now_markup(records: list[dict]) -> str:
-    """Render a compact operator-first summary for current developing patterns."""
     rows = developing_records(records)
     if not rows:
         return ""
-
     cards = []
     for record in rows:
-        symbol = html.escape(str(record.get("symbol") or "").upper())
+        symbol_raw = str(record.get("symbol") or "").upper()
+        symbol = html.escape(symbol_raw)
         price = _number(record, "price")
         pct = _number(record, "pct_change", "percent_change")
         vwap = _number(record, "vwap_distance_pct", "vwap_distance")
         participation = _number(record, "participation_score", "participation_surge_score", default=0.0) or 0.0
         expansion = _number(record, "expansion_score", "expansion_quality", default=0.0) or 0.0
         supertrend = bool(record.get("supertrend_bullish") or record.get("supertrend_flip"))
-        recommendation = None
-        try:
-            from . import ui
-            recommendation = ui.mission_control_recommendation(record)
-        except Exception:
-            recommendation = None
-        label = html.escape(str((recommendation or {}).get("label") or "DEVELOPING"))
+        label = html.escape(_operator_label(record))
         price_text = f"${price:.4f}" if price is not None else "price n/a"
         pct_text = f"{pct:+.1f}%" if pct is not None else ""
         vwap_text = f"VWAP {vwap:+.1f}%" if vwap is not None else "VWAP n/a"
@@ -69,7 +80,6 @@ def developing_now_markup(records: list[dict]) -> str:
             f"<div class='gs349-evidence'>{vwap_text} · {st_text} · Participation {participation:.0f} · Expansion {expansion:.0f}</div>"
             "</div>"
         )
-
     return (
         "<style>"
         ".gs349-shell{background:#0b1119;border:1px solid #315076;border-left:5px solid #60a5fa;border-radius:12px;padding:11px 14px;margin:-4px 0 10px}"
@@ -94,20 +104,16 @@ def _inherit(wrapper, wrapped) -> None:
 
 
 def install() -> None:
-    """Append the current DEVELOPING summary inside Mission Control, before the feed slot."""
     from . import ui
-
     current_render = ui.render_walter_mission_control
     if getattr(current_render, "_gs349_operator_first_layout", False):
         return
-
     def render_with_developing_first(records: list[dict]) -> None:
         result = current_render(records)
         markup = developing_now_markup(records)
         if markup:
             ui.st.markdown(markup, unsafe_allow_html=True)
         return result
-
     _inherit(render_with_developing_first, current_render)
     render_with_developing_first._gs349_operator_first_layout = True
     render_with_developing_first._gs349_original = current_render
