@@ -192,3 +192,7 @@ _install_gs344_emergence_convergence_engine()
 from .gs345_persistent_leader_escalation import install as _install_gs345_persistent_leader_escalation  # noqa: E402
 
 _install_gs345_persistent_leader_escalation()
+
+from .gs347_native_radar_timeout_health import install as _install_gs347_native_radar_timeout_health  # noqa: E402
+
+_install_gs347_native_radar_timeout_health()
