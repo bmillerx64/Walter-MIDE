@@ -22,6 +22,24 @@ def _number(record: dict, *keys: str, default: float | None = None) -> float | N
     return default
 
 
+def _diagnostic_number(record: dict, group: str, key: str, *fallback_keys: str, default: float | None = None) -> float | None:
+    """Prefer the same diagnostic snapshot Walter's entry trigger uses.
+
+    GS354: the operator summary must not disagree with the entry-lock chips.  The
+    trigger gate reads strengthening_vwap_gate and participation_surge_diagnostics
+    before the convenience top-level fields, so the summary now follows the same
+    precedence.  This is presentation-only; no decision input is changed.
+    """
+    diagnostics = record.get(group) or {}
+    try:
+        value = diagnostics.get(key)
+        if value is not None and value != "":
+            return float(value)
+    except (TypeError, ValueError, AttributeError):
+        pass
+    return _number(record, *fallback_keys, default=default)
+
+
 def developing_records(records: list[dict]) -> list[dict]:
     from . import ui
     rows: list[dict] = []
@@ -64,9 +82,23 @@ def developing_now_markup(records: list[dict]) -> str:
         symbol = html.escape(symbol_raw)
         price = _number(record, "price")
         pct = _number(record, "pct_change", "percent_change")
-        vwap = _number(record, "vwap_distance_pct", "vwap_distance")
-        participation = _number(record, "participation_score", "participation_surge_score", default=0.0) or 0.0
-        expansion = _number(record, "expansion_score", "expansion_quality", default=0.0) or 0.0
+        # GS354: use the exact diagnostic values that feed trigger_diagnostics.
+        vwap = _diagnostic_number(
+            record,
+            "strengthening_vwap_gate",
+            "distance_pct",
+            "vwap_distance_pct",
+            "vwap_distance",
+        )
+        participation = _diagnostic_number(
+            record,
+            "participation_surge_diagnostics",
+            "participation_score",
+            "participation_surge_score",
+            "participation_score",
+            default=0.0,
+        ) or 0.0
+        expansion = _number(record, "expansion_quality", "expansion_score", default=0.0) or 0.0
         supertrend = bool(record.get("supertrend_bullish") or record.get("supertrend_flip"))
         label = html.escape(_operator_label(record))
         price_text = f"${price:.4f}" if price is not None else "price n/a"
