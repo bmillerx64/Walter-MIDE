@@ -154,14 +154,19 @@ def _inherit(wrapper, wrapped) -> None:
 def install() -> None:
     from . import ui
     current = ui.render_walter_mission_control
-    if getattr(current, "_gs355_runtime_truth_banner", False):
-        return
+    if not getattr(current, "_gs355_runtime_truth_banner", False):
+        def render_with_runtime_truth(records: list[dict]) -> None:
+            render_runtime_truth_banner()
+            return current(records)
 
-    def render_with_runtime_truth(records: list[dict]) -> None:
-        render_runtime_truth_banner()
-        return current(records)
+        _inherit(render_with_runtime_truth, current)
+        render_with_runtime_truth._gs355_runtime_truth_banner = True
+        render_with_runtime_truth._gs355_original = current
+        ui.render_walter_mission_control = render_with_runtime_truth
 
-    _inherit(render_with_runtime_truth, current)
-    render_with_runtime_truth._gs355_runtime_truth_banner = True
-    render_with_runtime_truth._gs355_original = current
-    ui.render_walter_mission_control = render_with_runtime_truth
+    # GS356 is intentionally installed from the final existing runtime patch so
+    # it remains last in the UI wrapper chain without adding another fragile
+    # import-order entry to mide.__init__ during hot deployments.
+    from .gs356_client_session_truth import install as _install_gs356_client_session_truth
+
+    _install_gs356_client_session_truth()
