@@ -220,3 +220,7 @@ _install_gs352_persistent_alert_arm()
 from .gs353_entry_lock_clarity import install as _install_gs353_entry_lock_clarity  # noqa: E402
 
 _install_gs353_entry_lock_clarity()
+
+from .gs355_runtime_truth_banner import install as _install_gs355_runtime_truth_banner  # noqa: E402
+
+_install_gs355_runtime_truth_banner()
