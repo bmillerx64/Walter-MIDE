@@ -78,3 +78,8 @@ def install() -> None:
         return {symbol: output[symbol] for symbol in wanted if symbol in output}
 
     webull_live.WebullOpenAPIClient.bars = ordered_bars
+
+    # GS357 wraps the final history adapter after compatibility ordering is in
+    # place, so a stalled SDK call cannot hold the Streamlit script indefinitely.
+    from .gs357_history_timeout_containment import install as install_history_timeout
+    install_history_timeout()
