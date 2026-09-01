@@ -34,7 +34,7 @@ def test_voice_transition_uses_same_unified_opportunity_state_as_display():
     changes = unified_state_changes([current])
 
     assert changes == [
-        {"symbol": "TEST", "from": "LOOK NOW", "to": "WATCH FOR ENTRY"}
+        {"symbol": "TEST", "from": "DEVELOPING", "to": "WATCH FOR ENTRY"}
     ]
     assert "TEST. WATCH FOR ENTRY." in unified_alert_phrase([current])
 
