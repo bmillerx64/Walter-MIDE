@@ -170,3 +170,10 @@ def install() -> None:
     from .gs356_client_session_truth import install as _install_gs356_client_session_truth
 
     _install_gs356_client_session_truth()
+
+    # GS363 is operator presentation/alert only and intentionally installs after
+    # the session-truth wrappers so sorting and tiered chimes are the final UI
+    # layer without changing any scanner or qualification contract.
+    from .gs363_operator_attention_hierarchy import install as _install_gs363_operator_attention_hierarchy
+
+    _install_gs363_operator_attention_hierarchy()
