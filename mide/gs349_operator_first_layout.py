@@ -1,4 +1,4 @@
-"""GS349: keep active developing setups above historical opportunity-feed noise.
+"""GS349/GS359: keep active developing setups first in Walter's operator layout.
 
 Presentation-only. This does not change discovery, candidate membership, scoring,
 qualification, thresholds, readiness, alerts, execution, or orders.
@@ -87,12 +87,40 @@ def _stored_trigger_number(record: dict, condition: str) -> float | None:
     return None
 
 
-def developing_records(records: list[dict]) -> list[dict]:
+def _full_display_sections(records: list[dict]) -> list[tuple[str, list[dict], bool]]:
+    """Return the unfiltered Radar sections, even after GS359 moves Developing.
+
+    The installed public section function omits Developing so app.py will not
+    render a second copy below the View controls.  The original section function
+    is retained on the wrapper for this operator-first render path.  A monkeypatch
+    without that attribute still works normally in regression tests.
+    """
     from . import ui
+
+    section_fn = ui.scanner_v2_display_sections
+    section_fn = getattr(section_fn, "_gs349_full_sections", section_fn)
+    return list(section_fn(records or []))
+
+
+def operator_first_sections(
+    records: list[dict],
+) -> tuple[list[tuple[str, list[dict], bool]], list[tuple[str, list[dict], bool]]]:
+    """Split full Radar sections into moved Developing rows and lower-page rows."""
+    developing = []
+    remaining = []
+    for section in _full_display_sections(records):
+        title = str(section[0])
+        if "DEVELOPING" in title.upper():
+            developing.append(section)
+        else:
+            remaining.append(section)
+    return developing, remaining
+
+
+def developing_records(records: list[dict]) -> list[dict]:
     rows: list[dict] = []
-    for title, section_rows, _expanded in ui.scanner_v2_display_sections(records or []):
-        if "DEVELOPING" not in str(title).upper():
-            continue
+    developing, _remaining = operator_first_sections(records)
+    for _title, section_rows, _expanded in developing:
         rows.extend(section_rows)
         if len(rows) >= MAX_DEVELOPING_ROWS:
             break
@@ -188,6 +216,32 @@ def developing_now_markup(records: list[dict]) -> str:
     )
 
 
+def render_developing_detail(records: list[dict]) -> None:
+    """Render the full Developing Radar section immediately below Developing Now.
+
+    GS359 reproduces the existing Radar section/card/table presentation at the
+    operator-first location.  Walter Priority remains the ordering here so the
+    lower presentation-only sort control does not move this primary watch area.
+    """
+    from . import ui
+
+    developing, _remaining = operator_first_sections(records)
+    for section_name, section_records, expanded in developing:
+        if not section_records:
+            continue
+        with ui.st.expander(
+            f"{str(section_name).upper()} ({len(section_records)})", expanded=expanded
+        ):
+            sorted_records = sorted(
+                section_records, key=ui.trader_priority_sort_key, reverse=True
+            )
+            for record in sorted_records[:10]:
+                ui.opportunity_card(record)
+            ui.st.dataframe(
+                ui.radar_table(sorted_records), width="stretch", hide_index=True
+            )
+
+
 def _inherit(wrapper, wrapped) -> None:
     for name, value in getattr(wrapped, "__dict__", {}).items():
         if name.startswith("_gs") and not hasattr(wrapper, name):
@@ -196,16 +250,38 @@ def _inherit(wrapper, wrapped) -> None:
 
 def install() -> None:
     from . import ui
+
     current_render = ui.render_walter_mission_control
     if getattr(current_render, "_gs349_operator_first_layout", False):
         return
+
+    # GS359: app.py renders all scanner sections after the View controls. Keep
+    # that existing path for every section except Developing, which is rendered
+    # directly after DEVELOPING NOW above the feed/structure/control blocks.
+    current_sections = ui.scanner_v2_display_sections
+
+    def sections_without_developing(records: list[dict]):
+        return [
+            section
+            for section in current_sections(records)
+            if "DEVELOPING" not in str(section[0]).upper()
+        ]
+
+    _inherit(sections_without_developing, current_sections)
+    sections_without_developing._gs359_developing_section_order = True
+    sections_without_developing._gs349_full_sections = current_sections
+    ui.scanner_v2_display_sections = sections_without_developing
+
     def render_with_developing_first(records: list[dict]) -> None:
         result = current_render(records)
         markup = developing_now_markup(records)
         if markup:
             ui.st.markdown(markup, unsafe_allow_html=True)
+            render_developing_detail(records)
         return result
+
     _inherit(render_with_developing_first, current_render)
     render_with_developing_first._gs349_operator_first_layout = True
+    render_with_developing_first._gs359_developing_section_order = True
     render_with_developing_first._gs349_original = current_render
     ui.render_walter_mission_control = render_with_developing_first
