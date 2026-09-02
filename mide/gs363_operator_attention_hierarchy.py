@@ -46,18 +46,36 @@ def operator_attention_score(record: dict) -> int:
 
 
 def operator_display_sort_key(record: dict) -> tuple[int, int, str]:
-    """Sort highest-actionability state first, then highest attention score."""
+    """Expose the two new primary presentation keys for tests/diagnostics."""
     state = opportunity_state(record)["state"]
     return (
-        -int(STATE_PRIORITY.get(state, 0)),
-        -operator_attention_score(record),
+        int(STATE_PRIORITY.get(state, 0)),
+        operator_attention_score(record),
         str(record.get("symbol") or "").upper(),
     )
 
 
 def sorted_operator_records(records: list[dict]) -> list[dict]:
-    """Return a presentation-only copy ordered for fast operator triage."""
-    return sorted(list(records or []), key=operator_display_sort_key)
+    """Return a presentation-only copy ordered for fast operator triage.
+
+    State and the existing 0-100 attention score are the new primary keys.  When
+    both tie, preserve Walter's established trader-priority sort as a tertiary
+    tie-break instead of discarding the prior Radar ordering contract.
+    """
+    from . import ui
+
+    rows = list(records or [])
+    rows.sort(key=lambda record: str(record.get("symbol") or "").upper())
+    try:
+        rows.sort(key=ui.trader_priority_sort_key, reverse=True)
+    except Exception:
+        pass
+    rows.sort(key=operator_attention_score, reverse=True)
+    rows.sort(
+        key=lambda record: STATE_PRIORITY.get(opportunity_state(record)["state"], 0),
+        reverse=True,
+    )
+    return rows
 
 
 def alert_chime_count(phrase: str) -> int:
@@ -82,9 +100,17 @@ def priority_queue_markup(records: list[dict]) -> str:
     if not visible:
         return ""
 
+    views = [opportunity_state(record) for record in visible]
+    monitoring = ""
+    if WATCH_FOR_ENTRY not in {view["state"] for view in views}:
+        monitoring = (
+            "<div class='gs363-monitor'>"
+            "No entry-ready setups. Continue monitoring."
+            "</div>"
+        )
+
     rows = []
-    for index, record in enumerate(visible, start=1):
-        view = opportunity_state(record)
+    for index, (record, view) in enumerate(zip(visible, views), start=1):
         symbol = html.escape(str(record.get("symbol") or "").upper())
         score = operator_attention_score(record)
         state = html.escape(str(view["state"]))
@@ -109,6 +135,7 @@ def priority_queue_markup(records: list[dict]) -> str:
         ".gs363-shell{background:#0b1119;border:1px solid #334155;border-left:5px solid #facc15;border-radius:12px;padding:10px 14px;margin:-2px 0 12px}"
         ".gs363-title{font-size:.78rem;letter-spacing:.12em;font-weight:950;color:#f8fafc;margin-bottom:3px}"
         ".gs363-sub{font-size:.78rem;color:#94a3b8;margin-bottom:5px}"
+        ".gs363-monitor{margin:6px 0 3px;padding:6px 9px;border:1px solid #854d0e;border-radius:7px;background:#302707;color:#fde68a;font-size:.78rem;font-weight:900}"
         ".gs363-row{display:grid;grid-template-columns:38px minmax(70px,.65fr) 92px minmax(130px,1fr) 70px;gap:8px;align-items:center;border-top:1px solid #1e293b;padding:6px 0}"
         ".gs363-rank{color:#64748b;font-size:.78rem;font-weight:900}.gs363-symbol{font-size:1rem;font-weight:950;color:#f8fafc}"
         ".gs363-score{font-size:1.18rem;font-weight:950;color:#f8fafc;font-variant-numeric:tabular-nums}.gs363-score span{font-size:.68rem;color:#94a3b8;margin-left:2px}"
@@ -119,6 +146,7 @@ def priority_queue_markup(records: list[dict]) -> str:
         "<div class='gs363-shell'>"
         "<div class='gs363-title'>OPERATOR PRIORITY · HIGH TO LOW</div>"
         "<div class='gs363-sub'>State first, then Walter attention score. Attention is a display cue, not a trade authorization.</div>"
+        + monitoring
         + "".join(rows)
         + "<div class='gs363-legend'>🔔 WATCH FOR ENTRY = 3 chimes · LOOK NOW = 2 chimes · other state change = 1 chime</div>"
         "</div>"
