@@ -1,4 +1,4 @@
-"""GS349: keep active developing setups above historical opportunity-feed noise.
+"""GS349/GS359: keep active developing setups first in Walter's operator layout.
 
 Presentation-only. This does not change discovery, candidate membership, scoring,
 qualification, thresholds, readiness, alerts, execution, or orders.
@@ -9,6 +9,7 @@ import html
 import re
 
 MAX_DEVELOPING_ROWS = 4
+_SUPPRESS_NEXT_DEVELOPING_KEY = "_gs359_suppress_next_developing_section"
 
 
 def _number(record: dict, *keys: str, default: float | None = None) -> float | None:
@@ -87,12 +88,40 @@ def _stored_trigger_number(record: dict, condition: str) -> float | None:
     return None
 
 
-def developing_records(records: list[dict]) -> list[dict]:
+def _full_display_sections(records: list[dict]) -> list[tuple[str, list[dict], bool]]:
+    """Return Walter's unfiltered Radar sections.
+
+    GS359 wraps the public section function only to suppress one later duplicate
+    during the same Streamlit rerun.  The original section function is retained
+    on that wrapper so the operator-first block always sees the complete set.
+    A test monkeypatch without that attribute remains fully supported.
+    """
     from . import ui
+
+    section_fn = ui.scanner_v2_display_sections
+    section_fn = getattr(section_fn, "_gs349_full_sections", section_fn)
+    return list(section_fn(records or []))
+
+
+def operator_first_sections(
+    records: list[dict],
+) -> tuple[list[tuple[str, list[dict], bool]], list[tuple[str, list[dict], bool]]]:
+    """Split full Radar sections into moved Developing rows and lower-page rows."""
+    developing = []
+    remaining = []
+    for section in _full_display_sections(records):
+        title = str(section[0])
+        if "DEVELOPING" in title.upper():
+            developing.append(section)
+        else:
+            remaining.append(section)
+    return developing, remaining
+
+
+def developing_records(records: list[dict]) -> list[dict]:
     rows: list[dict] = []
-    for title, section_rows, _expanded in ui.scanner_v2_display_sections(records or []):
-        if "DEVELOPING" not in str(title).upper():
-            continue
+    developing, _remaining = operator_first_sections(records)
+    for _title, section_rows, _expanded in developing:
         rows.extend(section_rows)
         if len(rows) >= MAX_DEVELOPING_ROWS:
             break
@@ -188,24 +217,104 @@ def developing_now_markup(records: list[dict]) -> str:
     )
 
 
+def render_developing_detail(records: list[dict]) -> None:
+    """Render the full Developing Radar section immediately below Developing Now.
+
+    GS359 reproduces the existing Radar section/card/table presentation at the
+    operator-first location. Walter Priority remains the ordering here so the
+    lower presentation-only sort control does not move this primary watch area.
+    """
+    from . import ui
+
+    developing, _remaining = operator_first_sections(records)
+    for section_name, section_records, expanded in developing:
+        if not section_records:
+            continue
+        with ui.st.expander(
+            f"{str(section_name).upper()} ({len(section_records)})", expanded=expanded
+        ):
+            sorted_records = sorted(
+                section_records, key=ui.trader_priority_sort_key, reverse=True
+            )
+            for record in sorted_records[:10]:
+                ui.opportunity_card(record)
+            ui.st.dataframe(
+                ui.radar_table(sorted_records), width="stretch", hide_index=True
+            )
+
+
 def _inherit(wrapper, wrapped) -> None:
     for name, value in getattr(wrapped, "__dict__", {}).items():
         if name.startswith("_gs") and not hasattr(wrapper, name):
             setattr(wrapper, name, value)
 
 
+def _set_suppress_next_developing(value: bool) -> None:
+    """Store one-rerun duplicate suppression in Streamlit's session-local state."""
+    from . import ui
+
+    try:
+        ui.st.session_state[_SUPPRESS_NEXT_DEVELOPING_KEY] = bool(value)
+    except Exception:
+        # Streamlit-free unit tests may not have a usable session_state proxy.
+        pass
+
+
+def _consume_suppress_next_developing() -> bool:
+    """Consume the session-local one-shot duplicate suppression flag."""
+    from . import ui
+
+    try:
+        pending = bool(ui.st.session_state.get(_SUPPRESS_NEXT_DEVELOPING_KEY, False))
+        if pending:
+            ui.st.session_state[_SUPPRESS_NEXT_DEVELOPING_KEY] = False
+        return pending
+    except Exception:
+        return False
+
+
 def install() -> None:
     from . import ui
+
     current_render = ui.render_walter_mission_control
     if getattr(current_render, "_gs349_operator_first_layout", False):
         return
+
+    # GS359: app.py renders all scanner sections after the View controls. Wrap
+    # that shared section helper conservatively: only the first call after the
+    # operator-first render omits Developing, preventing the lower Radar duplicate.
+    # All other callers retain the complete section contract.
+    current_sections = ui.scanner_v2_display_sections
+
+    def sections_with_one_shot_suppression(records: list[dict]):
+        sections = list(current_sections(records))
+        if not _consume_suppress_next_developing():
+            return sections
+        return [
+            section
+            for section in sections
+            if "DEVELOPING" not in str(section[0]).upper()
+        ]
+
+    _inherit(sections_with_one_shot_suppression, current_sections)
+    sections_with_one_shot_suppression._gs359_developing_section_order = True
+    sections_with_one_shot_suppression._gs349_full_sections = current_sections
+    ui.scanner_v2_display_sections = sections_with_one_shot_suppression
+
     def render_with_developing_first(records: list[dict]) -> None:
+        # Clear a stale flag from a prior rerun/tab before the upper block reads
+        # sections. Set a new one-shot only after the moved detail is rendered.
+        _set_suppress_next_developing(False)
         result = current_render(records)
         markup = developing_now_markup(records)
         if markup:
             ui.st.markdown(markup, unsafe_allow_html=True)
+            render_developing_detail(records)
+            _set_suppress_next_developing(True)
         return result
+
     _inherit(render_with_developing_first, current_render)
     render_with_developing_first._gs349_operator_first_layout = True
+    render_with_developing_first._gs359_developing_section_order = True
     render_with_developing_first._gs349_original = current_render
     ui.render_walter_mission_control = render_with_developing_first
