@@ -9,6 +9,7 @@ import html
 import re
 
 MAX_DEVELOPING_ROWS = 4
+_SUPPRESS_NEXT_DEVELOPING_KEY = "_gs359_suppress_next_developing_section"
 
 
 def _number(record: dict, *keys: str, default: float | None = None) -> float | None:
@@ -88,12 +89,12 @@ def _stored_trigger_number(record: dict, condition: str) -> float | None:
 
 
 def _full_display_sections(records: list[dict]) -> list[tuple[str, list[dict], bool]]:
-    """Return the unfiltered Radar sections, even after GS359 moves Developing.
+    """Return Walter's unfiltered Radar sections.
 
-    The installed public section function omits Developing so app.py will not
-    render a second copy below the View controls.  The original section function
-    is retained on the wrapper for this operator-first render path.  A monkeypatch
-    without that attribute still works normally in regression tests.
+    GS359 wraps the public section function only to suppress one later duplicate
+    during the same Streamlit rerun.  The original section function is retained
+    on that wrapper so the operator-first block always sees the complete set.
+    A test monkeypatch without that attribute remains fully supported.
     """
     from . import ui
 
@@ -220,7 +221,7 @@ def render_developing_detail(records: list[dict]) -> None:
     """Render the full Developing Radar section immediately below Developing Now.
 
     GS359 reproduces the existing Radar section/card/table presentation at the
-    operator-first location.  Walter Priority remains the ordering here so the
+    operator-first location. Walter Priority remains the ordering here so the
     lower presentation-only sort control does not move this primary watch area.
     """
     from . import ui
@@ -248,6 +249,30 @@ def _inherit(wrapper, wrapped) -> None:
             setattr(wrapper, name, value)
 
 
+def _set_suppress_next_developing(value: bool) -> None:
+    """Store one-rerun duplicate suppression in Streamlit's session-local state."""
+    from . import ui
+
+    try:
+        ui.st.session_state[_SUPPRESS_NEXT_DEVELOPING_KEY] = bool(value)
+    except Exception:
+        # Streamlit-free unit tests may not have a usable session_state proxy.
+        pass
+
+
+def _consume_suppress_next_developing() -> bool:
+    """Consume the session-local one-shot duplicate suppression flag."""
+    from . import ui
+
+    try:
+        pending = bool(ui.st.session_state.get(_SUPPRESS_NEXT_DEVELOPING_KEY, False))
+        if pending:
+            ui.st.session_state[_SUPPRESS_NEXT_DEVELOPING_KEY] = False
+        return pending
+    except Exception:
+        return False
+
+
 def install() -> None:
     from . import ui
 
@@ -255,29 +280,37 @@ def install() -> None:
     if getattr(current_render, "_gs349_operator_first_layout", False):
         return
 
-    # GS359: app.py renders all scanner sections after the View controls. Keep
-    # that existing path for every section except Developing, which is rendered
-    # directly after DEVELOPING NOW above the feed/structure/control blocks.
+    # GS359: app.py renders all scanner sections after the View controls. Wrap
+    # that shared section helper conservatively: only the first call after the
+    # operator-first render omits Developing, preventing the lower Radar duplicate.
+    # All other callers retain the complete section contract.
     current_sections = ui.scanner_v2_display_sections
 
-    def sections_without_developing(records: list[dict]):
+    def sections_with_one_shot_suppression(records: list[dict]):
+        sections = list(current_sections(records))
+        if not _consume_suppress_next_developing():
+            return sections
         return [
             section
-            for section in current_sections(records)
+            for section in sections
             if "DEVELOPING" not in str(section[0]).upper()
         ]
 
-    _inherit(sections_without_developing, current_sections)
-    sections_without_developing._gs359_developing_section_order = True
-    sections_without_developing._gs349_full_sections = current_sections
-    ui.scanner_v2_display_sections = sections_without_developing
+    _inherit(sections_with_one_shot_suppression, current_sections)
+    sections_with_one_shot_suppression._gs359_developing_section_order = True
+    sections_with_one_shot_suppression._gs349_full_sections = current_sections
+    ui.scanner_v2_display_sections = sections_with_one_shot_suppression
 
     def render_with_developing_first(records: list[dict]) -> None:
+        # Clear a stale flag from a prior rerun/tab before the upper block reads
+        # sections. Set a new one-shot only after the moved detail is rendered.
+        _set_suppress_next_developing(False)
         result = current_render(records)
         markup = developing_now_markup(records)
         if markup:
             ui.st.markdown(markup, unsafe_allow_html=True)
             render_developing_detail(records)
+            _set_suppress_next_developing(True)
         return result
 
     _inherit(render_with_developing_first, current_render)
