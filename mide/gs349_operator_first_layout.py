@@ -1,4 +1,4 @@
-"""GS349/GS359: keep active developing setups first in Walter's operator layout.
+"""GS349/GS359/GS360: keep active developing setups first in Walter's operator layout.
 
 Presentation-only. This does not change discovery, candidate membership, scoring,
 qualification, thresholds, readiness, alerts, execution, or orders.
@@ -302,19 +302,24 @@ def install() -> None:
     ui.scanner_v2_display_sections = sections_with_one_shot_suppression
 
     def render_with_developing_first(records: list[dict]) -> None:
-        # Clear a stale flag from a prior rerun/tab before the upper block reads
-        # sections. Set a new one-shot only after the moved detail is rendered.
+        # mission_plan_slot in app.py is an st.empty() placeholder. A placeholder
+        # keeps only one direct child, so GS359's second child (the full Developing
+        # expander) replaced the DEVELOPING NOW markdown during live validation.
+        # GS360 makes one container the placeholder's single child; every operator
+        # element then lives inside that container and remains visible in order.
         _set_suppress_next_developing(False)
-        result = current_render(records)
-        markup = developing_now_markup(records)
-        if markup:
-            ui.st.markdown(markup, unsafe_allow_html=True)
-            render_developing_detail(records)
-            _set_suppress_next_developing(True)
+        with ui.st.container():
+            result = current_render(records)
+            markup = developing_now_markup(records)
+            if markup:
+                ui.st.markdown(markup, unsafe_allow_html=True)
+                render_developing_detail(records)
+                _set_suppress_next_developing(True)
         return result
 
     _inherit(render_with_developing_first, current_render)
     render_with_developing_first._gs349_operator_first_layout = True
     render_with_developing_first._gs359_developing_section_order = True
+    render_with_developing_first._gs360_preserve_developing_summary = True
     render_with_developing_first._gs349_original = current_render
     ui.render_walter_mission_control = render_with_developing_first
