@@ -9,8 +9,10 @@ phrases such as ``Not yet Entry Ready``. A raw substring search therefore heard
 ``ENTRY READY`` and emitted the three-chime highest-attention cadence even while
 Walter visibly showed DEVELOPING / NO TRADE.
 
-This final audio wrapper preserves GS364's single serial cadence and GS311 speech
-transport, but classifies only *affirmative* attention-state language.
+This audio wrapper preserves GS364's single serial cadence and GS311 speech
+transport, but classifies only *affirmative* attention-state language. GS366 is
+installed immediately afterward to suppress duplicate delivery on Streamlit
+reruns of the same completed scan.
 """
 from __future__ import annotations
 
@@ -72,34 +74,41 @@ def _inherit(wrapper, wrapped) -> None:
 
 
 def install() -> None:
-    """Replace only GS364's phrase classifier while retaining its audio transport."""
+    """Install semantic chimes, then the final completed-scan delivery guard."""
     from . import ui
     from .gs364_live_operator_containment import _exact_chime_markup
 
     current = ui.play_alert
-    if getattr(current, "_gs365_chime_semantics", False):
-        return
+    if not getattr(current, "_gs365_chime_semantics", False):
+        # GS364 saved the pre-GS364 alert wrapper here. Calling that wrapper with a
+        # deliberately missing WAV keeps speech/diagnostics intact while suppressing
+        # both its base chime and GS363's extra-chime component. We then emit exactly
+        # one serial cadence with the corrected semantic classifier.
+        voice_transport = getattr(current, "_gs364_original", None)
+        if callable(voice_transport):
+            def play_alert(sound_path: str, phrase: str, voice_name: str = ""):
+                if not phrase:
+                    return voice_transport(sound_path, phrase, voice_name)
 
-    # GS364 saved the pre-GS364 alert wrapper here. Calling that wrapper with a
-    # deliberately missing WAV keeps speech/diagnostics intact while suppressing
-    # both its base chime and GS363's extra-chime component. We then emit exactly
-    # one serial cadence with the corrected semantic classifier.
-    voice_transport = getattr(current, "_gs364_original", None)
-    if not callable(voice_transport):
-        return
+                silent_path = str(
+                    Path(sound_path).with_name("__walter_voice_only__.missing")
+                )
+                result = voice_transport(silent_path, phrase, voice_name)
+                markup = _exact_chime_markup(
+                    sound_path, semantic_chime_count(phrase)
+                )
+                if markup:
+                    ui.st.components.v1.html(markup, height=0, scrolling=False)
+                return result
 
-    def play_alert(sound_path: str, phrase: str, voice_name: str = ""):
-        if not phrase:
-            return voice_transport(sound_path, phrase, voice_name)
+            _inherit(play_alert, current)
+            play_alert._gs365_chime_semantics = True
+            play_alert._gs365_original = current
+            ui.play_alert = play_alert
 
-        silent_path = str(Path(sound_path).with_name("__walter_voice_only__.missing"))
-        result = voice_transport(silent_path, phrase, voice_name)
-        markup = _exact_chime_markup(sound_path, semantic_chime_count(phrase))
-        if markup:
-            ui.st.components.v1.html(markup, height=0, scrolling=False)
-        return result
+    # Always attempt GS366 installation, even when GS365 was already present in a
+    # warm Streamlit process. This makes the hot-deploy path converge without
+    # requiring the semantic wrapper itself to be rebuilt.
+    from .gs366_rerun_alert_dedupe import install as _install_gs366_rerun_alert_dedupe
 
-    _inherit(play_alert, current)
-    play_alert._gs365_chime_semantics = True
-    play_alert._gs365_original = current
-    ui.play_alert = play_alert
+    _install_gs366_rerun_alert_dedupe()
