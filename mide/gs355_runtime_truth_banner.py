@@ -184,3 +184,10 @@ def install() -> None:
     from .gs364_live_operator_containment import install as _install_gs364_live_operator_containment
 
     _install_gs364_live_operator_containment()
+
+    # GS365 is the final audio-only semantic guard. It prevents negative phrases
+    # such as "Not yet Entry Ready" from being mistaken for affirmative entry
+    # states while retaining GS364's single serialized chime transport.
+    from .gs365_chime_semantic_classifier import install as _install_gs365_chime_semantic_classifier
+
+    _install_gs365_chime_semantic_classifier()
