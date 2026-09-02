@@ -75,7 +75,7 @@ def test_far_below_vwap_attention_is_not_elevated_for_entry_review():
     assert "reclaims vwap" in view["next_step"].lower()
 
 
-def test_attention_can_still_surface_look_now_once_vwap_rule_is_satisfied():
+def test_plain_top_mover_attention_needs_current_structure_before_look_now():
     view = opportunity_state(
         _record(
             vwap_relation="above",
@@ -87,8 +87,9 @@ def test_attention_can_still_surface_look_now_once_vwap_rule_is_satisfied():
         )
     )
 
-    assert view["state"] == LOOK_NOW
+    assert view["state"] == DEVELOPING
     assert view["attention_provenance"] == ["WEBULL_TOP_MOVER"]
+    assert "not strong enough for look now" in view["reason"].lower()
 
 
 def test_extended_symbol_is_chase_wait_even_if_other_evidence_is_strong():
