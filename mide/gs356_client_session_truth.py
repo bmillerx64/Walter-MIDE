@@ -1,11 +1,12 @@
-"""GS356: make Walter's top status tell the truth about browser/session health.
+"""GS356/GS361: make Walter's top status tell the truth about browser/session health.
 
 Presentation and runtime-observability only.  The prior green LIVE badge meant
 "Live Webull mode selected", not "the Streamlit websocket is healthy".  That is
 misleading when Streamlit itself is visibly CONNECTING.  GS356 changes the badge
 semantics to session health and installs a zero-height browser watcher that keeps
-running if the server websocket stalls.  It can therefore turn the Walter badge
-red while the last rendered scan remains frozen on screen.
+running if the server websocket stalls.  GS361 hardens the browser detector after
+live validation exposed a Streamlit CONNECTING label prefixed by a different
+ellipsis glyph than the exact strings GS356 recognized.
 
 No discovery, market data, scoring, thresholds, qualification, readiness,
 alerts, execution, order, or scan scheduling logic changes.
@@ -34,6 +35,7 @@ def _in_streamlit_run() -> bool:
 def _status_payload(state: Any) -> dict[str, Any]:
     """Return the server-side starting point for the browser health watcher."""
     from .gs355_runtime_truth_banner import runtime_truth_snapshot
+    from .gs351_session_rerun_isolation import LAST_ALLOWED_RERUN_AT_KEY
 
     snapshot = runtime_truth_snapshot(state)
     server_state = str(snapshot.get("state") or "STARTING").upper()
@@ -55,6 +57,7 @@ def _status_payload(state: Any) -> dict[str, Any]:
         "scan_age_seconds": 0 if age is None else max(0, int(age)),
         "auto_scan": auto,
         "reason": reason,
+        "last_allowed_rerun_at": str(state.get(LAST_ALLOWED_RERUN_AT_KEY) or ""),
     }
 
 
@@ -63,13 +66,15 @@ def header_with_session_truth(markup: str, payload: dict[str, Any]) -> str:
     if not markup or not _STATUS_RE.search(markup):
         return markup
     reason = payload.get("reason") or ""
+    last_rerun = str(payload.get("last_allowed_rerun_at") or "")
     # Attribute values are constrained to generated numbers/booleans/state
-    # labels.  The human-readable reason remains a DOM property set by JS.
+    # labels/timestamps.  Human-readable diagnostic text remains a DOM property.
     prefix = (
         "<div id='walter-status' class='control-stat-value control-live' "
         f"data-walter-scan-age='{int(payload.get('scan_age_seconds') or 0)}' "
         f"data-walter-auto='{1 if payload.get('auto_scan') else 0}' "
         f"data-walter-server-state='{str(payload.get('server_state') or 'STARTING')}' "
+        f"data-walter-last-rerun='{last_rerun}' "
         f"style='color:{payload.get('color') or '#94a3b8'}'>"
     )
     replacement = prefix + str(payload.get("text") or "🟡 STARTING") + "</div>"
@@ -97,12 +102,12 @@ def _watcher_html(reason: str = "") -> str:
   const statusNode = () => root.document.getElementById('walter-status');
   const nativeConnecting = () => {{
     try {{
-      return Array.from(root.document.querySelectorAll('div,span,p')).some(el => {{
-        if (el.id === 'walter-status') return false;
-        if (el.children && el.children.length) return false;
-        const text = (el.textContent || '').trim().toUpperCase();
-        return text === 'CONNECTING' || text === '... CONNECTING' || text === '… CONNECTING';
-      }});
+      // Streamlit has used several visual prefixes before CONNECTING (three
+      // periods, U+2026 ellipsis, U+22EF midline ellipsis).  Match the semantic
+      // status word anywhere in visible page text instead of an exact glyph
+      // sequence.  Our own Walter badge never contains the word CONNECTING.
+      const text = (root.document.body?.innerText || '').toUpperCase();
+      return /\\bCONNECTING\\b/.test(text);
     }} catch (_) {{
       return false;
     }}
@@ -123,6 +128,7 @@ def _watcher_html(reason: str = "") -> str:
     if (!el) return;
     const auto = el.dataset.walterAuto === '1';
     const serverState = (el.dataset.walterServerState || 'STARTING').toUpperCase();
+    const lastRerun = el.dataset.walterLastRerun || '';
     age += 1;
 
     if (root.navigator && root.navigator.onLine === false) {{
@@ -130,7 +136,8 @@ def _watcher_html(reason: str = "") -> str:
       return;
     }}
     if (nativeConnecting()) {{
-      paint('🔴 CONNECTION LOST', '#ef4444', 'Streamlit websocket is reconnecting; displayed scan may be frozen.');
+      const rerunNote = lastRerun ? ` Last Walter app rerun: ${{lastRerun}}.` : '';
+      paint('🔴 CONNECTION LOST', '#ef4444', 'Streamlit websocket is reconnecting; displayed scan may be frozen.' + rerunNote);
       return;
     }}
     if (auto && age > 150) {{
@@ -190,6 +197,7 @@ def install() -> None:
 
         _inherit(truthful_header, current_header)
         truthful_header._gs356_client_session_truth = True
+        truthful_header._gs361_reconnect_truth = True
         truthful_header._gs356_original = current_header
         ui.mission_control_header_markup = truthful_header
 
@@ -214,5 +222,6 @@ def install() -> None:
 
         _inherit(wrapped, current)
         wrapped._gs356_client_session_truth = True
+        wrapped._gs361_reconnect_truth = True
         wrapped._gs356_original = current
         setattr(ui, attr, wrapped)
