@@ -84,8 +84,13 @@ def install() -> None:
         session_controls.finish_scan = finish_scan_with_render_cooldown
 
     current = st.rerun
-    if getattr(current, "_gs351_session_rerun_isolation", False):
+    if getattr(current, "_gs361_post_scan_rerun_cooldown", False):
         return
+    if getattr(current, "_gs351_session_rerun_isolation", False):
+        # Warm Streamlit reloads can retain the GS351 wrapper. Rebase GS361 on
+        # its original Streamlit callable rather than stacking a second guard or
+        # silently retaining the older wrapper behavior.
+        current = getattr(current, "_gs351_original", current)
 
     def rerun_when_idle(*args, **kwargs):
         state = st.session_state
