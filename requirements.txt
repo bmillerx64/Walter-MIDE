@@ -1,7 +1,6 @@
-# GS265: dependency manifest touch forces Streamlit Cloud to rebuild the Python runtime
-# after authoritative market-clock changes, preventing stale imported modules from
-# surviving a hot app rerun across deployments.
-streamlit==1.59.2
+# GS362: pin the current Streamlit runtime with fragment/runtime fixes validated
+# for Walter's periodic fragment, st.status, and reconnect execution model.
+streamlit==1.62.0
 pandas==2.3.3
 numpy==2.5.1
 requests==2.34.2
