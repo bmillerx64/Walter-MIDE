@@ -9,10 +9,11 @@ a dedupe key for escalation-state transitions; fallback scan alerts with no stat
 transition therefore remained replayable on every rerun. Several one-chime
 components arriving close together sound like one false triple alert.
 
-This final wrapper scopes delivery to the immutable CompletedScan timestamp and
-remembers every phrase already emitted for that scan. A new completed scan resets
-the delivery registry, so a genuinely new event may alert even when its wording
-matches a prior scan.
+This wrapper scopes delivery to the immutable CompletedScan timestamp and remembers
+every phrase already emitted for that scan. A new completed scan resets the delivery
+registry, so a genuinely new event may alert even when its wording matches a prior
+scan. GS367 is installed immediately afterward to aggregate distinct alert paths
+for the same scan into one browser-scoped audible cadence.
 """
 from __future__ import annotations
 
@@ -91,28 +92,33 @@ def _inherit(wrapper, wrapped) -> None:
 
 
 def install() -> None:
-    """Install a final session-scoped delivery guard around Walter audio."""
+    """Install server dedupe, then Walter's final browser audio broker."""
     from . import ui
 
     current = ui.play_alert
-    if getattr(current, "_gs366_rerun_alert_dedupe", False):
-        return
+    if not getattr(current, "_gs366_rerun_alert_dedupe", False):
+        def play_alert(sound_path: str, phrase: str, voice_name: str = ""):
+            if not should_deliver_alert(
+                ui.st.session_state,
+                sound_path=sound_path,
+                phrase=phrase,
+                voice_name=voice_name,
+            ):
+                print(
+                    "[WALTER AUDIO] duplicate delivery suppressed for current completed scan",
+                    flush=True,
+                )
+                return None
+            return current(sound_path, phrase, voice_name)
 
-    def play_alert(sound_path: str, phrase: str, voice_name: str = ""):
-        if not should_deliver_alert(
-            ui.st.session_state,
-            sound_path=sound_path,
-            phrase=phrase,
-            voice_name=voice_name,
-        ):
-            print(
-                "[WALTER AUDIO] duplicate delivery suppressed for current completed scan",
-                flush=True,
-            )
-            return None
-        return current(sound_path, phrase, voice_name)
+        _inherit(play_alert, current)
+        play_alert._gs366_rerun_alert_dedupe = True
+        play_alert._gs366_original = current
+        ui.play_alert = play_alert
 
-    _inherit(play_alert, current)
-    play_alert._gs366_rerun_alert_dedupe = True
-    play_alert._gs366_original = current
-    ui.play_alert = play_alert
+    # Always attempt GS367 installation.  On a warm Streamlit deployment the old
+    # GS366 wrapper may already be present, so returning early here would prevent
+    # the browser broker from ever becoming the final audio layer.
+    from .gs367_browser_audio_broker import install as _install_gs367_browser_audio_broker
+
+    _install_gs367_browser_audio_broker()
