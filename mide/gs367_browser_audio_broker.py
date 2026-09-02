@@ -153,9 +153,15 @@ def _inherit(wrapper, wrapped) -> None:
 
 
 def install() -> None:
-    """Install the browser broker as Walter's final audio-delivery layer."""
+    """Install GS368 relevance calibration and Walter's final audio-delivery layer."""
     from . import ui
     from .gs365_chime_semantic_classifier import semantic_chime_count
+    from .gs368_look_now_relevance import install as _install_gs368_look_now_relevance
+
+    # Always attempt GS368 first.  Warm Streamlit deployments can retain the
+    # already-installed GS367 audio wrapper, but the state calibration still must
+    # converge to the newest presentation contract without a process restart.
+    _install_gs368_look_now_relevance()
 
     current = ui.play_alert
     if getattr(current, "_gs367_browser_audio_broker", False):
