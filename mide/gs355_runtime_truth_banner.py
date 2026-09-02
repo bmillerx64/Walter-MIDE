@@ -177,3 +177,10 @@ def install() -> None:
     from .gs363_operator_attention_hierarchy import install as _install_gs363_operator_attention_hierarchy
 
     _install_gs363_operator_attention_hierarchy()
+
+    # GS364 is the final runtime/operator containment layer.  It bounds the
+    # growing history/export memory path and then tightens LOOK NOW/chime delivery
+    # without touching scanner or entry qualification contracts.
+    from .gs364_live_operator_containment import install as _install_gs364_live_operator_containment
+
+    _install_gs364_live_operator_containment()
