@@ -80,8 +80,19 @@ def ensure_operator_card_order() -> None:
     install()
 
 
+def ensure_operator_visibility() -> None:
+    """Bind GS373's operator-only relevance/freshness filter before app imports."""
+    from .gs373_operator_visibility_freshness import install
+
+    install()
+
+
 # GS371: package-level installers can be correct while app.py still binds an older
 # renderer object during a complex Streamlit import/reload sequence. This module is
 # app.py's first MIDE import, so enforce the final presentation wrapper immediately
 # before app.py binds any renderer names.
 ensure_operator_card_order()
+
+# GS373: use the same early binding point so every app-level reference to
+# actionable_candidate_records receives the current operator visibility contract.
+ensure_operator_visibility()
