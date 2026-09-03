@@ -101,6 +101,13 @@ def ensure_operator_awareness() -> None:
     install()
 
 
+def ensure_reclaim_watch() -> None:
+    """Bind GS376 so rebuilding leaders outrank ordinary DEVELOPING/CHASE noise."""
+    from .gs376_reclaim_watch import install
+
+    install()
+
+
 # GS371: package-level installers can be correct while app.py still binds an older
 # renderer object during a complex Streamlit import/reload sequence. This module is
 # app.py's first MIDE import, so enforce the final presentation wrapper immediately
@@ -119,3 +126,8 @@ ensure_header_scan_truth()
 # safety boundary while current-attention leaders can stay visible without gaining
 # entry or alert authorization.
 ensure_operator_awareness()
+
+# GS376: install after GS375.  This keeps the GS373 stale-data guard intact while
+# allowing only a strict, fresh reconstruction exception for current major leaders;
+# awareness-only copies remain denied entry/alert authority.
+ensure_reclaim_watch()
