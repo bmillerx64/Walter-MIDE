@@ -1,18 +1,21 @@
-"""GS351/GS361: prevent scheduled Streamlit reruns from colliding with active scans.
+"""GS351/GS361/GS372: isolate scheduled reruns without deadlocking stale sessions.
 
 Walter's 60-second auto-scan cadence uses an explicit ``st.rerun`` from a timed
-fragment. If that rerun fires while the current scan is still active (or while a
-manual scan request is already queued), Streamlit can tear down/re-enter the app
-while provider work is in flight. Live September 1 testing showed intermittent
-browser ``CONNECTING`` states consistent with this collision pattern.
+fragment. If that rerun fires while provider work is genuinely active, Streamlit
+can tear down/re-enter the app while the scan is in flight.
 
-GS361 extends the same protection through the short post-scan render window. The
-process watchdog clears ``scan_in_progress`` as soon as provider work finishes,
-but Streamlit still has the rest of the page to render. A stale fragment tick can
-otherwise request another full-app rerun in that gap. Only ``scope='app'`` reruns
-are held for this short cooldown, so deploy/reconnect self-healing remains intact.
+GS361 extended that protection through a short post-scan render window. GS372
+closes the recovery hole exposed in live September 3 testing: session-state flags
+can remain stale after an interrupted rerun/deploy even though the process-wide
+scan watchdog is idle. Suppressing the scheduler solely from those stale flags
+prevents the full-app rerun that would reconcile them, freezing the last completed
+scan until a manual browser refresh.
 
-This patch changes only rerun scheduling and observability. It does not alter
+The process watchdog is now authoritative for active scan ownership. A recently
+queued manual request is still protected briefly, but stale queued intent no
+longer blocks the scheduler forever.
+
+This changes only rerun scheduling/recovery and observability. It does not alter
 discovery, market data, scoring, ranking, VWAP, SuperTrend, qualification, alerts,
 execution, or orders.
 """
@@ -21,7 +24,11 @@ from __future__ import annotations
 from datetime import datetime, timezone
 import time
 
-from .session_controls import SCAN_REQUESTED_KEY, SCAN_RUNNING_KEY
+from .session_controls import (
+    SCAN_REQUESTED_AT_KEY,
+    SCAN_REQUESTED_KEY,
+    SCAN_RUNNING_KEY,
+)
 
 LAST_RERUN_KEY = "_walter_last_explicit_rerun_monotonic"
 SUPPRESSED_RERUNS_KEY = "_walter_suppressed_reruns"
@@ -31,6 +38,7 @@ LAST_ALLOWED_RERUN_AT_KEY = "_walter_last_allowed_explicit_rerun_utc"
 LAST_ALLOWED_RERUN_SCOPE_KEY = "_walter_last_allowed_explicit_rerun_scope"
 RERUN_COOLDOWN_SECONDS = 5.0
 POST_SCAN_RERUN_COOLDOWN_SECONDS = 15.0
+RECENT_SCAN_REQUEST_GUARD_SECONDS = 5.0
 
 
 def rerun_suppression_reason(
@@ -39,12 +47,44 @@ def rerun_suppression_reason(
     now: float | None = None,
     epoch_now: float | None = None,
     protect_post_scan: bool = False,
+    process_scan_running: bool | None = None,
 ) -> str | None:
-    """Return why an explicit app rerun should be deferred, if any."""
-    if bool(state.get(SCAN_RUNNING_KEY, False)):
-        return "scan already running"
-    if bool(state.get(SCAN_REQUESTED_KEY, False)):
-        return "scan already requested"
+    """Return why an explicit app rerun should be deferred, if any.
+
+    ``process_scan_running`` is optional to preserve the historical pure-function
+    contract used by existing tests. Production passes the watchdog's actual lock
+    state so stale Streamlit session flags can never deadlock recovery.
+    """
+    session_running = bool(state.get(SCAN_RUNNING_KEY, False))
+    scan_requested = bool(state.get(SCAN_REQUESTED_KEY, False))
+
+    if process_scan_running is None:
+        # Historical/default behavior for direct callers and existing tests.
+        if session_running:
+            return "scan already running"
+        if scan_requested:
+            return "scan already requested"
+    else:
+        # The process-wide watchdog is authoritative for whether provider work is
+        # actually active. A stale session ``scan_in_progress=True`` must not
+        # suppress the full-app rerun that repairs session state.
+        if bool(process_scan_running):
+            return "scan already running"
+
+        # A fresh manual button request can briefly coexist with the timed
+        # fragment. Protect only that short handoff. If the request is old (or a
+        # legacy/stale flag has no timestamp), allow the app rerun so the request
+        # can be consumed or reconciled instead of freezing AutoScan indefinitely.
+        if scan_requested:
+            epoch_now = time.time() if epoch_now is None else float(epoch_now)
+            try:
+                requested_at = float(state.get(SCAN_REQUESTED_AT_KEY))
+            except (TypeError, ValueError):
+                requested_at = None
+            if requested_at is not None:
+                request_age = epoch_now - requested_at
+                if 0 <= request_age < RECENT_SCAN_REQUEST_GUARD_SECONDS:
+                    return "scan already requested"
 
     if protect_post_scan:
         epoch_now = time.time() if epoch_now is None else float(epoch_now)
@@ -84,28 +124,33 @@ def install() -> None:
         session_controls.finish_scan = finish_scan_with_render_cooldown
 
     current = st.rerun
-    if getattr(current, "_gs361_post_scan_rerun_cooldown", False):
+    if getattr(current, "_gs372_stale_session_recovery", False):
         return
     if getattr(current, "_gs351_session_rerun_isolation", False):
-        # Warm Streamlit reloads can retain the GS351 wrapper. Rebase GS361 on
-        # its original Streamlit callable rather than stacking a second guard or
-        # silently retaining the older wrapper behavior.
+        # Warm Streamlit reloads can retain an older GS351/GS361 wrapper. Rebase
+        # on its original Streamlit callable so the recovery logic is replaced,
+        # not stacked behind a wrapper that can still suppress forever.
         current = getattr(current, "_gs351_original", current)
 
     def rerun_when_idle(*args, **kwargs):
         state = st.session_state
         now = time.monotonic()
         epoch_now = time.time()
-        # Walter's timed fragment is the only production caller using
-        # scope='app'. Restrict post-scan suppression to that scheduler path so
-        # GS341's reconnect self-heal (plain st.rerun()) is never blocked.
         scope = str(kwargs.get("scope") or "")
         protect_post_scan = scope == "app"
+        try:
+            from .watchdog import PROCESS_SCAN_WATCHDOG
+
+            process_scan_running = bool(PROCESS_SCAN_WATCHDOG.is_running)
+        except Exception:
+            # Fail conservatively if watchdog truth is unavailable.
+            process_scan_running = None
         reason = rerun_suppression_reason(
             state,
             now=now,
             epoch_now=epoch_now,
             protect_post_scan=protect_post_scan,
+            process_scan_running=process_scan_running,
         )
         if reason:
             state[SUPPRESSED_RERUNS_KEY] = int(state.get(SUPPRESSED_RERUNS_KEY, 0) or 0) + 1
@@ -119,5 +164,6 @@ def install() -> None:
 
     rerun_when_idle._gs351_session_rerun_isolation = True
     rerun_when_idle._gs361_post_scan_rerun_cooldown = True
+    rerun_when_idle._gs372_stale_session_recovery = True
     rerun_when_idle._gs351_original = current
     st.rerun = rerun_when_idle
