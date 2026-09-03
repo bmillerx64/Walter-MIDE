@@ -94,6 +94,13 @@ def ensure_header_scan_truth() -> None:
     install()
 
 
+def ensure_operator_awareness() -> None:
+    """Bind GS375 so market awareness stays separate from entry eligibility."""
+    from .gs375_operator_awareness import install
+
+    install()
+
+
 # GS371: package-level installers can be correct while app.py still binds an older
 # renderer object during a complex Streamlit import/reload sequence. This module is
 # app.py's first MIDE import, so enforce the final presentation wrapper immediately
@@ -107,3 +114,8 @@ ensure_operator_visibility()
 # GS374: the control-header callable is also imported by name in app.py. Install
 # before that binding so the visible timestamp always comes from CompletedScan.
 ensure_header_scan_truth()
+
+# GS375: install after GS373 so stale/far-below-VWAP suppression remains the outer
+# safety boundary while current-attention leaders can stay visible without gaining
+# entry or alert authorization.
+ensure_operator_awareness()
