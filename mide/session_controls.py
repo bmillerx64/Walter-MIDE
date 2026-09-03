@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import MutableMapping
+import time
 from typing import Any
 
 
@@ -11,6 +12,7 @@ PROVIDER_KEY = "selected_live_provider"
 AUTO_SCAN_KEY = "auto_scan_enabled"
 SCAN_RUNNING_KEY = "scan_in_progress"
 SCAN_REQUESTED_KEY = "scan_requested"
+SCAN_REQUESTED_AT_KEY = "_walter_scan_requested_epoch"
 STOP_REQUESTED_KEY = "scan_stop_requested"
 
 VALID_DATA_MODES = {"Live Webull", "Demo"}
@@ -30,7 +32,7 @@ def initialize_session_controls(
 
     The process watchdog is authoritative for whether a scan is actually active,
     but it must not erase a manual scan request that Streamlit just persisted on
-    the widget-triggered rerun.  Idle reconciliation therefore clears only stale
+    the widget-triggered rerun. Idle reconciliation therefore clears only stale
     stop intent; ``scan_requested`` remains set until scan execution consumes it
     or ``finish_scan`` clears it.
     """
@@ -71,6 +73,7 @@ def select_data_mode(state: MutableMapping[str, Any]) -> None:
 def request_scan(state: MutableMapping[str, Any]) -> None:
     """Schedule a manual scan; execution becomes active only when it begins."""
     state[SCAN_REQUESTED_KEY] = True
+    state[SCAN_REQUESTED_AT_KEY] = time.time()
     state[STOP_REQUESTED_KEY] = False
 
 
@@ -78,6 +81,7 @@ def request_stop(state: MutableMapping[str, Any]) -> None:
     """Immediately cancel this session's current and scheduled scans."""
     state[STOP_REQUESTED_KEY] = True
     state[SCAN_REQUESTED_KEY] = False
+    state.pop(SCAN_REQUESTED_AT_KEY, None)
     state[SCAN_RUNNING_KEY] = False
     state[AUTO_SCAN_KEY] = False
 
@@ -97,3 +101,4 @@ def finish_scan(state: MutableMapping[str, Any]) -> None:
     """Clear transient scan activity without changing persistent controls."""
     state[SCAN_RUNNING_KEY] = False
     state[SCAN_REQUESTED_KEY] = False
+    state.pop(SCAN_REQUESTED_AT_KEY, None)
