@@ -1,5 +1,8 @@
+from mide import gs310_unified_opportunity_state as unified
+from mide import gs363_operator_attention_hierarchy as hierarchy
 from mide import ui
 from mide.gs369_escalation_priority_order import install, ordered_escalation_records
+from mide.startup import ensure_operator_card_order
 
 
 def _record(symbol: str, state: str, score: int) -> dict:
@@ -13,6 +16,7 @@ def _record(symbol: str, state: str, score: int) -> dict:
         "expansion_quality": 20,
         "volume_acceleration": 0.5,
         "_test_attention": score,
+        "_test_state": state,
     }
     if state == "WATCH FOR ENTRY":
         record.update(
@@ -43,6 +47,28 @@ def test_opportunity_state_cards_follow_existing_state_priority(monkeypatch):
 
     ordered = ordered_escalation_records(_unordered_records())
     assert [record["symbol"] for record in ordered] == ["READY", "LOOK", "DEV", "CHASE"]
+
+
+def test_sort_uses_current_canonical_state_not_stale_hierarchy_binding(monkeypatch):
+    """Live ordering must match the state function that renders the cards."""
+    records = [
+        _record("CHASE", "CHASE / WAIT", 99),
+        _record("DEV", "DEVELOPING", 1),
+    ]
+    monkeypatch.setattr(ui, "hot_list_priority_score", lambda record: record["_test_attention"])
+    monkeypatch.setattr(
+        hierarchy,
+        "opportunity_state",
+        lambda _record: {"state": unified.CHASE_WAIT},
+    )
+    monkeypatch.setattr(
+        unified,
+        "opportunity_state",
+        lambda record: {"state": record["_test_state"]},
+    )
+
+    ordered = ordered_escalation_records(records)
+    assert [record["symbol"] for record in ordered] == ["DEV", "CHASE"]
 
 
 def test_install_sorts_before_existing_escalation_renderer(monkeypatch):
@@ -117,6 +143,34 @@ def test_existing_gs369_escalation_wrapper_does_not_skip_live_route(monkeypatch)
     assert seen["symbols"] == ["DEV", "CHASE"]
     assert getattr(
         ui.render_walter_mission_control,
+        "_gs370_live_opportunity_state_priority_order",
+        False,
+    )
+
+
+def test_startup_guard_wraps_renderer_before_app_can_bind_it(monkeypatch):
+    """GS371 closes the exact app-level import-order gap seen in live validation."""
+    seen = {}
+
+    def bare_live_route(records):
+        seen["symbols"] = [record["symbol"] for record in records]
+
+    monkeypatch.setattr(ui, "hot_list_priority_score", lambda record: record["_test_attention"])
+    monkeypatch.setattr(ui, "render_escalation_engine", lambda records: None)
+    monkeypatch.setattr(ui, "render_walter_mission_control", bare_live_route)
+
+    ensure_operator_card_order()
+    app_bound_renderer = ui.render_walter_mission_control
+    app_bound_renderer(
+        [
+            _record("CHASE", "CHASE / WAIT", 99),
+            _record("DEV", "DEVELOPING", 1),
+        ]
+    )
+
+    assert seen["symbols"] == ["DEV", "CHASE"]
+    assert getattr(
+        app_bound_renderer,
         "_gs370_live_opportunity_state_priority_order",
         False,
     )
