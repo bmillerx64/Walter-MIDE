@@ -102,6 +102,7 @@ def install() -> None:
     from . import gs311_unified_voice as voice
     from . import gs314_state_consistency as consistency
     from . import gs363_operator_attention_hierarchy as hierarchy
+    from .gs369_escalation_priority_order import install as _install_gs369_escalation_priority_order
 
     current = unified.opportunity_state
     if getattr(current, "_gs368_look_now_relevance", False):
@@ -162,3 +163,4 @@ def install() -> None:
     voice.opportunity_state = calibrated
     consistency.opportunity_state = calibrated
     hierarchy.opportunity_state = calibrated
+    _install_gs369_escalation_priority_order()
