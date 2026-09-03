@@ -65,3 +65,23 @@ def instrument_startup(component: str) -> Callable[[Callable[..., _T]], Callable
         return instrumented
 
     return decorate
+
+
+def ensure_operator_card_order() -> None:
+    """Bind the final operator-order wrappers before app.py imports UI callables.
+
+    app.py imports this startup module before it performs ``from mide.ui import``.
+    Running the GS369/370 installer here closes the import-order gap seen in live
+    GS370 validation: the callable that app.py subsequently binds is guaranteed to
+    include the current Opportunity State ordering wrapper. Presentation only.
+    """
+    from .gs369_escalation_priority_order import install
+
+    install()
+
+
+# GS371: package-level installers can be correct while app.py still binds an older
+# renderer object during a complex Streamlit import/reload sequence. This module is
+# app.py's first MIDE import, so enforce the final presentation wrapper immediately
+# before app.py binds any renderer names.
+ensure_operator_card_order()
