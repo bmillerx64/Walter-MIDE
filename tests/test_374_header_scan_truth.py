@@ -71,4 +71,9 @@ def test_startup_binds_header_scan_truth_before_app_imports_ui():
     from mide import startup
 
     assert hasattr(startup, "ensure_header_scan_truth")
+    # The full suite intentionally monkeypatches/reinstalls older presentation
+    # wrappers in other tests. Importing an already-cached startup module does not
+    # rerun module-level side effects, so explicitly exercise the binding helper
+    # whose production call occurs during startup before app.py imports UI names.
+    startup.ensure_header_scan_truth()
     assert getattr(ui.mission_control_header_markup, "_gs374_header_scan_truth", False)
