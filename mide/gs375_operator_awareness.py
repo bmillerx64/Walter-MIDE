@@ -66,6 +66,28 @@ def augment_operator_records(records: list[dict], actionable: list[dict]) -> lis
     return output
 
 
+def _near_above_current_attention(record: dict) -> bool:
+    """Return whether a current-attention row belongs in LOOK NOW rather than DEVELOPING.
+
+    This deliberately resolves only presentation state.  It is independent of the
+    scanner's watch/entry qualification and makes the result stable even when a warm
+    Streamlit/test runtime still holds an older GS310 wrapper that would otherwise
+    classify the same row as DEVELOPING.
+    """
+    from .gs309_current_attention_mission import current_attention_provenance
+
+    relation = str(record.get("vwap_relation") or "").lower()
+    if relation != "above":
+        return False
+    try:
+        distance = float(record.get("vwap_distance_pct"))
+    except (TypeError, ValueError):
+        distance = None
+    if distance is not None and distance > 2.0:
+        return False
+    return bool(current_attention_provenance(record))
+
+
 def awareness_safe_opportunity_state(
     record: dict,
     state_function: Callable[[dict], dict] | None = None,
@@ -80,7 +102,15 @@ def awareness_safe_opportunity_state(
     if not record.get(AWARENESS_ONLY_KEY):
         return view
 
-    if view.get("state") == unified.WATCH_FOR_ENTRY:
+    state = view.get("state")
+    force_look_now = bool(
+        state == unified.WATCH_FOR_ENTRY
+        or (
+            state in {unified.LOOK_NOW, unified.DEVELOPING}
+            and _near_above_current_attention(record)
+        )
+    )
+    if force_look_now:
         view["state"] = unified.LOOK_NOW
         view["color"] = unified.STATE_COLORS[unified.LOOK_NOW]
         view["reason"] = (
@@ -91,7 +121,7 @@ def awareness_safe_opportunity_state(
             "Keep the chart open; entry remains locked until Walter's scanner "
             "qualification and trigger rules are satisfied."
         )
-    elif view.get("state") in {unified.LOOK_NOW, unified.DEVELOPING}:
+    elif state in {unified.LOOK_NOW, unified.DEVELOPING}:
         original_reason = str(view.get("reason") or "").strip()
         view["reason"] = (
             "Current market-attention leader; not yet scanner-qualified for entry review."
