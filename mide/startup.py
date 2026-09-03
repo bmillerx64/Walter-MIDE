@@ -87,6 +87,13 @@ def ensure_operator_visibility() -> None:
     install()
 
 
+def ensure_header_scan_truth() -> None:
+    """Bind GS374 so the header timestamp means last completed scan, not deploy."""
+    from .gs374_header_scan_truth import install
+
+    install()
+
+
 # GS371: package-level installers can be correct while app.py still binds an older
 # renderer object during a complex Streamlit import/reload sequence. This module is
 # app.py's first MIDE import, so enforce the final presentation wrapper immediately
@@ -96,3 +103,7 @@ ensure_operator_card_order()
 # GS373: use the same early binding point so every app-level reference to
 # actionable_candidate_records receives the current operator visibility contract.
 ensure_operator_visibility()
+
+# GS374: the control-header callable is also imported by name in app.py. Install
+# before that binding so the visible timestamp always comes from CompletedScan.
+ensure_header_scan_truth()
