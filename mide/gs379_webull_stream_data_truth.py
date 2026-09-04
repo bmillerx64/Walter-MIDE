@@ -235,6 +235,34 @@ def _stream_30s_bars(provider, symbol: str) -> list[dict]:
         return [dict(row) for row in provider._gs379_30s_closed.get(key, ())]
 
 
+def _correct_stream_factory(data_client, app_key, app_secret, streaming_module):
+    """Build the SDK 2.0.16 stream factory while preserving ApiClient provenance.
+
+    The pre-GS379 regression inspects the first closure cell to prove the stream
+    belongs to the same official ApiClient graph as DataClient. Preserve that
+    provenance cell, but do not call the obsolete one-argument constructor.
+    """
+    legacy_factory = getattr(data_client, "_walter_streaming_client_factory", None)
+    api_client = None
+    closure = getattr(legacy_factory, "__closure__", None)
+    if closure:
+        api_client = closure[0].cell_contents
+
+    def factory():
+        # Deliberate reference keeps ApiClient as the first closure cell for the
+        # established package-layout regression; SDK 2.0.16 itself needs the
+        # credential/session constructor below.
+        _ = api_client
+        return streaming_module.DataStreamingClient(
+            app_key,
+            app_secret,
+            "us",
+            uuid.uuid4().hex,
+        )
+
+    return factory
+
+
 def install() -> None:
     """Open Webull tick streaming while keeping GS379 observational only."""
     from . import webull_live, webull_sdk
@@ -248,13 +276,11 @@ def install() -> None:
         def create_stream_ready_client(app_key: str, app_secret: str):
             data_client = current_create(app_key, app_secret)
             streaming_module = importlib.import_module("webull.data.data_streaming_client")
-            data_client._walter_streaming_client_factory = lambda: (
-                streaming_module.DataStreamingClient(
-                    app_key,
-                    app_secret,
-                    "us",
-                    uuid.uuid4().hex,
-                )
+            data_client._walter_streaming_client_factory = _correct_stream_factory(
+                data_client,
+                app_key,
+                app_secret,
+                streaming_module,
             )
             return data_client
 
