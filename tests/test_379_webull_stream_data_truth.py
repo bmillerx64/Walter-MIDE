@@ -81,6 +81,40 @@ def test_official_transport_subscribes_only_to_us_stock_ticks():
     assert client.disconnected is True
 
 
+def test_sdk_2016_stream_factory_uses_credential_region_session_constructor():
+    calls = []
+
+    class StreamClient:
+        def __init__(self, *args):
+            calls.append(args)
+
+    class StreamingModule:
+        DataStreamingClient = StreamClient
+
+    api_client = object()
+
+    def legacy_factory():
+        return api_client
+
+    data_client = type("DataClient", (), {})()
+    data_client._walter_streaming_client_factory = legacy_factory
+    factory = gs379._correct_stream_factory(
+        data_client,
+        "app-key",
+        "app-secret",
+        StreamingModule,
+    )
+
+    created = factory()
+    assert isinstance(created, StreamClient)
+    assert calls[0][0:3] == ("app-key", "app-secret", "us")
+    assert isinstance(calls[0][3], str) and len(calls[0][3]) == 32
+    # Preserve the established proof that the factory remains connected to the
+    # same official ApiClient graph, even though SDK 2.0.16 no longer accepts
+    # that object as its constructor argument.
+    assert factory.__closure__[0].cell_contents is api_client
+
+
 def test_only_real_sdk_owned_provider_auto_opens_streaming():
     assert gs379._production_owned_stream({}) is True
     assert gs379._production_owned_stream({"universe_client": object()}) is True
