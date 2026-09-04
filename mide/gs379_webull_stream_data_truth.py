@@ -6,6 +6,13 @@ OpenAPI stream, aggregates genuine trade ticks into closed 30-second OHLCV bars,
 and exposes diagnostics so Walter can prove 30-second market-data fidelity before
 those bars are allowed to influence trading decisions.
 
+GS380 hardens the same observational stream boundary after live validation exposed
+an app restart. Failed connection/subscription attempts are now torn down, and a
+new production session retires any older process-local Webull stream before it can
+be orphaned. GS380 also makes the pipeline provenance row report the news provider
+that actually served the completed scan (for example Financial Modeling Prep)
+instead of the Webull-native route's stale ``None`` label.
+
 Safety properties:
 - production LiveWebullProvider instances auto-enable streaming only when Walter
   owns the real SDK construction (tests/injected providers keep their explicit
@@ -17,6 +24,7 @@ Safety properties:
 - stale/out-of-order ticks cannot rewind Walter's live price cache;
 - streaming subscriptions follow the current radar universe instead of growing
   without bound across 60-second scans;
+- failed/orphaned stream transports are explicitly disconnected;
 - only completed 30-second buckets are exposed by ``stream_30s_bars``;
 - the pinned Webull SDK remains unchanged.
 """
@@ -26,8 +34,9 @@ from collections import deque
 from functools import wraps
 import importlib
 import logging
-from threading import Event, Thread
+from threading import Event, Lock, Thread
 import uuid
+import weakref
 from typing import Any
 
 from .market_data import EventType, MarketEvent
@@ -38,6 +47,8 @@ CONNECT_TIMEOUT_SECONDS = 8.0
 SUBSCRIBE_TIMEOUT_SECONDS = 5.0
 THIRTY_SECOND_MS = 30_000
 THIRTY_SECOND_HISTORY = 240
+_ACTIVE_PROVIDER_LOCK = Lock()
+_ACTIVE_PROVIDER_REF = None
 
 
 def _number(value: Any) -> float | None:
@@ -95,6 +106,7 @@ class OfficialWebullTickTransport:
         self._subscribed = Event()
         self._thread: Thread | None = None
         self._failure: BaseException | None = None
+        self._closed = False
 
     def _on_connect(self, _client, _api_client, _session_id) -> None:
         self._connected.set()
@@ -129,12 +141,21 @@ class OfficialWebullTickTransport:
             daemon=True,
         )
         self._thread.start()
-        if not self._connected.wait(CONNECT_TIMEOUT_SECONDS):
-            raise TimeoutError(
-                f"Webull OpenAPI stream did not connect within {CONNECT_TIMEOUT_SECONDS:g}s"
-            )
-        if self._failure is not None:
-            raise RuntimeError(f"Webull OpenAPI stream failed: {self._failure}") from self._failure
+        try:
+            if not self._connected.wait(CONNECT_TIMEOUT_SECONDS):
+                raise TimeoutError(
+                    f"Webull OpenAPI stream did not connect within {CONNECT_TIMEOUT_SECONDS:g}s"
+                )
+            if self._failure is not None:
+                raise RuntimeError(
+                    f"Webull OpenAPI stream failed: {self._failure}"
+                ) from self._failure
+        except BaseException:
+            # The official client has its own reconnect loop. If Walter gives up
+            # on this attempt, terminate that loop before returning to REST-only
+            # operation so a failed session cannot leave an orphan MQTT thread.
+            self.close()
+            raise
 
     @staticmethod
     def _symbols(symbols) -> list[str]:
@@ -149,11 +170,17 @@ class OfficialWebullTickTransport:
         if not wanted:
             return
         self._subscribed.clear()
-        # TICK is the only payload GS379 needs. Snapshot/history remain on the
-        # proven REST path, minimizing stream topic load and behavioral surface.
-        self.client.subscribe(wanted, "US_STOCK", ["TICK"])
-        if not self._subscribed.wait(SUBSCRIBE_TIMEOUT_SECONDS):
-            raise RuntimeError("Webull OpenAPI tick subscription did not confirm")
+        try:
+            # TICK is the only payload GS379 needs. Snapshot/history remain on the
+            # proven REST path, minimizing stream topic load and behavioral surface.
+            self.client.subscribe(wanted, "US_STOCK", ["TICK"])
+            if not self._subscribed.wait(SUBSCRIBE_TIMEOUT_SECONDS):
+                raise RuntimeError("Webull OpenAPI tick subscription did not confirm")
+        except BaseException:
+            # A connected-but-unsubscribed client is not useful to Walter and can
+            # continue retrying inside the SDK. Retire it before falling back.
+            self.close()
+            raise
 
     def unsubscribe(self, symbols: list[str]) -> None:
         wanted = self._symbols(symbols)
@@ -167,6 +194,9 @@ class OfficialWebullTickTransport:
         )
 
     def close(self) -> None:
+        if self._closed:
+            return
+        self._closed = True
         try:
             self.client.disconnect()
         except Exception:
@@ -263,8 +293,85 @@ def _correct_stream_factory(data_client, app_key, app_secret, streaming_module):
     return factory
 
 
+def _retire_provider_stream(provider) -> None:
+    """Close one no-longer-authoritative process-local Webull stream safely."""
+    subscription = getattr(provider, "_subscription", None)
+    if subscription is None:
+        return
+    diagnostic = getattr(provider, "diagnostics", {}).setdefault("webull_stream", {})
+    try:
+        subscription.close()
+    except Exception as exc:
+        diagnostic["stream_cleanup_failures"] = int(
+            diagnostic.get("stream_cleanup_failures", 0)
+        ) + 1
+        LOGGER.warning(
+            "WEBULL replaced-stream cleanup failed error_type=%s", type(exc).__name__
+        )
+    finally:
+        provider._subscription = None
+        subscribed = getattr(provider, "_subscribed", None)
+        if hasattr(subscribed, "clear"):
+            subscribed.clear()
+        diagnostic["stream_connection_status"] = "replaced"
+        diagnostic["stream_replaced_count"] = int(
+            diagnostic.get("stream_replaced_count", 0)
+        ) + 1
+
+
+def _register_active_provider(provider) -> None:
+    """Ensure one production Webull stream is authoritative per Python process."""
+    global _ACTIVE_PROVIDER_REF
+    with _ACTIVE_PROVIDER_LOCK:
+        prior_ref = _ACTIVE_PROVIDER_REF
+        _ACTIVE_PROVIDER_REF = weakref.ref(provider)
+    prior = prior_ref() if prior_ref is not None else None
+    if prior is not None and prior is not provider:
+        _retire_provider_stream(prior)
+
+
+def _reset_active_provider_registry() -> None:
+    """Test/support helper; does not alter scanner decisions."""
+    global _ACTIVE_PROVIDER_REF
+    with _ACTIVE_PROVIDER_LOCK:
+        _ACTIVE_PROVIDER_REF = None
+
+
+def _runtime_news_pipeline_rows(provider, rows: list[dict]) -> list[dict]:
+    """Replace static Webull-news provenance with the provider actually used."""
+    coverage = dict(getattr(provider, "diagnostics", {}).get("news_coverage") or {})
+    active = str(coverage.get("active_provider") or "").strip()
+    endpoints = [
+        str(value).strip()
+        for value in (coverage.get("provider_endpoints") or [])
+        if str(value).strip()
+    ]
+    output = [dict(row) for row in rows]
+    for row in output:
+        stage = str(row.get("Stage") or "").strip().casefold()
+        if stage not in {"news", "news / catalyst"}:
+            continue
+        if active and active.casefold() != "none":
+            row["Actual provider"] = active
+            row["Endpoint / operation"] = (
+                "Licensed catalyst feed: " + ", ".join(endpoints)
+                if endpoints
+                else f"{active} catalyst/news fetch"
+            )
+            if "Code path" in row:
+                row["Code path"] = "NewsService → active licensed news provider"
+        else:
+            row["Actual provider"] = "No active catalyst provider"
+            row["Endpoint / operation"] = (
+                "No ticker-news provider completed a fetch for this scan"
+            )
+            if "Code path" in row:
+                row["Code path"] = "NewsService → provider availability check"
+    return output
+
+
 def install() -> None:
-    """Open Webull tick streaming while keeping GS379 observational only."""
+    """Open Webull tick streaming while keeping GS379/GS380 observational only."""
     from . import webull_live, webull_sdk
 
     # The repository is pinned to webull-openapi-python-sdk 2.0.16. Its
@@ -306,7 +413,8 @@ def install() -> None:
     if not getattr(current_init, "_gs379_stream_enabled", False):
         @wraps(current_init)
         def init(self, app_key: str, app_secret: str, *args, **kwargs):
-            if _production_owned_stream(kwargs):
+            production_owned = _production_owned_stream(kwargs)
+            if production_owned:
                 kwargs["enable_streaming"] = True
             current_init(self, app_key, app_secret, *args, **kwargs)
             self._gs379_30s_current: dict[str, dict] = {}
@@ -321,8 +429,12 @@ def install() -> None:
                 out_of_order_ticks=0,
                 unsubscribed_symbols=0,
                 unsubscribe_failures=0,
+                stream_replaced_count=0,
+                stream_cleanup_failures=0,
                 thirty_second_authority="OBSERVATIONAL_ONLY",
             )
+            if production_owned and getattr(self, "_enable_streaming", False):
+                _register_active_provider(self)
 
         init._gs379_stream_enabled = True
         init._gs379_original = current_init
@@ -397,3 +509,18 @@ def install() -> None:
 
     if not hasattr(webull_live.LiveWebullProvider, "stream_30s_bars"):
         webull_live.LiveWebullProvider.stream_30s_bars = _stream_30s_bars
+
+    # Import the native Webull cutover now so its pipeline_sources replacement
+    # is installed before we wrap it. app.py later imports the already-loaded
+    # module, preventing its static News row from overwriting this runtime truth.
+    from . import webull_connection as _webull_connection  # noqa: F401
+
+    current_sources = webull_live.LiveWebullProvider.pipeline_sources
+    if not getattr(current_sources, "_gs380_runtime_news_truth", False):
+        @wraps(current_sources)
+        def pipeline_sources(self):
+            return _runtime_news_pipeline_rows(self, current_sources(self))
+
+        pipeline_sources._gs380_runtime_news_truth = True
+        pipeline_sources._gs380_original = current_sources
+        webull_live.LiveWebullProvider.pipeline_sources = pipeline_sources
