@@ -40,6 +40,7 @@ class _StreamingClient:
         self.on_quotes_message = None
         self.on_subscribe_success = None
         self.subscriptions = []
+        self.unsubscriptions = []
         self.disconnected = False
         self.stop = Event()
 
@@ -53,6 +54,11 @@ class _StreamingClient:
         self.on_subscribe_success(self, object(), "session")
         self.on_quotes_message(self, "tick", _Tick())
 
+    def unsubscribe(self, symbols, category, sub_types, unsubscribe_all=False):
+        self.unsubscriptions.append(
+            (list(symbols), category, list(sub_types), unsubscribe_all)
+        )
+
     def disconnect(self):
         self.disconnected = True
         self.stop.set()
@@ -65,9 +71,11 @@ def test_official_transport_subscribes_only_to_us_stock_ticks():
 
     transport.connect()
     transport.subscribe(["olox", "OLOX", "GRI"])
+    transport.unsubscribe(["GRI"])
     transport.close()
 
     assert client.subscriptions == [(["OLOX", "GRI"], "US_STOCK", ["TICK"])]
+    assert client.unsubscriptions == [(["GRI"], "US_STOCK", ["TICK"], False)]
     assert len(events) == 1
     assert events[0].symbol == "OLOX"
     assert client.disconnected is True
@@ -141,7 +149,7 @@ def test_tick_stream_builds_closed_30s_bars_without_corrupting_session_volume():
     assert diagnostics["thirty_second_authority"] == "OBSERVATIONAL_ONLY"
 
 
-def test_out_of_order_tick_is_observed_but_cannot_rewrite_closed_sequence():
+def test_out_of_order_tick_is_observed_but_cannot_rewind_live_price():
     provider = LiveWebullProvider(
         "key",
         "secret",
@@ -154,7 +162,33 @@ def test_out_of_order_tick_is_observed_but_cannot_rewrite_closed_sequence():
     provider._on_event(_trade("OLOX", start, 0.98, 500))
 
     assert provider.diagnostics["webull_stream"]["out_of_order_ticks"] == 1
+    assert provider.cache["OLOX"].price == 1.03
     assert provider.stream_30s_bars("OLOX") == []
+
+
+class _Transport:
+    def __init__(self):
+        self.released = []
+
+    def unsubscribe(self, symbols):
+        self.released.append(list(symbols))
+
+
+def test_rotating_radar_releases_symbols_no_longer_in_current_universe():
+    provider = LiveWebullProvider(
+        "key",
+        "secret",
+        rest_client=_Rest(),
+        enable_streaming=False,
+    )
+    transport = _Transport()
+    provider._subscription = type("Subscription", (), {"transport": transport})()
+    provider._subscribed = {"OLD", "KEEP"}
+
+    assert provider.ensure_stream(["KEEP"]) is True
+    assert transport.released == [["OLD"]]
+    assert provider._subscribed == {"KEEP"}
+    assert provider.diagnostics["webull_stream"]["unsubscribed_symbols"] == 1
 
 
 def test_runtime_hooks_are_installed_without_changing_sdk_pin_contract():
@@ -162,4 +196,5 @@ def test_runtime_hooks_are_installed_without_changing_sdk_pin_contract():
     assert getattr(webull_sdk.WebullSDKClient.stream, "_gs379_tick_transport", False)
     assert getattr(LiveWebullProvider.__init__, "_gs379_stream_enabled", False)
     assert getattr(LiveWebullProvider._on_event, "_gs379_tick_aggregation", False)
+    assert getattr(LiveWebullProvider.ensure_stream, "_gs379_reconcile_symbols", False)
     assert hasattr(LiveWebullProvider, "stream_30s_bars")
