@@ -228,3 +228,9 @@ _install_gs353_entry_lock_clarity()
 from .gs355_runtime_truth_banner import install as _install_gs355_runtime_truth_banner  # noqa: E402
 
 _install_gs355_runtime_truth_banner()
+
+from .gs378_live_vwap_st_crossover import install as _install_gs378_live_vwap_st_crossover  # noqa: E402
+from .gs378_live_vwap_contract import install as _install_gs378_live_vwap_contract  # noqa: E402
+
+_install_gs378_live_vwap_st_crossover()
+_install_gs378_live_vwap_contract()
