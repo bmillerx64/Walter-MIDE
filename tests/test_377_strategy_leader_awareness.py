@@ -1,10 +1,13 @@
 import ast
 from pathlib import Path
+from types import SimpleNamespace
 
 from mide import gs334_market_event_lane as lane
 from mide.gs377_strategy_leader_awareness import (
     implied_previous_close,
     install,
+    merge_strategy_leader_events,
+    publish_strategy_leader_awareness,
     strategy_leader_rows,
 )
 
@@ -62,30 +65,80 @@ def test_rule_requires_current_day_gainer_rank_and_meaningful_gain():
     assert strategy_leader_rows(rows) == []
 
 
-def test_gs377_extends_existing_lane_without_duplicate_trade_authority():
-    install()
-    events = lane.market_event_rows([
+def test_merge_preserves_existing_gs340_classification_and_adds_missing_leaders():
+    baseline = [{
+        "symbol": "GPRO",
+        "pct_change": 46.0,
+        "rank": 4,
+        "price": 0.88,
+        "volume": 166_000_000,
+        "sources": ["day_gainers"],
+        "attention_only": True,
+        "event_type": "high_liquidity_trend",
+    }]
+    rows = [
+        _native("GPRO", 46.0, 4, price=0.88, volume=166_000_000),
+        _native("OFAL", 18.83, 7, price=0.8065, volume=73_490_000),
+        _native("PMI", 18.26, 8, price=5.31, volume=167_490),
+    ]
+
+    events = merge_strategy_leader_events(baseline, rows)
+
+    assert [event["symbol"] for event in events] == ["GPRO", "OFAL", "PMI"]
+    assert events[0]["event_type"] == "high_liquidity_trend"
+    assert events[1]["event_type"] == "strategy_leader"
+    assert events[2]["event_type"] == "strategy_leader"
+
+
+def test_publish_extends_persisted_snapshot_without_trade_authority(monkeypatch):
+    baseline = [{
+        "symbol": "CLGN",
+        "pct_change": 95.0,
+        "rank": 1,
+        "price": 0.70,
+        "volume": 120_000_000,
+        "sources": ["day_gainers"],
+        "attention_only": True,
+    }]
+    monkeypatch.setattr(lane, "_LATEST_MARKET_EVENTS", [dict(baseline[0])])
+    provider = SimpleNamespace(
+        diagnostics={"market_event_lane": {"events": [dict(baseline[0])]}}
+    )
+    rows = [
         _native("CLGN", 95.0, 1, price=0.70, volume=120_000_000),
         _native("OFAL", 18.83, 7, price=0.8065, volume=73_490_000),
         _native("PMI", 18.26, 8, price=5.31, volume=167_490),
-    ])
+    ]
+
+    events = publish_strategy_leader_awareness(provider, rows)
 
     symbols = [event["symbol"] for event in events]
-    assert symbols.count("CLGN") == 1
-    assert "OFAL" in symbols
-    assert "PMI" in symbols
+    assert symbols == ["CLGN", "OFAL", "PMI"]
+    assert [event["symbol"] for event in provider.diagnostics["market_event_lane"]["events"]] == symbols
+    assert [event["symbol"] for event in lane._LATEST_MARKET_EVENTS] == symbols
     for event in events:
         assert event.get("attention_only") is True
         assert "qualified_for_entry" not in event
         assert "qualified_for_alert" not in event
 
 
-def test_gs377_install_is_idempotent():
+def test_gs377_does_not_mutate_gs334_gs340_market_event_row_contract():
+    before = lane.market_event_rows
     install()
-    first = lane.market_event_rows
+    assert lane.market_event_rows is before
+
+
+def test_gs377_install_is_idempotent_and_keeps_legacy_assets_identity():
+    from mide import webull_connection as connection
+    from mide.webull_live import LiveWebullProvider
+
     install()
-    assert lane.market_event_rows is first
+    first = LiveWebullProvider.assets
+    install()
+
+    assert LiveWebullProvider.assets is first
     assert getattr(first, "_gs377_strategy_leader_awareness", False)
+    assert connection._webull_native_assets is first
 
 
 def test_gs377_does_not_import_scanner_execution_or_architecture_modules():
