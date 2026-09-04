@@ -1,7 +1,7 @@
 """GS379: activate Webull OpenAPI tick streaming as observational market truth.
 
 This phase deliberately does *not* change discovery, scoring, readiness, entry,
-alert, execution, or order authority.  It opens the already-entitled Webull
+alert, execution, or order authority. It opens the already-entitled Webull
 OpenAPI stream, aggregates genuine trade ticks into closed 30-second OHLCV bars,
 and exposes diagnostics so Walter can prove 30-second market-data fidelity before
 those bars are allowed to influence trading decisions.
@@ -14,6 +14,9 @@ Safety properties:
   stream failure;
 - per-tick size is never substituted for cumulative session volume in Walter's
   snapshot cache;
+- stale/out-of-order ticks cannot rewind Walter's live price cache;
+- streaming subscriptions follow the current radar universe instead of growing
+  without bound across 60-second scans;
 - only completed 30-second buckets are exposed by ``stream_30s_bars``;
 - the pinned Webull SDK remains unchanged.
 """
@@ -24,7 +27,6 @@ from functools import wraps
 import importlib
 import logging
 from threading import Event, Thread
-import time
 import uuid
 from typing import Any
 
@@ -134,20 +136,35 @@ class OfficialWebullTickTransport:
         if self._failure is not None:
             raise RuntimeError(f"Webull OpenAPI stream failed: {self._failure}") from self._failure
 
-    def subscribe(self, symbols: list[str]) -> None:
-        wanted = list(dict.fromkeys(
+    @staticmethod
+    def _symbols(symbols) -> list[str]:
+        return list(dict.fromkeys(
             str(symbol or "").strip().upper()
             for symbol in symbols
             if str(symbol or "").strip()
         ))
+
+    def subscribe(self, symbols: list[str]) -> None:
+        wanted = self._symbols(symbols)
         if not wanted:
             return
         self._subscribed.clear()
-        # TICK is the only payload GS379 needs.  Snapshot/history remain on the
+        # TICK is the only payload GS379 needs. Snapshot/history remain on the
         # proven REST path, minimizing stream topic load and behavioral surface.
         self.client.subscribe(wanted, "US_STOCK", ["TICK"])
         if not self._subscribed.wait(SUBSCRIBE_TIMEOUT_SECONDS):
             raise RuntimeError("Webull OpenAPI tick subscription did not confirm")
+
+    def unsubscribe(self, symbols: list[str]) -> None:
+        wanted = self._symbols(symbols)
+        if not wanted:
+            return
+        self.client.unsubscribe(
+            wanted,
+            "US_STOCK",
+            ["TICK"],
+            unsubscribe_all=False,
+        )
 
     def close(self) -> None:
         try:
@@ -170,25 +187,30 @@ def _new_bar(bucket_ms: int, price: float, volume: float) -> dict:
     }
 
 
-def _record_tick(provider, event: MarketEvent) -> None:
+def _record_tick(provider, event: MarketEvent) -> bool:
+    """Record one tick; False means the tick is stale and must not update price."""
     price = _number(event.payload.get("price"))
     if price is None:
-        return
+        return False
     size = max(0.0, _number(event.payload.get("volume")) or 0.0)
     timestamp_ms = int(event.source_timestamp_ms)
     bucket_ms = timestamp_ms - (timestamp_ms % THIRTY_SECOND_MS)
     symbol = event.symbol.upper()
 
     with provider._lock:
+        stream = provider.diagnostics["webull_stream"]
+        stream["tick_messages_received"] += 1
+        stream["last_tick_timestamp_ms"] = timestamp_ms
+
         current = provider._gs379_30s_current.get(symbol)
         if current is None:
             provider._gs379_30s_current[symbol] = _new_bar(bucket_ms, price, size)
         elif bucket_ms < current["t"]:
-            provider.diagnostics["webull_stream"]["out_of_order_ticks"] += 1
-            return
+            stream["out_of_order_ticks"] += 1
+            return False
         elif bucket_ms > current["t"]:
             provider._gs379_30s_closed[symbol].append(dict(current))
-            provider.diagnostics["webull_stream"]["thirty_second_bars_closed"] += 1
+            stream["thirty_second_bars_closed"] += 1
             provider._gs379_30s_current[symbol] = _new_bar(bucket_ms, price, size)
         else:
             current["h"] = max(current["h"], price)
@@ -197,15 +219,13 @@ def _record_tick(provider, event: MarketEvent) -> None:
             current["v"] += size
             current["trade_count"] += 1
 
-        stream = provider.diagnostics["webull_stream"]
-        stream["tick_messages_received"] += 1
-        stream["last_tick_timestamp_ms"] = timestamp_ms
         stream["tick_symbols_seen"] = len(
             set(provider._gs379_30s_current) | set(provider._gs379_30s_closed)
         )
         stream["thirty_second_symbols_ready"] = sum(
             len(rows) >= 10 for rows in provider._gs379_30s_closed.values()
         )
+    return True
 
 
 def _stream_30s_bars(provider, symbol: str) -> list[dict]:
@@ -219,7 +239,7 @@ def install() -> None:
     """Open Webull tick streaming while keeping GS379 observational only."""
     from . import webull_live, webull_sdk
 
-    # The repository is pinned to webull-openapi-python-sdk 2.0.16.  Its
+    # The repository is pinned to webull-openapi-python-sdk 2.0.16. Its
     # DataStreamingClient constructor takes app_key/app_secret/region/session,
     # not the DataClient instance used by Walter's dormant pre-GS379 factory.
     current_create = webull_sdk.create_official_client
@@ -264,10 +284,7 @@ def install() -> None:
                 kwargs["enable_streaming"] = True
             current_init(self, app_key, app_secret, *args, **kwargs)
             self._gs379_30s_current: dict[str, dict] = {}
-            self._gs379_30s_closed = {}
-            self._gs379_30s_closed = {
-                # created lazily per symbol by the event wrapper below
-            }
+            self._gs379_30s_closed: dict[str, deque] = {}
             stream_diag = self.diagnostics["webull_stream"]
             stream_diag.update(
                 tick_messages_received=0,
@@ -276,6 +293,8 @@ def install() -> None:
                 thirty_second_bars_closed=0,
                 thirty_second_symbols_ready=0,
                 out_of_order_ticks=0,
+                unsubscribed_symbols=0,
+                unsubscribe_failures=0,
                 thirty_second_authority="OBSERVATIONAL_ONLY",
             )
 
@@ -295,8 +314,9 @@ def install() -> None:
                             event.symbol,
                             deque(maxlen=THIRTY_SECOND_HISTORY),
                         )
-                _record_tick(self, event)
-                # TICK.volume is trade size, not cumulative session volume.  The
+                if not _record_tick(self, event):
+                    return
+                # TICK.volume is trade size, not cumulative session volume. The
                 # existing cache expects cumulative volume, so preserve the REST
                 # snapshot volume while still refreshing price from the stream.
                 payload = dict(event.payload)
@@ -315,6 +335,39 @@ def install() -> None:
         on_event._gs379_tick_aggregation = True
         on_event._gs379_original = current_event
         webull_live.LiveWebullProvider._on_event = on_event
+
+    current_ensure = webull_live.LiveWebullProvider.ensure_stream
+    if not getattr(current_ensure, "_gs379_reconcile_symbols", False):
+        @wraps(current_ensure)
+        def ensure_stream(self, symbols) -> bool:
+            wanted = {
+                str(symbol or "").strip().upper()
+                for symbol in symbols
+                if str(symbol or "").strip()
+            }
+            stale = sorted(set(self._subscribed) - wanted)
+            transport = getattr(getattr(self, "_subscription", None), "transport", None)
+            unsubscribe = getattr(transport, "unsubscribe", None)
+            if stale and callable(unsubscribe):
+                try:
+                    unsubscribe(stale)
+                except Exception as exc:
+                    self.diagnostics["webull_stream"]["unsubscribe_failures"] += 1
+                    self.warnings.append(
+                        f"Webull stream could not release stale symbols: {type(exc).__name__}"
+                    )
+                    LOGGER.warning(
+                        "WEBULL stream stale-symbol unsubscribe failed count=%s error_type=%s",
+                        len(stale), type(exc).__name__,
+                    )
+                else:
+                    self._subscribed.difference_update(stale)
+                    self.diagnostics["webull_stream"]["unsubscribed_symbols"] += len(stale)
+            return current_ensure(self, sorted(wanted))
+
+        ensure_stream._gs379_reconcile_symbols = True
+        ensure_stream._gs379_original = current_ensure
+        webull_live.LiveWebullProvider.ensure_stream = ensure_stream
 
     if not hasattr(webull_live.LiveWebullProvider, "stream_30s_bars"):
         webull_live.LiveWebullProvider.stream_30s_bars = _stream_30s_bars
