@@ -131,3 +131,8 @@ ensure_operator_awareness()
 # allowing only a strict, fresh reconstruction exception for current major leaders;
 # awareness-only copies remain denied entry/alert authority.
 ensure_reclaim_watch()
+
+# GS377 is deliberately installed from mide.__init__ after GS340.  webull_live
+# imports this startup module while LiveWebullProvider is still being defined, so
+# importing GS377 here would create a circular webull_live -> startup -> GS377 ->
+# webull_connection -> webull_live dependency during ordinary package imports.
