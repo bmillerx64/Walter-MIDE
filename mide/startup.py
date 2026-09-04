@@ -108,6 +108,13 @@ def ensure_reclaim_watch() -> None:
     install()
 
 
+def ensure_strategy_leader_awareness() -> None:
+    """Bind GS377 so current sub-$5-origin leaders remain visible as context."""
+    from .gs377_strategy_leader_awareness import install
+
+    install()
+
+
 # GS371: package-level installers can be correct while app.py still binds an older
 # renderer object during a complex Streamlit import/reload sequence. This module is
 # app.py's first MIDE import, so enforce the final presentation wrapper immediately
@@ -131,3 +138,8 @@ ensure_operator_awareness()
 # allowing only a strict, fresh reconstruction exception for current major leaders;
 # awareness-only copies remain denied entry/alert authority.
 ensure_reclaim_watch()
+
+# GS377: extend the already-separate GS334 Market Events lane with current Webull
+# Day Gainers that remain relevant to Walter's sub-$5 strategy, including a leader
+# that has just broken above $5 from a <=$5 prior-close reference. Presentation only.
+ensure_strategy_leader_awareness()
