@@ -164,9 +164,20 @@ def install() -> None:
         return
     original_build = current_build
 
-    def build_seed_symbols(*args, **kwargs):
-        result = original_build(*args, **kwargs)
-        client = args[0] if args else kwargs.get("client")
+    def build_seed_symbols(client, settings, news_items, *, universe_verification=None):
+        # Preserve the discovery call contract explicitly. app.py inspects this
+        # signature to decide whether to pass UniverseVerification; hiding it
+        # behind *args/**kwargs caused live Webull source accounting to be skipped
+        # and produced a false Universe verification: FAIL.
+        if universe_verification is None:
+            result = original_build(client, settings, news_items)
+        else:
+            result = original_build(
+                client,
+                settings,
+                news_items,
+                universe_verification=universe_verification,
+            )
         diagnostics = getattr(client, "diagnostics", None)
         block = diagnostics.get("news_seeded_discovery") if isinstance(diagnostics, dict) else None
         if isinstance(block, dict):
