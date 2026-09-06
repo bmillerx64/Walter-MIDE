@@ -58,9 +58,10 @@ def test_observational_export_is_incremental_and_does_not_duplicate_old_bars():
 
     first = gs386.build_observational_30s(provider, ["TEST"])
     second = gs386.build_observational_30s(provider, ["TEST"])
+    next_timestamp = bars[-1]["t"] + 30_000
     provider._bars["TEST"].append(
         {
-            "t": bars[-1]["t"] + 30_000,
+            "t": next_timestamp,
             "o": 1.12,
             "h": 1.14,
             "l": 1.11,
@@ -74,7 +75,7 @@ def test_observational_export_is_incremental_and_does_not_duplicate_old_bars():
     assert first["new_bar_count"] == 12
     assert second["new_bar_count"] == 0
     assert third["new_bar_count"] == 1
-    assert third["symbols"][0]["bars"][0]["timestamp_ms"] == bars[-1]["t"] + 30_000
+    assert third["symbols"][0]["bars"][0]["timestamp_ms"] == next_timestamp
 
 
 def test_current_scan_download_retains_observational_30s_payload():
