@@ -32,7 +32,7 @@ def test_stream_summary_surfaces_operational_truth_and_observational_30s_state()
     assert "62 ms" in detail
     assert "0 disconnects" in detail
     assert "128 closed 30s bars" in detail
-    assert "14 ST-ready symbols" in detail
+    assert "14 30s-ready symbols" in detail
     assert detail.endswith("OBSERVATIONAL_ONLY")
 
 
