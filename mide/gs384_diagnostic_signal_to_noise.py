@@ -72,7 +72,7 @@ def _stream_summary(diagnostics: dict) -> tuple[str, str]:
             f"{disconnects} disconnects",
             f"{len(failures)} subscription errors",
             f"{bars} closed 30s bars",
-            f"{ready} ST-ready symbols",
+            f"{ready} 30s-ready symbols",
             authority,
         ]
     )
