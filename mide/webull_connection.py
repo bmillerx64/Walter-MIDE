@@ -19,6 +19,18 @@ _ORIGINAL_LIVE_WEBULL_SNAPSHOTS = LiveWebullProvider.snapshots
 _ORIGINAL_LIVE_WEBULL_PIPELINE_SOURCES = LiveWebullProvider.pipeline_sources
 
 
+# These one-off snapshot checks are useful diagnostics, but Walter's production
+# snapshot path is the full eligible-universe batching check below. A failure in
+# one of these probes must not paint a healthy production path red when the full
+# batch succeeds.
+_DIAGNOSTIC_SNAPSHOT_PROBES = {
+    "HYFM snapshot",
+    "10-symbol batch",
+    "100-symbol batch",
+}
+_PRODUCTION_SNAPSHOT_CHECK = "Full eligible-universe batching"
+
+
 def _merge_snapshot_continuity(previous: dict, current: dict) -> dict:
     merged = dict(previous or {})
     merged.update(current or {})
@@ -188,6 +200,74 @@ def _radar_failure_rows(error: str, latency_ms: float) -> list[dict]:
     ]
 
 
+def _short_error(value: object, limit: int = 72) -> str:
+    text = " ".join(str(value or "").split())
+    if len(text) <= limit:
+        return text
+    return text[: max(0, limit - 1)].rstrip() + "…"
+
+
+def _cleanup_connection_rows(rows: list[dict]) -> list[dict]:
+    """Make Diagnostics truthful and readable without changing provider behavior.
+
+    ``app.py`` treats any row whose ``Status`` is ``FAIL`` as an overall Webull
+    connection failure. The single-symbol and sample-batch checks are diagnostic
+    probes, not Walter's authoritative snapshot path. If the full eligible-universe
+    batch succeeds, a failed probe is therefore displayed as CAUTION while its
+    operational ``Status`` remains PASS. Credential/client failures, the production
+    full-universe snapshot check, and every native discovery feed remain fail-closed.
+
+    ``Result`` is deliberately inserted first so the narrow Streamlit sidebar shows
+    the useful status/reason before the verbose endpoint columns.
+    """
+    full_row = next(
+        (row for row in rows if row.get("Test") == _PRODUCTION_SNAPSHOT_CHECK),
+        None,
+    )
+    full_snapshot_ok = bool(full_row and full_row.get("Status") == "PASS")
+    cleaned: list[dict] = []
+    for source in rows:
+        row = dict(source)
+        name = str(row.get("Test") or "Diagnostic check")
+        raw_status = str(row.get("Status") or "FAIL").upper()
+        error = str(row.get("Actual exception / API error") or "")
+        caution = (
+            name in _DIAGNOSTIC_SNAPSHOT_PROBES
+            and raw_status == "FAIL"
+            and full_snapshot_ok
+        )
+        if caution:
+            operational_status = "PASS"
+            display_status = "CAUTION"
+            impact = "Diagnostic probe failed; production full-universe batching passed."
+        elif raw_status == "PASS":
+            operational_status = "PASS"
+            display_status = "PASS"
+            impact = "Production-path check passed." if (
+                name == _PRODUCTION_SNAPSHOT_CHECK
+                or name.startswith("Native radar —")
+                or name in {"Credential loading", "SDK client initialization"}
+            ) else "Diagnostic probe passed."
+        else:
+            operational_status = "FAIL"
+            display_status = "FAIL"
+            impact = "Production path is not fully healthy; inspect this failure before relying on Live Webull."
+
+        reason = _short_error(error)
+        result = f"{display_status} · {name}"
+        if reason and display_status != "PASS":
+            result += f" — {reason}"
+        cleaned.append({
+            "Result": result,
+            "Status": operational_status,
+            "Test": name,
+            "Diagnostic status": display_status,
+            "Impact": impact,
+            **{key: value for key, value in row.items() if key not in {"Status", "Test"}},
+        })
+    return cleaned
+
+
 def run_connection_test(*, app_key: str, app_secret: str,
                         eligible_symbols: Iterable[str], client_factory: Callable) -> list[dict]:
     symbols = list(dict.fromkeys(str(s).strip().upper() for s in eligible_symbols if str(s).strip()))
@@ -207,7 +287,7 @@ def run_connection_test(*, app_key: str, app_secret: str,
     started = perf_counter()
     if not app_key or not app_secret:
         result("Credential loading", started, error="WEBULL_APP_KEY or WEBULL_APP_SECRET is missing")
-        return rows
+        return _cleanup_connection_rows(rows)
     result("Credential loading", started)
     started = perf_counter()
     try:
@@ -215,7 +295,7 @@ def run_connection_test(*, app_key: str, app_secret: str,
         result("SDK client initialization", started)
     except Exception as exc:
         result("SDK client initialization", started, error=f"{type(exc).__name__}: {exc}")
-        return rows
+        return _cleanup_connection_rows(rows)
 
     cases = [("HYFM snapshot", ["HYFM"]), ("10-symbol batch", symbols[:10]),
              ("100-symbol batch", symbols[:100]), ("Full eligible-universe batching", symbols)]
@@ -242,4 +322,4 @@ def run_connection_test(*, app_key: str, app_secret: str,
         for radar_row in radar_rows:
             radar_row["Latency ms"] = latency_ms
     rows.extend(radar_rows)
-    return rows
+    return _cleanup_connection_rows(rows)
