@@ -1,3 +1,6 @@
+# GS385 deployment marker: force Streamlit Community Cloud to rebuild the
+# Python runtime so the merged GS384 diagnostic presentation code is loaded.
+# No dependency versions change in this deployment-only nudge.
 # GS362: pin the current Streamlit runtime with fragment/runtime fixes validated
 # for Walter's periodic fragment, st.status, and reconnect execution model.
 streamlit==1.62.0
