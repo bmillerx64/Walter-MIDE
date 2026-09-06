@@ -10,8 +10,13 @@ from __future__ import annotations
 from time import perf_counter
 from typing import Callable, Iterable
 
-from .webull_sdk import SNAPSHOT_OPERATION
-from .webull_live import LiveWebullProvider
+from .webull_sdk import MAX_SNAPSHOT_SYMBOLS, SNAPSHOT_OPERATION
+from .webull_live import (
+    LiveWebullProvider,
+    _invalid_snapshot_symbols,
+    _invalid_symbol_error,
+    webull_snapshot_symbol_supported,
+)
 from .webull_native_radar import RADAR_FEEDS, fetch_native_radar, radar_probe_rows
 
 
@@ -268,18 +273,66 @@ def _cleanup_connection_rows(rows: list[dict]) -> list[dict]:
     return cleaned
 
 
+def _production_snapshot_fetch(client, symbols: Iterable[str]) -> tuple[dict, int, list[str]]:
+    """Exercise Walter's production invalid-symbol isolation without mutating a scan.
+
+    The live provider rejects known unsupported suffixes before calling Webull and,
+    for HTTP 417 INVALID_SYMBOL responses, removes named bad symbols or recursively
+    bisects an ambiguous batch so valid peers still load. Diagnostics must use the
+    same behavior or one unsupported radar symbol can create a false connection FAIL.
+    """
+    submitted = list(dict.fromkeys(
+        str(symbol).strip().upper() for symbol in symbols if str(symbol).strip()
+    ))
+    wanted = [symbol for symbol in submitted if webull_snapshot_symbol_supported(symbol)]
+    skipped = [symbol for symbol in submitted if symbol not in wanted]
+    request_count = 0
+
+    def fetch(batch: list[str]) -> dict:
+        nonlocal request_count
+        if not batch:
+            return {}
+        request_count += 1
+        try:
+            return client.snapshots(batch)
+        except Exception as exc:
+            if not _invalid_symbol_error(exc):
+                raise
+            identified = set(_invalid_snapshot_symbols(exc))
+            invalid = [symbol for symbol in batch if symbol in identified]
+            if invalid:
+                skipped.extend(symbol for symbol in invalid if symbol not in skipped)
+                remaining = [symbol for symbol in batch if symbol not in identified]
+                return fetch(remaining) if remaining else {}
+            if len(batch) == 1:
+                if batch[0] not in skipped:
+                    skipped.append(batch[0])
+                return {}
+            midpoint = len(batch) // 2
+            return {**fetch(batch[:midpoint]), **fetch(batch[midpoint:])}
+
+    returned: dict = {}
+    for offset in range(0, len(wanted), MAX_SNAPSHOT_SYMBOLS):
+        returned.update(fetch(wanted[offset:offset + MAX_SNAPSHOT_SYMBOLS]))
+    return returned, request_count, skipped
+
+
 def run_connection_test(*, app_key: str, app_secret: str,
                         eligible_symbols: Iterable[str], client_factory: Callable) -> list[dict]:
     symbols = list(dict.fromkeys(str(s).strip().upper() for s in eligible_symbols if str(s).strip()))
     rows = []
 
-    def result(name, started, *, requested=0, returned=(), error=""):
+    def result(name, started, *, requested=0, returned=(), error="", request_count=None,
+               skipped=()):
         returned = sorted(returned)
+        if request_count is None:
+            request_count = (requested + MAX_SNAPSHOT_SYMBOLS - 1) // MAX_SNAPSHOT_SYMBOLS if requested else 0
         rows.append({
             "Test": name, "Status": "FAIL" if error else "PASS",
             "Provider": "Webull OpenAPI SDK", "Endpoint / SDK operation": SNAPSHOT_OPERATION,
-            "Request count": (requested + 99) // 100 if requested else 0,
+            "Request count": request_count,
             "Returned symbol count": len(returned), "First 10 returned symbols": ", ".join(returned[:10]),
+            "Skipped/isolated symbols": ", ".join(sorted(set(skipped))),
             "Latency ms": round((perf_counter() - started) * 1000, 2),
             "Actual exception / API error": error,
         })
@@ -298,17 +351,29 @@ def run_connection_test(*, app_key: str, app_secret: str,
         return _cleanup_connection_rows(rows)
 
     cases = [("HYFM snapshot", ["HYFM"]), ("10-symbol batch", symbols[:10]),
-             ("100-symbol batch", symbols[:100]), ("Full eligible-universe batching", symbols)]
+             ("100-symbol batch", symbols[:MAX_SNAPSHOT_SYMBOLS])]
     for name, requested_symbols in cases:
         started = perf_counter()
         returned = {}
         try:
-            for offset in range(0, len(requested_symbols), 100):
-                returned.update(client.snapshots(requested_symbols[offset:offset + 100]))
+            for offset in range(0, len(requested_symbols), MAX_SNAPSHOT_SYMBOLS):
+                returned.update(client.snapshots(
+                    requested_symbols[offset:offset + MAX_SNAPSHOT_SYMBOLS]
+                ))
             result(name, started, requested=len(requested_symbols), returned=returned)
         except Exception as exc:
             result(name, started, requested=len(requested_symbols), returned=returned,
                    error=f"{type(exc).__name__}: {exc}")
+
+    started = perf_counter()
+    returned = {}
+    try:
+        returned, request_count, skipped = _production_snapshot_fetch(client, symbols)
+        result(_PRODUCTION_SNAPSHOT_CHECK, started, requested=len(symbols), returned=returned,
+               request_count=request_count, skipped=skipped)
+    except Exception as exc:
+        result(_PRODUCTION_SNAPSHOT_CHECK, started, requested=len(symbols), returned=returned,
+               error=f"{type(exc).__name__}: {exc}")
 
     radar_started = perf_counter()
     try:
