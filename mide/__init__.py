@@ -238,3 +238,7 @@ _install_gs378_live_vwap_contract()
 from .gs379_webull_stream_data_truth import install as _install_gs379_webull_stream_data_truth  # noqa: E402
 
 _install_gs379_webull_stream_data_truth()
+
+from .gs384_diagnostic_signal_to_noise import install as _install_gs384_diagnostic_signal_to_noise  # noqa: E402
+
+_install_gs384_diagnostic_signal_to_noise()
