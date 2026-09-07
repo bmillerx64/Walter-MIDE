@@ -1,3 +1,6 @@
+# GS387 deployment marker: force one clean Streamlit Community Cloud runtime so
+# the permanent checkout-vs-loaded-runtime freshness detector is installed.
+# No dependency versions change in this deployment-only activation.
 # GS385 deployment marker: force Streamlit Community Cloud to rebuild the
 # Python runtime so the merged GS384 diagnostic presentation code is loaded.
 # No dependency versions change in this deployment-only nudge.
