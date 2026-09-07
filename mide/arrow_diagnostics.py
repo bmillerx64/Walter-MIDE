@@ -44,6 +44,24 @@ def _arrow_safe_table_value(value: Any) -> Any:
         return json.dumps(value, sort_keys=True, default=str)
     return value
 
+def _display_safe_frame(value: Any) -> Any:
+    """Return a detached table with nested containers rendered as readable JSON.
+
+    PyArrow can serialize some list/struct columns successfully, but Streamlit's
+    frontend may still display those cells as ``[object Object]``.  Normalize
+    nested diagnostic cells for presentation even when Arrow accepts the schema.
+    Source records/dataframes remain untouched.
+    """
+    try:
+        frame = value.copy() if isinstance(value, pd.DataFrame) else pd.DataFrame(value)
+    except Exception:
+        return value
+    for column in frame.columns:
+        series = frame[column]
+        if any(isinstance(item, (dict, list, tuple, set)) for item in series.tolist()):
+            frame[column] = series.map(_arrow_safe_table_value)
+    return frame
+
 def _arrow_safe_frame(value: Any, violating_columns: set[str]) -> pd.DataFrame:
     frame = value.copy() if isinstance(value, pd.DataFrame) else pd.DataFrame(value)
     for column in frame.columns:
@@ -52,13 +70,14 @@ def _arrow_safe_frame(value: Any, violating_columns: set[str]) -> pd.DataFrame:
     return frame
 
 def instrument_streamlit_tables(streamlit_module: Any) -> None:
-    """Log Arrow problems and safely normalize only columns that cannot serialize.
+    """Log Arrow problems and normalize diagnostics for safe, readable display.
 
-    Walter's diagnostics contain heterogeneous Python values by design.  Streamlit
-    delegates dataframe transport to PyArrow, which rejects mixed object columns.
-    Keep ordinary numeric/string columns untouched; for a column proven invalid,
-    stringify container values and, if necessary, stringify the whole column as a
-    final display-only fallback.  The source dataframe is never mutated.
+    Walter's diagnostics contain heterogeneous Python values by design. Streamlit
+    delegates dataframe transport to PyArrow, which rejects some mixed object
+    columns and may render accepted nested list/struct cells as ``[object Object]``.
+    Keep ordinary numeric/string columns untouched; stringify nested containers
+    for display and retain the historical invalid-column fallback. The source
+    dataframe is never mutated.
     """
     for method_name in ("dataframe", "table"):
         original = getattr(streamlit_module, method_name)
@@ -68,10 +87,10 @@ def instrument_streamlit_tables(streamlit_module: Any) -> None:
             caller = inspect.currentframe().f_back
             location = f"{caller.f_code.co_filename}:{caller.f_lineno}"
             violations = log_arrow_violations(value, dataframe_name=f"st.{_name} at {location}")
-            display_value = value
+            display_value = _display_safe_frame(value)
             if violations:
                 violating_columns = {item["column"] for item in violations}
-                display_value = _arrow_safe_frame(value, violating_columns)
+                display_value = _arrow_safe_frame(display_value, violating_columns)
                 try:
                     pa.Table.from_pandas(display_value)
                 except (pa.ArrowInvalid, pa.ArrowTypeError):
