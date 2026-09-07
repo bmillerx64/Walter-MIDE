@@ -9,9 +9,10 @@ GS386 reuses this late diagnostic installer as the narrow bootstrap point for th
 30-second observational recorder so the large package initializer stays untouched.
 GS388 reuses the same bootstrap point for presentation-only Flight Recorder cleanup.
 GS389 reuses it for explicit Live Webull mode-exit stream lifecycle cleanup.
+GS390 reuses it to persist an observational 30s -> 1m -> 3m validation sequence.
 
 Safety contract:
-- presentation/provenance/lifecycle only;
+- presentation/provenance/lifecycle/evidence only;
 - no discovery, scoring, readiness, qualification, alert, execution, or order logic;
 - 30-second bars remain explicitly observational only;
 - underlying diagnostic counters are not rewritten or normalized.
@@ -128,6 +129,7 @@ def install() -> None:
     from .gs386_30s_observational_recorder import install as install_gs386
     from .gs388_diagnostic_ui_pruning import install as install_gs388
     from .gs389_webull_mode_exit_lifecycle import install as install_gs389
+    from .gs390_st_vwap_validation_sequence import install as install_gs390
 
     # These installers are evidence/presentation/lifecycle-only and intentionally
     # bootstrap here, after GS379 has installed the genuine Webull stream boundary.
@@ -135,6 +137,7 @@ def install() -> None:
     install_gs386()
     install_gs388()
     install_gs389()
+    install_gs390()
 
     current_sources = webull_live.LiveWebullProvider.pipeline_sources
     if getattr(current_sources, "_gs384_signal_to_noise", False):
