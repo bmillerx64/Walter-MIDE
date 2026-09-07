@@ -7,6 +7,7 @@ source rows with concise live health summaries.
 
 GS386 reuses this late diagnostic installer as the narrow bootstrap point for the
 30-second observational recorder so the large package initializer stays untouched.
+GS388 reuses the same bootstrap point for presentation-only Flight Recorder cleanup.
 
 Safety contract:
 - presentation/provenance only;
@@ -121,13 +122,15 @@ def enrich_pipeline_rows(provider, rows: list[dict]) -> list[dict]:
 
 
 def install() -> None:
-    """Install compact health presentation and the GS386 evidence-only recorder."""
+    """Install compact health and later presentation/evidence-only diagnostics."""
     from . import webull_live
     from .gs386_30s_observational_recorder import install as install_gs386
+    from .gs388_diagnostic_ui_pruning import install as install_gs388
 
-    # GS386 is evidence-only and is intentionally bootstrapped here, after GS379
-    # has installed the genuine Webull 30-second stream boundary.
+    # These installers are evidence/presentation-only and intentionally bootstrap
+    # here, after GS379 has installed the genuine Webull stream boundary.
     install_gs386()
+    install_gs388()
 
     current_sources = webull_live.LiveWebullProvider.pipeline_sources
     if getattr(current_sources, "_gs384_signal_to_noise", False):
