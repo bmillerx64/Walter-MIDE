@@ -10,11 +10,15 @@ GS386 reuses this late diagnostic installer as the narrow bootstrap point for th
 GS388 reuses the same bootstrap point for presentation-only Flight Recorder cleanup.
 GS389 reuses it for explicit Live Webull mode-exit stream lifecycle cleanup.
 GS390 reuses it to persist an observational 30s -> 1m -> 3m validation sequence.
+GS391 reuses it to correct primary VWAP evidence to the Webull extended-session
+anchor and to persist observational 1m/3m SuperTrend parity evidence.
 
 Safety contract:
-- presentation/provenance/lifecycle/evidence only;
-- no discovery, scoring, readiness, qualification, alert, execution, or order logic;
-- 30-second bars remain explicitly observational only;
+- GS384/386/388/389/390 remain presentation/provenance/lifecycle/evidence only;
+- GS391 is the explicit exception: it corrects primary VWAP decision evidence, so
+  existing downstream reclaim/crossover/alignment/rescoring recomputes from the
+  corrected VWAP; thresholds, entry rules, alerts, execution, and orders are unchanged;
+- 30-second bars and GS391 SuperTrend parity rows remain observational only;
 - underlying diagnostic counters are not rewritten or normalized.
 """
 from __future__ import annotations
@@ -124,20 +128,23 @@ def enrich_pipeline_rows(provider, rows: list[dict]) -> list[dict]:
 
 
 def install() -> None:
-    """Install compact health and later presentation/evidence/lifecycle diagnostics."""
+    """Install compact health and later evidence/lifecycle/truth corrections."""
     from . import webull_live
     from .gs386_30s_observational_recorder import install as install_gs386
     from .gs388_diagnostic_ui_pruning import install as install_gs388
     from .gs389_webull_mode_exit_lifecycle import install as install_gs389
     from .gs390_st_vwap_validation_sequence import install as install_gs390
+    from .gs391_webull_vwap_st_parity import install as install_gs391
 
-    # These installers are evidence/presentation/lifecycle-only and intentionally
-    # bootstrap here, after GS379 has installed the genuine Webull stream boundary.
+    # These installers bootstrap here after GS379 has installed the genuine Webull
+    # stream boundary.  GS391 intentionally runs last so it can correct GS378's
+    # primary VWAP and wrap the recorder after GS390's observational sequence.
     # They run before the GS384 idempotence return so warm reloads cannot miss one.
     install_gs386()
     install_gs388()
     install_gs389()
     install_gs390()
+    install_gs391()
 
     current_sources = webull_live.LiveWebullProvider.pipeline_sources
     if getattr(current_sources, "_gs384_signal_to_noise", False):
