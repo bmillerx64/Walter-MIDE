@@ -86,3 +86,12 @@ def install() -> None:
     from .gs395_earlier_discovery_breadth import install as install_gs395
 
     install_gs395()
+
+    # GS396 promotes genuine Webull 30-second ST state from recorder-only evidence to
+    # the first attention tripwire. It is deliberately installed last so the live
+    # Scanner V2 boundary sees every earlier strategy correction, while its entry
+    # wrapper strips 30s flip fields before legacy entry-trigger evaluation. Thus:
+    # 30s = investigate, 1m = primary ignition, 3m = confirmation.
+    from .gs396_live_30s_tripwire import install as install_gs396
+
+    install_gs396()
