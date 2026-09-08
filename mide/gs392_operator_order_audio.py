@@ -75,7 +75,14 @@ def install() -> None:
 
     # GS394 is narrower still: a chart-review-only re-arm for a previously extended
     # mover that has digested the move and produces a fresh 1m bullish reset while 3m
-    # remains confirmed.  Existing anti-chase entry/readiness authority is untouched.
+    # remains confirmed. Existing anti-chase entry/readiness authority is untouched.
     from .gs394_consolidation_rearm import install as install_gs394
 
     install_gs394()
+
+    # GS395 widens discovery only: a bounded second page for Webull 5-minute movers
+    # and absolute-volume rankings. It intentionally leaves RVOL as context and does
+    # not alter any downstream qualification or execution threshold.
+    from .gs395_earlier_discovery_breadth import install as install_gs395
+
+    install_gs395()
