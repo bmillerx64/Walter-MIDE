@@ -95,3 +95,11 @@ def install() -> None:
     from .gs396_live_30s_tripwire import install as install_gs396
 
     install_gs396()
+
+    # GS397 closes the live-path split exposed by the 2026-09-08 close: GS378's
+    # canonical 30s alignment receives the same completed Webull TICK-reconstructed
+    # bars that GS396 already proved in the recorder. A fresh flip may enter the
+    # operator investigation view, but it does not gain 1m entry authority.
+    from .gs397_canonical_30s_tripwire_truth import install as install_gs397
+
+    install_gs397()
