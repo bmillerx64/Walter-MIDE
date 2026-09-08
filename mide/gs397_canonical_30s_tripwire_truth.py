@@ -60,16 +60,16 @@ def fresh_30s_tripwire(record: dict) -> bool:
 
 
 def _primary_above_vwap(record: dict, alignment_30s: dict, tripwire: dict) -> bool | None:
-    """Prefer the Stage-6 30s calculation, then derive from the same live close."""
+    """Derive from the authoritative live 30s close, then fall back to Stage 6."""
+    close = _number(tripwire.get("latest_close"))
+    vwap = _number(record.get("vwap_value"))
+    if close is not None and vwap is not None:
+        return close >= vwap
     if "above_vwap" in alignment_30s:
         value = alignment_30s.get("above_vwap")
         if value is not None:
             return bool(value)
-    close = _number(tripwire.get("latest_close"))
-    vwap = _number(record.get("vwap_value"))
-    if close is None or vwap is None:
-        return None
-    return close >= vwap
+    return None
 
 
 def canonicalize_record(record: dict) -> dict:
