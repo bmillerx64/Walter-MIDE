@@ -19,7 +19,7 @@ def _frame(index, prices, volumes):
     )
 
 
-def test_primary_vwap_resets_at_0930_et_without_discarding_premarket_context():
+def test_primary_vwap_stays_extended_session_anchored_after_0930_with_rth_context():
     frame = _frame(
         pd.to_datetime(
             [
@@ -36,14 +36,17 @@ def test_primary_vwap_resets_at_0930_et_without_discarding_premarket_context():
 
     context = gs378.primary_vwap_context(frame)
 
-    assert context["anchor_mode"] == "RTH_09:30_ET"
-    assert context["anchor_time"].hour == 9
-    assert context["anchor_time"].minute == 30
+    assert context["anchor_mode"] == "WEBULL_EXTENDED_04:00_ET"
+    assert context["anchor_time"].hour == 4
+    assert context["anchor_time"].minute == 0
     assert context["premarket_value"] == 1.0
-    assert round(context["value"], 6) == 2.1
+    assert round(context["rth_value"], 6) == 2.1
+    # The high-volume premarket session remains authoritative after 09:30; the
+    # tiny RTH prints cannot manufacture a VWAP reclaim by resetting the anchor.
+    assert round(context["value"], 6) == 1.00011
 
 
-def test_primary_vwap_remains_premarket_anchored_before_regular_open():
+def test_primary_vwap_remains_extended_0400_anchored_before_regular_open():
     frame = _frame(
         pd.to_datetime(
             ["2026-09-04T08:00:00Z", "2026-09-04T13:29:00Z"],
@@ -55,9 +58,10 @@ def test_primary_vwap_remains_premarket_anchored_before_regular_open():
 
     context = gs378.primary_vwap_context(frame)
 
-    assert context["anchor_mode"] == "PREMARKET_04:00_ET"
+    assert context["anchor_mode"] == "WEBULL_EXTENDED_04:00_ET"
     assert context["anchor_time"].hour == 4
     assert round(context["value"], 6) == 1.1
+    assert context["rth_value"] is None
 
 
 def test_bar_history_reconstructs_cross_that_latest_scan_snapshot_can_miss(monkeypatch):
@@ -168,3 +172,6 @@ def test_gs378_runtime_wrappers_are_installed_after_package_initialization():
         False,
     ) is True
     assert getattr(gs348.observe_crosses, "_gs378_bar_cross_handoff", False) is True
+    # GS391 intentionally supersedes only the primary VWAP policy; GS378's
+    # deterministic bar-derived crossover machinery remains installed underneath.
+    assert getattr(gs378.primary_vwap_context, "_gs391_webull_vwap", False) is True
