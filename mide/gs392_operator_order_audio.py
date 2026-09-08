@@ -72,3 +72,10 @@ def install() -> None:
     from .gs393_ignition_truth_extreme_decay import install as install_gs393
 
     install_gs393()
+
+    # GS394 is narrower still: a chart-review-only re-arm for a previously extended
+    # mover that has digested the move and produces a fresh 1m bullish reset while 3m
+    # remains confirmed.  Existing anti-chase entry/readiness authority is untouched.
+    from .gs394_consolidation_rearm import install as install_gs394
+
+    install_gs394()
