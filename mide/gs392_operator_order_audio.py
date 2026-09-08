@@ -65,3 +65,10 @@ def install() -> None:
     _install_final_order(ui, "render_escalation_engine")
     _install_final_order(ui, "render_walter_mission_control")
     _install_distinct_audio_patterns()
+
+    # GS393 deliberately installs after the final GS392 presentation/audio boundary.
+    # It changes operator ignition semantics and the lifetime of the separate extreme-
+    # mover banner, while leaving scanner qualification/execution authority untouched.
+    from .gs393_ignition_truth_extreme_decay import install as install_gs393
+
+    install_gs393()
