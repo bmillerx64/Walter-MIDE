@@ -23,14 +23,22 @@ def test_native_radar_calls_four_feed_discovery_contract():
     client=FakeLiveClient(); report=fetch_native_radar(client)
     assert report["all_feeds_available"] is True
     assert report["discovery_feed_keys"]==["day_gainers","five_minute_movers","absolute_volume","relative_volume"]
-    assert report["maximum_pre_dedupe_symbols"]==80
+    assert report["maximum_pre_dedupe_symbols"]==100
     calls=client._snapshot_client.sdk.sdk_client.screener.calls
-    assert [c[0] for c in calls]==["get_gainers_losers","get_gainers_losers","get_most_active","get_most_active"]
+    # GS395 preserves the four required page-1 calls, then adds bounded page 2
+    # only for 5-minute movers and absolute/raw volume.
+    assert [c[0] for c in calls]==[
+        "get_gainers_losers","get_gainers_losers","get_most_active","get_most_active",
+        "get_gainers_losers","get_most_active",
+    ]
     assert calls[0][1]["rank_type"]=="DAY_1"
     assert calls[1][1]["rank_type"]=="MIN_5"
     assert calls[2][1]["rank_type"]=="VOLUME"
     assert calls[3][1]["rank_type"]=="RELATIVE_VOLUME_10D"
-    assert all(c[1]["page_size"]==20 and c[1]["page_index"]==1 for c in calls)
+    assert all(c[1]["page_size"]==20 and c[1]["page_index"]==1 for c in calls[:4])
+    assert calls[4][1]["rank_type"]=="MIN_5" and calls[4][1]["page_index"]==2
+    assert calls[5][1]["rank_type"]=="VOLUME" and calls[5][1]["page_index"]==2
+    assert report["supplemental_breadth"]["status"]=="PASS"
 
 def test_native_radar_normalizes_rows_and_provenance():
     report=fetch_native_radar(FakeLiveClient()); day=report["feeds"]["day_gainers"]["rows"][0]
