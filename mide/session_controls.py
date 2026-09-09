@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 from collections.abc import MutableMapping
+from datetime import datetime
+import math
 import time
 from typing import Any
 
@@ -107,3 +109,58 @@ def finish_scan(state: MutableMapping[str, Any]) -> None:
     state[SCAN_RUNNING_KEY] = False
     state[SCAN_REQUESTED_KEY] = False
     state.pop(SCAN_REQUESTED_AT_KEY, None)
+
+
+def autoscan_wait_seconds(
+    refresh_seconds: int,
+    last_updated: datetime | None,
+    last_scan_attempt: datetime | None,
+    *,
+    retry_seconds: int = 5,
+    now: datetime | None = None,
+) -> int:
+    """Return the next fragment wait while preserving failure backoff.
+
+    After a successful scan the configured cadence is measured from scan start,
+    not scan completion. A 55-second scan on a 60-second cadence therefore waits
+    about five more seconds. A failed attempt retains the existing retry delay.
+    """
+    refresh = max(1, int(refresh_seconds))
+    retry = max(1, int(retry_seconds))
+    retry_pending = bool(
+        last_scan_attempt
+        and (last_updated is None or last_scan_attempt > last_updated)
+    )
+    if retry_pending:
+        return retry
+    if last_scan_attempt is None:
+        return refresh
+
+    current = now or datetime.now().astimezone()
+    try:
+        elapsed = max(0.0, (current - last_scan_attempt).total_seconds())
+    except (TypeError, ValueError):
+        return refresh
+    return max(1, int(math.ceil(max(0.0, refresh - elapsed))))
+
+
+def autoscan_request_due(
+    refresh_seconds: int,
+    last_updated: datetime | None,
+    last_scan_attempt: datetime | None,
+    *,
+    now: datetime | None = None,
+) -> bool:
+    """Return whether a successful scan has reached its start-to-start deadline."""
+    if (
+        last_scan_attempt is None
+        or last_updated is None
+        or last_scan_attempt > last_updated
+    ):
+        return False
+    current = now or datetime.now().astimezone()
+    try:
+        elapsed = (current - last_scan_attempt).total_seconds()
+    except (TypeError, ValueError):
+        return False
+    return elapsed >= max(1, int(refresh_seconds))
