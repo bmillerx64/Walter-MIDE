@@ -144,6 +144,8 @@ from mide.session_controls import (
     PROVIDER_KEY,
     SCAN_REQUESTED_KEY,
     STOP_REQUESTED_KEY,
+    autoscan_request_due,
+    autoscan_wait_seconds,
     begin_scheduled_scan,
     finish_scan,
     initialize_session_controls,
@@ -1217,19 +1219,31 @@ def arm_live_clock_engine(
     # A browser ``location.reload()`` creates a new Streamlit session and loses
     # the completed scan and persistent controls along with its session_state.
     if enabled:
-        interval = retry_seconds if last_scan_attempt and (
-            not last_updated or last_scan_attempt > last_updated
-        ) else refresh_seconds
-        interval = max(1, int(interval))
+        interval = autoscan_wait_seconds(
+            refresh_seconds,
+            last_updated,
+            last_scan_attempt,
+            retry_seconds=retry_seconds,
+        )
         tick_key = "_walter_live_scan_fragment_tick"
 
         @st.fragment(run_every=timedelta(seconds=interval))
         def request_session_preserving_rerun() -> None:
             now = datetime.now().astimezone()
             previous = st.session_state.get(tick_key)
+            if previous is not None and last_scan_attempt and previous < last_scan_attempt:
+                previous = None
             if previous is None:
                 st.session_state[tick_key] = now
             elif (now - previous).total_seconds() >= interval * 0.9:
+                if autoscan_request_due(
+                    refresh_seconds,
+                    last_updated,
+                    last_scan_attempt,
+                    retry_seconds=retry_seconds,
+                    now=now,
+                ):
+                    st.session_state[SCAN_REQUESTED_KEY] = True
                 st.session_state[tick_key] = now
                 st.rerun(scope="app")
 
@@ -1302,7 +1316,7 @@ def arm_live_clock_engine(
             }}
             const deadline = attemptedAt > updatedAt
               ? attemptedAt + retryMs
-              : (updatedAt ? updatedAt + refreshMs : now);
+              : (attemptedAt ? attemptedAt + refreshMs : now);
             if (!scanState && now < deadline) return;
             // The timed Streamlit fragment above owns reruns. Never use
             // location.reload here: that starts a new server session.
