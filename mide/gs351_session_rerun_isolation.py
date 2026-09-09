@@ -146,12 +146,12 @@ def install() -> None:
         session_controls.finish_scan = finish_scan_with_render_cooldown
 
     current = st.rerun
-    if getattr(current, "_gs372_stale_session_recovery", False):
+    if getattr(current, "_gs409_due_autoscan_cadence", False):
         return
     if getattr(current, "_gs351_session_rerun_isolation", False):
-        # Warm Streamlit reloads can retain an older GS351/GS361 wrapper. Rebase
-        # on its original Streamlit callable so the recovery logic is replaced,
-        # not stacked behind a wrapper that can still suppress forever.
+        # Warm Streamlit reloads can retain an older GS351/361/372 wrapper. Rebase
+        # on its original Streamlit callable so GS409 replaces the old cadence
+        # boundary instead of remaining trapped behind its 15-second suppression.
         current = getattr(current, "_gs351_original", current)
 
     def rerun_when_idle(*args, **kwargs):
