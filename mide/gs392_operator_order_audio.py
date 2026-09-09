@@ -103,3 +103,10 @@ def install() -> None:
     from .gs397_canonical_30s_tripwire_truth import install as install_gs397
 
     install_gs397()
+
+    # GS398 makes a genuinely new visible LOOK NOW transition own tier-2 audio ahead
+    # of routine/coiling alerts, while preserving any simultaneous tier-3 entry alert.
+    # GS366/367 remain the exactly-once delivery authority across Streamlit reruns.
+    from .gs398_look_now_audio_transition import install as install_gs398
+
+    install_gs398()
