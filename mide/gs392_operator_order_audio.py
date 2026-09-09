@@ -148,3 +148,10 @@ def install() -> None:
     from .gs407_sidebar_diagnostics_isolation import install as install_gs407
 
     install_gs407()
+
+    # GS408 keeps the prior completed trading surface mounted while the next blocking
+    # Streamlit scan rerun is in flight. Only app.py's seven mission-control empty
+    # placeholders are deferred; the new scan replaces them when rendering begins.
+    from .gs408_preserve_completed_scan_during_rerun import install as install_gs408
+
+    install_gs408()
