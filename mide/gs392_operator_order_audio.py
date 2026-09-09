@@ -133,3 +133,11 @@ def install() -> None:
     from .gs404_reset_retest_look_now import install as install_gs404
 
     install_gs404()
+
+    # GS406 is presentation-only operator memory. A newly visible LOOK NOW or WATCH
+    # FOR ENTRY remains pinned for five minutes while Walter continues scanning, so a
+    # fast subsequent recategorization cannot erase the event while the operator is
+    # validating the chart in Webull.
+    from .gs406_operator_alert_latch import install as install_gs406
+
+    install_gs406()
