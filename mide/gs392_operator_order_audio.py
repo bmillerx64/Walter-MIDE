@@ -155,3 +155,10 @@ def install() -> None:
     from .gs408_preserve_completed_scan_during_rerun import install as install_gs408
 
     install_gs408()
+
+    # GS411 is observational timing only. It runs after GS408 at GS410's safe
+    # post-package startup boundary and records scheduler/rerun/watchdog/persistence
+    # geometry into each Flight Recorder scan without changing cadence or trading.
+    from .gs411_scan_cadence_timing_truth import install as install_gs411
+
+    install_gs411()
