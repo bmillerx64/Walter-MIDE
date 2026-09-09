@@ -11,22 +11,17 @@ def test_gs399_preserves_existing_semantic_tone_patterns():
     assert broker.tone_pattern(3) == gs392.WATCH_FOR_ENTRY_PATTERN
 
 
-def test_gs399_look_now_markup_gets_attention_envelope():
-    base = gs399._gs399_original_markup_for_test if hasattr(
-        gs399, "_gs399_original_markup_for_test"
-    ) else None
-    if base is None:
-        # The public broker generator is already wrapped during normal bootstrap;
-        # generate its markup and verify the final browser contract directly.
-        gs399.install()
-        markup = broker.browser_broker_markup("scan-gs399", 2)
-    else:
-        markup = gs399._attention_envelope_markup(base("scan-gs399", 2))
+def test_gs399_markup_encodes_distinct_look_now_and_entry_envelopes():
+    gs399.install()
+    markup = broker.browser_broker_markup("scan-gs399", 2)
 
-    assert "oscillator.type = tier === 2 ? 'triangle' : 'sine';" in markup
-    assert "tier === 2 ? 0.42 : 0.24" in markup
-    assert "tier === 2 ? 0.34 : 0.13" in markup
-    assert "tier === 2 ? 0.36 : 0.145" in markup
+    assert (
+        "oscillator.type = tier === 2 ? 'triangle' : (tier === 3 ? 'sawtooth' : 'sine');"
+        in markup
+    )
+    assert "tier === 2 ? 0.42 : (tier === 3 ? 0.46 : 0.24)" in markup
+    assert "tier === 2 ? 0.34 : (tier === 3 ? 0.22 : 0.13)" in markup
+    assert "tier === 2 ? 0.36 : (tier === 3 ? 0.24 : 0.145)" in markup
 
 
 def test_gs399_applies_envelope_after_final_broker_tier_selection():
@@ -36,10 +31,20 @@ def test_gs399_applies_envelope_after_final_broker_tier_selection():
     tier_selection = markup.index(
         "const tier = Math.max(1, Math.min(3, Number(broker.tier || 1)));"
     )
-    envelope = markup.index("oscillator.type = tier === 2 ? 'triangle' : 'sine';")
+    envelope = markup.index("oscillator.type = tier === 2")
 
     assert tier_selection < envelope
     assert "broker.tier = Math.max(Number(broker.tier || 0), requestedTier);" in markup
+
+
+def test_gs399_keeps_routine_fallback_values_unchanged():
+    gs399.install()
+    markup = broker.browser_broker_markup("scan-gs399-routine", 1)
+
+    assert "'sine'" in markup
+    assert ": 0.24" in markup
+    assert ": 0.13" in markup
+    assert ": 0.145" in markup
 
 
 def test_gs399_install_is_idempotent():
