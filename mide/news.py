@@ -32,6 +32,17 @@ TRUSTED_CATALYST_SOURCE_TERMS = (
     "company press release",
 )
 
+# Wire headlines frequently insert the fiscal period and metric between the action
+# and "guidance" (for example "Raises FY2026 Sales Guidance" or "raises full-year
+# revenue guidance"). Walter has always treated a guidance raise as material; this
+# pattern only normalizes those ordinary headline variants to that existing truth.
+GUIDANCE_RAISE_RE = re.compile(
+    r"\b(?:raise|raises|raised|raising)\b"
+    r"(?:\s+(?:fy\d{2,4}|20\d{2}|fiscal|year|full[-\s]?year|annual|sales|revenue|earnings|profit|ebitda|eps)){0,5}"
+    r"\s+guidance\b",
+    re.IGNORECASE,
+)
+
 
 def classify_headline(headline: str):
     text = (headline or "").lower()
@@ -41,6 +52,14 @@ def classify_headline(headline: str):
         if phrase in text:
             score += weight
             flags.append(phrase)
+
+    # Do not double-count the legacy exact phrase. This only catches the common
+    # qualified variants that previously scored zero despite expressing the same
+    # material guidance-raise event.
+    if "raises guidance" not in flags and GUIDANCE_RAISE_RE.search(text):
+        score += POSITIVE["raises guidance"]
+        flags.append("raises guidance")
+
     for phrase, weight in NEGATIVE.items():
         if phrase in text:
             score += weight

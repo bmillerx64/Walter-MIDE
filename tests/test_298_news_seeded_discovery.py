@@ -47,6 +47,41 @@ def test_material_reuters_and_benzinga_headlines_seed_symbols_and_preserve_sourc
     assert by_symbol["BENZ"]["attention_only"] is False
 
 
+def test_ufg_style_qualified_guidance_raise_is_material_news_seed():
+    selected = select_material_news_seeds(
+        [
+            article(
+                "UFG",
+                "Uni-Fuels Holdings Raises FY2026 Sales Guidance from $320M-$340M to $340M-$360M",
+                source="Benzinga",
+                age_minutes=12,
+            ),
+            article(
+                "GUID",
+                "Company reports record first-half results and raises full-year revenue guidance",
+                source="Reuters",
+                age_minutes=15,
+            ),
+        ],
+        now=NOW,
+    )
+
+    by_symbol = {item["symbol"]: item for item in selected}
+    assert by_symbol["UFG"]["seed_type"] == "material_catalyst"
+    assert by_symbol["UFG"]["catalyst_score"] >= 7
+    assert "raises guidance" in by_symbol["UFG"]["catalyst_flags"]
+    assert by_symbol["GUID"]["seed_type"] == "material_catalyst"
+    assert by_symbol["GUID"]["catalyst_score"] >= 7
+
+
+def test_raises_concerns_over_guidance_does_not_false_positive():
+    selected = select_material_news_seeds(
+        [article("NOISE", "NOISE raises concerns over guidance for next quarter")],
+        now=NOW,
+    )
+    assert selected == []
+
+
 def test_neutral_negative_stale_and_invalid_symbol_news_do_not_seed():
     selected = select_material_news_seeds(
         [
