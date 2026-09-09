@@ -1,19 +1,20 @@
-"""GS351/GS361/GS372: isolate scheduled reruns without deadlocking stale sessions.
+"""GS351/GS361/GS372/GS409: isolate scheduled reruns without cadence drift.
 
 Walter's 60-second auto-scan cadence uses an explicit ``st.rerun`` from a timed
 fragment. If that rerun fires while provider work is genuinely active, Streamlit
 can tear down/re-enter the app while the scan is in flight.
 
 GS361 extended that protection through a short post-scan render window. GS372
-closes the recovery hole exposed in live September 3 testing: session-state flags
+closed the recovery hole exposed in live September 3 testing: session-state flags
 can remain stale after an interrupted rerun/deploy even though the process-wide
 scan watchdog is idle. Suppressing the scheduler solely from those stale flags
 prevents the full-app rerun that would reconcile them, freezing the last completed
 scan until a manual browser refresh.
 
-The process watchdog is now authoritative for active scan ownership. A recently
-queued manual request is still protected briefly, but stale queued intent no
-longer blocks the scheduler forever.
+GS409 reconciles that render protection with GS405's start-to-start cadence. Once
+the watchdog is idle and the timed scheduler has already queued a due AutoScan
+request, the old 15-second post-scan render guard must not add a second cadence
+penalty. Manual requests and unrelated app reruns keep the render guard unchanged.
 
 This changes only rerun scheduling/recovery and observability. It does not alter
 discovery, market data, scoring, ranking, VWAP, SuperTrend, qualification, alerts,
@@ -39,6 +40,21 @@ LAST_ALLOWED_RERUN_SCOPE_KEY = "_walter_last_allowed_explicit_rerun_scope"
 RERUN_COOLDOWN_SECONDS = 5.0
 POST_SCAN_RERUN_COOLDOWN_SECONDS = 15.0
 RECENT_SCAN_REQUEST_GUARD_SECONDS = 5.0
+
+
+def scheduled_autoscan_due(state, *, process_scan_running: bool | None) -> bool:
+    """Identify the scheduler-owned request that may honor GS405's due deadline.
+
+    Manual ``request_scan`` calls always carry ``SCAN_REQUESTED_AT_KEY``. The timed
+    AutoScan fragment intentionally sets only ``SCAN_REQUESTED_KEY`` after
+    ``autoscan_request_due`` becomes true. With authoritative watchdog truth saying
+    the process is idle, that timestamp-free request is safe to start immediately.
+    """
+    if process_scan_running is None or bool(process_scan_running):
+        return False
+    if not bool(state.get(SCAN_REQUESTED_KEY, False)):
+        return False
+    return state.get(SCAN_REQUESTED_AT_KEY) is None
 
 
 def rerun_suppression_reason(
@@ -86,7 +102,13 @@ def rerun_suppression_reason(
                 if 0 <= request_age < RECENT_SCAN_REQUEST_GUARD_SECONDS:
                     return "scan already requested"
 
-    if protect_post_scan:
+    # GS361 still protects ordinary app reruns while the just-completed scan is
+    # rendering. GS409 exempts only a scheduler-owned request that is already due
+    # under GS405 and only when the process watchdog confirms provider work is idle.
+    due_autoscan = scheduled_autoscan_due(
+        state, process_scan_running=process_scan_running
+    )
+    if protect_post_scan and not due_autoscan:
         epoch_now = time.time() if epoch_now is None else float(epoch_now)
         try:
             finished_at = float(state.get(LAST_SCAN_FINISHED_KEY))
@@ -124,12 +146,12 @@ def install() -> None:
         session_controls.finish_scan = finish_scan_with_render_cooldown
 
     current = st.rerun
-    if getattr(current, "_gs372_stale_session_recovery", False):
+    if getattr(current, "_gs409_due_autoscan_cadence", False):
         return
     if getattr(current, "_gs351_session_rerun_isolation", False):
-        # Warm Streamlit reloads can retain an older GS351/GS361 wrapper. Rebase
-        # on its original Streamlit callable so the recovery logic is replaced,
-        # not stacked behind a wrapper that can still suppress forever.
+        # Warm Streamlit reloads can retain an older GS351/361/372 wrapper. Rebase
+        # on its original Streamlit callable so GS409 replaces the old cadence
+        # boundary instead of remaining trapped behind its 15-second suppression.
         current = getattr(current, "_gs351_original", current)
 
     def rerun_when_idle(*args, **kwargs):
@@ -165,5 +187,6 @@ def install() -> None:
     rerun_when_idle._gs351_session_rerun_isolation = True
     rerun_when_idle._gs361_post_scan_rerun_cooldown = True
     rerun_when_idle._gs372_stale_session_recovery = True
+    rerun_when_idle._gs409_due_autoscan_cadence = True
     rerun_when_idle._gs351_original = current
     st.rerun = rerun_when_idle
