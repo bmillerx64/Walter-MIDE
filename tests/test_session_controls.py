@@ -29,6 +29,35 @@ def test_live_webull_remains_selected_after_run_live_scan_and_rerun():
     assert state[PROVIDER_KEY] == "WEBULL"
 
 
+def test_fresh_live_webull_session_defaults_auto_scan_on():
+    state = {}
+
+    initialize_session_controls(state, default_mode="Live Webull", scan_running=False)
+
+    assert state[DATA_MODE_KEY] == "Live Webull"
+    assert state[AUTO_SCAN_KEY] is True
+
+
+def test_fresh_demo_session_does_not_auto_scan():
+    state = {}
+
+    initialize_session_controls(state, default_mode="Demo", scan_running=False)
+
+    assert state[DATA_MODE_KEY] == "Demo"
+    assert state[AUTO_SCAN_KEY] is False
+
+
+def test_explicit_live_user_disable_survives_rerun():
+    state = {}
+    initialize_session_controls(state, default_mode="Live Webull", scan_running=False)
+    state[AUTO_SCAN_KEY] = False
+    update_auto_scan(state)
+
+    initialize_session_controls(state, default_mode="Live Webull", scan_running=False)
+
+    assert state[AUTO_SCAN_KEY] is False
+
+
 def test_auto_scan_stays_off_across_reruns():
     state = {}
     initialize_session_controls(state, default_mode="Live Alpaca")
