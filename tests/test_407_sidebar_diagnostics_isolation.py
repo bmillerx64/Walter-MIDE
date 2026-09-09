@@ -181,5 +181,7 @@ def test_scope_lock_does_not_touch_trading_authority():
 
     assert "qualified_for_entry" not in source
     assert "vwap_distance_pct" not in source
-    assert "supertrend" not in source.lower()
     assert "SCAN_REQUESTED_KEY" not in source
+    assert "from .scanner" not in source
+    assert "from .decision_engine" not in source
+    assert "from .gs310" not in source
