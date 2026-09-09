@@ -10,13 +10,14 @@ exactly-once delivery, speech, discovery, market data, scoring, qualification,
 readiness, thresholds, execution, and orders. Only the audible envelope for the tier
 that actually wins the GS367 browser broker is changed:
 
-* tier 1 routine: unchanged short sine blip;
+* tier 1 routine: unchanged short sine blip at this layer;
 * tier 2 LOOK NOW: longer, louder triangle-wave rising pair;
 * tier 3 entry urgency: sharper, louder sawtooth rising triple.
 
-The tier-dependent envelope is evaluated against the broker's final winning tier, so
-call order between multiple alert registrations in one completed scan cannot apply a
-lower-priority envelope to a higher-priority event.
+GS402 installs after this layer and may suppress the routine browser tone while leaving
+these semantic patterns intact. The tier-dependent envelope is evaluated against the
+broker's final winning tier, so call order between multiple alert registrations in one
+completed scan cannot apply a lower-priority envelope to a higher-priority event.
 """
 from __future__ import annotations
 
@@ -57,12 +58,20 @@ def _attention_envelope_markup(markup: str) -> str:
     return text
 
 
+def _install_gs402() -> None:
+    from .gs402_critical_only_audio import install as install_gs402
+
+    install_gs402()
+
+
 def install() -> None:
     """Wrap the GS367 browser markup generator once, preserving broker semantics."""
     from . import gs367_browser_audio_broker as broker
 
     current = broker.browser_broker_markup
     if getattr(current, "_gs399_attention_audio_envelope", False):
+        # Warm Streamlit sessions may already own GS399 while loading newer code.
+        _install_gs402()
         return
 
     @wraps(current)
@@ -72,3 +81,5 @@ def install() -> None:
     browser_broker_markup._gs399_attention_audio_envelope = True
     browser_broker_markup._gs399_original = current
     broker.browser_broker_markup = browser_broker_markup
+
+    _install_gs402()
