@@ -30,6 +30,11 @@ def initialize_session_controls(
 ) -> None:
     """Initialize persistent controls and synchronize actual scan activity.
 
+    A fresh Live Webull Streamlit session defaults auto-scan ON so a deploy/reload
+    cannot silently leave Walter idle during the trading day. Existing session
+    state remains authoritative: an explicit user disable or Stop action is still
+    preserved across ordinary reruns.
+
     The process watchdog is authoritative for whether a scan is actually active,
     but it must not erase a manual scan request that Streamlit just persisted on
     the widget-triggered rerun. Idle reconciliation therefore clears only stale
@@ -42,7 +47,7 @@ def initialize_session_controls(
         current_mode = safe_default
     state[DATA_MODE_KEY] = current_mode
     state[PROVIDER_KEY] = provider_for_mode(current_mode)
-    state.setdefault(AUTO_SCAN_KEY, False)
+    state.setdefault(AUTO_SCAN_KEY, current_mode == "Live Webull")
 
     if scan_running is None:
         state.setdefault(SCAN_RUNNING_KEY, False)
