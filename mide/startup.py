@@ -17,6 +17,20 @@ SLOW_STARTUP_SECONDS = 10.0
 _T = TypeVar("_T")
 
 
+def ensure_late_runtime_installers() -> None:
+    """Install the GS384+ runtime chain after the parent package import is complete.
+
+    ``mide.startup`` can itself be imported while ``mide.__init__`` is still running,
+    so the late chain must not execute at module import time. app.py calls
+    ``log_startup('entering app.py')`` immediately after its first MIDE import; at
+    that point Python has released the parent package import lock and GS384 can safely
+    import GS386+ without the hot-reload lock inversion fixed by GS410.
+    """
+    from .gs384_diagnostic_signal_to_noise import install
+
+    install()
+
+
 def log_startup(component: str, message: str = "starting") -> None:
     """Emit one consistently timestamped startup event."""
     timestamp = datetime.now(timezone.utc).isoformat(timespec="milliseconds")
@@ -27,6 +41,12 @@ def log_startup(component: str, message: str = "starting") -> None:
         component,
         message,
     )
+    # This exact app.py boundary runs only after ``from mide.startup ...`` has
+    # completed, which in turn means ``mide.__init__`` is no longer holding the
+    # parent package import lock. Keep ordinary provider/startup logging side-effect
+    # free so background workers can never trigger the late import chain.
+    if component == "entering app.py":
+        ensure_late_runtime_installers()
 
 
 @contextmanager
@@ -136,3 +156,7 @@ ensure_reclaim_watch()
 # imports this startup module while LiveWebullProvider is still being defined, so
 # importing GS377 here would create a circular webull_live -> startup -> GS377 ->
 # webull_connection -> webull_live dependency during ordinary package imports.
+
+# GS410 follows the same rule for the much larger GS384+ late installer chain. It is
+# invoked only by app.py's explicit ``log_startup('entering app.py')`` call above,
+# after the parent ``mide`` package import has fully completed.
