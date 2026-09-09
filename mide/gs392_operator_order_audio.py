@@ -141,3 +141,10 @@ def install() -> None:
     from .gs406_operator_alert_latch import install as install_gs406
 
     install_gs406()
+
+    # GS407 isolates the sidebar Diagnostics widgets from app-wide Streamlit reruns.
+    # Toggling lookup controls or running the explicit connection test must not enter
+    # or delay Walter's live scan orchestration while autoscan owns the market loop.
+    from .gs407_sidebar_diagnostics_isolation import install as install_gs407
+
+    install_gs407()
