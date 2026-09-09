@@ -149,18 +149,26 @@ def autoscan_request_due(
     last_updated: datetime | None,
     last_scan_attempt: datetime | None,
     *,
+    retry_seconds: int = 5,
     now: datetime | None = None,
 ) -> bool:
-    """Return whether a successful scan has reached its start-to-start deadline."""
-    if (
-        last_scan_attempt is None
-        or last_updated is None
-        or last_scan_attempt > last_updated
-    ):
+    """Return whether the current autoscan cycle has reached its deadline.
+
+    Successful cycles use the configured start-to-start refresh cadence. Failed
+    attempts use the existing retry/backoff interval and never wait a full fresh
+    scan interval before becoming eligible again.
+    """
+    if last_scan_attempt is None:
         return False
     current = now or datetime.now().astimezone()
     try:
         elapsed = (current - last_scan_attempt).total_seconds()
     except (TypeError, ValueError):
         return False
-    return elapsed >= max(1, int(refresh_seconds))
+    retry_pending = last_updated is None or last_scan_attempt > last_updated
+    threshold = (
+        max(1, int(retry_seconds))
+        if retry_pending
+        else max(1, int(refresh_seconds))
+    )
+    return elapsed >= threshold
