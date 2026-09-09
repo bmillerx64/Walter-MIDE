@@ -70,7 +70,7 @@ jobs:
           pip install pytest
 
       - name: Compile Python sources
-        run: python -m compileall -q .
+        run: python -m compileall -q app.py mide tests
 
       - name: Run complete test suite
         run: python -m pytest -q
