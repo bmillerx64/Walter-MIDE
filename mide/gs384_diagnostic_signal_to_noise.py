@@ -15,6 +15,12 @@ anchor and to persist observational 1m/3m SuperTrend parity evidence.
 GS392 reuses it as the final operator presentation/audio boundary so inherited
 wrapper markers cannot reintroduce card-order drift.
 
+GS410 keeps this late chain out of the parent ``mide`` package import lock. During
+``mide.__init__`` the installer returns before importing GS386+; app.py's first
+startup log call re-enters this installer after the parent package import has fully
+completed. This removes the cross-thread import-lock inversion exposed by Streamlit
+hot deployment without changing the installer order or any trading authority.
+
 Safety contract:
 - GS384/386/388/389/390/392 remain presentation/provenance/lifecycle/evidence only;
 - GS391 is the explicit exception: it corrects primary VWAP decision evidence, so
@@ -26,6 +32,7 @@ Safety contract:
 from __future__ import annotations
 
 from functools import wraps
+import sys
 from typing import Any
 
 
@@ -41,6 +48,13 @@ def _number(value: Any) -> float | None:
         return float(value) if value is not None else None
     except (TypeError, ValueError):
         return None
+
+
+def _package_initializing() -> bool:
+    """Return whether Python still owns the parent ``mide`` package import lock."""
+    package = sys.modules.get("mide")
+    spec = getattr(package, "__spec__", None) if package is not None else None
+    return bool(getattr(spec, "_initializing", False))
 
 
 def _stream_summary(diagnostics: dict) -> tuple[str, str]:
@@ -131,6 +145,15 @@ def enrich_pipeline_rows(provider, rows: list[dict]) -> list[dict]:
 
 def install() -> None:
     """Install compact health and later evidence/lifecycle/truth corrections."""
+    # During ``import mide`` Python holds the parent package module lock. Streamlit
+    # hot deployment may still have an older script thread importing one of the late
+    # GS modules at the same instant. Importing GS386+ from inside that parent lock
+    # creates a classic lock inversion (mide -> gs386 versus gs386 -> mide) and can
+    # raise ``importlib._DeadlockError``. The app startup hook calls us again as soon
+    # as the parent package import has completed, so no feature is omitted at runtime.
+    if _package_initializing():
+        return
+
     from . import webull_live
     from .gs386_30s_observational_recorder import install as install_gs386
     from .gs388_diagnostic_ui_pruning import install as install_gs388

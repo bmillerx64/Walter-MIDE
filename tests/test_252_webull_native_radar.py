@@ -1,3 +1,11 @@
+from mide.gs395_earlier_discovery_breadth import install as install_gs395
+
+# GS410 deliberately defers the GS384+ runtime chain until app.py enters its safe
+# post-package startup boundary. This direct provider-contract test imports modules
+# without app.py, so install the production GS395 breadth layer explicitly before
+# binding fetch_native_radar/run_connection_test. The asserted contract is unchanged.
+install_gs395()
+
 from mide.webull_native_radar import fetch_native_radar, radar_probe_rows
 from mide.webull_connection import run_connection_test
 
