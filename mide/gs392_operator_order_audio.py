@@ -125,3 +125,11 @@ def install() -> None:
     from .gs401_final_opportunity_order import install as install_gs401
 
     install_gs401()
+
+    # GS404 is a chart-review-only retest attention path. A current Webull mover that
+    # was extended on the prior scan, resets into the established +/-2% VWAP window,
+    # retains bullish 1m SuperTrend, and still carries participation/flow becomes
+    # LOOK NOW without gaining scanner qualification, readiness, or entry authority.
+    from .gs404_reset_retest_look_now import install as install_gs404
+
+    install_gs404()
