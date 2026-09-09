@@ -50,7 +50,9 @@ def test_new_look_now_is_latched_for_operator_review():
     assert latches["ZTG"]["state"] == unified.LOOK_NOW
     assert latches["ZTG"]["price"] == 0.75
     assert latches["ZTG"]["vwap_distance_pct"] == 0.7
-    assert latches["ZTG"]["qualified_for_entry"] if False else True
+    assert latches["ZTG"]["supertrend_bullish"] is True
+    assert latches["ZTG"]["participation_score"] == 48.0
+    assert latches["ZTG"]["expansion_score"] == 61.0
 
 
 def test_same_high_priority_state_does_not_refresh_latch_clock():
