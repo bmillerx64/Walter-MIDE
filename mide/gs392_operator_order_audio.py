@@ -118,3 +118,10 @@ def install() -> None:
     from .gs399_attention_audio_envelope import install as install_gs399
 
     install_gs399()
+
+    # GS401 is the final presentation anchor for Opportunity State cards. It sorts
+    # only after the complete actionable/awareness/reclaim collection has been built,
+    # so later visibility enrichment cannot undo WATCH/LOOK/DEVELOPING/CHASE priority.
+    from .gs401_final_opportunity_order import install as install_gs401
+
+    install_gs401()
