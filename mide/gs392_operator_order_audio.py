@@ -110,3 +110,11 @@ def install() -> None:
     from .gs398_look_now_audio_transition import install as install_gs398
 
     install_gs398()
+
+    # GS399 leaves all alert truth/routing intact and changes only the browser audio
+    # envelope after the winning semantic tier has been selected. Live validation on
+    # 2026-09-09 proved the existing short two/three-note blips were not distinctive
+    # enough to reliably pull operator attention away from Webull.
+    from .gs399_attention_audio_envelope import install as install_gs399
+
+    install_gs399()
