@@ -176,3 +176,11 @@ def install() -> None:
     from .gs413_inflight_intent_preservation import install as install_gs413_inflight
 
     install_gs413_inflight()
+
+    # GS414 is the final Opportunity State presentation anchor. It freezes the fully
+    # enriched actionable collection in canonical operator-priority order for the
+    # duration of the renderer so nested/later wrappers cannot append DEVELOPING
+    # records below CHASE / WAIT after the final sort.
+    from .gs414_final_enriched_opportunity_order import install as install_gs414
+
+    install_gs414()
