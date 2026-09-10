@@ -16,6 +16,11 @@ parent-window broker keyed by the immutable completed-scan token. The broker wai
 a short settle interval, keeps only the highest tier requested for that scan, and
 plays one distinct Web Audio pattern exactly once. Streamlit reruns and additional
 lower-tier phrases for the same scan cannot add extra sounds afterward.
+
+GS420 hardens only this browser transport: a scan is not marked emitted until the
+AudioContext is actually running and the tone pattern has been scheduled. If Chrome
+has suspended Web Audio after a redeploy, the latest pending tier is retained and
+retried after resume or the next user activation instead of being silently burned.
 """
 from __future__ import annotations
 
@@ -80,6 +85,10 @@ def browser_broker_markup(scan_token: str, tier: int) -> str:
       timer: null,
       emittedToken: null,
       audioContext: null,
+      pendingToken: null,
+      pendingTier: 0,
+      pendingEmit: null,
+      unlockBound: false,
     }};
   }}
 
@@ -104,7 +113,6 @@ def browser_broker_markup(scan_token: str, tier: int) -> str:
     if (broker.emittedToken === token) return;
 
     const tier = Math.max(1, Math.min(3, Number(broker.tier || 1)));
-    broker.emittedToken = token;
     broker.tier = 0;
 
     const AudioContextCtor =
@@ -112,34 +120,113 @@ def browser_broker_markup(scan_token: str, tier: int) -> str:
       window.AudioContext || window.webkitAudioContext;
     if (!AudioContextCtor) return;
 
-    let context = broker.audioContext;
-    try {{
-      if (!context || context.state === 'closed') {{
-        context = new AudioContextCtor();
-        broker.audioContext = context;
+    const clearPending = () => {{
+      if (broker.pendingToken === token) {{
+        broker.pendingToken = null;
+        broker.pendingTier = 0;
+        broker.pendingEmit = null;
       }}
-      if (context.state === 'suspended' && context.resume) {{
-        const resumed = context.resume();
-        if (resumed && resumed.catch) resumed.catch(() => {{}});
-      }}
+    }};
 
-      const startBase = context.currentTime + 0.035;
-      const pattern = patterns[String(tier)] || patterns['1'];
-      pattern.forEach(([frequency, offset]) => {{
-        const start = startBase + Number(offset || 0);
-        const oscillator = context.createOscillator();
-        const gain = context.createGain();
-        oscillator.type = 'sine';
-        oscillator.frequency.setValueAtTime(Number(frequency), start);
-        gain.gain.setValueAtTime(0.0001, start);
-        gain.gain.exponentialRampToValueAtTime(0.24, start + 0.014);
-        gain.gain.exponentialRampToValueAtTime(0.0001, start + 0.13);
-        oscillator.connect(gain);
-        gain.connect(context.destination);
-        oscillator.start(start);
-        oscillator.stop(start + 0.145);
-      }});
-    }} catch (_) {{}}
+    const emitPattern = (context) => {{
+      if (broker.emittedToken === token) return true;
+      if (!context || context.state !== 'running') return false;
+      try {{
+        const startBase = context.currentTime + 0.035;
+        const pattern = patterns[String(tier)] || patterns['1'];
+        pattern.forEach(([frequency, offset]) => {{
+          const start = startBase + Number(offset || 0);
+          const oscillator = context.createOscillator();
+          const gain = context.createGain();
+          oscillator.type = 'sine';
+          oscillator.frequency.setValueAtTime(Number(frequency), start);
+          gain.gain.setValueAtTime(0.0001, start);
+          gain.gain.exponentialRampToValueAtTime(0.24, start + 0.014);
+          gain.gain.exponentialRampToValueAtTime(0.0001, start + 0.13);
+          oscillator.connect(gain);
+          gain.connect(context.destination);
+          oscillator.start(start);
+          oscillator.stop(start + 0.145);
+        }});
+        // GS420: only claim delivery after a running context accepted the pattern.
+        broker.emittedToken = token;
+        clearPending();
+        return true;
+      }} catch (_) {{
+        return false;
+      }}
+    }};
+
+    const ensureContext = () => {{
+      let context = broker.audioContext;
+      try {{
+        if (!context || context.state === 'closed') {{
+          context = new AudioContextCtor();
+          broker.audioContext = context;
+        }}
+      }} catch (_) {{
+        return null;
+      }}
+      return context;
+    }};
+
+    const retryPending = () => {{
+      if (broker.pendingToken !== token || broker.emittedToken === token) return;
+      const context = ensureContext();
+      if (!context) return;
+      if (emitPattern(context)) return;
+      try {{
+        if (context.resume) {{
+          const resumed = context.resume();
+          if (resumed && resumed.then) {{
+            resumed.then(() => emitPattern(context)).catch(() => {{}});
+          }} else {{
+            emitPattern(context);
+          }}
+        }}
+      }} catch (_) {{}}
+    }};
+
+    const bindUnlockRetry = () => {{
+      if (broker.unlockBound) return;
+      broker.unlockBound = true;
+      const unlock = () => {{
+        broker.unlockBound = false;
+        try {{ host.removeEventListener('pointerdown', unlock, true); }} catch (_) {{}}
+        try {{ host.removeEventListener('keydown', unlock, true); }} catch (_) {{}}
+        try {{ host.removeEventListener('touchstart', unlock, true); }} catch (_) {{}}
+        const pending = broker.pendingEmit;
+        if (typeof pending === 'function') pending();
+      }};
+      try {{ host.addEventListener('pointerdown', unlock, true); }} catch (_) {{}}
+      try {{ host.addEventListener('keydown', unlock, true); }} catch (_) {{}}
+      try {{ host.addEventListener('touchstart', unlock, true); }} catch (_) {{}}
+    }};
+
+    const context = ensureContext();
+    if (context && emitPattern(context)) return;
+
+    // Preserve only the newest/highest unresolved scan event. Do not mark it emitted.
+    broker.pendingToken = token;
+    broker.pendingTier = tier;
+    broker.pendingEmit = retryPending;
+
+    if (context && context.resume) {{
+      try {{
+        const resumed = context.resume();
+        if (resumed && resumed.then) {{
+          resumed.then(() => {{
+            if (!emitPattern(context)) bindUnlockRetry();
+          }}).catch(() => bindUnlockRetry());
+        }} else if (!emitPattern(context)) {{
+          bindUnlockRetry();
+        }}
+      }} catch (_) {{
+        bindUnlockRetry();
+      }}
+    }} else {{
+      bindUnlockRetry();
+    }}
   }}, {BROKER_SETTLE_MS});
 }})();
 </script>
