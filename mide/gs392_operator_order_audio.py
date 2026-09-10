@@ -192,3 +192,10 @@ def install() -> None:
     from .gs421_multitimeframe_convergence_recorder import install as install_gs421
 
     install_gs421()
+
+    # GS422 keeps GS421's learning layer off the scan hot path for ordinary records.
+    # Only records with current watch/entry/30s/crossover/strengthening evidence pay
+    # for the multi-timeframe reconstruction; all trading authority remains unchanged.
+    from .gs422_convergence_recorder_performance import install as install_gs422
+
+    install_gs422()
