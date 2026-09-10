@@ -26,9 +26,11 @@ def ensure_late_runtime_installers() -> None:
     that point Python has released the parent package import lock and GS384 can safely
     import GS386+ without the hot-reload lock inversion fixed by GS410.
     """
-    from .gs384_diagnostic_signal_to_noise import install
+    from .gs384_diagnostic_signal_to_noise import install as install_late_chain
+    from .gs416_validity_symbol_suffix import install as install_gs416
 
-    install()
+    install_late_chain()
+    install_gs416()
 
 
 def log_startup(component: str, message: str = "starting") -> None:
@@ -159,4 +161,5 @@ ensure_reclaim_watch()
 
 # GS410 follows the same rule for the much larger GS384+ late installer chain. It is
 # invoked only by app.py's explicit ``log_startup('entering app.py')`` call above,
-# after the parent ``mide`` package import has fully completed.
+# after the parent ``mide`` package import has fully completed. GS416 joins that late
+# boundary because it patches the already-defined architecture Validity method only.
