@@ -9,6 +9,7 @@ from uuid import uuid4
 
 from mide.flight_recorder_writer import persist_replayable_scan
 from mide.trade_outcomes import TradeOutcomeStore
+from mide.gs415_qualified_pass_visibility import legacy_status_visible
 
 STAGES = (
     "discovery",
@@ -255,10 +256,7 @@ class FlightRecorder:
                     else rejection or "not qualified because an earlier stage failed"
                 ),
             )
-            displayed = qualified and (record or {}).get("status") not in {
-                "PASS",
-                "Removed",
-            }
+            displayed = qualified and legacy_status_visible(record or {})
             event(
                 "actionable display",
                 displayed,
@@ -272,7 +270,7 @@ class FlightRecorder:
                     )
                 ),
                 {"status": (record or {}).get("status")},
-                {"hidden_statuses": ["PASS", "Removed"]},
+                {"hidden_statuses": ["Removed"]},
             )
             reached = next(
                 (e["stage"] for e in reversed(events) if e["passed"]), "discovery"
@@ -414,7 +412,7 @@ class FlightRecorder:
             ),
             "Displayed": sum(
                 bool(r.get("qualified_for_ranking", not scanner_v2))
-                and r.get("status") not in {"PASS", "Removed"}
+                and legacy_status_visible(r)
                 for r in records
             ),
         }

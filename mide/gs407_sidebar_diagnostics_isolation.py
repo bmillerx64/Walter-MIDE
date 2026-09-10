@@ -8,7 +8,7 @@ trading.
 
 GS407 keeps the existing sidebar Diagnostics presentation but moves its three
 interactive controls into Streamlit fragments:
-* Show removed/pass candidates
+* Show removed candidates
 * Symbol lookup
 * Run Webull Connection Test
 
@@ -29,7 +29,7 @@ from typing import Any, Callable
 from .session_controls import AUTO_SCAN_KEY, SCAN_RUNNING_KEY
 
 
-SHOW_PASS_LABEL = "Show removed/pass candidates"
+SHOW_PASS_LABEL = "Show removed candidates"
 SYMBOL_LOOKUP_LABEL = "Symbol lookup"
 CONNECTION_TEST_LABEL = "Run Webull Connection Test"
 
