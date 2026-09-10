@@ -29,12 +29,16 @@ def ensure_late_runtime_installers() -> None:
     from .gs384_diagnostic_signal_to_noise import install as install_late_chain
     from .gs416_validity_symbol_suffix import install as install_gs416
     from .gs423_convergence_handoff_efficiency import install as install_gs423
+    from .gs424_warm_scan_history_cache import install as install_gs424
 
     install_late_chain()
     install_gs416()
-    # GS423 runs last so warm Streamlit deployments cannot retain an inherited
-    # GS421 marker while missing the efficient analyzed->recorder handoff.
+    # GS423 runs after the legacy chain so warm Streamlit deployments cannot retain an
+    # inherited GS421 marker while missing the efficient analyzed->recorder handoff.
     install_gs423()
+    # GS424 owns only the persistent provider's Stage-6 acquisition boundary. It runs
+    # last and never changes the evidence produced by GS423 or any trading contract.
+    install_gs424()
 
 
 def log_startup(component: str, message: str = "starting") -> None:
@@ -168,4 +172,5 @@ ensure_reclaim_watch()
 # after the parent ``mide`` package import has fully completed. GS416 joins that late
 # boundary because it patches the already-defined architecture Validity method only.
 # GS423 also runs at this boundary, after the entire GS421/422 chain, so it can own
-# the final convergence wrapper even across a warm Streamlit deployment.
+# the final convergence wrapper even across a warm Streamlit deployment. GS424 then
+# installs the persistent-provider warm-history cache after all evidence wrappers.
