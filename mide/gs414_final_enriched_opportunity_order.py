@@ -23,6 +23,12 @@ def _inherit(wrapper, wrapped) -> None:
             setattr(wrapper, name, value)
 
 
+def _install_gs419() -> None:
+    from .gs419_completed_scan_heartbeat import install as install_gs419
+
+    install_gs419()
+
+
 def final_enriched_opportunity_records(
     records: list[dict], *, actionable_function=None
 ) -> list[dict]:
@@ -41,6 +47,9 @@ def install() -> None:
 
     current = ui.render_escalation_engine
     if getattr(current, "_gs414_final_enriched_opportunity_order", False):
+        # Warm Streamlit processes may already own GS414 when newer late installers
+        # arrive; still converge the audio-only GS419 tail without a process restart.
+        _install_gs419()
         return
 
     def render_with_final_enriched_order(records: list[dict]) -> None:
@@ -67,3 +76,4 @@ def install() -> None:
     render_with_final_enriched_order._gs414_final_enriched_opportunity_order = True
     render_with_final_enriched_order._gs414_original = current
     ui.render_escalation_engine = render_with_final_enriched_order
+    _install_gs419()
