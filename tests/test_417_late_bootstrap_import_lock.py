@@ -30,11 +30,7 @@ def test_late_bootstrap_remains_after_parent_import_boundary():
 
 
 def test_gs417_does_not_touch_trading_authority():
-    combined = (
-        Path("mide/__init__.py").read_text()
-        + Path("mide/startup.py").read_text()
-        + Path("tests/test_417_late_bootstrap_import_lock.py").read_text()
-    )
+    combined = Path("mide/__init__.py").read_text() + Path("mide/startup.py").read_text()
     forbidden_assignments = (
         "qualified_for_entry =",
         "qualified_for_alert =",
