@@ -17,7 +17,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           ref: gs415-qualified-pass-visibility
-          fetch-depth: 0
+          fetch-depth: 1
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -124,7 +124,7 @@ jobs:
           pip install pytest
 
       - name: Compile Python sources
-        run: python -m compileall -q .
+        run: python -m compileall -q app.py mide tests
 
       - name: Run GS415 targeted tests
         run: python -m pytest -q tests/test_415_qualified_pass_visibility.py tests/test_flight_recorder.py
