@@ -182,6 +182,7 @@ from mide.discovery import (
     snapshot_identity_records,
 )
 from mide.flight_recorder import prefilter_decision
+from mide.gs415_qualified_pass_visibility import default_actionable_display_records
 from mide.pipeline_diagnostics import (
     diagnostics_table,
     observe_runtime_collection_count,
@@ -1110,7 +1111,7 @@ with st.sidebar:
         st.caption(
             "Optional troubleshooting tools are hidden here to keep the trading view focused."
         )
-        show_pass = st.toggle("Show removed/pass candidates", value=False)
+        show_pass = st.toggle("Show removed candidates", value=False)
         inspect_symbol = (
             st.text_input("Symbol lookup", placeholder="BIYA").strip().upper()
         )
@@ -2292,15 +2293,14 @@ rejected_records = st.session_state.get("rejected_candidate_history", [])
 display_records = (
     actionable_records
     if show_pass
-    else [r for r in actionable_records if r.get("status") not in {"PASS", "Removed"}]
+    else default_actionable_display_records(actionable_records)
 )
 if completed_scan:
     observe_runtime_collection_count(
         scan_diagnostics, "dashboard render", display_records,
         statement=(
             "display_records = actionable_records" if show_pass else
-            'display_records = [r for r in actionable_records if r.get("status") '
-            'not in {"PASS", "Removed"}]'
+            "display_records = default_actionable_display_records(actionable_records)"
         ),
     )
     runtime_stages = scan_diagnostics.get("production_webull_runtime_stages")
