@@ -11,9 +11,16 @@ from typing import Callable, TypeVar
 
 T = TypeVar("T")
 
+# GS412: once one session has successfully finished provider work, allow a short
+# process-wide handoff window for that completed result to be published/adopted by
+# other Streamlit sessions. Without this guard a waiting session can acquire the
+# watchdog in the tiny release->publication gap and launch a duplicate scan only
+# a few seconds after the previous one.
+COMPLETED_SCAN_HANDOFF_GUARD_SECONDS = 10.0
+
 
 class ScanAlreadyRunning(RuntimeError):
-    """Raised when another Streamlit session already owns the scanner."""
+    """Raised when another Streamlit session already owns/recently owned the scanner."""
 
 
 @dataclass(frozen=True)
@@ -28,6 +35,11 @@ class ScanWatchdog:
 
     The lock belongs to the Python process rather than a Streamlit session, so
     two browser sessions (or overlapping reruns) cannot scan concurrently.
+
+    GS412 also protects the brief successful-completion handoff boundary. The
+    normal 60-second scheduler remains authoritative; this is only a small
+    duplicate-start safety belt while another session adopts the just-completed
+    process result.
     """
 
     def __init__(
@@ -36,14 +48,28 @@ class ScanWatchdog:
         max_attempts: int = 3,
         backoff_seconds: tuple[float, ...] = (1.0, 3.0),
         sleep: Callable[[float], None] = time.sleep,
+        monotonic: Callable[[], float] = time.monotonic,
+        completed_handoff_guard_seconds: float = COMPLETED_SCAN_HANDOFF_GUARD_SECONDS,
     ) -> None:
         if max_attempts < 1:
             raise ValueError("max_attempts must be at least one")
         self.max_attempts = max_attempts
         self.backoff_seconds = backoff_seconds
         self._sleep = sleep
+        self._monotonic = monotonic
+        self.completed_handoff_guard_seconds = max(
+            0.0, float(completed_handoff_guard_seconds)
+        )
         self._lock = threading.Lock()
+        self._last_successful_finish_monotonic: float | None = None
         self.last_failures: list[ScanFailure] = []
+
+    def _handoff_guard_active(self) -> bool:
+        previous = self._last_successful_finish_monotonic
+        if previous is None or self.completed_handoff_guard_seconds <= 0:
+            return False
+        elapsed = self._monotonic() - previous
+        return 0.0 <= elapsed < self.completed_handoff_guard_seconds
 
     def run(
         self,
@@ -55,13 +81,20 @@ class ScanWatchdog:
     ) -> T:
         if not self._lock.acquire(blocking=False):
             raise ScanAlreadyRunning("a scan is already running in this process")
+        succeeded = False
         try:
+            if self._handoff_guard_active():
+                raise ScanAlreadyRunning(
+                    "a completed scan is still in the cross-session handoff window"
+                )
             if on_acquired is not None:
                 on_acquired()
             self.last_failures = []
             for attempt in range(1, self.max_attempts + 1):
                 try:
-                    return scan()
+                    result = scan()
+                    succeeded = True
+                    return result
                 except Exception as exc:
                     failure = ScanFailure(attempt, type(exc).__name__, str(exc))
                     self.last_failures.append(failure)
@@ -79,9 +112,13 @@ class ScanWatchdog:
             raise AssertionError("unreachable")
         finally:
             try:
-                if on_finished is not None:
+                if on_finished is not None and not self._handoff_guard_active():
+                    # A guard rejection did not acquire scan lifecycle ownership.
+                    # For an actual scan attempt, preserve the historical callback.
                     on_finished()
             finally:
+                if succeeded:
+                    self._last_successful_finish_monotonic = self._monotonic()
                 self._lock.release()
 
     @property
