@@ -1,15 +1,13 @@
 """GS419: guarantee one audible heartbeat for every completed scan.
 
 Live validation on 2026-09-10 showed GS418 correctly restored tier-1 audibility, but
-Walter could still complete a scan in silence whenever the existing alert phrase was
-empty (for example, only DEVELOPING/CHASE-WAIT records and no Strengthening, LOOK NOW,
-or entry-urgency event).
+Walter could still complete a scan in silence whenever no semantic watch/advance alert
+was generated (for example, only DEVELOPING/CHASE-WAIT records).
 
-GS419 restores the operator contract without changing alert truth: every completed
-scan gets at least the routine tier-1 browser tone when audible alerts are enabled;
-existing tier-2 LOOK NOW and tier-3 entry-urgency alerts retain priority through the
-GS367 per-scan highest-tier broker. The heartbeat itself is tone-only and adds no
-speech.
+GS419 adds a tone-only tier-1 registration at the final Opportunity State render
+boundary. It does not alter escalation phrases or alert truth. Existing LOOK NOW tier-2
+and entry-urgency tier-3 registrations still win through GS367's per-scan highest-tier
+broker. Browser-side gating honors the existing Audible watch/advance alerts toggle.
 
 Audio/presentation only. No discovery, market data, VWAP/ST, participation, expansion,
 scoring, qualification, readiness, thresholds, cadence, execution, or orders change.
@@ -19,35 +17,49 @@ from __future__ import annotations
 from functools import wraps
 
 
-HEARTBEAT_PHRASE = "__WALTER_COMPLETED_SCAN_HEARTBEAT__"
+_ALERT_TOGGLE_LABEL = "Audible watch/advance alerts"
 
 
-def _has_existing_scan_alert_fallback(records: list[dict]) -> bool:
-    """Leave app.py's existing Strengthening/Entry Ready fallback untouched."""
-    for record in records or []:
-        status = str(record.get("candidate_status") or "").strip().upper()
-        if status in {"STRENGTHENING", "ENTRY READY"}:
-            return True
-    return False
-
-
-def heartbeat_phrase(records: list[dict], existing_phrase: str) -> str:
-    """Return a tone-only sentinel only when the scan otherwise has no alert phrase."""
-    phrase = str(existing_phrase or "")
-    if phrase or _has_existing_scan_alert_fallback(records):
-        return phrase
-    return HEARTBEAT_PHRASE
+def _respect_alert_toggle(markup: str) -> str:
+    """Skip the heartbeat in-browser when Walter's existing audible-alert toggle is off."""
+    text = str(markup or "")
+    needle = "(() => {\n"
+    if needle not in text:
+        return text
+    gate = f"""(() => {{
+  // GS419: this heartbeat follows the existing Streamlit audible-alert toggle.
+  try {{
+    const doc = (window.parent && window.parent.document) ? window.parent.document : document;
+    const controls = Array.from(doc.querySelectorAll('input[type="checkbox"], [role="switch"]'));
+    let matched = false;
+    let enabled = true;
+    for (const control of controls) {{
+      let node = control;
+      for (let depth = 0; node && depth < 6; depth += 1, node = node.parentElement) {{
+        if ((node.textContent || '').includes('{_ALERT_TOGGLE_LABEL}')) {{
+          matched = true;
+          if (typeof control.checked === 'boolean') enabled = control.checked;
+          else enabled = String(control.getAttribute('aria-checked') || '').toLowerCase() !== 'false';
+          break;
+        }}
+      }}
+      if (matched) break;
+    }}
+    if (matched && !enabled) return;
+  }} catch (_) {{}}
+"""
+    return text.replace(needle, gate, 1)
 
 
 def heartbeat_markup(state) -> str:
-    """Build the tier-1 broker registration for the currently completed scan."""
+    """Build one tier-1 broker registration for the currently completed scan."""
     from . import gs367_browser_audio_broker as broker
     from .gs366_rerun_alert_dedupe import completed_scan_token
 
     token = completed_scan_token(state)
     if token == "no-completed-scan":
         return ""
-    return broker.browser_broker_markup(token, 1)
+    return _respect_alert_toggle(broker.browser_broker_markup(token, 1))
 
 
 def _inherit(wrapper, wrapped) -> None:
@@ -57,36 +69,25 @@ def _inherit(wrapper, wrapped) -> None:
 
 
 def install() -> None:
-    """Install after GS414 so app.py binds the final heartbeat-aware alert callables."""
-    from . import escalation, ui
+    """Install after GS414 at the final Opportunity State presentation boundary."""
+    from . import ui
 
-    current_phrase = escalation.escalation_alert_phrase
-    if not getattr(current_phrase, "_gs419_completed_scan_heartbeat", False):
-        @wraps(current_phrase)
-        def escalation_alert_phrase(records: list[dict]) -> str:
-            rows = list(records or [])
-            return heartbeat_phrase(rows, current_phrase(rows))
-
-        escalation_alert_phrase._gs419_completed_scan_heartbeat = True
-        escalation_alert_phrase._gs419_original = current_phrase
-        escalation.escalation_alert_phrase = escalation_alert_phrase
-
-    current_play = ui.play_alert
-    if getattr(current_play, "_gs419_completed_scan_heartbeat", False):
+    current = ui.render_escalation_engine
+    if getattr(current, "_gs419_completed_scan_heartbeat", False):
         return
 
-    @wraps(current_play)
-    def play_alert(sound_path: str, phrase: str, voice_name: str = ""):
-        if str(phrase or "") != HEARTBEAT_PHRASE:
-            return current_play(sound_path, phrase, voice_name)
-
+    @wraps(current)
+    def render_with_completed_scan_heartbeat(records: list[dict]) -> None:
+        result = current(records)
         markup = heartbeat_markup(ui.st.session_state)
-        if not markup:
-            return None
-        ui.st.components.v1.html(markup, height=0, scrolling=False)
-        return None
+        if markup:
+            # This tier-1 registration participates in GS367's existing 750 ms
+            # highest-tier settle window. Any tier-2/3 alert from the same completed
+            # scan therefore replaces it rather than stacking another sound.
+            ui.st.components.v1.html(markup, height=0, scrolling=False)
+        return result
 
-    _inherit(play_alert, current_play)
-    play_alert._gs419_completed_scan_heartbeat = True
-    play_alert._gs419_original = current_play
-    ui.play_alert = play_alert
+    _inherit(render_with_completed_scan_heartbeat, current)
+    render_with_completed_scan_heartbeat._gs419_completed_scan_heartbeat = True
+    render_with_completed_scan_heartbeat._gs419_original = current
+    ui.render_escalation_engine = render_with_completed_scan_heartbeat
