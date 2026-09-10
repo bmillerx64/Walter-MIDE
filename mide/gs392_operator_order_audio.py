@@ -184,3 +184,11 @@ def install() -> None:
     from .gs414_final_enriched_opportunity_order import install as install_gs414
 
     install_gs414()
+
+    # GS421 is observational only. It preserves TNON-style momentum maturation as one
+    # coherent 30s -> 1m -> 3m -> 5m -> 10m -> 15m convergence record using the
+    # current-session history GS378 already captured. It deliberately does not change
+    # target ranking, qualification, entry authority, chase guards, alerts, or orders.
+    from .gs421_multitimeframe_convergence_recorder import install as install_gs421
+
+    install_gs421()
