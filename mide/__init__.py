@@ -239,6 +239,8 @@ from .gs379_webull_stream_data_truth import install as _install_gs379_webull_str
 
 _install_gs379_webull_stream_data_truth()
 
-from .gs384_diagnostic_signal_to_noise import install as _install_gs384_diagnostic_signal_to_noise  # noqa: E402
-
-_install_gs384_diagnostic_signal_to_noise()
+# GS417: do not import the GS384+ late runtime bootstrap while the parent ``mide``
+# package lock is held. Streamlit hot deployment can run old/new script threads at
+# once; acquiring the GS384 module lock here can deadlock against a thread that is
+# already importing GS384 and waiting for ``mide``. app.py's first startup log call
+# invokes startup.ensure_late_runtime_installers() after the parent import completes.
