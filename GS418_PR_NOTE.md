@@ -1,1 +1,0 @@
-GS418 restores the routine tier-1 browser scan/watch cue that GS402 intentionally silenced. Tier 2 LOOK NOW and tier 3 entry urgency remain unchanged. Audio/presentation only; no trading authority, thresholds, discovery, cadence, or execution changes.
