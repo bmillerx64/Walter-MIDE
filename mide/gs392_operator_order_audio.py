@@ -169,3 +169,10 @@ def install() -> None:
     from .gs413_single_process_autoscan_authority import install as install_gs413
 
     install_gs413()
+
+    # Preserve the established reboot contract: if the process watchdog is already
+    # active, the request flag may represent the in-flight scan itself. Idle passive
+    # sessions are still denied by GS413's later scheduler/view authority.
+    from .gs413_inflight_intent_preservation import install as install_gs413_inflight
+
+    install_gs413_inflight()
