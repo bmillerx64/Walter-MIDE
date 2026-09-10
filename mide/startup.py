@@ -32,6 +32,7 @@ def ensure_late_runtime_installers() -> None:
     from .gs424_warm_scan_history_cache import install as install_gs424
     from .gs425_latency_truth_recorder import install as install_gs425
     from .gs426_intraday_free_float_cache import install as install_gs426
+    from .gs427_flight_recorder_latency_hard_bind import install as install_gs427
 
     install_late_chain()
     install_gs416()
@@ -47,6 +48,9 @@ def ensure_late_runtime_installers() -> None:
     # GS426 caches only the secondary free-float reference lookup across warm scans;
     # the established conservative float decision remains authoritative.
     install_gs426()
+    # GS427 is the final recorder-only binding. It makes GS425 timing/build identity
+    # survive a retained pre-deploy FlightRecorder.record_scan function graph.
+    install_gs427()
 
 
 def log_startup(component: str, message: str = "starting") -> None:
@@ -182,5 +186,6 @@ ensure_reclaim_watch()
 # GS423 also runs at this boundary, after the entire GS421/422 chain, so it can own
 # the final convergence wrapper even across a warm Streamlit deployment. GS424 then
 # installs the persistent-provider warm-history cache after all evidence wrappers,
-# GS425 measures that final acquisition boundary without changing it, and GS426
-# removes repeated same-day Yahoo free-float refreshes without changing float gates.
+# GS425 measures that final acquisition boundary without changing it, GS426 removes
+# repeated same-day Yahoo free-float refreshes without changing float gates, and
+# GS427 hard-binds the latency/build evidence to the active recorder call graph.
