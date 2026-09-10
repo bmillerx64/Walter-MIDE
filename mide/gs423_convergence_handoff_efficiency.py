@@ -7,16 +7,18 @@ Sep. 10 close validation of GS422 proved two things at once:
   so the live learning payload was not surviving the actual analysis path.
 
 GS423 makes the handoff explicit.  GS378's existing 1m/3m/5m/10m confirmation pass
-now retains the bullish-flip metadata it already had in memory, and GS421 reuses that
-metadata.  Only the missing 15m maturation requires another SuperTrend pass for a
-selected study record.  A GS423-owned application wrapper also replaces any inherited
-or stale GS421 helper wrapper after a warm Streamlit deploy, guaranteeing that every
-analyzed record receives either a real observational package or an explicit skipped
-package before it enters the architecture handoff.
+now retains the bullish-flip metadata it already had in memory, and the live GS423
+handoff reuses that metadata. Only the missing 15m maturation requires another
+SuperTrend pass for a selected study record. A GS423-owned application wrapper also
+replaces any inherited or stale GS421 application wrapper after a warm Streamlit
+deploy, guaranteeing that every analyzed record receives either a real observational
+package or an explicit skipped package before it enters the architecture handoff.
 
-This remains observational only.  Confirmation counts and the existing trading fields
-are preserved; discovery, scoring, ranking, qualification, readiness, thresholds,
-VWAP/chase rules, alerts/audio, execution, orders, and provider requests are unchanged.
+The standalone GS421 helper remains unchanged for replay/unit compatibility; the live
+GS423 wrapper calls the efficient builder directly. This remains observational only.
+Confirmation counts and established trading fields are preserved; discovery, scoring,
+ranking, qualification, readiness, thresholds, VWAP/chase rules, alerts/audio,
+execution, orders, and provider requests are unchanged.
 """
 from __future__ import annotations
 
@@ -136,15 +138,18 @@ def _fallback_event(record: dict, label: str) -> dict:
         "current_confirmed": bool(bullish and above_vwap),
         "bullish_flip_timestamp": cross.get("bullish_flip_timestamp"),
         "bullish_flip_age_seconds": cross.get("bullish_flip_age_seconds"),
-        "price_at_flip": cross.get("price"),
-        "vwap_at_flip": cross.get("vwap_value"),
-        "supertrend_at_flip": cross.get("supertrend_value"),
-        "volume_at_flip": cross.get("volume"),
+        # GS378's crossover price is not necessarily the bullish-flip price, so do
+        # not relabel it. The normal live path receives exact values from the enriched
+        # confirmation pass above.
+        "price_at_flip": None,
+        "vwap_at_flip": None,
+        "supertrend_at_flip": None,
+        "volume_at_flip": None,
     }
 
 
 def build_efficient_maturation_evidence(record: dict, raw_rows, client) -> dict:
-    """Build GS421 evidence with zero duplicate 1m/3m/5m/10m ST calculations."""
+    """Build live GS421 evidence with zero duplicate 1m/3m/5m/10m ST calculations."""
     if not gs422.should_record_maturation(record):
         return gs422.skipped_evidence(record)
 
@@ -244,7 +249,7 @@ def install() -> None:
         return
 
     # Replace the stale/older GS421 application wrapper rather than stacking another
-    # full maturation pass around it.  The pure GS378 correction remains the base.
+    # full maturation pass around it. The pure GS378 correction remains the base.
     base = getattr(current, "_gs423_base", None)
     if not callable(base):
         base = getattr(current, "_gs421_original", current)
@@ -252,7 +257,6 @@ def install() -> None:
     # Enrich GS378's existing confirmation calculation itself. This does not add a
     # SuperTrend call; it only retains metadata from the four calls already required.
     gs378._confirmation_details = confirmation_details_with_maturation
-    gs421.build_maturation_evidence = build_efficient_maturation_evidence
 
     @wraps(base)
     def apply_with_efficient_maturation(
@@ -294,6 +298,9 @@ def install() -> None:
         return updated
 
     _inherit(apply_with_efficient_maturation, base)
+    # Preserve the compatibility marker so an inherited GS421 application wrapper
+    # cannot stack itself over this final live boundary on a warm rerun. The pure
+    # GS421 helper itself is intentionally left unchanged.
     apply_with_efficient_maturation._gs421_multitimeframe_convergence = True
     apply_with_efficient_maturation._gs423_convergence_handoff_efficiency = True
     apply_with_efficient_maturation._gs423_install_generation = _INSTALL_GENERATION
