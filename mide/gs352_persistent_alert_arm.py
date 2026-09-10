@@ -2,6 +2,10 @@
 
 Presentation/alert transport only. This does not change discovery, ranking,
 qualification, readiness, thresholds, execution, orders, or market-data logic.
+
+GS420 makes the test control arm the same parent-window AudioContext used by GS367.
+A Streamlit redeploy can preserve sessionStorage while destroying the old JavaScript
+AudioContext, so a stale "armed" flag is no longer treated as proof that tones can run.
 """
 from __future__ import annotations
 
@@ -27,10 +31,35 @@ def alert_arm_markup() -> str:
         if (window.parent) root = window.parent;
       } catch (_) { root = window; }
 
+      const brokerKey = '__walterGS367ChimeBroker';
+      const ensureBroker = () => {
+        let broker = root[brokerKey];
+        if (!broker || typeof broker !== 'object') {
+          broker = root[brokerKey] = {
+            token: null,
+            tier: 0,
+            timer: null,
+            emittedToken: null,
+            audioContext: null,
+            pendingToken: null,
+            pendingTier: 0,
+            pendingEmit: null,
+            unlockBound: false,
+          };
+        }
+        return broker;
+      };
+
       const readArmed = () => {
         try {
           return Boolean(root.__walterVoiceArmed) ||
             (root.sessionStorage && root.sessionStorage.getItem('walterVoiceArmed') === '1');
+        } catch (_) { return false; }
+      };
+      const audioReady = () => {
+        try {
+          const broker = ensureBroker();
+          return Boolean(broker.audioContext && broker.audioContext.state === 'running');
         } catch (_) { return false; }
       };
       const markArmed = () => {
@@ -40,21 +69,56 @@ def alert_arm_markup() -> str:
         } catch (_) {}
       };
       const setStatus = (text) => { if (status) status.textContent = text; };
-      if (readArmed()) setStatus('Armed for this browser tab');
+      if (audioReady()) setStatus('Armed for this browser tab');
+      else if (readArmed()) setStatus('Re-test after reload');
 
       const testTone = () => {
         try {
-          const AudioContext = window.AudioContext || window.webkitAudioContext;
-          if (!AudioContext) return;
-          const ctx = new AudioContext();
-          const osc = ctx.createOscillator();
-          const gain = ctx.createGain();
-          gain.gain.value = 0.035;
-          osc.frequency.value = 660;
-          osc.connect(gain); gain.connect(ctx.destination);
-          osc.start();
-          osc.stop(ctx.currentTime + 0.09);
-        } catch (_) {}
+          const AudioContextCtor =
+            root.AudioContext || root.webkitAudioContext ||
+            window.AudioContext || window.webkitAudioContext;
+          if (!AudioContextCtor) {
+            setStatus('Web Audio unavailable');
+            return;
+          }
+          const broker = ensureBroker();
+          let ctx = broker.audioContext;
+          if (!ctx || ctx.state === 'closed') {
+            ctx = new AudioContextCtor();
+            broker.audioContext = ctx;
+          }
+
+          const play = () => {
+            if (!ctx || ctx.state !== 'running') {
+              setStatus('Audio blocked · click again');
+              return;
+            }
+            const osc = ctx.createOscillator();
+            const gain = ctx.createGain();
+            gain.gain.value = 0.035;
+            osc.frequency.value = 660;
+            osc.connect(gain); gain.connect(ctx.destination);
+            osc.start();
+            osc.stop(ctx.currentTime + 0.09);
+            markArmed();
+            setStatus('Armed · tone confirmed');
+          };
+
+          if (ctx.state === 'running') {
+            play();
+          } else if (ctx.resume) {
+            const resumed = ctx.resume();
+            if (resumed && resumed.then) {
+              resumed.then(play).catch(() => setStatus('Audio blocked · click again'));
+            } else {
+              play();
+            }
+          } else {
+            setStatus('Audio blocked · click again');
+          }
+        } catch (_) {
+          setStatus('Audio test failed');
+        }
       };
 
       const testVoice = () => {
@@ -68,8 +132,8 @@ def alert_arm_markup() -> str:
         utterance.rate = 0.95;
         utterance.pitch = 0.9;
         utterance.volume = 1.0;
-        utterance.onstart = () => { markArmed(); setStatus('Armed · voice confirmed'); };
-        utterance.onend = () => { markArmed(); setStatus('Armed for this browser tab'); };
+        utterance.onstart = () => { markArmed(); };
+        utterance.onend = () => { markArmed(); };
         utterance.onerror = (event) => {
           const detail = event && event.error ? String(event.error) : 'speech error';
           setStatus('Voice error: ' + detail);
@@ -78,15 +142,14 @@ def alert_arm_markup() -> str:
           if (synth.paused && synth.resume) synth.resume();
           synth.speak(utterance);
           markArmed();
-          setStatus('Armed · test requested');
         } catch (error) {
           setStatus('Voice error: ' + String(error));
         }
       };
 
       if (button) button.addEventListener('click', () => {
-        // Keep both requests inside the actual user gesture. This is the most
-        // reliable Chrome path for unlocking Web Audio and Web Speech.
+        // Keep both requests inside the actual user gesture. GS420 primes the same
+        // parent-window AudioContext that the automatic GS367 broker later reuses.
         testTone();
         testVoice();
       });
