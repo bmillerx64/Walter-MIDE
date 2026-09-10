@@ -1,30 +1,6 @@
 from pathlib import Path
-from types import SimpleNamespace
 
 from mide import gs419_completed_scan_heartbeat as gs419
-
-
-def test_gs419_heartbeat_when_scan_has_no_existing_alert():
-    records = [
-        {"symbol": "DEV", "candidate_status": "Watching", "opportunity_state": "DEVELOPING"},
-        {"symbol": "CHASE", "candidate_status": "Watching", "opportunity_state": "CHASE / WAIT"},
-    ]
-    assert gs419.heartbeat_phrase(records, "") == gs419.HEARTBEAT_PHRASE
-
-
-def test_gs419_preserves_existing_higher_priority_phrase():
-    assert (
-        gs419.heartbeat_phrase([], "XYZ. LOOK NOW.")
-        == "XYZ. LOOK NOW."
-    )
-
-
-def test_gs419_leaves_strengthening_and_entry_ready_to_existing_app_fallback():
-    strengthening = [{"symbol": "AAA", "candidate_status": "Strengthening"}]
-    entry_ready = [{"symbol": "BBB", "candidate_status": "Entry Ready"}]
-
-    assert gs419.heartbeat_phrase(strengthening, "") == ""
-    assert gs419.heartbeat_phrase(entry_ready, "") == ""
 
 
 def test_gs419_heartbeat_markup_is_tier1_and_requires_completed_scan(monkeypatch):
@@ -35,12 +11,29 @@ def test_gs419_heartbeat_markup_is_tier1_and_requires_completed_scan(monkeypatch
     monkeypatch.setattr(
         broker,
         "browser_broker_markup",
-        lambda token, tier: f"token={token};tier={tier}",
+        lambda token, tier: f"<script>\n(() => {{\ntoken={token};tier={tier};\n}})();\n</script>",
     )
-    assert gs419.heartbeat_markup({}) == "token=scan-419;tier=1"
+    markup = gs419.heartbeat_markup({})
+    assert "token=scan-419;tier=1" in markup
 
     monkeypatch.setattr(dedupe, "completed_scan_token", lambda _state: "no-completed-scan")
     assert gs419.heartbeat_markup({}) == ""
+
+
+def test_gs419_heartbeat_respects_existing_audible_toggle_in_browser():
+    base = "<script>\n(() => {\nconst x = 1;\n})();\n</script>"
+    markup = gs419._respect_alert_toggle(base)
+
+    assert "Audible watch/advance alerts" in markup
+    assert "if (matched && !enabled) return;" in markup
+    assert "const x = 1;" in markup
+
+
+def test_gs419_does_not_replace_escalation_alert_semantics():
+    module = Path("mide/gs419_completed_scan_heartbeat.py").read_text(encoding="utf-8")
+
+    assert "escalation.escalation_alert_phrase =" not in module
+    assert "HEARTBEAT_PHRASE" not in module
 
 
 def test_gs419_installs_after_gs414_and_does_not_touch_trading_authority():
