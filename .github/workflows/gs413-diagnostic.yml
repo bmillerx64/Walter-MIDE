@@ -4,12 +4,11 @@ on:
   push:
     branches:
       - gs413-single-process-autoscan-authority
-  pull_request:
-    paths:
-      - 'mide/gs413_single_process_autoscan_authority.py'
-      - 'tests/test_413_single_process_autoscan_authority.py'
-      - 'mide/gs392_operator_order_audio.py'
-      - '.github/workflows/gs413-diagnostic.yml'
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
 
 jobs:
   diagnose:
@@ -26,17 +25,27 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
           pip install pytest
-      - name: Run pytest and publish tail
+      - name: Run pytest and capture tail
         shell: bash
         run: |
           set +e
           python -m pytest -q > pytest-output.txt 2>&1
           code=$?
-          echo '## GS413 pytest diagnostic' >> "$GITHUB_STEP_SUMMARY"
-          echo '' >> "$GITHUB_STEP_SUMMARY"
-          echo '```text' >> "$GITHUB_STEP_SUMMARY"
-          tail -n 220 pytest-output.txt >> "$GITHUB_STEP_SUMMARY"
-          echo '```' >> "$GITHUB_STEP_SUMMARY"
-          echo '' >> "$GITHUB_STEP_SUMMARY"
-          echo "pytest exit code: $code" >> "$GITHUB_STEP_SUMMARY"
+          tail -n 220 pytest-output.txt > pytest-tail.txt
+          echo "$code" > pytest-exit-code.txt
           exit 0
+      - name: Post diagnostic to PR
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          {
+            echo '## GS413 pytest diagnostic'
+            echo
+            echo '```text'
+            cat pytest-tail.txt
+            echo '```'
+            echo
+            echo "pytest exit code: $(cat pytest-exit-code.txt)"
+          } > diagnostic-comment.md
+          gh pr comment 413 --body-file diagnostic-comment.md
