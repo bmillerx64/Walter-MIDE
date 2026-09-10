@@ -30,15 +30,19 @@ def ensure_late_runtime_installers() -> None:
     from .gs416_validity_symbol_suffix import install as install_gs416
     from .gs423_convergence_handoff_efficiency import install as install_gs423
     from .gs424_warm_scan_history_cache import install as install_gs424
+    from .gs425_latency_truth_recorder import install as install_gs425
 
     install_late_chain()
     install_gs416()
     # GS423 runs after the legacy chain so warm Streamlit deployments cannot retain an
     # inherited GS421 marker while missing the efficient analyzed->recorder handoff.
     install_gs423()
-    # GS424 owns only the persistent provider's Stage-6 acquisition boundary. It runs
-    # last and never changes the evidence produced by GS423 or any trading contract.
+    # GS424 owns only the persistent provider's Stage-6 acquisition boundary and never
+    # changes the evidence produced by GS423 or any trading contract.
     install_gs424()
+    # GS425 runs outside GS424 so it measures the exact effective history boundary and
+    # persists the already-computed architecture timing summary into Flight Recorder.
+    install_gs425()
 
 
 def log_startup(component: str, message: str = "starting") -> None:
@@ -173,4 +177,5 @@ ensure_reclaim_watch()
 # boundary because it patches the already-defined architecture Validity method only.
 # GS423 also runs at this boundary, after the entire GS421/422 chain, so it can own
 # the final convergence wrapper even across a warm Streamlit deployment. GS424 then
-# installs the persistent-provider warm-history cache after all evidence wrappers.
+# installs the persistent-provider warm-history cache after all evidence wrappers,
+# and GS425 measures that final acquisition boundary without changing it.
