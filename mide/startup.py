@@ -31,6 +31,7 @@ def ensure_late_runtime_installers() -> None:
     from .gs423_convergence_handoff_efficiency import install as install_gs423
     from .gs424_warm_scan_history_cache import install as install_gs424
     from .gs425_latency_truth_recorder import install as install_gs425
+    from .gs426_intraday_free_float_cache import install as install_gs426
 
     install_late_chain()
     install_gs416()
@@ -43,6 +44,9 @@ def ensure_late_runtime_installers() -> None:
     # GS425 runs outside GS424 so it measures the exact effective history boundary and
     # persists the already-computed architecture timing summary into Flight Recorder.
     install_gs425()
+    # GS426 caches only the secondary free-float reference lookup across warm scans;
+    # the established conservative float decision remains authoritative.
+    install_gs426()
 
 
 def log_startup(component: str, message: str = "starting") -> None:
@@ -178,4 +182,5 @@ ensure_reclaim_watch()
 # GS423 also runs at this boundary, after the entire GS421/422 chain, so it can own
 # the final convergence wrapper even across a warm Streamlit deployment. GS424 then
 # installs the persistent-provider warm-history cache after all evidence wrappers,
-# and GS425 measures that final acquisition boundary without changing it.
+# GS425 measures that final acquisition boundary without changing it, and GS426
+# removes repeated same-day Yahoo free-float refreshes without changing float gates.
