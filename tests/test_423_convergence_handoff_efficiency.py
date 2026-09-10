@@ -9,7 +9,7 @@ from mide import gs423_convergence_handoff_efficiency as gs423
 from mide.flight_recorder import FlightRecorder
 
 
-def _day(rows=90):
+def _day(rows=240):
     index = pd.date_range(
         "2026-09-10 13:30:00+00:00", periods=rows, freq="min"
     )
