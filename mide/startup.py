@@ -28,9 +28,13 @@ def ensure_late_runtime_installers() -> None:
     """
     from .gs384_diagnostic_signal_to_noise import install as install_late_chain
     from .gs416_validity_symbol_suffix import install as install_gs416
+    from .gs423_convergence_handoff_efficiency import install as install_gs423
 
     install_late_chain()
     install_gs416()
+    # GS423 runs last so warm Streamlit deployments cannot retain an inherited
+    # GS421 marker while missing the efficient analyzed->recorder handoff.
+    install_gs423()
 
 
 def log_startup(component: str, message: str = "starting") -> None:
@@ -163,3 +167,5 @@ ensure_reclaim_watch()
 # invoked only by app.py's explicit ``log_startup('entering app.py')`` call above,
 # after the parent ``mide`` package import has fully completed. GS416 joins that late
 # boundary because it patches the already-defined architecture Validity method only.
+# GS423 also runs at this boundary, after the entire GS421/422 chain, so it can own
+# the final convergence wrapper even across a warm Streamlit deployment.
