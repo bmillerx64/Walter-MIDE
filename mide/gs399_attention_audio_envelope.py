@@ -14,8 +14,9 @@ that actually wins the GS367 browser broker is changed:
 * tier 2 LOOK NOW: longer, louder triangle-wave rising pair;
 * tier 3 entry urgency: sharper, louder sawtooth rising triple.
 
-GS402 installs after this layer and may suppress the routine browser tone while leaving
-these semantic patterns intact. The tier-dependent envelope is evaluated against the
+GS402 installs after this layer and applies its historical critical-only suppression;
+GS418 then restores the operator-requested tier-1 routine cue while preserving the
+same tier-2/tier-3 patterns. The tier-dependent envelope is evaluated against the
 broker's final winning tier, so call order between multiple alert registrations in one
 completed scan cannot apply a lower-priority envelope to a higher-priority event.
 """
@@ -60,8 +61,10 @@ def _attention_envelope_markup(markup: str) -> str:
 
 def _install_gs402() -> None:
     from .gs402_critical_only_audio import install as install_gs402
+    from .gs418_restore_routine_scan_audio import install as install_gs418
 
     install_gs402()
+    install_gs418()
 
 
 def install() -> None:
