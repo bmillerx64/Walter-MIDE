@@ -162,3 +162,17 @@ def install() -> None:
     from .gs411_scan_cadence_timing_truth import install as install_gs411
 
     install_gs411()
+
+    # GS413 runs after GS411 so there is one process-wide AutoScan cadence owner.
+    # Passive Streamlit sessions still adopt/render completed evidence and alerts,
+    # but cannot manufacture competing automatic requests or completion-time drift.
+    from .gs413_single_process_autoscan_authority import install as install_gs413
+
+    install_gs413()
+
+    # Preserve the established reboot contract: if the process watchdog is already
+    # active, the request flag may represent the in-flight scan itself. Idle passive
+    # sessions are still denied by GS413's later scheduler/view authority.
+    from .gs413_inflight_intent_preservation import install as install_gs413_inflight
+
+    install_gs413_inflight()
