@@ -1,3 +1,6 @@
+# GS433 deployment marker: force one clean Streamlit Community Cloud runtime so
+# the fragment-owned Flight Recorder download boundary is loaded everywhere.
+# No dependency versions change in this deployment-only activation.
 # GS429 deployment marker: force one clean Streamlit Community Cloud runtime so
 # the NumPy-backed, bit-identical SuperTrend recurrence is loaded everywhere.
 # No dependency versions change in this deployment-only activation.
