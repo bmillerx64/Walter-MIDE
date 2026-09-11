@@ -39,6 +39,7 @@ def ensure_late_runtime_installers() -> None:
     from .gs445_incremental_backup_exports import install as install_gs445
     from .gs446_deferred_candidate_history_download import install as install_gs446
     from .gs448_deferred_flight_recorder_download import install as install_gs448
+    from .gs449_bound_startup_memory_profile import install as install_gs449
 
     install_late_chain()
     # GS445 patches GS364's already-installed backup materializer before app.py builds
@@ -53,6 +54,10 @@ def ensure_late_runtime_installers() -> None:
     # button after scan orchestration, but Streamlit now receives only a callable on
     # ordinary reruns and materializes recorder bytes only when the operator clicks it.
     install_gs448()
+    # GS449 runs before app.py later imports ``profile as memory_profile``. The first
+    # process startup still receives the full tracemalloc/GC/deep-size report, while
+    # recurring full-app AutoScan reruns use a constant-cost RSS-only observation.
+    install_gs449()
     install_gs416()
     # GS423 runs after the legacy chain so warm Streamlit deployments cannot retain an
     # inherited GS421 marker while missing the efficient analyzed->recorder handoff.
@@ -220,6 +225,7 @@ ensure_reclaim_watch()
 # repeated same-day Yahoo free-float refreshes without changing float gates, GS427
 # hard-binds latency/build evidence to the active recorder call graph, GS428 releases
 # obsolete post-scan scheduler deadtime, GS435 removes stale-owner due latency, GS445
-# removes append-only backup recompression, GS446 defers the remaining full Candidate
-# History payload until operator click, GS448 defers the matching Flight Recorder
-# payload, and GS436 hard-binds the final enriched Opportunity State ordering boundary.
+# removes append-only backup recompression, GS446/GS448 defer the two large backup
+# payloads until operator click, GS449 bounds the full startup object-graph profiler
+# to once per process, and GS436 hard-binds the final enriched Opportunity State
+# ordering boundary.
