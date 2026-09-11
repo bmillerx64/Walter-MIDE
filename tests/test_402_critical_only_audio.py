@@ -23,8 +23,13 @@ def test_final_audio_chain_preserves_distinct_look_now_and_entry_envelopes():
     gs399.install()
     markup = broker.browser_broker_markup("scan-gs402-critical", 3)
 
-    assert "oscillator.type = tier === 2 ? 'triangle' : (tier === 3 ? 'sawtooth' : 'sine');" in markup
-    assert "tier === 2 ? 0.42 : (tier === 3 ? 0.46 : 0.24)" in markup
+    # GS399 remains the underlying distinct-envelope layer; GS441 deliberately owns
+    # the final live signature and strengthens tier 3 from sawtooth to square without
+    # changing semantic tier selection or restoring GS402's old tier-1 suppression.
+    assert "oscillator.type = tier === 2 ? 'triangle' : (tier === 3 ? 'square' : 'sine');" in markup
+    assert "tier === 2 ? 0.48 : (tier === 3 ? 0.52 : 0.24)" in markup
+    assert "patterns['2'] = [[640,0.00],[1280,0.38]];" in markup
+    assert "patterns['3'] = [[1568,0.00],[988,0.12],[1568,0.24]];" in markup
     assert "if (tier === 1) return;" not in markup
 
 
