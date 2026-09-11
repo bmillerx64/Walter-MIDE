@@ -78,7 +78,9 @@ def test_gs441_scope_lock_and_clean_runtime_marker():
         "request_scan(",
     )
     assert not any(token in module for token in forbidden)
-    assert requirements.startswith("# GS441 deployment marker:")
+    # Newer GS deployment markers may legitimately sit above GS441; preserve the
+    # GS441 marker itself rather than pinning it forever to the first line.
+    assert "# GS441 deployment marker:" in requirements
     assert "streamlit==1.62.0" in requirements
     assert "pandas==2.3.3" in requirements
     assert "numpy==2.5.1" in requirements
