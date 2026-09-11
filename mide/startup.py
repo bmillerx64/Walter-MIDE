@@ -38,6 +38,7 @@ def ensure_late_runtime_installers() -> None:
     from .gs435_due_deadline_owner_handoff import install as install_gs435
     from .gs445_incremental_backup_exports import install as install_gs445
     from .gs446_deferred_candidate_history_download import install as install_gs446
+    from .gs448_deferred_flight_recorder_download import install as install_gs448
 
     install_late_chain()
     # GS445 patches GS364's already-installed backup materializer before app.py builds
@@ -48,6 +49,10 @@ def ensure_late_runtime_installers() -> None:
     # returns a Streamlit-supported deferred callable, so no growing backup payload is
     # generated/registered before app.py can reach the scheduled scan boundary.
     install_gs446()
+    # GS448 closes the matching Flight Recorder leak. app.py still renders the same
+    # button after scan orchestration, but Streamlit now receives only a callable on
+    # ordinary reruns and materializes recorder bytes only when the operator clicks it.
+    install_gs448()
     install_gs416()
     # GS423 runs after the legacy chain so warm Streamlit deployments cannot retain an
     # inherited GS421 marker while missing the efficient analyzed->recorder handoff.
@@ -216,5 +221,5 @@ ensure_reclaim_watch()
 # hard-binds latency/build evidence to the active recorder call graph, GS428 releases
 # obsolete post-scan scheduler deadtime, GS435 removes stale-owner due latency, GS445
 # removes append-only backup recompression, GS446 defers the remaining full Candidate
-# History payload until operator click, and GS436 hard-binds the final enriched
-# Opportunity State ordering boundary.
+# History payload until operator click, GS448 defers the matching Flight Recorder
+# payload, and GS436 hard-binds the final enriched Opportunity State ordering boundary.
