@@ -1,3 +1,6 @@
+# GS445 deployment marker: force one clean Streamlit Community Cloud runtime so
+# append-only Candidate History / Flight Recorder exports reuse incremental gzip state.
+# No dependency versions change in this deployment-only activation.
 # GS442 deployment marker: force one clean Streamlit Community Cloud runtime so
 # the operator alignment card renders Walter's canonical 30s/1m/3m evidence ladder.
 # No dependency versions change in this deployment-only activation.
