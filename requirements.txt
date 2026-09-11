@@ -1,3 +1,6 @@
+# GS428 deployment marker: force one clean Streamlit Community Cloud runtime so
+# the merged GS424-GS428 late-runtime cache/timing/cadence chain is actually loaded.
+# No dependency versions change in this deployment-only activation.
 # GS387 deployment marker: force one clean Streamlit Community Cloud runtime so
 # the permanent checkout-vs-loaded-runtime freshness detector is installed.
 # No dependency versions change in this deployment-only activation.
