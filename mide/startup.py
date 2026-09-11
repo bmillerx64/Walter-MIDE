@@ -40,6 +40,7 @@ def ensure_late_runtime_installers() -> None:
     from .gs446_deferred_candidate_history_download import install as install_gs446
     from .gs448_deferred_flight_recorder_download import install as install_gs448
     from .gs449_bound_startup_memory_profile import install as install_gs449
+    from .gs450_release_startup_tracemalloc import install as install_gs450
 
     install_late_chain()
     # GS445 patches GS364's already-installed backup materializer before app.py builds
@@ -58,6 +59,10 @@ def ensure_late_runtime_installers() -> None:
     # process startup still receives the full tracemalloc/GC/deep-size report, while
     # recurring full-app AutoScan reruns use a constant-cost RSS-only observation.
     install_gs449()
+    # GS450 wraps GS449 immediately. If the first full startup profile itself enabled
+    # tracemalloc, release that tracing state as soon as the completed report returns;
+    # pre-existing external tracing and later explicit scan profiles remain untouched.
+    install_gs450()
     install_gs416()
     # GS423 runs after the legacy chain so warm Streamlit deployments cannot retain an
     # inherited GS421 marker while missing the efficient analyzed->recorder handoff.
@@ -227,5 +232,5 @@ ensure_reclaim_watch()
 # obsolete post-scan scheduler deadtime, GS435 removes stale-owner due latency, GS445
 # removes append-only backup recompression, GS446/GS448 defer the two large backup
 # payloads until operator click, GS449 bounds the full startup object-graph profiler
-# to once per process, and GS436 hard-binds the final enriched Opportunity State
-# ordering boundary.
+# to once per process, GS450 releases its tracemalloc bookkeeping after that report,
+# and GS436 hard-binds the final enriched Opportunity State ordering boundary.
