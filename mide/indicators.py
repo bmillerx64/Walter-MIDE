@@ -29,52 +29,59 @@ def atr(df: pd.DataFrame, period: int = 10) -> pd.Series:
 
 
 def supertrend(df: pd.DataFrame, period: int = 10, multiplier: float = 3.0):
+    """Return Walter's unchanged SuperTrend values using an array recurrence.
+
+    The recurrence is inherently sequential, but assigning through pandas ``.iloc``
+    inside that loop is extremely expensive.  Walter evaluates this same indicator
+    hundreds of times per scan across 30s/1m/3m/5m/10m/15m views.  Keep the exact
+    ATR, band, comparison, seed, and direction rules while moving only the recurrence
+    storage to NumPy arrays; convert back to identically indexed Series at the end.
+    """
     if len(df) < period + 2:
         return pd.Series(index=df.index, dtype=float), pd.Series(
             index=df.index, dtype=bool
         )
     hl2 = (df["high"] + df["low"]) / 2
     atr_value = atr(df, period)
-    upper = hl2 + multiplier * atr_value
-    lower = hl2 - multiplier * atr_value
+    upper = (hl2 + multiplier * atr_value).to_numpy(dtype=float, copy=True)
+    lower = (hl2 - multiplier * atr_value).to_numpy(dtype=float, copy=True)
+    atr_values = atr_value.to_numpy(dtype=float, copy=False)
+    close = df["close"].to_numpy(dtype=float, copy=False)
     final_upper = upper.copy()
     final_lower = lower.copy()
-    trend = pd.Series(True, index=df.index, dtype=bool)
-    st = pd.Series(np.nan, index=df.index, dtype=float)
+    trend = np.ones(len(df), dtype=bool)
+    st = np.full(len(df), np.nan, dtype=float)
 
     for i in range(1, len(df)):
         prev = i - 1
-        if pd.isna(atr_value.iloc[i]):
+        if np.isnan(atr_values[i]):
             continue
-        # Seed the bands on the first ATR-ready bar.  Without this, the leading
-        # NaNs propagate through every comparison and direction is always false.
-        if pd.isna(final_upper.iloc[prev]) or pd.isna(final_lower.iloc[prev]):
-            final_upper.iloc[i] = upper.iloc[i]
-            final_lower.iloc[i] = lower.iloc[i]
-            trend.iloc[i] = trend.iloc[prev]
-            st.iloc[i] = final_lower.iloc[i] if trend.iloc[i] else final_upper.iloc[i]
+        # Seed the bands on the first ATR-ready bar.  This is the exact historical
+        # Walter rule; only the backing storage changed from pandas Series to arrays.
+        if np.isnan(final_upper[prev]) or np.isnan(final_lower[prev]):
+            final_upper[i] = upper[i]
+            final_lower[i] = lower[i]
+            trend[i] = trend[prev]
+            st[i] = final_lower[i] if trend[i] else final_upper[i]
             continue
-        if (
-            upper.iloc[i] < final_upper.iloc[prev]
-            or df["close"].iloc[prev] > final_upper.iloc[prev]
-        ):
-            final_upper.iloc[i] = upper.iloc[i]
+        if upper[i] < final_upper[prev] or close[prev] > final_upper[prev]:
+            final_upper[i] = upper[i]
         else:
-            final_upper.iloc[i] = final_upper.iloc[prev]
-        if (
-            lower.iloc[i] > final_lower.iloc[prev]
-            or df["close"].iloc[prev] < final_lower.iloc[prev]
-        ):
-            final_lower.iloc[i] = lower.iloc[i]
+            final_upper[i] = final_upper[prev]
+        if lower[i] > final_lower[prev] or close[prev] < final_lower[prev]:
+            final_lower[i] = lower[i]
         else:
-            final_lower.iloc[i] = final_lower.iloc[prev]
+            final_lower[i] = final_lower[prev]
 
-        if trend.iloc[prev]:
-            trend.iloc[i] = df["close"].iloc[i] >= final_lower.iloc[i]
+        if trend[prev]:
+            trend[i] = close[i] >= final_lower[i]
         else:
-            trend.iloc[i] = df["close"].iloc[i] > final_upper.iloc[i]
-        st.iloc[i] = final_lower.iloc[i] if trend.iloc[i] else final_upper.iloc[i]
-    return st, trend
+            trend[i] = close[i] > final_upper[i]
+        st[i] = final_lower[i] if trend[i] else final_upper[i]
+    return (
+        pd.Series(st, index=df.index, dtype=float),
+        pd.Series(trend, index=df.index, dtype=bool),
+    )
 
 
 def rsi(series: pd.Series, period: int = 14) -> pd.Series:
