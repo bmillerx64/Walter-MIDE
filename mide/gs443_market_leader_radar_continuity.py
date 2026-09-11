@@ -14,9 +14,11 @@ GS443 reuses established thresholds rather than creating a new qualification fam
 
 The continuity strip is presentation-only and intentionally fills only the gap left by
 existing lanes. It excludes symbols already in Mission, already eligible for GS305
-attention, and 75%+ extreme movers already owned by GS333. It never plays audio,
-changes scores, manufactures LOOK NOW / ENTRY READY semantics, or alters discovery,
-qualification, readiness, thresholds, execution, or orders.
+attention, and the one extraordinary mover already being displayed by GS333. Other
+simultaneous leaders remain eligible for this watch-only continuity lane, even above
++75%, so one extreme mover cannot hide another. It never plays audio, changes scores,
+manufactures LOOK NOW / ENTRY READY semantics, or alters discovery, qualification,
+readiness, thresholds, execution, or orders.
 """
 from __future__ import annotations
 
@@ -27,7 +29,6 @@ from collections.abc import Iterable
 MAJOR_MOVER_PCT = 20.0
 MIN_DOLLAR_VOLUME = 250_000.0
 LEADER_DOMINANCE = 78.0
-EXTREME_MOVER_PCT = 75.0
 
 
 def _number(record: dict, *keys: str, default: float | None = None) -> float | None:
@@ -66,13 +67,21 @@ def market_leader_candidate(
     """Return one uncovered current leader plus display evidence, without mutation."""
     from .gs305_second_wave_attention import attention_evaluation
     from .gs309_current_attention_mission import current_attention_provenance
+    from .gs333_extreme_mover_operator_priority import prioritized_extreme_event
 
+    records = list(records or [])
     focused = _focused_symbols(mission)
+    displayed_extreme, _event = prioritized_extreme_event(records)
+    displayed_extreme_symbol = (
+        str(displayed_extreme.get("symbol") or "").strip().upper()
+        if isinstance(displayed_extreme, dict)
+        else ""
+    )
     choices: list[tuple[tuple[float, float, float], dict, dict]] = []
 
-    for record in records or []:
+    for record in records:
         symbol = str(record.get("symbol") or "").strip().upper()
-        if not symbol or symbol in focused:
+        if not symbol or symbol in focused or symbol == displayed_extreme_symbol:
             continue
 
         # This lane is for current session leaders, not stale ledger names or pure
@@ -90,11 +99,6 @@ def market_leader_candidate(
         if dollar_volume < MIN_DOLLAR_VOLUME:
             continue
         if dominance < LEADER_DOMINANCE:
-            continue
-
-        # GS333 already owns extraordinary 75%+ current movers at the operator
-        # sightline. Do not create a second panel for the same event.
-        if pct_change >= EXTREME_MOVER_PCT:
             continue
 
         # GS305 already supplies a structure-aware early-attention lane. GS443 is
