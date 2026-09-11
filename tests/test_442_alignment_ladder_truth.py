@@ -71,6 +71,7 @@ def test_gs442_is_chained_from_gs441_for_cold_and_warm_sessions():
 
 def test_gs442_scope_lock_is_presentation_only():
     source = Path("mide/gs442_alignment_ladder_truth.py").read_text(encoding="utf-8")
+    requirements = Path("requirements.txt").read_text(encoding="utf-8")
     forbidden = (
         "qualified_for_entry =",
         "qualified_for_alert =",
@@ -84,3 +85,10 @@ def test_gs442_scope_lock_is_presentation_only():
         "place_order(",
     )
     assert not any(token in source for token in forbidden)
+    assert requirements.startswith("# GS442 deployment marker:")
+    assert "streamlit==1.62.0" in requirements
+    assert "pandas==2.3.3" in requirements
+    assert "numpy==2.5.1" in requirements
+    assert "requests==2.34.2" in requirements
+    assert "paho-mqtt==1.6.1" in requirements
+    assert "webull-openapi-python-sdk==2.0.16" in requirements
