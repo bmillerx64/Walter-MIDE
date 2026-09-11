@@ -29,7 +29,7 @@ def test_download_buttons_default_to_ignore_without_overriding_explicit_behavior
     assert calls[-1][1]["on_click"] == "rerun"
 
 
-def test_flight_recorder_download_uses_stable_key_and_deferred_payload(monkeypatch):
+def test_flight_recorder_download_uses_stable_key_and_preserves_direct_payload(monkeypatch):
     calls = []
 
     def fake_download_button(*args, **kwargs):
@@ -45,8 +45,7 @@ def test_flight_recorder_download_uses_stable_key_and_deferred_payload(monkeypat
     _, kwargs = calls[-1]
     assert kwargs["key"] == FLIGHT_RECORDER_KEY
     assert kwargs["on_click"] == "ignore"
-    assert callable(kwargs["data"])
-    assert kwargs["data"]() == payload
+    assert kwargs["data"] is payload
 
 
 def test_flight_recorder_download_preserves_explicit_key_and_callable(monkeypatch):
@@ -73,7 +72,7 @@ def test_flight_recorder_download_preserves_explicit_key_and_callable(monkeypatc
     assert kwargs["data"] is payload_factory
 
 
-def test_flight_recorder_positional_payload_is_deferred(monkeypatch):
+def test_flight_recorder_positional_payload_is_preserved(monkeypatch):
     calls = []
 
     def fake_download_button(*args, **kwargs):
@@ -88,8 +87,7 @@ def test_flight_recorder_positional_payload_is_deferred(monkeypatch):
 
     args, kwargs = calls[-1]
     assert kwargs["key"] == FLIGHT_RECORDER_KEY
-    assert callable(args[1])
-    assert args[1]() == payload
+    assert args[1] is payload
 
 
 def test_install_is_idempotent(monkeypatch):
