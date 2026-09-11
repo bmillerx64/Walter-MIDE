@@ -80,12 +80,21 @@ def distinct_action_markup(markup: str) -> str:
     return text
 
 
+def _install_gs442() -> None:
+    from .gs442_alignment_ladder_truth import install as install_gs442
+
+    install_gs442()
+
+
 def install() -> None:
     """Install as the final browser-audio presentation wrapper."""
     from . import gs367_browser_audio_broker as broker
 
     current = broker.browser_broker_markup
     if getattr(current, "_gs441_distinct_action_audio", False):
+        # Warm sessions may already own GS441. Still converge the newer final
+        # operator-presentation layer without rebinding the audio wrapper.
+        _install_gs442()
         return
 
     @wraps(current)
@@ -95,3 +104,4 @@ def install() -> None:
     browser_broker_markup._gs441_distinct_action_audio = True
     browser_broker_markup._gs441_original = current
     broker.browser_broker_markup = browser_broker_markup
+    _install_gs442()
