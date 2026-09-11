@@ -1,19 +1,27 @@
-"""GS393: align operator ignition with live Webull behavior and decay stale extreme banners.
+"""GS393/GS439: align operator ignition and keep the top sightline action-first.
 
 Live validation on 2026-09-08 showed two operator-truth failures:
 
 1. Walter's GS348 attention path treated a literal SuperTrend-line/VWAP-line cross as
-   ignition.  On GCDT the useful move began much earlier: price reclaimed/held VWAP
-   while the 1-minute SuperTrend turned bullish.  Waiting for the lagging ST line to
+   ignition. On GCDT the useful move began much earlier: price reclaimed/held VWAP
+   while the 1-minute SuperTrend turned bullish. Waiting for the lagging ST line to
    physically cross VWAP caused Walter to miss the actionable chart-review window.
 2. GS333 intentionally pinned +75% extreme movers above ordinary states with no TTL,
    so a correctly-labeled DO NOT CHASE event could monopolize the top sightline for
    many minutes while fresher DEVELOPING/LOOK NOW setups formed below it.
 
-GS393 changes operator attention/alert semantics only.  It does not change discovery,
-market-data requests, ranking, qualification, readiness, entry thresholds, execution,
-or orders.  The anti-chase VWAP rule remains authoritative.  Literal ST-line/VWAP
-crosses remain available as secondary maturation evidence in GS378/GS390.
+GS393 added primary 1m ignition truth plus a short TTL for an extended extreme banner.
+GS439 tightens the operator contract exposed by live validation on 2026-09-11: even a
+*fresh* EXTREME MOVER / DO NOT CHASE banner must immediately yield the top sightline
+when another symbol is WATCH FOR ENTRY, LOOK NOW, or DEVELOPING. The extended mover
+remains visible through its ordinary CHASE / WAIT card and market-event awareness;
+it simply stops displacing a setup the trader can actually work. HALTED and near-VWAP
+EXTREME MOVER / LOOK NOW events remain immediate top-level attention.
+
+These changes affect operator attention/alert presentation only. They do not change
+discovery, market-data requests, ranking, qualification, readiness, entry thresholds,
+execution, or orders. The anti-chase VWAP rule remains authoritative. Literal
+ST-line/VWAP crosses remain available as secondary maturation evidence in GS378/GS390.
 """
 from __future__ import annotations
 
@@ -108,9 +116,9 @@ def _supporting_flow(record: dict) -> tuple[bool, list[str]]:
 def ignition_evidence(record: dict) -> dict:
     """Return the operator ignition truth from already-computed Stage-6 evidence.
 
-    Primary ignition is *not* a lagging ST-line/VWAP-line intersection.  It is a
+    Primary ignition is *not* a lagging ST-line/VWAP-line intersection. It is a
     fresh 1m bullish SuperTrend state occurring with a fresh VWAP reclaim/hold, or a
-    fresh 1m bullish ST flip while price is already above VWAP.  3m remains
+    fresh 1m bullish ST flip while price is already above VWAP. 3m remains
     confirmation, never permission to begin chart review.
     """
     relation = str(record.get("vwap_relation") or "").strip().lower()
@@ -229,17 +237,47 @@ def _install_ignition_state() -> None:
     hierarchy.opportunity_state = calibrated
 
 
+def _actionable_operator_symbols(rows: list[dict]) -> set[str]:
+    """Return symbols whose current state deserves attention before DO NOT CHASE.
+
+    Fail open: if a presentation-state calculation unexpectedly errors, Walter keeps
+    the existing extreme-event behavior rather than hiding market awareness.
+    """
+    from . import gs310_unified_opportunity_state as unified
+
+    priority_states = {
+        unified.WATCH_FOR_ENTRY,
+        unified.LOOK_NOW,
+        unified.DEVELOPING,
+    }
+    symbols: set[str] = set()
+    for record in rows:
+        symbol = str(record.get("symbol") or "").strip().upper()
+        if not symbol:
+            continue
+        try:
+            state = unified.opportunity_state(record).get("state")
+        except Exception:
+            continue
+        if state in priority_states:
+            symbols.add(symbol)
+    return symbols
+
+
 def _install_extreme_banner_decay() -> None:
-    """Keep a new extreme event prominent briefly; stop pinning stale DO NOT CHASE."""
+    """Keep urgent extremes visible while making the top sightline action-first."""
     from . import gs333_extreme_mover_operator_priority as extreme
 
     current = extreme.prioritized_extreme_event
-    if getattr(current, "_gs393_extreme_decay", False):
+    # GS439 needs to replace a retained pre-GS439 GS393 closure in warm Streamlit
+    # runtimes. The historical GS393 marker alone is therefore not installation proof.
+    if getattr(current, "_gs439_action_first_extreme", False):
         return
 
     def prioritized_with_decay(records, *, now: float | None = None):
         stamp = monotonic() if now is None else float(now)
         rows = list(records or [])
+        actionable_symbols = _actionable_operator_symbols(rows)
         extreme_symbols: set[str] = set()
         choices: list[tuple[tuple, dict, dict]] = []
 
@@ -255,13 +293,21 @@ def _install_extreme_banner_decay() -> None:
 
             label = str(event.get("label") or "").upper()
             elapsed = max(0.0, stamp - _extreme_first_seen[symbol])
-            # HALTED and near-VWAP LOOK NOW remain immediate market events.  A far-
-            # extended DO NOT CHASE banner gets a short top-of-screen TTL, then the
-            # symbol remains visible through ordinary CHASE/WAIT and event lanes.
+            competing_action = any(
+                candidate_symbol != symbol for candidate_symbol in actionable_symbols
+            )
+            # HALTED and near-VWAP LOOK NOW remain immediate market events. A far-
+            # extended DO NOT CHASE banner may lead briefly only when Walter has no
+            # other symbol in WATCH FOR ENTRY / LOOK NOW / DEVELOPING. As soon as a
+            # workable setup exists, the untouchable runner yields the top sightline
+            # and remains visible in its ordinary CHASE / WAIT and market-event lanes.
             eligible = (
                 "HALTED" in label
                 or "LOOK NOW" in label
-                or elapsed <= EXTREME_DO_NOT_CHASE_TOP_TTL_SECONDS
+                or (
+                    not competing_action
+                    and elapsed <= EXTREME_DO_NOT_CHASE_TOP_TTL_SECONDS
+                )
             )
             if not eligible:
                 continue
@@ -290,6 +336,7 @@ def _install_extreme_banner_decay() -> None:
         return record, event
 
     prioritized_with_decay._gs393_extreme_decay = True
+    prioritized_with_decay._gs439_action_first_extreme = True
     prioritized_with_decay._gs393_original = current
     extreme.prioritized_extreme_event = prioritized_with_decay
 
