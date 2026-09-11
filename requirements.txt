@@ -1,3 +1,6 @@
+# GS441 deployment marker: force one clean Streamlit Community Cloud runtime so
+# the final action-only LOOK NOW / entry-urgency audio signatures load everywhere.
+# No dependency versions change in this deployment-only activation.
 # GS440 deployment marker: force one clean Streamlit Community Cloud runtime so
 # Live Opportunity Feed signal-to-noise and same-scan operator priority load cleanly.
 # No dependency versions change in this deployment-only activation.
