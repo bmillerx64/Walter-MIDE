@@ -34,6 +34,7 @@ def ensure_late_runtime_installers() -> None:
     from .gs426_intraday_free_float_cache import install as install_gs426
     from .gs427_flight_recorder_latency_hard_bind import install as install_gs427
     from .gs428_scheduler_deadtime_release import install as install_gs428
+    from .gs435_due_deadline_owner_handoff import install as install_gs435
 
     install_late_chain()
     install_gs416()
@@ -56,6 +57,9 @@ def ensure_late_runtime_installers() -> None:
     # completed-scan handoff delay from the production watchdog singleton while the
     # process-wide scheduler owner and no-overlap watchdog remain authoritative.
     install_gs428()
+    # GS435 runs outside GS413 so a live passive session can take cadence ownership
+    # exactly when the shared real scan-start deadline is due, not after a 120s lease.
+    install_gs435()
 
 
 def log_startup(component: str, message: str = "starting") -> None:
@@ -104,8 +108,8 @@ def startup_step(component: str) -> Iterator[None]:
 
 def instrument_startup(component: str) -> Callable[[Callable[..., _T]], Callable[..., _T]]:
     """Decorate a component so its start, duration, and delay are reported."""
-    def decorate(function: Callable[..., _T]) -> Callable[..., _T]:
-        def instrumented(*args, **kwargs) -> _T:
+    def decorate(function):
+        def instrumented(*args, **kwargs):
             with startup_step(component):
                 return function(*args, **kwargs)
 
@@ -193,5 +197,5 @@ ensure_reclaim_watch()
 # installs the persistent-provider warm-history cache after all evidence wrappers,
 # GS425 measures that final acquisition boundary without changing it, GS426 removes
 # repeated same-day Yahoo free-float refreshes without changing float gates, GS427
-# hard-binds latency/build evidence to the active recorder call graph, and GS428
-# releases obsolete post-scan scheduler deadtime only after GS413 owns AutoScan.
+# hard-binds latency/build evidence to the active recorder call graph, GS428 releases
+# obsolete post-scan scheduler deadtime, and GS435 removes stale-owner due latency.
