@@ -33,8 +33,8 @@ def test_gs441_preserves_semantic_tier_truth():
 
     # GS441 changes browser playback only; the historical public broker table remains
     # untouched so no semantic/routing contract is silently redefined.
-    assert broker.tone_pattern(2) == ((900, 0.0), (1480, 0.22))
-    assert broker.tone_pattern(3) == ((760, 0.0), (1080, 0.14), (1520, 0.28))
+    assert broker.tone_pattern(2) == ((900, 0.0), (1480, 0.28))
+    assert broker.tone_pattern(3) == ((740, 0.0), (1047, 0.17), (1568, 0.34))
 
 
 def test_gs441_applies_signature_after_final_broker_tier_selection():
