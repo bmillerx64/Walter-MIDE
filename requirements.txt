@@ -1,3 +1,6 @@
+# GS436 deployment marker: force one clean Streamlit Community Cloud runtime so
+# the final enriched Opportunity State ordering boundary is hard-bound everywhere.
+# No dependency versions change in this deployment-only activation.
 # GS435 deployment marker: force one clean Streamlit Community Cloud runtime so
 # due-deadline AutoScan owner handoff is loaded across every live session.
 # No dependency versions change in this deployment-only activation.
