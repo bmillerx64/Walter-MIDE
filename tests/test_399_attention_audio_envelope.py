@@ -3,6 +3,13 @@ from mide import gs392_operator_order_audio as gs392
 from mide import gs399_attention_audio_envelope as gs399
 
 
+def _pre_gs441_markup(scan_token: str, tier: int) -> str:
+    """Exercise GS399's own layer even when the final GS441 wrapper is installed."""
+    current = broker.browser_broker_markup
+    pre_gs441 = getattr(current, "_gs441_original", current)
+    return pre_gs441(scan_token, tier)
+
+
 def test_gs399_preserves_existing_semantic_tone_patterns():
     gs392.install()
 
@@ -13,7 +20,7 @@ def test_gs399_preserves_existing_semantic_tone_patterns():
 
 def test_gs399_markup_encodes_distinct_look_now_and_entry_envelopes():
     gs399.install()
-    markup = broker.browser_broker_markup("scan-gs399", 2)
+    markup = _pre_gs441_markup("scan-gs399", 2)
 
     assert (
         "oscillator.type = tier === 2 ? 'triangle' : (tier === 3 ? 'sawtooth' : 'sine');"
@@ -26,7 +33,7 @@ def test_gs399_markup_encodes_distinct_look_now_and_entry_envelopes():
 
 def test_gs399_applies_envelope_after_final_broker_tier_selection():
     gs399.install()
-    markup = broker.browser_broker_markup("scan-gs399-priority", 3)
+    markup = _pre_gs441_markup("scan-gs399-priority", 3)
 
     tier_selection = markup.index(
         "const tier = Math.max(1, Math.min(3, Number(broker.tier || 1)));"
@@ -39,7 +46,7 @@ def test_gs399_applies_envelope_after_final_broker_tier_selection():
 
 def test_gs399_keeps_routine_fallback_values_unchanged():
     gs399.install()
-    markup = broker.browser_broker_markup("scan-gs399-routine", 1)
+    markup = _pre_gs441_markup("scan-gs399-routine", 1)
 
     assert "'sine'" in markup
     assert ": 0.24" in markup
