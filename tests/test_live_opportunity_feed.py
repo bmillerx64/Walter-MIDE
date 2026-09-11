@@ -1,6 +1,11 @@
 from datetime import datetime, timezone
 
-from mide.live_opportunity_feed import opportunity_feed_changes, update_opportunity_feed
+from mide.live_opportunity_feed import (
+    FEED_SCHEMA_VERSION,
+    FEED_TIME_BASIS,
+    opportunity_feed_changes,
+    update_opportunity_feed,
+)
 
 
 NOW = datetime(2026, 7, 27, 14, 30, 15)
@@ -17,6 +22,18 @@ def state(**overrides):
     }
     value.update(overrides)
     return value
+
+
+def current_event(message: str = "older") -> dict:
+    return {
+        "time": "14:29:00",
+        "time_basis": FEED_TIME_BASIS,
+        "schema_version": FEED_SCHEMA_VERSION,
+        "symbol": "OLD",
+        "message": message,
+        "color": "yellow",
+        "confidence_delta": None,
+    }
 
 
 def test_feed_reports_only_material_transitions():
@@ -42,6 +59,8 @@ def test_feed_reports_only_material_transitions():
         "ENTRY WINDOW OPEN",
     ]
     assert all(event["time"] == "14:30:15" for event in changes)
+    assert all(event["time_basis"] == FEED_TIME_BASIS for event in changes)
+    assert all(event["schema_version"] == FEED_SCHEMA_VERSION for event in changes)
 
 
 def test_feed_converts_utc_scan_time_to_eastern_display_time():
@@ -55,6 +74,8 @@ def test_feed_converts_utc_scan_time_to_eastern_display_time():
     assert changes == [
         {
             "time": "10:30:58",
+            "time_basis": FEED_TIME_BASIS,
+            "schema_version": FEED_SCHEMA_VERSION,
             "symbol": "OLD",
             "message": "Symbol removed from Focus",
             "color": "red",
@@ -89,7 +110,9 @@ def test_feed_reports_negative_changes_and_focus_removal():
 
 def test_feed_does_not_emit_initial_state_and_retains_ten_events():
     record = {"symbol": "DSX", "conviction_score": 70}
-    snapshot, events = update_opportunity_feed(record and [record], {}, [{}] * 25, NOW)
+    snapshot, events = update_opportunity_feed(
+        record and [record], {}, [current_event(str(index)) for index in range(25)], NOW
+    )
 
     assert snapshot["DSX"]["confidence"] == 70
     assert len(events) == 10
@@ -123,7 +146,7 @@ def test_new_events_are_newest_first():
     _, events = update_opportunity_feed(
         [],
         {"OLD": state()},
-        [{"message": "older"}],
+        [current_event()],
         NOW,
     )
 
@@ -131,3 +154,18 @@ def test_new_events_are_newest_first():
         "Symbol removed from Focus",
         "older",
     ]
+
+
+def test_feed_drops_legacy_rows_with_ambiguous_pre_gs438_clock_basis():
+    legacy_utc_row = {
+        "time": "14:43:24",
+        "symbol": "CRMT",
+        "message": "Symbol removed from Focus",
+        "color": "red",
+        "confidence_delta": None,
+    }
+    valid = current_event("valid Eastern row")
+
+    _, events = update_opportunity_feed([], {}, [legacy_utc_row, valid], NOW)
+
+    assert events == [valid]

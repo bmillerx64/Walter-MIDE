@@ -11,6 +11,8 @@ PARTICIPATION_THRESHOLD = 90.0
 EXTENDED_DISTANCE = 2.0
 MATERIAL_CONFIDENCE_DELTA = 5
 FEED_EVENT_LIMIT = 10
+FEED_TIME_BASIS = "America/New_York"
+FEED_SCHEMA_VERSION = 2
 
 
 def _number(record: dict, *keys: str) -> float:
@@ -57,11 +59,21 @@ def _event(symbol: str, message: str, color: str, when: datetime, delta=None) ->
     """Build one feed event using Walter's user-facing U.S. market clock."""
     return {
         "time": eastern_time(when).strftime("%H:%M:%S"),
+        "time_basis": FEED_TIME_BASIS,
+        "schema_version": FEED_SCHEMA_VERSION,
         "symbol": symbol,
         "message": message,
         "color": color,
         "confidence_delta": delta,
     }
+
+
+def _is_current_clock_event(event: dict) -> bool:
+    """Reject pre-GS438 feed rows whose stored clock basis is ambiguous."""
+    return (
+        event.get("time_basis") == FEED_TIME_BASIS
+        and event.get("schema_version") == FEED_SCHEMA_VERSION
+    )
 
 
 def opportunity_feed_changes(
@@ -137,7 +149,15 @@ def opportunity_feed_changes(
 def update_opportunity_feed(
     records: list[dict], previous: dict[str, dict], events: list[dict], when: datetime
 ) -> tuple[dict[str, dict], list[dict]]:
-    """Return the new snapshot and a newest-first, ten-event mission log."""
+    """Return the new snapshot and a newest-first, ten-event mission log.
+
+    GS438 deliberately drops feed rows created before the explicit Eastern-time
+    schema. Streamlit can preserve session state across a deployment, which is why
+    GS437's correctly converted new rows could appear beside older UTC rows in the
+    same live feed. Ambiguous legacy rows are presentation history only, so removing
+    them is safer than guessing their clock basis.
+    """
     current = opportunity_feed_snapshot(records)
     changes = opportunity_feed_changes(previous, current, when) if previous else []
-    return current, (list(reversed(changes)) + list(events))[:FEED_EVENT_LIMIT]
+    retained = [event for event in events if _is_current_clock_event(event)]
+    return current, (list(reversed(changes)) + retained)[:FEED_EVENT_LIMIT]
