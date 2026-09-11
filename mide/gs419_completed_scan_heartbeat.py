@@ -68,12 +68,21 @@ def _inherit(wrapper, wrapped) -> None:
             setattr(wrapper, name, value)
 
 
+def _install_gs441() -> None:
+    from .gs441_distinct_action_audio import install as install_gs441
+
+    install_gs441()
+
+
 def install() -> None:
     """Install after GS414 at the final Opportunity State presentation boundary."""
     from . import ui
 
     current = ui.render_escalation_engine
     if getattr(current, "_gs419_completed_scan_heartbeat", False):
+        # Warm Streamlit sessions may already own GS419 while loading GS441. Always
+        # converge the final browser-audio layer even when this renderer needs no rebind.
+        _install_gs441()
         return
 
     @wraps(current)
@@ -91,3 +100,4 @@ def install() -> None:
     render_with_completed_scan_heartbeat._gs419_completed_scan_heartbeat = True
     render_with_completed_scan_heartbeat._gs419_original = current
     ui.render_escalation_engine = render_with_completed_scan_heartbeat
+    _install_gs441()
