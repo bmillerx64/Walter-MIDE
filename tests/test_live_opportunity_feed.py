@@ -64,10 +64,10 @@ def test_feed_reports_structural_transitions_without_confidence_chatter():
     assert all(event["schema_version"] == FEED_SCHEMA_VERSION for event in changes)
 
 
-def test_feed_converts_utc_scan_time_to_eastern_display_time():
+def test_feed_converts_utc_scan_time_to_eastern_for_entry_window_focus_loss():
     utc_scan = datetime(2026, 9, 11, 14, 30, 58, tzinfo=timezone.utc)
     changes = opportunity_feed_changes(
-        {"OLD": state()},
+        {"OLD": state(entry_open=True)},
         {},
         utc_scan,
     )
@@ -78,11 +78,19 @@ def test_feed_converts_utc_scan_time_to_eastern_display_time():
             "time_basis": FEED_TIME_BASIS,
             "schema_version": FEED_SCHEMA_VERSION,
             "symbol": "OLD",
-            "message": "Symbol removed from Focus",
+            "message": "ENTRY WINDOW LEFT FOCUS",
             "color": "red",
             "confidence_delta": None,
         }
     ]
+
+
+def test_routine_focus_rotation_is_not_a_feed_event():
+    assert opportunity_feed_changes(
+        {"AIXC": state(), "FTFT": state(building=True)},
+        {},
+        NOW,
+    ) == []
 
 
 def test_feed_ignores_unchanged_states_and_small_confidence_moves():
@@ -110,7 +118,7 @@ def test_feed_reports_large_standalone_confidence_move_only():
     ]
 
 
-def test_feed_structural_change_suppresses_even_large_confidence_move():
+def test_feed_structural_change_suppresses_even_large_confidence_move_and_focus_housekeeping():
     changes = opportunity_feed_changes(
         {"DSX": state(vwap="above", confidence=85, entry_open=True), "OLD": state()},
         {"DSX": state(confidence=61)},
@@ -120,13 +128,12 @@ def test_feed_structural_change_suppresses_even_large_confidence_move():
     assert [(event["message"], event["color"]) for event in changes] == [
         ("Lost VWAP", "red"),
         ("Entry Window closed", "red"),
-        ("Symbol removed from Focus", "red"),
     ]
 
 
-def test_same_scan_feed_priority_puts_action_and_risk_before_housekeeping():
+def test_same_scan_feed_priority_keeps_entry_window_focus_loss_with_risk_events():
     changes = [
-        _event("OLD", "Symbol removed from Focus", "red", NOW),
+        _event("OLD", "ENTRY WINDOW LEFT FOCUS", "red", NOW),
         _event("DSX", "Confidence +20", "green", NOW, 20),
         _event("DSX", "Entered BUILDING", "yellow", NOW),
         _event("DSX", "VWAP reclaimed", "green", NOW),
@@ -137,11 +144,11 @@ def test_same_scan_feed_priority_puts_action_and_risk_before_housekeeping():
     ordered = sorted(changes, key=_event_priority, reverse=True)
     assert [event["message"] for event in ordered] == [
         "ENTRY WINDOW OPEN",
+        "ENTRY WINDOW LEFT FOCUS",
         "Too extended",
         "VWAP reclaimed",
         "Entered BUILDING",
         "Confidence +20",
-        "Symbol removed from Focus",
     ]
 
 
@@ -179,7 +186,7 @@ def test_feed_reports_building_pullback_and_extension_with_requested_colors():
     ]
 
 
-def test_new_events_are_newest_first():
+def test_routine_focus_rotation_does_not_displace_existing_feed_history():
     _, events = update_opportunity_feed(
         [],
         {"OLD": state()},
@@ -187,10 +194,7 @@ def test_new_events_are_newest_first():
         NOW,
     )
 
-    assert [event["message"] for event in events] == [
-        "Symbol removed from Focus",
-        "older",
-    ]
+    assert [event["message"] for event in events] == ["older"]
 
 
 def test_feed_drops_rows_from_older_presentation_schemas():
@@ -206,9 +210,9 @@ def test_feed_drops_rows_from_older_presentation_schemas():
         "time_basis": FEED_TIME_BASIS,
         "schema_version": FEED_SCHEMA_VERSION - 1,
         "symbol": "BDRX",
-        "message": "Confidence +7",
-        "color": "green",
-        "confidence_delta": 7,
+        "message": "Symbol removed from Focus",
+        "color": "red",
+        "confidence_delta": None,
     }
     valid = current_event("valid current row")
 
