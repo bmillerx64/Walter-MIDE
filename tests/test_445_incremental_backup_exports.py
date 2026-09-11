@@ -101,7 +101,8 @@ def test_gs445_install_reuses_gs364_memory_and_flight_export_wrappers(tmp_path, 
         gs445.install()
         installed = gs364._gzip_export
         assert getattr(installed, "_gs445_incremental_backup_exports", False)
-        assert getattr(installed, "_gs364_compressed_export", False) is False or True
+        assert getattr(MemoryStore.export_bytes, "_gs364_compressed_export", False)
+        assert getattr(FlightRecorder.export_bytes, "_gs364_compressed_export", False)
 
         history_path = tmp_path / "candidate.jsonl"
         flight_path = tmp_path / "flight.jsonl"
@@ -126,8 +127,9 @@ def test_gs445_is_installed_before_sidebar_backup_materialization():
     assert app.index('log_startup("entering app.py")') < app.index("data=get_store().export_bytes()")
 
 
-def test_gs445_scope_lock_is_export_materialization_only():
+def test_gs445_scope_lock_and_clean_runtime_marker():
     source = Path("mide/gs445_incremental_backup_exports.py").read_text(encoding="utf-8")
+    requirements = Path("requirements.txt").read_text(encoding="utf-8")
     forbidden = (
         "qualified_for_entry =",
         "qualified_for_alert =",
@@ -141,3 +143,10 @@ def test_gs445_scope_lock_is_export_materialization_only():
         "place_order(",
     )
     assert not any(token in source for token in forbidden)
+    assert requirements.startswith("# GS445 deployment marker:")
+    assert "streamlit==1.62.0" in requirements
+    assert "pandas==2.3.3" in requirements
+    assert "numpy==2.5.1" in requirements
+    assert "requests==2.34.2" in requirements
+    assert "paho-mqtt==1.6.1" in requirements
+    assert "webull-openapi-python-sdk==2.0.16" in requirements
