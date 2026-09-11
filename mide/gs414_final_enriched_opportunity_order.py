@@ -1,4 +1,4 @@
-"""GS414: anchor Opportunity State ordering after the final enrichment pass.
+"""GS414/GS436: anchor Opportunity State ordering after final enrichment.
 
 Live validation on 2026-09-10 exposed the same presentation failure GS401 was meant
 to prevent: an already-extended CHASE / WAIT symbol rendered above later-enriched
@@ -10,11 +10,24 @@ ordered enriched collection for the duration of that render. This prevents neste
 renderer/actionable wrappers from appending or reordering awareness records after the
 priority sort.
 
+GS436 closes the remaining warm-runtime failure seen on 2026-09-11. Walter's wrapper
+helpers intentionally inherit ``_gs*`` markers for compatibility. A later/stale
+renderer can therefore carry GS414's marker even when the actual GS414 wrapper is no
+longer the outer render boundary. Treating that inherited marker as installation
+proof lets CHASE / WAIT render above LOOK NOW or DEVELOPING again. GS436 uses a
+private non-inherited owner sentinel instead and re-runs this installer at the final
+late-runtime boundary, so only the actual outer GS414 wrapper can suppress rebinding.
+
 Presentation only. It does not change discovery, candidate membership, Webull market
 data, VWAP/SuperTrend evidence, participation, expansion, scoring, ranking,
 qualification, thresholds, readiness, alerts/audio, execution, or orders.
 """
 from __future__ import annotations
+
+
+# Deliberately does not begin with ``_gs``. Walter's compatibility wrappers inherit
+# ``_gs*`` markers; this owner sentinel must identify the actual outer callable only.
+FINAL_ORDER_OWNER_ATTR = "_walter_final_enriched_opportunity_order_owner"
 
 
 def _inherit(wrapper, wrapped) -> None:
@@ -46,9 +59,9 @@ def install() -> None:
     from . import ui
 
     current = ui.render_escalation_engine
-    if getattr(current, "_gs414_final_enriched_opportunity_order", False):
-        # Warm Streamlit processes may already own GS414 when newer late installers
-        # arrive; still converge the audio-only GS419 tail without a process restart.
+    if getattr(current, FINAL_ORDER_OWNER_ATTR, False):
+        # This is proof that the actual outer renderer is GS414/GS436. An inherited
+        # ``_gs414...`` marker alone is intentionally not sufficient.
         _install_gs419()
         return
 
@@ -74,6 +87,8 @@ def install() -> None:
 
     _inherit(render_with_final_enriched_order, current)
     render_with_final_enriched_order._gs414_final_enriched_opportunity_order = True
+    render_with_final_enriched_order._gs436_final_render_hard_bind = True
     render_with_final_enriched_order._gs414_original = current
+    setattr(render_with_final_enriched_order, FINAL_ORDER_OWNER_ATTR, True)
     ui.render_escalation_engine = render_with_final_enriched_order
     _install_gs419()

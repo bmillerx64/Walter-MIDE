@@ -27,6 +27,7 @@ def ensure_late_runtime_installers() -> None:
     import GS386+ without the hot-reload lock inversion fixed by GS410.
     """
     from .gs384_diagnostic_signal_to_noise import install as install_late_chain
+    from .gs414_final_enriched_opportunity_order import install as install_final_order
     from .gs416_validity_symbol_suffix import install as install_gs416
     from .gs423_convergence_handoff_efficiency import install as install_gs423
     from .gs424_warm_scan_history_cache import install as install_gs424
@@ -60,6 +61,11 @@ def ensure_late_runtime_installers() -> None:
     # GS435 runs outside GS413 so a live passive session can take cadence ownership
     # exactly when the shared real scan-start deadline is due, not after a 120s lease.
     install_gs435()
+    # GS436 reasserts the already-established GS414 presentation contract only after
+    # every late-runtime installer has converged. Its non-inherited owner sentinel
+    # distinguishes the actual outer renderer from a stale wrapper that merely copied
+    # GS414's historical marker during a warm Streamlit deployment.
+    install_final_order()
 
 
 def log_startup(component: str, message: str = "starting") -> None:
@@ -198,4 +204,5 @@ ensure_reclaim_watch()
 # GS425 measures that final acquisition boundary without changing it, GS426 removes
 # repeated same-day Yahoo free-float refreshes without changing float gates, GS427
 # hard-binds latency/build evidence to the active recorder call graph, GS428 releases
-# obsolete post-scan scheduler deadtime, and GS435 removes stale-owner due latency.
+# obsolete post-scan scheduler deadtime, GS435 removes stale-owner due latency, and
+# GS436 hard-binds the final enriched Opportunity State ordering boundary.
