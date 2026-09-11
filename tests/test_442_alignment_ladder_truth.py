@@ -85,7 +85,9 @@ def test_gs442_scope_lock_is_presentation_only():
         "place_order(",
     )
     assert not any(token in source for token in forbidden)
-    assert requirements.startswith("# GS442 deployment marker:")
+    # Newer deployment markers may legitimately sit above GS442. Preserve the
+    # GS442 marker itself rather than pinning it forever to the first line.
+    assert "# GS442 deployment marker:" in requirements
     assert "streamlit==1.62.0" in requirements
     assert "pandas==2.3.3" in requirements
     assert "numpy==2.5.1" in requirements
