@@ -1,3 +1,6 @@
+# GS435 deployment marker: force one clean Streamlit Community Cloud runtime so
+# due-deadline AutoScan owner handoff is loaded across every live session.
+# No dependency versions change in this deployment-only activation.
 # GS434 deployment marker: force one clean Streamlit Community Cloud runtime so
 # the fragment-owned Flight Recorder download boundary is loaded everywhere.
 # No dependency versions change in this deployment-only activation.
