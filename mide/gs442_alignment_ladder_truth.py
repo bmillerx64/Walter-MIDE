@@ -44,12 +44,21 @@ def _inherit(wrapper, wrapped) -> None:
             setattr(wrapper, name, value)
 
 
+def _install_gs443() -> None:
+    from .gs443_market_leader_radar_continuity import install as install_gs443
+
+    install_gs443()
+
+
 def install() -> None:
     """Replace only the final operator-facing alignment presentation helper."""
     from . import ui
 
     current = ui.alignment_markup
     if getattr(current, "_gs442_alignment_ladder_truth", False):
+        # Warm sessions can already own the GS442 helper. Still converge the next
+        # presentation layer so a deployment never leaves GS443 dormant.
+        _install_gs443()
         return
 
     def alignment_markup(record: dict) -> str:
@@ -62,3 +71,4 @@ def install() -> None:
     alignment_markup._gs442_alignment_ladder_truth = True
     alignment_markup._gs442_original = current
     ui.alignment_markup = alignment_markup
+    _install_gs443()
