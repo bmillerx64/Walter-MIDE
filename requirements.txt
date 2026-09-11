@@ -1,3 +1,6 @@
+# GS442 deployment marker: force one clean Streamlit Community Cloud runtime so
+# the operator alignment card renders Walter's canonical 30s/1m/3m evidence ladder.
+# No dependency versions change in this deployment-only activation.
 # GS441 deployment marker: force one clean Streamlit Community Cloud runtime so
 # the final action-only LOOK NOW / entry-urgency audio signatures load everywhere.
 # No dependency versions change in this deployment-only activation.
