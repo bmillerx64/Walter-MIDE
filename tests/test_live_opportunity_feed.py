@@ -3,6 +3,8 @@ from datetime import datetime, timezone
 from mide.live_opportunity_feed import (
     FEED_SCHEMA_VERSION,
     FEED_TIME_BASIS,
+    _event,
+    _event_priority,
     opportunity_feed_changes,
     update_opportunity_feed,
 )
@@ -36,7 +38,7 @@ def current_event(message: str = "older") -> dict:
     }
 
 
-def test_feed_reports_only_material_transitions():
+def test_feed_reports_structural_transitions_without_confidence_chatter():
     changes = opportunity_feed_changes(
         {"DSX": state()},
         {
@@ -44,7 +46,7 @@ def test_feed_reports_only_material_transitions():
                 participation=92,
                 vwap="above",
                 supertrend=True,
-                confidence=82,
+                confidence=90,
                 entry_open=True,
             )
         },
@@ -55,7 +57,6 @@ def test_feed_reports_only_material_transitions():
         "Participation 80→92",
         "VWAP reclaimed",
         "SuperTrend flipped bullish",
-        "Confidence +12",
         "ENTRY WINDOW OPEN",
     ]
     assert all(event["time"] == "14:30:15" for event in changes)
@@ -87,13 +88,29 @@ def test_feed_converts_utc_scan_time_to_eastern_display_time():
 def test_feed_ignores_unchanged_states_and_small_confidence_moves():
     assert (
         opportunity_feed_changes(
-            {"DSX": state(confidence=70)}, {"DSX": state(confidence=74)}, NOW
+            {"DSX": state(confidence=70)}, {"DSX": state(confidence=84)}, NOW
         )
         == []
     )
 
 
-def test_feed_reports_negative_changes_and_focus_removal():
+def test_feed_reports_large_standalone_confidence_move_only():
+    positive = opportunity_feed_changes(
+        {"DSX": state(confidence=60)}, {"DSX": state(confidence=76)}, NOW
+    )
+    negative = opportunity_feed_changes(
+        {"DSX": state(confidence=80)}, {"DSX": state(confidence=62)}, NOW
+    )
+
+    assert [(event["message"], event["color"]) for event in positive] == [
+        ("Confidence +16", "green")
+    ]
+    assert [(event["message"], event["color"]) for event in negative] == [
+        ("Confidence -18", "red")
+    ]
+
+
+def test_feed_structural_change_suppresses_even_large_confidence_move():
     changes = opportunity_feed_changes(
         {"DSX": state(vwap="above", confidence=85, entry_open=True), "OLD": state()},
         {"DSX": state(confidence=61)},
@@ -102,9 +119,29 @@ def test_feed_reports_negative_changes_and_focus_removal():
 
     assert [(event["message"], event["color"]) for event in changes] == [
         ("Lost VWAP", "red"),
-        ("Confidence -24", "red"),
         ("Entry Window closed", "red"),
         ("Symbol removed from Focus", "red"),
+    ]
+
+
+def test_same_scan_feed_priority_puts_action_and_risk_before_housekeeping():
+    changes = [
+        _event("OLD", "Symbol removed from Focus", "red", NOW),
+        _event("DSX", "Confidence +20", "green", NOW, 20),
+        _event("DSX", "Entered BUILDING", "yellow", NOW),
+        _event("DSX", "VWAP reclaimed", "green", NOW),
+        _event("DSX", "Too extended", "red", NOW),
+        _event("DSX", "ENTRY WINDOW OPEN", "green", NOW),
+    ]
+
+    ordered = sorted(changes, key=_event_priority, reverse=True)
+    assert [event["message"] for event in ordered] == [
+        "ENTRY WINDOW OPEN",
+        "Too extended",
+        "VWAP reclaimed",
+        "Entered BUILDING",
+        "Confidence +20",
+        "Symbol removed from Focus",
     ]
 
 
@@ -156,7 +193,7 @@ def test_new_events_are_newest_first():
     ]
 
 
-def test_feed_drops_legacy_rows_with_ambiguous_pre_gs438_clock_basis():
+def test_feed_drops_rows_from_older_presentation_schemas():
     legacy_utc_row = {
         "time": "14:43:24",
         "symbol": "CRMT",
@@ -164,8 +201,19 @@ def test_feed_drops_legacy_rows_with_ambiguous_pre_gs438_clock_basis():
         "color": "red",
         "confidence_delta": None,
     }
-    valid = current_event("valid Eastern row")
+    prior_schema_row = {
+        "time": "10:43:24",
+        "time_basis": FEED_TIME_BASIS,
+        "schema_version": FEED_SCHEMA_VERSION - 1,
+        "symbol": "BDRX",
+        "message": "Confidence +7",
+        "color": "green",
+        "confidence_delta": 7,
+    }
+    valid = current_event("valid current row")
 
-    _, events = update_opportunity_feed([], {}, [legacy_utc_row, valid], NOW)
+    _, events = update_opportunity_feed(
+        [], {}, [legacy_utc_row, prior_schema_row, valid], NOW
+    )
 
     assert events == [valid]
