@@ -36,8 +36,13 @@ def ensure_late_runtime_installers() -> None:
     from .gs427_flight_recorder_latency_hard_bind import install as install_gs427
     from .gs428_scheduler_deadtime_release import install as install_gs428
     from .gs435_due_deadline_owner_handoff import install as install_gs435
+    from .gs445_incremental_backup_exports import install as install_gs445
 
     install_late_chain()
+    # GS445 patches GS364's already-installed backup materializer before app.py builds
+    # the sidebar download buttons. This removes whole-file recompression from the
+    # scheduler-request -> scan-attempt path without changing any cadence predicate.
+    install_gs445()
     install_gs416()
     # GS423 runs after the legacy chain so warm Streamlit deployments cannot retain an
     # inherited GS421 marker while missing the efficient analyzed->recorder handoff.
@@ -204,5 +209,6 @@ ensure_reclaim_watch()
 # GS425 measures that final acquisition boundary without changing it, GS426 removes
 # repeated same-day Yahoo free-float refreshes without changing float gates, GS427
 # hard-binds latency/build evidence to the active recorder call graph, GS428 releases
-# obsolete post-scan scheduler deadtime, GS435 removes stale-owner due latency, and
-# GS436 hard-binds the final enriched Opportunity State ordering boundary.
+# obsolete post-scan scheduler deadtime, GS435 removes stale-owner due latency, GS445
+# removes append-only backup recompression from the pre-scan rerun path, and GS436
+# hard-binds the final enriched Opportunity State ordering boundary.
