@@ -2,10 +2,7 @@ from __future__ import annotations
 
 import streamlit as st
 
-from mide.gs350_download_export_reliability import (
-    FLIGHT_RECORDER_KEY,
-    install,
-)
+from mide.gs350_download_export_reliability import install
 
 
 def test_download_buttons_default_to_ignore_without_overriding_explicit_behavior(monkeypatch):
@@ -29,7 +26,7 @@ def test_download_buttons_default_to_ignore_without_overriding_explicit_behavior
     assert calls[-1][1]["on_click"] == "rerun"
 
 
-def test_flight_recorder_download_uses_stable_key_and_preserves_direct_payload(monkeypatch):
+def test_flight_recorder_download_preserves_native_identity_and_direct_payload(monkeypatch):
     calls = []
 
     def fake_download_button(*args, **kwargs):
@@ -43,9 +40,9 @@ def test_flight_recorder_download_uses_stable_key_and_preserves_direct_payload(m
     assert st.download_button("Download Flight Recorder", data=payload) == "ok"
 
     _, kwargs = calls[-1]
-    assert kwargs["key"] == FLIGHT_RECORDER_KEY
     assert kwargs["on_click"] == "ignore"
     assert kwargs["data"] is payload
+    assert "key" not in kwargs
 
 
 def test_flight_recorder_download_preserves_explicit_key_and_callable(monkeypatch):
@@ -70,9 +67,10 @@ def test_flight_recorder_download_preserves_explicit_key_and_callable(monkeypatc
     _, kwargs = calls[-1]
     assert kwargs["key"] == "explicit-key"
     assert kwargs["data"] is payload_factory
+    assert kwargs["on_click"] == "ignore"
 
 
-def test_flight_recorder_positional_payload_is_preserved(monkeypatch):
+def test_flight_recorder_positional_payload_is_preserved_without_forced_key(monkeypatch):
     calls = []
 
     def fake_download_button(*args, **kwargs):
@@ -86,8 +84,9 @@ def test_flight_recorder_positional_payload_is_preserved(monkeypatch):
     st.download_button("Download Flight Recorder", payload)
 
     args, kwargs = calls[-1]
-    assert kwargs["key"] == FLIGHT_RECORDER_KEY
     assert args[1] is payload
+    assert kwargs["on_click"] == "ignore"
+    assert "key" not in kwargs
 
 
 def test_install_is_idempotent(monkeypatch):
