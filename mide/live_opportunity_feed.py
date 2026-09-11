@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 
 from mide.escalation import escalation_snapshot
+from mide.time_service import eastern_time
 
 PARTICIPATION_THRESHOLD = 90.0
 EXTENDED_DISTANCE = 2.0
@@ -53,8 +54,9 @@ def opportunity_feed_snapshot(records: list[dict]) -> dict[str, dict]:
 
 
 def _event(symbol: str, message: str, color: str, when: datetime, delta=None) -> dict:
+    """Build one feed event using Walter's user-facing U.S. market clock."""
     return {
-        "time": when.strftime("%H:%M:%S"),
+        "time": eastern_time(when).strftime("%H:%M:%S"),
         "symbol": symbol,
         "message": message,
         "color": color,
