@@ -14,14 +14,15 @@ EXTENDED_DISTANCE = 2.0
 MATERIAL_CONFIDENCE_DELTA = 15
 FEED_EVENT_LIMIT = 10
 FEED_TIME_BASIS = "America/New_York"
-# GS440 bumps the presentation-history schema so warm Streamlit sessions immediately
-# shed pre-refinement confidence chatter instead of carrying it for ten more rows.
-FEED_SCHEMA_VERSION = 3
+# GS451 bumps the presentation-history schema so warm Streamlit sessions immediately
+# shed the old repeated "Symbol removed from Focus" housekeeping rows.
+FEED_SCHEMA_VERSION = 4
 
 
 _EVENT_PRIORITY = {
     "ENTRY WINDOW OPEN": 100,
     "Entry Window closed": 95,
+    "ENTRY WINDOW LEFT FOCUS": 95,
     "Lost VWAP": 90,
     "Too extended": 90,
     "VWAP reclaimed": 85,
@@ -29,7 +30,6 @@ _EVENT_PRIORITY = {
     "Pullback": 80,
     "Entered BUILDING": 70,
     "Entered MONITOR": 60,
-    "Symbol removed from Focus": 30,
 }
 
 
@@ -114,8 +114,10 @@ def opportunity_feed_changes(
 
     GS440 keeps confidence as a supporting-only feed cue. A standalone confidence move
     must be large enough to matter, and it is omitted when the same symbol already has
-    a structural/action transition in that scan. That mirrors the operator workflow:
-    show *what changed in the trade*, not every intermediate score wobble.
+    a structural/action transition in that scan. GS451 also stops treating routine
+    Primary/Secondary Focus rotation as a market event. A symbol leaving Focus emits no
+    row unless it had an open Entry Window, in which case losing that operator sightline
+    remains a high-priority safety event.
     """
     events = []
     for symbol, state in current.items():
@@ -189,8 +191,12 @@ def opportunity_feed_changes(
 
         events.extend(symbol_events)
 
+    # GS451: Focus is a two-slot operator ranking surface, so ordinary membership
+    # rotation is housekeeping rather than market evidence. Preserve only the safety
+    # case where an active Entry Window disappears from those two operator slots.
     for symbol in previous.keys() - current.keys():
-        events.append(_event(symbol, "Symbol removed from Focus", "red", when))
+        if previous[symbol].get("entry_open"):
+            events.append(_event(symbol, "ENTRY WINDOW LEFT FOCUS", "red", when))
     return events
 
 
@@ -199,11 +205,11 @@ def update_opportunity_feed(
 ) -> tuple[dict[str, dict], list[dict]]:
     """Return the new snapshot and a newest-first, ten-event operator log.
 
-    GS440 orders changes from the same scan by operator consequence rather than code
-    generation order: entry-window changes first, then risk/structure, then setup
-    development, then rare standalone confidence moves and Focus housekeeping.
-    Historical rows from older presentation schemas are dropped intentionally; they
-    are UI history only and should not survive a live signal-to-noise refinement.
+    Changes from the same scan are ordered by operator consequence: entry-window
+    changes first, then risk/structure, setup development, and rare standalone
+    confidence moves. Historical rows from older presentation schemas are dropped
+    intentionally; they are UI history only and should not survive a signal-to-noise
+    refinement.
     """
     current = opportunity_feed_snapshot(records)
     changes = opportunity_feed_changes(previous, current, when) if previous else []
