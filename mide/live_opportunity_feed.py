@@ -9,10 +9,28 @@ from mide.time_service import eastern_time
 
 PARTICIPATION_THRESHOLD = 90.0
 EXTENDED_DISTANCE = 2.0
-MATERIAL_CONFIDENCE_DELTA = 5
+# GS440: confidence is supporting evidence, not an operator action. Small scan-to-scan
+# moves (+/-5 to +/-13 in live validation) were crowding out structural transitions.
+MATERIAL_CONFIDENCE_DELTA = 15
 FEED_EVENT_LIMIT = 10
 FEED_TIME_BASIS = "America/New_York"
-FEED_SCHEMA_VERSION = 2
+# GS440 bumps the presentation-history schema so warm Streamlit sessions immediately
+# shed pre-refinement confidence chatter instead of carrying it for ten more rows.
+FEED_SCHEMA_VERSION = 3
+
+
+_EVENT_PRIORITY = {
+    "ENTRY WINDOW OPEN": 100,
+    "Entry Window closed": 95,
+    "Lost VWAP": 90,
+    "Too extended": 90,
+    "VWAP reclaimed": 85,
+    "SuperTrend flipped bullish": 85,
+    "Pullback": 80,
+    "Entered BUILDING": 70,
+    "Entered MONITOR": 60,
+    "Symbol removed from Focus": 30,
+}
 
 
 def _number(record: dict, *keys: str) -> float:
@@ -69,24 +87,45 @@ def _event(symbol: str, message: str, color: str, when: datetime, delta=None) ->
 
 
 def _is_current_clock_event(event: dict) -> bool:
-    """Reject pre-GS438 feed rows whose stored clock basis is ambiguous."""
+    """Reject feed rows created before the current explicit ET/history schema."""
     return (
         event.get("time_basis") == FEED_TIME_BASIS
         and event.get("schema_version") == FEED_SCHEMA_VERSION
     )
 
 
+def _event_priority(event: dict) -> tuple[int, int]:
+    """Rank same-scan feed changes by what should move the trader's eyes first."""
+    message = str(event.get("message") or "")
+    if message.startswith("Participation "):
+        priority = 75
+    elif message.startswith("Confidence "):
+        priority = 40
+    else:
+        priority = _EVENT_PRIORITY.get(message, 50)
+    delta = abs(int(event.get("confidence_delta") or 0))
+    return priority, delta
+
+
 def opportunity_feed_changes(
     previous: dict[str, dict], current: dict[str, dict], when: datetime
 ) -> list[dict]:
-    """Describe material state transitions without affecting scanner decisions."""
+    """Describe material state transitions without affecting scanner decisions.
+
+    GS440 keeps confidence as a supporting-only feed cue. A standalone confidence move
+    must be large enough to matter, and it is omitted when the same symbol already has
+    a structural/action transition in that scan. That mirrors the operator workflow:
+    show *what changed in the trade*, not every intermediate score wobble.
+    """
     events = []
     for symbol, state in current.items():
         prior = previous.get(symbol)
         if prior is None:
             continue
+
+        symbol_events = []
         if prior["participation"] < PARTICIPATION_THRESHOLD <= state["participation"]:
-            events.append(
+            symbol_events.append(
                 _event(
                     symbol,
                     f"Participation {round(prior['participation'])}→{round(state['participation'])}",
@@ -95,14 +134,50 @@ def opportunity_feed_changes(
                 )
             )
         if prior["vwap"] != "above" and state["vwap"] == "above":
-            events.append(_event(symbol, "VWAP reclaimed", "green", when))
+            symbol_events.append(_event(symbol, "VWAP reclaimed", "green", when))
         elif prior["vwap"] in {"above", "testing"} and state["vwap"] == "below":
-            events.append(_event(symbol, "Lost VWAP", "red", when))
+            symbol_events.append(_event(symbol, "Lost VWAP", "red", when))
         if not prior["supertrend"] and state["supertrend"]:
-            events.append(_event(symbol, "SuperTrend flipped bullish", "green", when))
+            symbol_events.append(
+                _event(symbol, "SuperTrend flipped bullish", "green", when)
+            )
+        if not prior["entry_open"] and state["entry_open"]:
+            symbol_events.append(_event(symbol, "ENTRY WINDOW OPEN", "green", when))
+        elif prior["entry_open"] and not state["entry_open"]:
+            symbol_events.append(_event(symbol, "Entry Window closed", "red", when))
+
+        pullback_emitted = False
+        if not prior.get("extended") and state["extended"]:
+            symbol_events.append(_event(symbol, "Too extended", "red", when))
+        elif prior.get("extended") and not state["extended"]:
+            symbol_events.append(_event(symbol, "Pullback", "yellow", when))
+            pullback_emitted = True
+        if (
+            not prior.get("building")
+            and state.get("building")
+            and not state["entry_open"]
+        ):
+            symbol_events.append(_event(symbol, "Entered BUILDING", "yellow", when))
+        elif (
+            not prior.get("monitor")
+            and state.get("monitor")
+            and not state.get("building")
+        ):
+            symbol_events.append(_event(symbol, "Entered MONITOR", "yellow", when))
+        if (
+            not pullback_emitted
+            and not prior.get("pullback")
+            and state.get("pullback")
+            and not state["extended"]
+        ):
+            symbol_events.append(_event(symbol, "Pullback", "yellow", when))
+
         confidence_delta = state["confidence"] - prior["confidence"]
-        if abs(confidence_delta) >= MATERIAL_CONFIDENCE_DELTA:
-            events.append(
+        if (
+            not symbol_events
+            and abs(confidence_delta) >= MATERIAL_CONFIDENCE_DELTA
+        ):
+            symbol_events.append(
                 _event(
                     symbol,
                     f"Confidence {confidence_delta:+d}",
@@ -111,35 +186,8 @@ def opportunity_feed_changes(
                     confidence_delta,
                 )
             )
-        if not prior["entry_open"] and state["entry_open"]:
-            events.append(_event(symbol, "ENTRY WINDOW OPEN", "green", when))
-        elif prior["entry_open"] and not state["entry_open"]:
-            events.append(_event(symbol, "Entry Window closed", "red", when))
-        pullback_emitted = False
-        if not prior.get("extended") and state["extended"]:
-            events.append(_event(symbol, "Too extended", "red", when))
-        elif prior.get("extended") and not state["extended"]:
-            events.append(_event(symbol, "Pullback", "yellow", when))
-            pullback_emitted = True
-        if (
-            not prior.get("building")
-            and state.get("building")
-            and not state["entry_open"]
-        ):
-            events.append(_event(symbol, "Entered BUILDING", "yellow", when))
-        elif (
-            not prior.get("monitor")
-            and state.get("monitor")
-            and not state.get("building")
-        ):
-            events.append(_event(symbol, "Entered MONITOR", "yellow", when))
-        if (
-            not pullback_emitted
-            and not prior.get("pullback")
-            and state.get("pullback")
-            and not state["extended"]
-        ):
-            events.append(_event(symbol, "Pullback", "yellow", when))
+
+        events.extend(symbol_events)
 
     for symbol in previous.keys() - current.keys():
         events.append(_event(symbol, "Symbol removed from Focus", "red", when))
@@ -149,15 +197,16 @@ def opportunity_feed_changes(
 def update_opportunity_feed(
     records: list[dict], previous: dict[str, dict], events: list[dict], when: datetime
 ) -> tuple[dict[str, dict], list[dict]]:
-    """Return the new snapshot and a newest-first, ten-event mission log.
+    """Return the new snapshot and a newest-first, ten-event operator log.
 
-    GS438 deliberately drops feed rows created before the explicit Eastern-time
-    schema. Streamlit can preserve session state across a deployment, which is why
-    GS437's correctly converted new rows could appear beside older UTC rows in the
-    same live feed. Ambiguous legacy rows are presentation history only, so removing
-    them is safer than guessing their clock basis.
+    GS440 orders changes from the same scan by operator consequence rather than code
+    generation order: entry-window changes first, then risk/structure, then setup
+    development, then rare standalone confidence moves and Focus housekeeping.
+    Historical rows from older presentation schemas are dropped intentionally; they
+    are UI history only and should not survive a live signal-to-noise refinement.
     """
     current = opportunity_feed_snapshot(records)
     changes = opportunity_feed_changes(previous, current, when) if previous else []
+    prioritized_changes = sorted(changes, key=_event_priority, reverse=True)
     retained = [event for event in events if _is_current_clock_event(event)]
-    return current, (list(reversed(changes)) + retained)[:FEED_EVENT_LIMIT]
+    return current, (prioritized_changes + retained)[:FEED_EVENT_LIMIT]
