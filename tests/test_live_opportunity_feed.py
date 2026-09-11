@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timezone
 
 from mide.live_opportunity_feed import opportunity_feed_changes, update_opportunity_feed
 
@@ -42,6 +42,25 @@ def test_feed_reports_only_material_transitions():
         "ENTRY WINDOW OPEN",
     ]
     assert all(event["time"] == "14:30:15" for event in changes)
+
+
+def test_feed_converts_utc_scan_time_to_eastern_display_time():
+    utc_scan = datetime(2026, 9, 11, 14, 30, 58, tzinfo=timezone.utc)
+    changes = opportunity_feed_changes(
+        {"OLD": state()},
+        {},
+        utc_scan,
+    )
+
+    assert changes == [
+        {
+            "time": "10:30:58",
+            "symbol": "OLD",
+            "message": "Symbol removed from Focus",
+            "color": "red",
+            "confidence_delta": None,
+        }
+    ]
 
 
 def test_feed_ignores_unchanged_states_and_small_confidence_moves():
