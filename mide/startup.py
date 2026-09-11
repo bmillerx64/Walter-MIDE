@@ -108,8 +108,8 @@ def startup_step(component: str) -> Iterator[None]:
 
 def instrument_startup(component: str) -> Callable[[Callable[..., _T]], Callable[..., _T]]:
     """Decorate a component so its start, duration, and delay are reported."""
-    def decorate(function):
-        def instrumented(*args, **kwargs):
+    def decorate(function: Callable[..., _T]) -> Callable[..., _T]:
+        def instrumented(*args, **kwargs) -> _T:
             with startup_step(component):
                 return function(*args, **kwargs)
 
