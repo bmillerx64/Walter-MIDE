@@ -5,6 +5,14 @@ import streamlit as st
 from mide.gs350_download_export_reliability import install
 
 
+def _fake_fragment_recorder(calls):
+    def fragment(func):
+        calls.append(func.__name__)
+        return func
+
+    return fragment
+
+
 def test_download_buttons_default_to_ignore_without_overriding_explicit_behavior(monkeypatch):
     calls = []
 
@@ -26,19 +34,22 @@ def test_download_buttons_default_to_ignore_without_overriding_explicit_behavior
     assert calls[-1][1]["on_click"] == "rerun"
 
 
-def test_flight_recorder_download_uses_native_rerun_and_preserves_direct_payload(monkeypatch):
+def test_flight_recorder_download_uses_fragment_native_rerun_and_direct_payload(monkeypatch):
     calls = []
+    fragments = []
 
     def fake_download_button(*args, **kwargs):
         calls.append((args, kwargs))
         return "ok"
 
     monkeypatch.setattr(st, "download_button", fake_download_button)
+    monkeypatch.setattr(st, "fragment", _fake_fragment_recorder(fragments))
     install()
 
     payload = b"large-flight-recorder"
     assert st.download_button("Download Flight Recorder", data=payload) == "ok"
 
+    assert fragments == ["flight_recorder_download_fragment"]
     _, kwargs = calls[-1]
     assert kwargs["on_click"] == "rerun"
     assert kwargs["data"] is payload
@@ -47,12 +58,14 @@ def test_flight_recorder_download_uses_native_rerun_and_preserves_direct_payload
 
 def test_flight_recorder_preserves_explicit_key_callable_and_click_behavior(monkeypatch):
     calls = []
+    fragments = []
 
     def fake_download_button(*args, **kwargs):
         calls.append((args, kwargs))
         return "ok"
 
     monkeypatch.setattr(st, "download_button", fake_download_button)
+    monkeypatch.setattr(st, "fragment", _fake_fragment_recorder(fragments))
     install()
 
     def payload_factory():
@@ -65,13 +78,36 @@ def test_flight_recorder_preserves_explicit_key_callable_and_click_behavior(monk
         on_click="ignore",
     )
 
+    assert fragments == ["flight_recorder_download_fragment"]
     _, kwargs = calls[-1]
     assert kwargs["key"] == "explicit-key"
     assert kwargs["data"] is payload_factory
     assert kwargs["on_click"] == "ignore"
 
 
-def test_flight_recorder_positional_payload_is_preserved_without_forced_key(monkeypatch):
+def test_flight_recorder_positional_payload_is_preserved_inside_fragment(monkeypatch):
+    calls = []
+    fragments = []
+
+    def fake_download_button(*args, **kwargs):
+        calls.append((args, kwargs))
+        return "ok"
+
+    monkeypatch.setattr(st, "download_button", fake_download_button)
+    monkeypatch.setattr(st, "fragment", _fake_fragment_recorder(fragments))
+    install()
+
+    payload = b"positional"
+    st.download_button("Download Flight Recorder", payload)
+
+    assert fragments == ["flight_recorder_download_fragment"]
+    args, kwargs = calls[-1]
+    assert args[1] is payload
+    assert kwargs["on_click"] == "rerun"
+    assert "key" not in kwargs
+
+
+def test_flight_recorder_falls_back_to_nonrerunning_button_without_fragment(monkeypatch):
     calls = []
 
     def fake_download_button(*args, **kwargs):
@@ -79,15 +115,11 @@ def test_flight_recorder_positional_payload_is_preserved_without_forced_key(monk
         return "ok"
 
     monkeypatch.setattr(st, "download_button", fake_download_button)
+    monkeypatch.setattr(st, "fragment", None)
     install()
 
-    payload = b"positional"
-    st.download_button("Download Flight Recorder", payload)
-
-    args, kwargs = calls[-1]
-    assert args[1] is payload
-    assert kwargs["on_click"] == "rerun"
-    assert "key" not in kwargs
+    st.download_button("Download Flight Recorder", data=b"fallback")
+    assert calls[-1][1]["on_click"] == "ignore"
 
 
 def test_install_is_idempotent(monkeypatch):
