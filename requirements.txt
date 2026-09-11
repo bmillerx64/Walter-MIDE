@@ -1,3 +1,6 @@
+# GS440 deployment marker: force one clean Streamlit Community Cloud runtime so
+# Live Opportunity Feed signal-to-noise and same-scan operator priority load cleanly.
+# No dependency versions change in this deployment-only activation.
 # GS439 deployment marker: force one clean Streamlit Community Cloud runtime so
 # fresh DO NOT CHASE extreme banners yield immediately to workable operator states.
 # No dependency versions change in this deployment-only activation.
