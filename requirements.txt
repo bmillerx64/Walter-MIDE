@@ -1,3 +1,6 @@
+# GS429 deployment marker: force one clean Streamlit Community Cloud runtime so
+# the NumPy-backed, bit-identical SuperTrend recurrence is loaded everywhere.
+# No dependency versions change in this deployment-only activation.
 # GS428 deployment marker: force one clean Streamlit Community Cloud runtime so
 # the merged GS424-GS428 late-runtime cache/timing/cadence chain is actually loaded.
 # No dependency versions change in this deployment-only activation.
