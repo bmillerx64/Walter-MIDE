@@ -36,7 +36,7 @@ def _chase_view():
     }
 
 
-def test_vwsm_live_geometry_becomes_developing_wait_for_volume():
+def test_vsme_live_geometry_becomes_developing_wait_for_volume():
     view = gs453._state_with_constructive_extension(
         lambda _record: _chase_view(), _vsme()
     )
@@ -131,11 +131,11 @@ def test_true_three_of_three_bounded_structure_can_still_be_developing():
     assert view["constructive_extension"]["three_minute_aligned"] is True
 
 
-def test_gs453_is_display_only_and_installed_after_reset_retest():
+def test_gs453_is_display_only_and_installed_after_legacy_state_chain():
     source = Path("mide/gs453_constructive_extension_developing.py").read_text(
         encoding="utf-8"
     )
-    chain = Path("mide/gs392_operator_order_audio.py").read_text(encoding="utf-8")
+    startup = Path("mide/startup.py").read_text(encoding="utf-8")
 
     forbidden = (
         "qualified_for_entry =",
@@ -148,5 +148,6 @@ def test_gs453_is_display_only_and_installed_after_reset_retest():
     )
     assert not any(token in source for token in forbidden)
     assert "entry_chase_guard_still_authoritative" in source
-    assert chain.index("install_gs404()") < chain.index("install_gs453()")
-    assert chain.index("install_gs453()") < chain.index("install_gs406()")
+    assert "from .gs453_constructive_extension_developing import install as install_gs453" in startup
+    assert startup.index("install_late_chain()") < startup.index("install_gs453()")
+    assert startup.index("install_gs453()") < startup.index("install_gs445()")
