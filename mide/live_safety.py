@@ -28,23 +28,24 @@ def _positive_number(value: Any) -> float | None:
 
 
 def _conservative_yahoo_share_structure(payload: object) -> float | None:
-    """Use the larger of Yahoo float and shares outstanding for the squeeze gate.
+    """Return Yahoo's actual floatShares value for Walter's free-float gate.
 
-    Webull Desktop can show a newly enlarged float before third-party float fields
-    catch up. Shares outstanding is therefore used as a conservative conflict
-    ceiling: Walter may miss a borderline low-float name, but it cannot promote a
-    clearly enlarged capital structure as a <=3.5M squeeze candidate.
+    GS452 corrects a production provenance bug exposed by MWC on 2026-09-14.
+    The prior safety overlay returned ``max(floatShares, sharesOutstanding)``.
+    That made a company with a valid sub-50M free float fail Walter's 50M
+    *free-float* ceiling whenever shares outstanding happened to be larger.
+
+    Shares outstanding is useful capital-structure context, but it is not free
+    float and must never be substituted for, or numerically merged into,
+    ``floatShares``.  The underlying Yahoo parser already reads only
+    ``defaultKeyStatistics.floatShares.raw``; keep that exact semantic here.
+
+    Deliberately do not fall back to sharesOutstanding when floatShares is absent.
+    An unresolved free float remains unresolved and is handled by Walter's existing
+    verification/fail-closed logic instead of fabricating a float from another
+    share-count field.
     """
-    float_shares = _ORIGINAL_YAHOO_PARSE(payload)
-    outstanding = None
-    if isinstance(payload, dict):
-        summary = payload.get("quoteSummary")
-        results = summary.get("result") if isinstance(summary, dict) else None
-        statistics = results[0].get("defaultKeyStatistics") if results else None
-        if isinstance(statistics, dict):
-            outstanding = _positive_number(statistics.get("sharesOutstanding"))
-    values = [value for value in (float_shares, outstanding) if value is not None]
-    return max(values) if values else None
+    return _ORIGINAL_YAHOO_PARSE(payload)
 
 
 def _number(record: dict, *keys: str, default: float = 0.0) -> float:
@@ -124,5 +125,7 @@ def _behavioral_decision_with_participation_floor(record: dict):
     return advanced, audit, confluence
 
 
+# Rebind explicitly so a warm Streamlit deployment cannot retain the pre-GS452
+# parser that conflated shares outstanding with free float.
 YahooFinanceFloatProvider.parse = staticmethod(_conservative_yahoo_share_structure)
 decision_engine.behavioral_decision = _behavioral_decision_with_participation_floor

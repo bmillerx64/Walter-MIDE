@@ -18,10 +18,10 @@ def yahoo_payload(float_shares, shares_outstanding):
     }
 
 
-def test_share_structure_uses_conservative_larger_value():
+def test_share_structure_preserves_true_float_instead_of_outstanding():
     assert _conservative_yahoo_share_structure(
         yahoo_payload(1_000_000, 13_390_000)
-    ) == 13_390_000
+    ) == 1_000_000
 
 
 def test_low_rvol_without_multi_window_ignition_fails():
