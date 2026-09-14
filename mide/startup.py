@@ -41,8 +41,14 @@ def ensure_late_runtime_installers() -> None:
     from .gs448_deferred_flight_recorder_download import install as install_gs448
     from .gs449_bound_startup_memory_profile import install as install_gs449
     from .gs450_release_startup_tracemalloc import install as install_gs450
+    from .gs453_constructive_extension_developing import install as install_gs453
 
     install_late_chain()
+    # GS453 is deliberately outside the established GS392->GS404 presentation chain.
+    # It can only soften an already-computed CHASE / WAIT display state to DEVELOPING
+    # for a bounded 2-5% extension with constructive canonical 30s/1m structure. The
+    # underlying anti-chase entry/readiness authority remains untouched.
+    install_gs453()
     # GS445 patches GS364's already-installed backup materializer before app.py builds
     # the sidebar download buttons. This removes whole-file recompression from the
     # scheduler-request -> scan-attempt path without changing any cadence predicate.
@@ -233,4 +239,5 @@ ensure_reclaim_watch()
 # removes append-only backup recompression, GS446/GS448 defer the two large backup
 # payloads until operator click, GS449 bounds the full startup object-graph profiler
 # to once per process, GS450 releases its tracemalloc bookkeeping after that report,
-# and GS436 hard-binds the final enriched Opportunity State ordering boundary.
+# GS453 corrects bounded constructive-extension presentation after the legacy state
+# chain, and GS436 hard-binds the final enriched Opportunity State ordering boundary.
