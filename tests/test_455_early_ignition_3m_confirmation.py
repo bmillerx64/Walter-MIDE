@@ -35,31 +35,46 @@ def _set_clock(monkeypatch, hour, minute):
     )
 
 
-def confirmation_record(*, distance=3.0, age=30.0, new=True, halted=False):
+def _event(label, timestamp, *, new=False, current=True):
+    return {
+        "timeframe": label,
+        "crossed": True,
+        "recent": True,
+        "new": new,
+        "timestamp": timestamp,
+        "age_seconds": 30.0 if new else 600.0,
+        "current_confirmed": current,
+    }
+
+
+def progression_record(*, distance=3.0, newest="3m", halted=False):
+    timestamps = {
+        "30s": "2026-09-15T10:18:00-04:00",
+        "1m": "2026-09-15T10:26:00-04:00",
+        "3m": "2026-09-15T10:39:00-04:00",
+        "5m": "2026-09-15T10:40:00-04:00",
+        "10m": "2026-09-15T10:50:00-04:00",
+        "15m": "2026-09-15T11:15:00-04:00",
+    }
+    events = {
+        label: _event(label, stamp, new=(label == newest))
+        for label, stamp in timestamps.items()
+    }
     return {
         "symbol": "RETO",
-        "price": 0.84,
-        "pct_change": 132.0,
-        "volume": 4_000_000,
+        "price": 1.88,
+        "pct_change": 420.0,
+        "volume": 10_000_000,
         "vwap_relation": "above",
         "vwap_distance_pct": distance,
         "halted": halted,
         "timeframes": {
             "1m": {"above_vwap": True, "supertrend": True},
             "3m": {"above_vwap": True, "supertrend": True},
+            "5m": {"above_vwap": True, "supertrend": True},
+            "10m": {"above_vwap": True, "supertrend": True},
         },
-        "st_vwap_cross_events": {
-            "3m": {
-                "crossed": True,
-                "new": new,
-                "recent": True,
-                "timestamp": "2026-09-15T10:39:00-04:00",
-                "age_seconds": age,
-                "price": 0.84,
-                "supertrend_value": 0.8328,
-                "vwap_value": 0.8328,
-            }
-        },
+        "st_vwap_cross_events": events,
     }
 
 
@@ -131,82 +146,137 @@ def test_early_open_exception_never_overrides_price_mission_ceiling(monkeypatch)
     assert result["failed_rule"] == "Price outside threshold"
 
 
-def test_existing_normal_prefilter_pass_is_unchanged(monkeypatch):
-    _set_clock(monkeypatch, 9, 34)
-    snap = snapshot(price=0.40, previous_close=0.36, volume=1_000)
-    baseline = established_prefilter("MOVE", snap, SETTINGS)
-    result = gs455._early_open_prefilter_decision(
-        established_prefilter, "MOVE", snap, SETTINGS
-    )
-    assert baseline["passed"] is True
-    assert result == baseline
+def test_reto_screenshot_sequence_is_one_ordered_six_rung_progression():
+    record = progression_record(newest="15m")
+    progression = gs455.crossover_progression(record)
+
+    assert progression["active_rungs"] == [
+        "30s", "1m", "3m", "5m", "10m", "15m"
+    ]
+    assert progression["depth"] == 6
+    assert progression["ordered"] is True
+    assert progression["stage"] == "PERSISTENCE"
+    assert progression["highest_rung"] == "15m"
+    assert progression["latest_new_rung"] == "15m"
+    assert progression["sequence"] == "30s -> 1m -> 3m -> 5m -> 10m -> 15m"
 
 
-def test_fresh_3m_cross_with_constructive_1m_3m_is_maturation_evidence():
-    evidence = gs455.three_minute_confirmation(confirmation_record())
-    assert evidence["active"] is True
-    assert evidence["one_minute_constructive"] is True
-    assert evidence["three_minute_constructive"] is True
-    assert evidence["timestamp"] == "2026-09-15T10:39:00-04:00"
+def test_progression_stage_advances_from_ignition_to_confirmation_to_persistence():
+    ignition = progression_record(newest="1m")
+    ignition["st_vwap_cross_events"] = {
+        key: value
+        for key, value in ignition["st_vwap_cross_events"].items()
+        if key in {"30s", "1m"}
+    }
+    assert gs455.crossover_progression(ignition)["stage"] == "IGNITION"
+
+    confirmation = progression_record(newest="3m")
+    confirmation["st_vwap_cross_events"] = {
+        key: value
+        for key, value in confirmation["st_vwap_cross_events"].items()
+        if key in {"30s", "1m", "3m"}
+    }
+    assert gs455.crossover_progression(confirmation)["stage"] == "CONFIRMATION"
+
+    persistence = progression_record(newest="5m")
+    persistence["st_vwap_cross_events"] = {
+        key: value
+        for key, value in persistence["st_vwap_cross_events"].items()
+        if key in {"30s", "1m", "3m", "5m"}
+    }
+    assert gs455.crossover_progression(persistence)["stage"] == "PERSISTENCE"
 
 
-def test_near_vwap_fresh_3m_confirmation_promotes_chart_review_to_look_now():
-    record = confirmation_record(distance=3.0)
-    view = gs455._state_with_three_minute_confirmation(
+def test_new_30s_1m_3m_and_higher_rungs_all_create_operator_attention():
+    for rung in ("30s", "1m", "3m", "5m", "10m", "15m"):
+        record = progression_record(newest=rung)
+        cutoff = gs455.CROSSOVER_LADDER.index(rung)
+        record["st_vwap_cross_events"] = {
+            key: value
+            for key, value in record["st_vwap_cross_events"].items()
+            if gs455.CROSSOVER_LADDER.index(key) <= cutoff
+        }
+        signal = gs455.progression_signal(record)
+        assert signal["active"] is True
+        assert signal["new_rung"] == rung
+
+
+def test_out_of_order_crosses_are_not_promoted_as_propagation():
+    record = progression_record(newest="3m")
+    record["st_vwap_cross_events"]["3m"]["timestamp"] = "2026-09-15T10:20:00-04:00"
+    progression = gs455.crossover_progression(record)
+    assert progression["ordered"] is False
+    assert gs455.progression_signal(record)["active"] is False
+
+
+def test_near_vwap_new_progression_promotes_chart_review_to_look_now():
+    record = progression_record(distance=3.0, newest="3m")
+    view = gs455._state_with_progression(
         lambda _record: base_view(unified.DEVELOPING), record
     )
     assert view["state"] == unified.LOOK_NOW
-    assert "3m confirmation" in view["reason"]
+    assert "progression reached 3M" in view["reason"]
     assert "not entry authority" in view["next_step"]
-    assert "FRESH_3M_ST_VWAP_CONFIRMATION" in view["attention_provenance"]
+    assert "ST_VWAP_CROSSOVER_PROGRESSION" in view["attention_provenance"]
 
 
-def test_extended_reto_like_confirmation_stays_chase_wait_but_is_not_silent():
-    record = confirmation_record(distance=48.0)
-    view = gs455._state_with_three_minute_confirmation(
+def test_extended_reto_progression_stays_chase_wait_but_is_not_silent():
+    record = progression_record(distance=48.0, newest="5m")
+    view = gs455._state_with_progression(
         lambda _record: base_view(unified.CHASE_WAIT), record
     )
     assert view["state"] == unified.CHASE_WAIT
-    assert "confirming trend maturation" in view["reason"]
+    assert "progression reached 5M" in view["reason"]
     assert "DO NOT CHASE" in view["next_step"]
     assert "anti-chase guard remains authoritative" in view["next_step"]
 
-    phrase = gs455._confirmation_phrase([record])
+    phrase = gs455._progression_phrase([record])
     assert "LOOK NOW" in phrase
+    assert "5 minute" in phrase
     assert "Do not chase" in phrase
     assert semantic_chime_count(phrase) == 2
 
 
-def test_stale_or_broken_structure_does_not_manufacture_confirmation():
-    stale = confirmation_record(age=151.0, new=False)
-    assert gs455.three_minute_confirmation(stale)["active"] is False
-
-    broken = confirmation_record()
-    broken["timeframes"]["1m"]["supertrend"] = False
-    assert gs455.three_minute_confirmation(broken)["active"] is False
-
-
 def test_halt_and_existing_entry_state_are_never_overridden():
-    halted = confirmation_record(halted=True)
-    halted_view = gs455._state_with_three_minute_confirmation(
+    halted = progression_record(halted=True, newest="3m")
+    halted_view = gs455._state_with_progression(
         lambda _record: base_view(unified.HALTED), halted
     )
     assert halted_view["state"] == unified.HALTED
 
-    entry = confirmation_record()
-    entry_view = gs455._state_with_three_minute_confirmation(
+    entry = progression_record(newest="3m")
+    entry_view = gs455._state_with_progression(
         lambda _record: base_view(unified.WATCH_FOR_ENTRY), entry
     )
     assert entry_view["state"] == unified.WATCH_FOR_ENTRY
 
 
-def test_confirmation_signature_is_bound_to_canonical_cross_timestamp():
-    change = gs455._confirmation_change(confirmation_record())
+def test_progression_signature_is_bound_to_new_rung_and_cross_timestamp():
+    change = gs455._progression_change(progression_record(newest="3m"))
     assert change == {
         "symbol": "RETO",
         "from": "3M CROSS@2026-09-15T10:39:00-04:00",
-        "to": "3M ST/VWAP CONFIRMATION",
+        "to": "ST/VWAP PROGRESSION 3M",
     }
+
+
+def test_gs455_uses_already_fetched_history_without_provider_requests():
+    source = Path("mide/gs455_early_ignition_3m_confirmation.py").read_text(
+        encoding="utf-8"
+    )
+    assert "current_session_raw" in source
+    assert "current_session_30s_raw" in source
+    assert "client.bars_frame" in source
+    assert "client.bars(" not in source
+    assert "provider.bars(" not in source
+
+
+def test_gs455_preserves_gs378_canonical_1m_3m_and_adds_other_rungs():
+    source = Path("mide/gs455_early_ignition_3m_confirmation.py").read_text(
+        encoding="utf-8"
+    )
+    assert 'for label in ("30s", "5m", "10m", "15m")' in source
+    assert "Preserve GS378's canonical 1m/3m events exactly" in source
 
 
 def test_gs455_chains_after_gs454_on_cold_and_warm_runtime_paths():
@@ -232,5 +302,6 @@ def test_gs455_scope_lock_keeps_entry_execution_authority_untouched():
     for token in forbidden:
         assert token not in source
     assert "st_vwap_cross_events" in source
+    assert 'CROSSOVER_LADDER = ("30s", "1m", "3m", "5m", "10m", "15m")' in source
     assert "EARLY_OPEN_MIN_PCT_CHANGE = 2.0" in source
     assert "EARLY_OPEN_MIN_VOLUME = 15_000.0" in source
