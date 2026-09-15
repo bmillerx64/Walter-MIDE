@@ -3,6 +3,7 @@ from pathlib import Path
 import pandas as pd
 
 from mide import gs378_live_vwap_st_crossover as gs378
+from mide import gs391_webull_vwap_st_parity as gs391
 from mide import gs397_canonical_30s_tripwire_truth as gs397
 from mide import gs455_early_ignition_3m_confirmation as gs455
 from mide import gs456_canonical_30s_vwap_cross as gs456
@@ -24,8 +25,15 @@ def _thirty_second_frame(periods=70):
     )
 
 
+def _install_live_vwap_policy(monkeypatch):
+    # GS391 is the currently established live primary VWAP authority. GS456 must
+    # inherit it rather than revive GS378's older 09:30-reset policy.
+    monkeypatch.setattr(gs378, "primary_vwap_context", gs391.webull_primary_vwap_context)
+
+
 def test_30s_truth_uses_walters_vwap_not_webull_display(monkeypatch):
     frame = _thirty_second_frame()
+    _install_live_vwap_policy(monkeypatch)
 
     def deterministic_supertrend(source, period, multiplier):
         # No bullish-state flip is required for this test. The ST line itself moves
@@ -38,10 +46,10 @@ def test_30s_truth_uses_walters_vwap_not_webull_display(monkeypatch):
     truth = gs456.alignment_30s_truth(frame)
 
     assert truth["vwap_value"] == 1.0
-    assert truth["vwap_anchor_mode"] == "RTH_09:30_ET"
+    assert truth["vwap_anchor_mode"] == gs391.PRIMARY_POLICY
     assert truth["above_vwap"] is True
     assert truth["supertrend_value"] == 1.1
-    assert truth["authority"] == gs456.AUTHORITY
+    assert truth["vwap_truth_authority"] == gs456.AUTHORITY
 
     cross = truth["st_vwap_line_cross"]
     assert cross["crossed"] is True
@@ -53,6 +61,7 @@ def test_30s_truth_uses_walters_vwap_not_webull_display(monkeypatch):
 
 def test_30s_line_cross_is_distinct_from_supertrend_state_flip(monkeypatch):
     frame = _thirty_second_frame()
+    _install_live_vwap_policy(monkeypatch)
 
     def deterministic_supertrend(source, period, multiplier):
         line = pd.Series([0.90] * (len(source) - 1) + [1.10], index=source.index)
@@ -74,7 +83,7 @@ def test_gs397_prefers_canonical_30s_vwap_over_broader_stage6_vwap():
         result = gs397._primary_above_vwap(
             {"vwap_value": 2.00},
             {
-                "authority": gs456.AUTHORITY,
+                "vwap_truth_authority": gs456.AUTHORITY,
                 "vwap_value": 1.00,
                 "above_vwap": True,
             },
@@ -108,14 +117,14 @@ def test_canonicalization_surfaces_numeric_30s_vwap_and_cross_without_entry_chan
         "thirty_second_tripwire": {"latest_close": 0.70},
         "timeframe_alignment": {
             "30s": {
-                "authority": gs456.AUTHORITY,
+                "vwap_truth_authority": gs456.AUTHORITY,
                 "source": gs456.SOURCE,
                 "above_vwap": True,
                 "supertrend_bullish": True,
                 "aligned": False,
                 "vwap_value": 0.62,
-                "vwap_anchor_mode": "RTH_09:30_ET",
-                "vwap_anchor_time_et": "2026-09-15T09:30:00-04:00",
+                "vwap_anchor_mode": gs391.PRIMARY_POLICY,
+                "vwap_anchor_time_et": "2026-09-15T04:00:00-04:00",
                 "supertrend_value": 0.64,
                 "st_vwap_line_cross": event,
             }
@@ -128,9 +137,15 @@ def test_canonicalization_surfaces_numeric_30s_vwap_and_cross_without_entry_chan
         gs456._install_gs397_canonicalization()
         updated = gs397.canonicalize_record(record)
         assert updated["vwap_30s_value"] == 0.62
-        assert updated["vwap_30s_anchor_mode"] == "RTH_09:30_ET"
+        assert updated["vwap_30s_anchor_mode"] == gs391.PRIMARY_POLICY
         assert updated["st_vwap_30s_line_cross"] == event
         assert updated["timeframes"]["30s"]["vwap_value"] == 0.62
+        # GS397 still owns tripwire authority; GS456's VWAP truth survives separately.
+        assert updated["timeframe_alignment"]["30s"]["authority"] == gs397.AUTHORITY
+        assert (
+            updated["timeframe_alignment"]["30s"]["vwap_truth_authority"]
+            == gs456.AUTHORITY
+        )
         assert updated["qualified_for_entry"] is False
         assert updated["qualified_for_watch"] is False
     finally:
