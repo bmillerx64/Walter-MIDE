@@ -51,7 +51,7 @@ def test_fragment_only_rerun_recomputes_freshness_key_and_payload(tmp_path, monk
     monkeypatch.setattr(st, "fragment", fake_fragment)
 
     # Reproduce the production topology: GS350 first creates the fragment boundary,
-    # then GS454 is installed outside it, then GS458 rebinds GS350 outermost.
+    # GS454 later lives outside it, then GS458 rebinds GS350 outermost.
     gs350.install()
     inner_gs350 = st.download_button
 
@@ -161,13 +161,12 @@ def test_gs458_rebind_is_idempotent(monkeypatch):
     assert st.download_button is installed
 
 
-def test_gs458_chains_after_gs457_on_cold_and_warm_paths():
-    source = Path("mide/gs454_flight_recorder_download_freshness.py").read_text(
+def test_gs458_installs_after_gs454_at_gs448_boundary():
+    source = Path("mide/gs448_deferred_flight_recorder_download.py").read_text(
         encoding="utf-8"
     )
     assert "gs458_flight_recorder_fragment_freshness" in source
-    assert source.count("_install_gs458()") >= 2
-    assert source.index("_install_gs457()") < source.index("_install_gs458()")
+    assert source.index("install_gs454()") < source.index("install_gs458()")
 
 
 def test_gs458_scope_lock_is_export_lifecycle_only():
