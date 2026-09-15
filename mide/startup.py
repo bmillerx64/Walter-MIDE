@@ -43,6 +43,7 @@ def ensure_late_runtime_installers() -> None:
     from .gs450_release_startup_tracemalloc import install as install_gs450
     from .gs453_constructive_extension_developing import install as install_gs453
     from .gs459_price_trajectory_attention import install as install_gs459
+    from .gs460_st_flip_compression_ignition import install as install_gs460
 
     install_late_chain()
     # GS453 is deliberately outside the established GS392->GS404 presentation chain.
@@ -67,6 +68,11 @@ def ensure_late_runtime_installers() -> None:
     # presentation-only priority lift below LOOK NOW. It adds no provider call and no
     # entry/readiness/anti-chase authority.
     install_gs459()
+    # GS460 learns the operator's more specific RETO lesson: bottom-up 30s->1m->3m->5m
+    # bullish SuperTrend flip prices that compress into one zone while flow confirms
+    # can create LOOK NOW attention. Existing execution/readiness/session rules remain
+    # untouched, so premarket/after-hours evidence cannot create trading authority.
+    install_gs460()
     # GS449 runs before app.py later imports ``profile as memory_profile``. The first
     # process startup still receives the full tracemalloc/GC/deep-size report, while
     # recurring full-app AutoScan reruns use a constant-cost RSS-only observation.
@@ -244,7 +250,9 @@ ensure_reclaim_watch()
 # obsolete post-scan scheduler deadtime, GS435 removes stale-owner due latency, GS445
 # removes append-only backup recompression, GS446/GS448 defer the two large backup
 # payloads until operator click, GS459 extracts the operator's sparkline-like price
-# path evidence from already-owned 1m bars, GS449 bounds the full startup object-graph
-# profiler to once per process, GS450 releases its tracemalloc bookkeeping after that
-# report, GS453 corrects bounded constructive-extension presentation after the legacy
-# state chain, and GS436 hard-binds the final enriched Opportunity State ordering boundary.
+# path evidence from already-owned 1m bars, GS460 adds bottom-up ST flip-price
+# compression attention from already-owned 30s/1m/3m/5m evidence, GS449 bounds the
+# full startup object-graph profiler to once per process, GS450 releases its tracemalloc
+# bookkeeping after that report, GS453 corrects bounded constructive-extension
+# presentation after the legacy state chain, and GS436 hard-binds the final enriched
+# Opportunity State ordering boundary.
