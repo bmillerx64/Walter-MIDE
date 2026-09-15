@@ -173,3 +173,6 @@ def install() -> None:
     """Defer only Walter's default live Flight Recorder download payload."""
     _install_flight_export()
     _install_download_metadata()
+    from .gs454_flight_recorder_download_freshness import install as install_gs454
+
+    install_gs454()
