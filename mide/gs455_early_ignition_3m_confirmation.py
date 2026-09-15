@@ -1,35 +1,36 @@
-"""GS455: admit early ignition and elevate ST/VWAP timeframe progression.
+"""GS455: admit early ignition and promote ordered ST/VWAP maturation.
 
-Live validation on 2026-09-15 exposed one coherent timing failure on RETO.
+RETO live validation on 2026-09-15 exposed two connected timing gaps.
 
 First, Webull surfaced RETO during the first minutes after the open while it was still
-below Walter's ordinary 3% OR 100k-share prefilter. Second, the subsequent move showed
-a clear SuperTrend/VWAP propagation ladder across 30s -> 1m -> 3m -> 5m -> 10m -> 15m.
-Walter already had deterministic 1m/3m crossover truth, but later timeframe crosses were
-not first-class operator evidence and the earliest 30s cross was not represented in the
-same ladder.
+below Walter's ordinary 3% OR 100k-share prefilter. Second, the move matured through a
+clear timeframe sequence: 30s tripwire/flip -> 1m ST/VWAP cross -> 3m cross ->
+5m/10m/15m crosses. Walter already owns this maturation architecture in GS421/GS423,
+but that layer is observational and primarily retains bullish SuperTrend flips. The
+literal ST-line/VWAP-line cascade was not promoted to operator attention.
 
-GS455 sharpens that boundary without changing entry authority:
+GS455 sharpens the established architecture instead of building a parallel engine:
 
-* 09:30-09:45 ET only: an already-discovered symbol may survive the cheap prefilter at
+* 09:30-09:45 ET only, an already-discovered symbol may survive the cheap prefilter at
   >=2% AND >=15,000 shares. The ordinary prefilter resumes at 09:45.
-* Reuse the already-fetched Stage-6 1m and 30s histories to reconstruct literal
-  SuperTrend-line/VWAP-line crosses for 30s, 5m, 10m, and 15m while preserving GS378's
-  canonical 1m/3m events.
-* Build one ordered crossover progression. 30s/1m are ignition, 3m is confirmation,
-  and 5m+ are persistence/maturation.
-* A newly reached rung can create one tier-2 LOOK NOW operator pulse when structure and
-  supporting flow remain constructive. Existing WATCH FOR ENTRY/entry authority wins,
-  HALTED wins, and >5% VWAP extension remains CHASE / WAIT with an explicit DO NOT CHASE.
+* GS423's existing 1m/3m/5m/10m SuperTrend calculations retain literal line-cross
+  metadata at zero additional ST cost. GS421's existing 15m study calculation does the
+  same. GS378 remains canonical for 1m/3m crossover truth.
+* Walter's established 30s tripwire/flip is the first rung; 1m is ignition, 3m is
+  confirmation, and 5m/10m/15m are persistence/maturation.
+* A newly reached ordered rung can create one tier-2 LOOK NOW operator pulse. Existing
+  WATCH FOR ENTRY/entry authority wins, HALTED wins, and >5% VWAP extension remains
+  CHASE / WAIT with explicit DO NOT CHASE guidance.
 
-No additional provider request is made. No qualification, readiness, execution, order,
-or entry threshold is widened.
+No provider request is added. No qualification, readiness, execution, order, float,
+participation, expansion, or entry threshold is widened.
 """
 from __future__ import annotations
 
 from copy import deepcopy
 from datetime import datetime, time
 from functools import wraps
+import math
 from typing import Any
 
 EARLY_OPEN_START = time(9, 30)
@@ -38,13 +39,6 @@ EARLY_OPEN_MIN_PCT_CHANGE = 2.0
 EARLY_OPEN_MIN_VOLUME = 15_000.0
 
 CROSSOVER_LADDER = ("30s", "1m", "3m", "5m", "10m", "15m")
-_RESAMPLE_RULES = {
-    "1m": None,
-    "3m": "3min",
-    "5m": "5min",
-    "10m": "10min",
-    "15m": "15min",
-}
 _NEW_WINDOWS_SECONDS = {
     "30s": 90.0,
     "1m": 120.0,
@@ -73,10 +67,20 @@ def _number(record: dict, *keys: str, default: float | None = None) -> float | N
         if value is None or value == "":
             continue
         try:
-            return float(value)
+            number = float(value)
         except (TypeError, ValueError):
             continue
+        if math.isfinite(number):
+            return number
     return default
+
+
+def _finite(value: Any) -> float | None:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    return number if math.isfinite(number) else None
 
 
 def _market_now():
@@ -123,6 +127,278 @@ def _early_open_prefilter_decision(original, symbol: str, snapshot: dict, settin
     return decision
 
 
+def _line_cross_event(
+    frame,
+    vwap,
+    st_line,
+    trend,
+    label: str,
+    *,
+    latest_source_time,
+) -> dict:
+    """Retain a literal ST-line/VWAP-line cross from an already-paid ST pass."""
+    if frame is None or getattr(frame, "empty", True) or len(frame) < 2:
+        return {
+            "timeframe": label,
+            "crossed": False,
+            "recent": False,
+            "new": False,
+            "timestamp": None,
+            "age_seconds": None,
+            "current_confirmed": False,
+        }
+
+    close = frame["close"].astype(float)
+    valid = st_line.notna() & vwap.notna()
+    bullish = trend.fillna(False).astype(bool)
+    line_delta = st_line - vwap
+    mask = (
+        valid
+        & (line_delta.shift(1) < 0)
+        & (line_delta >= 0)
+        & bullish
+        & (close >= vwap)
+    )
+    hits = list(mask[mask.fillna(False)].index)
+    cross_time = hits[-1] if hits else None
+    age = (
+        max(0.0, (latest_source_time - cross_time).total_seconds())
+        if cross_time is not None and latest_source_time is not None
+        else None
+    )
+
+    latest_st = _finite(st_line.iloc[-1]) if len(st_line) else None
+    latest_vwap = _finite(vwap.iloc[-1]) if len(vwap) else None
+    latest_close = _finite(close.iloc[-1]) if len(close) else None
+    current_confirmed = bool(
+        latest_st is not None
+        and latest_vwap is not None
+        and latest_close is not None
+        and bool(bullish.iloc[-1])
+        and latest_close >= latest_vwap
+        and latest_st >= latest_vwap
+    )
+
+    event = {
+        "timeframe": label,
+        "crossed": cross_time is not None,
+        "recent": bool(
+            age is not None and age <= _RECENT_WINDOWS_SECONDS[label]
+        ),
+        "new": bool(age is not None and age <= _NEW_WINDOWS_SECONDS[label]),
+        "timestamp": cross_time.isoformat() if cross_time is not None else None,
+        "age_seconds": round(age, 1) if age is not None else None,
+        "current_confirmed": current_confirmed,
+        # Normalize non-ready ST values to None. Never leak NaN into scan evidence;
+        # NaN is not self-equal and breaks deterministic scan/replay comparisons.
+        "latest_supertrend_value": (
+            round(latest_st, 6) if latest_st is not None else None
+        ),
+        "latest_vwap_value": (
+            round(latest_vwap, 6) if latest_vwap is not None else None
+        ),
+    }
+    if cross_time is not None:
+        event.update(
+            {
+                "supertrend_value": round(float(st_line.loc[cross_time]), 6),
+                "vwap_value": round(float(vwap.loc[cross_time]), 6),
+                "price": round(float(close.loc[cross_time]), 6),
+                "volume": round(float(frame.loc[cross_time, "volume"]), 2),
+            }
+        )
+    return event
+
+
+def _confirmation_details_with_line_cross(day, primary_series) -> tuple[int, dict]:
+    """GS423 confirmation pass plus literal cross metadata, with no extra ST call."""
+    from . import gs378_live_vwap_st_crossover as gs378
+
+    confirmations = 0
+    details: dict[str, dict] = {}
+    latest_source_time = day.index[-1] if day is not None and not day.empty else None
+
+    for label in ("1m", "3m", "5m", "10m"):
+        tf = gs378._timeframe_frame(day, label)
+        if len(tf) < 20:
+            continue
+        vwap = gs378._timeframe_vwap(primary_series, label).reindex(tf.index)
+        st_line, trend = gs378.supertrend(tf, 10, 3)
+        close = tf["close"].astype(float)
+        latest_vwap = gs378._finite_number(vwap.iloc[-1]) if len(vwap) else None
+        latest_close = gs378._finite_number(close.iloc[-1]) if len(close) else None
+        bullish = bool(len(trend) and trend.iloc[-1])
+        above_vwap = bool(
+            latest_vwap is not None
+            and latest_close is not None
+            and latest_close >= latest_vwap
+        )
+        if bullish and above_vwap:
+            confirmations += 1
+
+        valid = st_line.notna() & vwap.notna()
+        bullish_series = trend.fillna(False).astype(bool)
+        prior_bullish = bullish_series.shift(1).fillna(False).astype(bool)
+        flip_mask = valid & bullish_series & (~prior_bullish) & (close >= vwap)
+        flip_time = gs378._latest_event(flip_mask)
+        flip_age = (
+            max(0.0, (latest_source_time - flip_time).total_seconds())
+            if flip_time is not None and latest_source_time is not None
+            else None
+        )
+
+        detail = {
+            "above_vwap": above_vwap,
+            "supertrend": bullish,
+            "timeframe": label,
+            "data_available": bool(valid.any()),
+            "current_supertrend_bullish": bullish,
+            "current_above_vwap": above_vwap,
+            "current_confirmed": bool(bullish and above_vwap),
+            "current_close": latest_close,
+            "current_vwap": latest_vwap,
+            "bullish_flip_timestamp": (
+                flip_time.isoformat() if flip_time is not None else None
+            ),
+            "bullish_flip_age_seconds": (
+                round(flip_age, 1) if flip_age is not None else None
+            ),
+            "st_vwap_line_cross": _line_cross_event(
+                tf,
+                vwap,
+                st_line,
+                trend,
+                label,
+                latest_source_time=latest_source_time,
+            ),
+        }
+        if flip_time is not None:
+            flip_price = _finite(close.loc[flip_time])
+            flip_vwap = _finite(vwap.loc[flip_time])
+            detail.update(
+                {
+                    "price_at_flip": flip_price,
+                    "vwap_at_flip": flip_vwap,
+                    "vwap_distance_at_flip_pct": (
+                        round((flip_price - flip_vwap) / flip_vwap * 100.0, 4)
+                        if flip_price is not None and flip_vwap not in (None, 0)
+                        else None
+                    ),
+                    "supertrend_at_flip": _finite(st_line.loc[flip_time]),
+                    "volume_at_flip": _finite(tf.loc[flip_time, "volume"]),
+                }
+            )
+        details[label] = detail
+
+    return confirmations, details
+
+
+def _timeframe_event_with_line_cross(day, primary_1m, label: str) -> dict:
+    """GS421 timeframe event plus literal cross metadata from the same ST pass."""
+    from . import gs421_multitimeframe_convergence_recorder as gs421
+    from .indicators import supertrend
+
+    tf = gs421._timeframe_frame(day, label)
+    vwap = gs421._timeframe_vwap(primary_1m, label).reindex(tf.index)
+    if len(tf) < 2 or vwap.empty:
+        return {
+            "timeframe": label,
+            "data_available": False,
+            "current_supertrend_bullish": False,
+            "current_above_vwap": False,
+            "current_confirmed": False,
+            "bullish_flip_timestamp": None,
+            "bullish_flip_age_seconds": None,
+            "st_vwap_line_cross": {
+                "timeframe": label,
+                "crossed": False,
+                "recent": False,
+                "new": False,
+                "timestamp": None,
+                "age_seconds": None,
+                "current_confirmed": False,
+            },
+        }
+
+    st_line, trend = supertrend(tf, 10, 3)
+    bullish = trend.fillna(False).astype(bool)
+    prior_bullish = bullish.shift(1).fillna(False).astype(bool)
+    close = tf["close"].astype(float)
+    valid = st_line.notna() & vwap.notna()
+    flip_mask = valid & bullish & (~prior_bullish) & (close >= vwap)
+    hits = list(flip_mask[flip_mask].index)
+    flip_time = hits[-1] if hits else None
+
+    latest_vwap = _finite(vwap.iloc[-1]) if len(vwap) else None
+    latest_close = _finite(close.iloc[-1])
+    current_bullish = bool(len(bullish) and bullish.iloc[-1])
+    current_above_vwap = bool(
+        latest_close is not None
+        and latest_vwap is not None
+        and latest_close >= latest_vwap
+    )
+
+    event = {
+        "timeframe": label,
+        "data_available": bool(valid.any()),
+        "current_supertrend_bullish": current_bullish,
+        "current_above_vwap": current_above_vwap,
+        "current_confirmed": bool(current_bullish and current_above_vwap),
+        "current_close": latest_close,
+        "current_vwap": latest_vwap,
+        "bullish_flip_timestamp": flip_time.isoformat() if flip_time is not None else None,
+        "bullish_flip_age_seconds": None,
+        "st_vwap_line_cross": _line_cross_event(
+            tf,
+            vwap,
+            st_line,
+            trend,
+            label,
+            latest_source_time=day.index[-1],
+        ),
+    }
+    if flip_time is not None:
+        age = max(0.0, (day.index[-1] - flip_time).total_seconds())
+        flip_price = _finite(close.loc[flip_time])
+        flip_vwap = _finite(vwap.loc[flip_time])
+        event.update(
+            {
+                "bullish_flip_age_seconds": round(age, 1),
+                "price_at_flip": flip_price,
+                "vwap_at_flip": flip_vwap,
+                "vwap_distance_at_flip_pct": (
+                    round((flip_price - flip_vwap) / flip_vwap * 100.0, 4)
+                    if flip_price is not None and flip_vwap not in (None, 0)
+                    else None
+                ),
+                "supertrend_at_flip": _finite(st_line.loc[flip_time]),
+                "volume_at_flip": _finite(tf.loc[flip_time, "volume"]),
+            }
+        )
+    return event
+
+
+def _install_existing_maturation_source() -> None:
+    """Converge GS423 first, then enrich its already-paid ST passes."""
+    from . import gs378_live_vwap_st_crossover as gs378
+    from . import gs421_multitimeframe_convergence_recorder as gs421
+    from . import gs423_convergence_handoff_efficiency as gs423
+
+    # GS455 can be reached from the late GS454 boundary before startup's explicit
+    # GS423 call. Install GS423 now; the later startup call is idempotent.
+    gs423.install()
+
+    if not getattr(gs378._confirmation_details, "_gs455_line_cross", False):
+        _confirmation_details_with_line_cross._gs455_line_cross = True
+        _confirmation_details_with_line_cross._gs455_original = gs378._confirmation_details
+        gs378._confirmation_details = _confirmation_details_with_line_cross
+
+    if not getattr(gs421._timeframe_event, "_gs455_line_cross", False):
+        _timeframe_event_with_line_cross._gs455_line_cross = True
+        _timeframe_event_with_line_cross._gs455_original = gs421._timeframe_event
+        gs421._timeframe_event = _timeframe_event_with_line_cross
+
+
 def _halted(record: dict) -> bool:
     if any(
         record.get(key) is True
@@ -137,6 +413,9 @@ def _halted(record: dict) -> bool:
 
 
 def _current_attention(record: dict) -> bool:
+    reasons = " ".join(str(item) for item in (record.get("discovery_reasons") or []))
+    if "webull native:" in reasons.lower():
+        return True
     try:
         from .gs309_current_attention_mission import current_attention_provenance
 
@@ -184,187 +463,78 @@ def _timestamp(value: Any) -> datetime | None:
         return None
 
 
-def _resample_frame(day, label: str):
-    from .indicators import resample_ohlcv
-
-    rule = _RESAMPLE_RULES[label]
-    return day if rule is None else resample_ohlcv(day, rule)
-
-
-def _resample_vwap(primary_series, label: str):
-    rule = _RESAMPLE_RULES[label]
-    if rule is None:
-        return primary_series
-    return primary_series.resample(rule).last().dropna()
-
-
-def _project_vwap_to_30s(primary_series, frame_30s):
-    if primary_series is None or getattr(primary_series, "empty", True):
-        return primary_series
-    if frame_30s is None or getattr(frame_30s, "empty", True):
-        return primary_series.iloc[0:0]
-    combined = primary_series.index.union(frame_30s.index)
-    expanded = primary_series.reindex(combined).sort_index().ffill()
-    return expanded.reindex(frame_30s.index)
-
-
-def _literal_cross_event(
-    frame,
-    vwap_series,
-    label: str,
-    *,
-    latest_source_time=None,
-) -> dict:
-    """Reconstruct one literal ST-line/VWAP-line cross from local bars only."""
-    from .indicators import supertrend
-
-    if frame is None or getattr(frame, "empty", True) or len(frame) < 2:
-        return {
-            "timeframe": label,
-            "crossed": False,
-            "recent": False,
-            "new": False,
-            "timestamp": None,
-            "age_seconds": None,
-            "age_bars": None,
-            "current_confirmed": False,
-        }
-
-    vwap = vwap_series.reindex(frame.index)
-    st_line, trend = supertrend(frame, 10, 3)
-    valid = st_line.notna() & vwap.notna()
-    close = frame["close"].astype(float)
-    line_delta = st_line - vwap
-    cross_mask = (
-        valid
-        & (line_delta.shift(1) < 0)
-        & (line_delta >= 0)
-        & trend.fillna(False).astype(bool)
-        & (close >= vwap)
+def _thirty_second_rung(record: dict) -> dict:
+    tripwire = record.get("thirty_second_tripwire") or {}
+    stamp = (
+        record.get("supertrend_30s_last_flip_timestamp")
+        or tripwire.get("last_flip_timestamp")
     )
-    hits = list(cross_mask[cross_mask.fillna(False)].index)
-    cross_time = hits[-1] if hits else None
-
-    latest = latest_source_time if latest_source_time is not None else frame.index[-1]
-    age_seconds = (
-        max(0.0, (latest - cross_time).total_seconds())
-        if cross_time is not None
-        else None
+    age = _number(
+        record,
+        "supertrend_30s_last_flip_age_seconds",
+        "supertrend_30s_flip_age_seconds",
     )
-    age_bars = None
-    if cross_time is not None:
-        try:
-            age_bars = max(0, len(frame) - 1 - int(frame.index.get_loc(cross_time)))
-        except Exception:
-            age_bars = None
-
-    latest_vwap = vwap.iloc[-1] if len(vwap) else None
-    latest_st = st_line.iloc[-1] if len(st_line) else None
-    current_confirmed = bool(
-        valid.iloc[-1]
-        and bool(trend.iloc[-1])
-        and float(close.iloc[-1]) >= float(latest_vwap)
+    if age is None:
+        age = _number(tripwire, "last_flip_age_seconds")
+    bullish = bool(
+        record.get("supertrend_30s_bullish")
+        or tripwire.get("supertrend_bullish")
     )
-    event = {
-        "timeframe": label,
-        "crossed": cross_time is not None,
-        "recent": bool(
-            age_seconds is not None
-            and age_seconds <= _RECENT_WINDOWS_SECONDS[label]
-        ),
-        "new": bool(
-            age_seconds is not None and age_seconds <= _NEW_WINDOWS_SECONDS[label]
-        ),
-        "timestamp": cross_time.isoformat() if cross_time is not None else None,
-        "age_seconds": round(age_seconds, 1) if age_seconds is not None else None,
-        "age_bars": age_bars,
-        "current_confirmed": current_confirmed,
-        "latest_supertrend_value": (
-            round(float(latest_st), 6) if latest_st is not None else None
-        ),
-        "latest_vwap_value": (
-            round(float(latest_vwap), 6) if latest_vwap is not None else None
-        ),
+    active = bool(stamp and bullish)
+    return {
+        "timeframe": "30s",
+        "crossed": active,
+        "recent": bool(active and age is not None and age <= _RECENT_WINDOWS_SECONDS["30s"]),
+        "new": bool(active and age is not None and age <= _NEW_WINDOWS_SECONDS["30s"]),
+        "timestamp": stamp,
+        "age_seconds": age,
+        "current_confirmed": bullish,
+        "kind": "canonical_30s_tripwire_flip",
     }
-    if cross_time is not None:
-        event.update(
-            {
-                "supertrend_value": round(float(st_line.loc[cross_time]), 6),
-                "vwap_value": round(float(vwap.loc[cross_time]), 6),
-                "price": round(float(close.loc[cross_time]), 6),
-                "volume": round(float(frame.loc[cross_time, "volume"]), 2),
-            }
-        )
-    return event
 
 
-def extra_crossover_events(frame_1m, frame_30s=None) -> dict[str, dict]:
-    """Compute 30s/5m/10m/15m events from histories Stage 6 already fetched."""
-    from . import gs378_live_vwap_st_crossover as gs378
+def _rung_event(record: dict, label: str) -> dict:
+    if label == "30s":
+        return _thirty_second_rung(record)
 
-    day = gs378._eastern_day(frame_1m)
-    if day.empty:
-        return {}
-    context = gs378.primary_vwap_context(day)
-    primary = context.get("series")
-    if primary is None or primary.empty:
-        return {}
+    if label in {"1m", "3m"}:
+        canonical = dict((record.get("st_vwap_cross_events") or {}).get(label) or {})
+        detail = dict((record.get("timeframes") or {}).get(label) or {})
+        enriched = dict(detail.get("st_vwap_line_cross") or {})
+        event = canonical or enriched
+        if canonical and enriched:
+            event = dict(canonical)
+            event["current_confirmed"] = enriched.get(
+                "current_confirmed",
+                bool(detail.get("above_vwap") and detail.get("supertrend")),
+            )
+        elif event:
+            event.setdefault(
+                "current_confirmed",
+                bool(detail.get("above_vwap") and detail.get("supertrend")),
+            )
+        return event
 
-    latest_source_time = day.index[-1]
-    events: dict[str, dict] = {}
-    for label in ("5m", "10m", "15m"):
-        tf = _resample_frame(day, label)
-        vwap = _resample_vwap(primary, label)
-        events[label] = _literal_cross_event(
-            tf, vwap, label, latest_source_time=latest_source_time
-        )
+    if label in {"5m", "10m"}:
+        detail = dict((record.get("timeframes") or {}).get(label) or {})
+        return dict(detail.get("st_vwap_line_cross") or {})
 
-    thirty = gs378._eastern_day(frame_30s)
-    if not thirty.empty:
-        latest_source_time = max(latest_source_time, thirty.index[-1])
-        projected = _project_vwap_to_30s(primary, thirty)
-        events["30s"] = _literal_cross_event(
-            thirty,
-            projected,
-            "30s",
-            latest_source_time=latest_source_time,
-        )
-    else:
-        events["30s"] = {
-            "timeframe": "30s",
-            "crossed": False,
-            "recent": False,
-            "new": False,
-            "timestamp": None,
-            "age_seconds": None,
-            "age_bars": None,
-            "current_confirmed": False,
-        }
-    return events
-
-
-def _current_confirmed(record: dict, label: str, event: dict) -> bool:
-    if label in {"30s", "15m"}:
-        return bool(event.get("current_confirmed"))
-    frames = record.get("timeframes") or {}
-    frame = frames.get(label) if isinstance(frames, dict) else None
-    if isinstance(frame, dict):
-        return bool(frame.get("above_vwap") and frame.get("supertrend"))
-    return bool(event.get("current_confirmed"))
+    maturation = record.get("multitimeframe_maturation") or {}
+    detail = dict((maturation.get("timeframes") or {}).get("15m") or {})
+    return dict(detail.get("st_vwap_line_cross") or {})
 
 
 def crossover_progression(record: dict) -> dict:
-    """Return the ordered current ST/VWAP propagation ladder for one symbol."""
-    events = record.get("st_vwap_cross_events") or {}
-    if not isinstance(events, dict):
-        events = {}
-
+    """Return Walter's ordered current 30s->15m maturation ladder."""
     active_rungs: list[str] = []
     timestamps: list[datetime] = []
     fresh_rungs: list[str] = []
+    rung_events: dict[str, dict] = {}
+
     for label in CROSSOVER_LADDER:
-        event = dict(events.get(label) or {})
-        if not event.get("crossed") or not _current_confirmed(record, label, event):
+        event = _rung_event(record, label)
+        rung_events[label] = event
+        if not event.get("crossed") or not event.get("current_confirmed"):
             continue
         active_rungs.append(label)
         stamp = _timestamp(event.get("timestamp"))
@@ -398,44 +568,13 @@ def crossover_progression(record: dict) -> dict:
         "latest_new_rung": latest_new,
         "stage": stage,
         "sequence": " -> ".join(active_rungs),
+        "events": rung_events,
     }
 
 
-def _augment_progression_records(
-    records: list[dict],
-    current_session_raw: dict[str, list[dict]],
-    current_session_30s_raw: dict[str, list[dict]] | None,
-    client,
-) -> list[dict]:
-    """Attach detached progression evidence without changing score or qualification."""
-    current_session_30s_raw = current_session_30s_raw or {}
-    for record in records or []:
-        symbol = str(record.get("symbol") or "").strip().upper()
-        if not symbol:
-            continue
-        raw_1m = current_session_raw.get(symbol) or []
-        if not raw_1m:
-            continue
-        try:
-            frame_1m = client.bars_frame(raw_1m)
-            frame_30s = client.bars_frame(current_session_30s_raw.get(symbol) or [])
-            extras = extra_crossover_events(frame_1m, frame_30s)
-        except Exception:
-            continue
-
-        events = dict(record.get("st_vwap_cross_events") or {})
-        # Preserve GS378's canonical 1m/3m events exactly; add only missing rungs.
-        for label in ("30s", "5m", "10m", "15m"):
-            if label in extras:
-                events[label] = extras[label]
-        record["st_vwap_cross_events"] = events
-        record["st_vwap_progression"] = crossover_progression(record)
-    return records
-
-
 def progression_signal(record: dict) -> dict:
-    """Return a fresh operator signal from a newly reached ordered ladder rung."""
-    progression = dict(record.get("st_vwap_progression") or crossover_progression(record))
+    """Return a fresh operator signal from a newly reached ordered maturation rung."""
+    progression = crossover_progression(record)
     new_rung = progression.get("latest_new_rung")
     distance = _number(record, "vwap_distance_pct")
     relation = str(record.get("vwap_relation") or "").strip().lower()
@@ -450,7 +589,7 @@ def progression_signal(record: dict) -> dict:
         and supported
         and (ordered or depth <= 1)
     )
-    event = dict((record.get("st_vwap_cross_events") or {}).get(new_rung) or {})
+    event = dict((progression.get("events") or {}).get(new_rung) or {})
     return {
         "active": active,
         "new_rung": new_rung,
@@ -479,9 +618,7 @@ def _state_with_progression(original, record: dict) -> dict:
     if _PROGRESSION_PROVENANCE not in provenance:
         provenance.append(_PROGRESSION_PROVENANCE)
     view["attention_provenance"] = provenance
-    view["st_vwap_progression"] = dict(
-        record.get("st_vwap_progression") or crossover_progression(record)
-    )
+    view["st_vwap_progression"] = crossover_progression(record)
 
     rung = str(signal.get("new_rung") or "").upper()
     sequence = signal.get("sequence") or rung
@@ -490,7 +627,7 @@ def _state_with_progression(original, record: dict) -> dict:
         view["state"] = unified.CHASE_WAIT
         view["color"] = unified.STATE_COLORS[unified.CHASE_WAIT]
         view["reason"] = (
-            f"ST/VWAP progression reached {rung}; {sequence}. "
+            f"ST/VWAP maturation reached {rung}; {sequence}. "
             f"Price is already {distance:.1f}% above VWAP."
         )
         view["next_step"] = (
@@ -501,9 +638,9 @@ def _state_with_progression(original, record: dict) -> dict:
 
     view["state"] = unified.LOOK_NOW
     view["color"] = unified.STATE_COLORS[unified.LOOK_NOW]
-    view["reason"] = f"ST/VWAP progression reached {rung}; {sequence}."
+    view["reason"] = f"ST/VWAP maturation reached {rung}; {sequence}."
     view["next_step"] = (
-        "Open the chart now. The crossover ladder is operator-attention evidence, not "
+        "Open the chart now. The maturation ladder is operator-attention evidence, not "
         "entry authority; normal participation, expansion, readiness, and VWAP guards "
         "still decide the trade."
     )
@@ -522,7 +659,7 @@ def _progression_change(record: dict) -> dict | None:
     return {
         "symbol": symbol,
         "from": f"{rung} CROSS@{stamp}",
-        "to": f"ST/VWAP PROGRESSION {rung}",
+        "to": f"ST/VWAP MATURATION {rung}",
     }
 
 
@@ -552,7 +689,7 @@ def _progression_phrase(records: list[dict]) -> str:
     rung = _spoken_rung(str(signal.get("new_rung") or ""))
     stage = str(signal.get("stage") or "").lower()
     phrase = (
-        f"{symbol}. LOOK NOW. SuperTrend VWAP progression reached {rung}. "
+        f"{symbol}. LOOK NOW. SuperTrend VWAP maturation reached {rung}. "
         f"{stage.capitalize()} advancing."
     )
     distance = signal.get("vwap_distance_pct")
@@ -584,33 +721,6 @@ def _install_prefilter() -> None:
     prefilter_decision._gs455_original = current
     flight_recorder.prefilter_decision = prefilter_decision
     discovery.prefilter_decision = prefilter_decision
-
-
-def _install_progression_evidence() -> None:
-    from . import gs378_live_vwap_st_crossover as gs378
-
-    current = gs378.apply_live_vwap_truth
-    if getattr(current, "_gs455_crossover_progression", False):
-        return
-
-    @wraps(current)
-    def apply_live_vwap_truth(
-        records,
-        current_session_raw,
-        current_session_30s_raw,
-        client,
-    ):
-        updated = current(
-            records, current_session_raw, current_session_30s_raw, client
-        )
-        return _augment_progression_records(
-            updated, current_session_raw, current_session_30s_raw, client
-        )
-
-    _inherit(apply_live_vwap_truth, current)
-    apply_live_vwap_truth._gs455_crossover_progression = True
-    apply_live_vwap_truth._gs455_original = current
-    gs378.apply_live_vwap_truth = apply_live_vwap_truth
 
 
 def _install_state() -> None:
@@ -683,7 +793,6 @@ def _install_alert_priority() -> None:
             progression = _progression_phrase(rows)
             if not progression:
                 return existing
-            # Existing tier-3 entry urgency always outranks this tier-2 progression pulse.
             if existing and semantic_chime_count(existing) >= 3:
                 return existing
             return progression
@@ -695,8 +804,8 @@ def _install_alert_priority() -> None:
 
 
 def install() -> None:
-    """Install early admission plus ordered crossover-progression operator truth."""
+    """Install bounded early admission plus existing-stack maturation priority."""
+    _install_existing_maturation_source()
     _install_prefilter()
-    _install_progression_evidence()
     _install_state()
     _install_alert_priority()
