@@ -72,6 +72,12 @@ def _install_gs455() -> None:
     install_gs455()
 
 
+def _install_gs456() -> None:
+    from .gs456_canonical_30s_vwap_cross import install as install_gs456
+
+    install_gs456()
+
+
 def install() -> None:
     """Version only GS448's deferred Flight Recorder download widget."""
     import streamlit as st
@@ -79,8 +85,9 @@ def install() -> None:
     current = st.download_button
     if getattr(current, "_gs454_install_generation", None) is _INSTALL_GENERATION:
         # Warm Streamlit sessions can already own GS454 while still needing the newer
-        # discovery/operator refinement loaded at this same late-runtime boundary.
+        # discovery/operator refinements loaded at this same late-runtime boundary.
         _install_gs455()
+        _install_gs456()
         return
 
     def download_button(*args, **kwargs):
@@ -114,3 +121,4 @@ def install() -> None:
     except Exception:
         pass
     _install_gs455()
+    _install_gs456()
