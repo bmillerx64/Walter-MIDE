@@ -44,6 +44,7 @@ def ensure_late_runtime_installers() -> None:
     from .gs453_constructive_extension_developing import install as install_gs453
     from .gs459_price_trajectory_attention import install as install_gs459
     from .gs460_st_flip_compression_ignition import install as install_gs460
+    from .gs461_cascade_runway import install as install_gs461
 
     install_late_chain()
     # GS453 is deliberately outside the established GS392->GS404 presentation chain.
@@ -85,6 +86,10 @@ def ensure_late_runtime_installers() -> None:
     # GS423 runs after the legacy chain so warm Streamlit deployments cannot retain an
     # inherited GS421 marker while missing the efficient analyzed->recorder handoff.
     install_gs423()
+    # GS461 must sit outside GS423: it consumes the final retained 10m/15m evidence and
+    # only then reconstructs 30m/1h runway locally for an active GS460 compression.
+    # It changes explanation/audio context only; trading authority remains untouched.
+    install_gs461()
     # GS424 owns only the persistent provider's Stage-6 acquisition boundary and never
     # changes the evidence produced by GS423 or any trading contract.
     install_gs424()
@@ -251,8 +256,9 @@ ensure_reclaim_watch()
 # removes append-only backup recompression, GS446/GS448 defer the two large backup
 # payloads until operator click, GS459 extracts the operator's sparkline-like price
 # path evidence from already-owned 1m bars, GS460 adds bottom-up ST flip-price
-# compression attention from already-owned 30s/1m/3m/5m evidence, GS449 bounds the
-# full startup object-graph profiler to once per process, GS450 releases its tracemalloc
-# bookkeeping after that report, GS453 corrects bounded constructive-extension
-# presentation after the legacy state chain, and GS436 hard-binds the final enriched
-# Opportunity State ordering boundary.
+# compression attention from already-owned 30s/1m/3m/5m evidence, GS461 adds factual
+# 10m/15m/30m/1h cascade-runway context only for that active compression, GS449 bounds
+# the full startup object-graph profiler to once per process, GS450 releases its
+# tracemalloc bookkeeping after that report, GS453 corrects bounded constructive-
+# extension presentation after the legacy state chain, and GS436 hard-binds the final
+# enriched Opportunity State ordering boundary.
