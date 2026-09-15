@@ -66,12 +66,21 @@ def _has_explicit_key(args: tuple, kwargs: dict) -> bool:
     return "key" in kwargs or len(args) > 4
 
 
+def _install_gs455() -> None:
+    from .gs455_early_ignition_3m_confirmation import install as install_gs455
+
+    install_gs455()
+
+
 def install() -> None:
     """Version only GS448's deferred Flight Recorder download widget."""
     import streamlit as st
 
     current = st.download_button
     if getattr(current, "_gs454_install_generation", None) is _INSTALL_GENERATION:
+        # Warm Streamlit sessions can already own GS454 while still needing the newer
+        # discovery/operator refinement loaded at this same late-runtime boundary.
+        _install_gs455()
         return
 
     def download_button(*args, **kwargs):
@@ -104,3 +113,4 @@ def install() -> None:
         ui.st.download_button = download_button
     except Exception:
         pass
+    _install_gs455()
