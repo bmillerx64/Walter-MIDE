@@ -133,30 +133,70 @@ def maturation_attention(record: dict) -> dict:
     }
 
 
+def _effective_progression_priority(attention: dict) -> tuple[int, float]:
+    """Use crossover tie-breaks only for the two GS457 maturation bands.
+
+    Ordinary WATCH FOR ENTRY / LOOK NOW / DEVELOPING / CHASE / HALTED rows must keep
+    GS369's established tie behavior exactly. A record can carry crossover metadata
+    without qualifying for a GS457 priority lift, so raw rung depth must not silently
+    reorder those ordinary peers.
+    """
+    promoted = bool(
+        attention.get("fresh_maturation") or attention.get("sustained_confirmation")
+    )
+    if not promoted:
+        return 0, float("-inf")
+    return int(attention.get("rung_rank") or 0), float(
+        attention.get("freshness", float("-inf"))
+    )
+
+
 def maturation_priority_sort_key(record: dict) -> tuple:
-    """Return the final presentation key while preserving existing tie-breakers."""
+    """Return GS457's major keys while preserving established ordinary tie-breaks."""
     from . import ui
     from .gs363_operator_attention_hierarchy import operator_attention_score
 
     attention = maturation_attention(record)
+    rung_rank, freshness = _effective_progression_priority(attention)
     try:
         established = ui.trader_priority_sort_key(record)
     except Exception:
         established = ()
     return (
         int(attention["band"]),
-        int(attention["rung_rank"]),
-        float(attention["freshness"]),
+        rung_rank,
+        freshness,
         int(operator_attention_score(record)),
         established,
-        str(record.get("symbol") or "").upper(),
     )
 
 
 def ordered_maturation_records(records: list[dict]) -> list[dict]:
-    """Order operator cards without changing candidate membership or state."""
-    rows = list(records or [])
-    return sorted(rows, key=maturation_priority_sort_key, reverse=True)
+    """Order operator cards without changing candidate membership or state.
+
+    Reproduce GS369's stable sort contract for ordinary rows: symbol ascending is the
+    deterministic floor, then trader-priority and attention sort descending. GS457's
+    crossover freshness/rung keys are inserted above those legacy tie-breakers and
+    below the new presentation band. This changes only the intended maturation cases.
+    """
+    from . import ui
+    from .gs363_operator_attention_hierarchy import operator_attention_score
+
+    pairs = [(record, maturation_attention(record)) for record in (records or [])]
+    pairs.sort(key=lambda item: str(item[0].get("symbol") or "").upper())
+    try:
+        pairs.sort(key=lambda item: ui.trader_priority_sort_key(item[0]), reverse=True)
+    except Exception:
+        pass
+    pairs.sort(key=lambda item: operator_attention_score(item[0]), reverse=True)
+    pairs.sort(
+        key=lambda item: _effective_progression_priority(item[1])[1], reverse=True
+    )
+    pairs.sort(
+        key=lambda item: _effective_progression_priority(item[1])[0], reverse=True
+    )
+    pairs.sort(key=lambda item: int(item[1]["band"]), reverse=True)
+    return [record for record, _attention in pairs]
 
 
 def install() -> None:
