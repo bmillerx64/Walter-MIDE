@@ -42,6 +42,7 @@ def ensure_late_runtime_installers() -> None:
     from .gs449_bound_startup_memory_profile import install as install_gs449
     from .gs450_release_startup_tracemalloc import install as install_gs450
     from .gs453_constructive_extension_developing import install as install_gs453
+    from .gs459_price_trajectory_attention import install as install_gs459
 
     install_late_chain()
     # GS453 is deliberately outside the established GS392->GS404 presentation chain.
@@ -61,6 +62,11 @@ def ensure_late_runtime_installers() -> None:
     # button after scan orchestration, but Streamlit now receives only a callable on
     # ordinary reruns and materializes recorder bytes only when the operator clicks it.
     install_gs448()
+    # GS459 uses only the same 1-minute bars already acquired for candidate analysis.
+    # It extracts short price-path acceleration/persistence evidence and installs a
+    # presentation-only priority lift below LOOK NOW. It adds no provider call and no
+    # entry/readiness/anti-chase authority.
+    install_gs459()
     # GS449 runs before app.py later imports ``profile as memory_profile``. The first
     # process startup still receives the full tracemalloc/GC/deep-size report, while
     # recurring full-app AutoScan reruns use a constant-cost RSS-only observation.
@@ -145,7 +151,7 @@ def startup_step(component: str) -> Iterator[None]:
 
 def instrument_startup(component: str) -> Callable[[Callable[..., _T]], Callable[..., _T]]:
     """Decorate a component so its start, duration, and delay are reported."""
-    def decorate(function: Callable[..., _T]) -> Callable[..., _T]:
+    def decorate(function):
         def instrumented(*args, **kwargs) -> _T:
             with startup_step(component):
                 return function(*args, **kwargs)
@@ -237,7 +243,8 @@ ensure_reclaim_watch()
 # hard-binds latency/build evidence to the active recorder call graph, GS428 releases
 # obsolete post-scan scheduler deadtime, GS435 removes stale-owner due latency, GS445
 # removes append-only backup recompression, GS446/GS448 defer the two large backup
-# payloads until operator click, GS449 bounds the full startup object-graph profiler
-# to once per process, GS450 releases its tracemalloc bookkeeping after that report,
-# GS453 corrects bounded constructive-extension presentation after the legacy state
-# chain, and GS436 hard-binds the final enriched Opportunity State ordering boundary.
+# payloads until operator click, GS459 extracts the operator's sparkline-like price
+# path evidence from already-owned 1m bars, GS449 bounds the full startup object-graph
+# profiler to once per process, GS450 releases its tracemalloc bookkeeping after that
+# report, GS453 corrects bounded constructive-extension presentation after the legacy
+# state chain, and GS436 hard-binds the final enriched Opportunity State ordering boundary.
