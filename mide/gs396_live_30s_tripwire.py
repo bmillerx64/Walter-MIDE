@@ -98,6 +98,7 @@ def tripwire_from_annotated(
 
     flip_close_ms = None
     flip_age = None
+    flip_price = _number(flip_row.get("close")) if flip_row is not None else None
     if flip_row is not None:
         raw_ms = flip_row.get("timestamp_ms")
         if raw_ms is not None:
@@ -145,6 +146,9 @@ def tripwire_from_annotated(
         "fresh_window_seconds": TRIPWIRE_FRESH_SECONDS,
         "last_flip_age_seconds": round(flip_age, 1) if flip_age is not None else None,
         "last_flip_timestamp": _iso_from_ms(flip_close_ms),
+        # GS460 retains the close of the actual bullish 30s ST flip so Walter can
+        # compare bottom-up flip prices without another indicator calculation.
+        "last_flip_price": flip_price,
         "latest_closed_timestamp": _iso_from_ms(latest_close_ms),
         "latest_close": latest_close,
         "latest_volume": latest_volume,
@@ -187,6 +191,7 @@ def enrich_record_with_live_30s(
     record["supertrend_30s_last_flip_timestamp"] = tripwire.get(
         "last_flip_timestamp"
     )
+    record["supertrend_30s_last_flip_price"] = tripwire.get("last_flip_price")
     record["volume_acceleration_30s"] = tripwire.get("volume_acceleration_30s")
     record["dollar_flow_acceleration_30s"] = tripwire.get(
         "dollar_flow_acceleration_30s"
