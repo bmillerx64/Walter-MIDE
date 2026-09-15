@@ -174,5 +174,7 @@ def install() -> None:
     _install_flight_export()
     _install_download_metadata()
     from .gs454_flight_recorder_download_freshness import install as install_gs454
+    from .gs458_flight_recorder_fragment_freshness import install as install_gs458
 
     install_gs454()
+    install_gs458()
