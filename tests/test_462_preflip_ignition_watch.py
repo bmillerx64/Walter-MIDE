@@ -158,11 +158,12 @@ def test_preflip_watch_sits_below_real_look_now_band(monkeypatch):
     assert gs462.effective_attention_band(record) == 40
 
 
-def test_gs462_installs_after_gs461_and_before_final_order():
-    source = Path("mide/startup.py").read_text(encoding="utf-8")
+def test_gs462_is_reasserted_at_final_presentation_boundary():
+    source = Path("mide/gs414_final_enriched_opportunity_order.py").read_text(encoding="utf-8")
     assert "gs462_preflip_ignition_watch" in source
-    assert source.index("install_gs461()") < source.index("install_gs462()")
-    assert source.index("install_gs462()") < source.index("install_final_order()")
+    assert "_install_gs462()" in source
+    startup = Path("mide/startup.py").read_text(encoding="utf-8")
+    assert startup.index("install_gs461()") < startup.index("install_final_order()")
 
 
 def test_gs462_scope_lock_is_attention_only_and_adds_no_audio_or_provider_work():
