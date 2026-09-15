@@ -78,6 +78,12 @@ def _install_gs456() -> None:
     install_gs456()
 
 
+def _install_gs457() -> None:
+    from .gs457_maturation_leader_priority import install as install_gs457
+
+    install_gs457()
+
+
 def install() -> None:
     """Version only GS448's deferred Flight Recorder download widget."""
     import streamlit as st
@@ -88,6 +94,7 @@ def install() -> None:
         # discovery/operator refinements loaded at this same late-runtime boundary.
         _install_gs455()
         _install_gs456()
+        _install_gs457()
         return
 
     def download_button(*args, **kwargs):
@@ -122,3 +129,4 @@ def install() -> None:
         pass
     _install_gs455()
     _install_gs456()
+    _install_gs457()
