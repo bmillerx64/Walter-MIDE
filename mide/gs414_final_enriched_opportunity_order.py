@@ -21,11 +21,11 @@ late-runtime boundary, so only the actual outer GS414 wrapper can suppress rebin
 GS462 uses this final late-runtime boundary to reassert its presentation-only 30s/1m
 pre-flip attention layer after GS459/GS460/GS461 have converged. GS463 then applies
 one final state-first band so real LOOK NOW cards always remain above attention-only
-CHASE / WAIT lifts.
+CHASE / WAIT lifts. GS464 also uses this same final late-runtime convergence point to
+restore session-aware VWAP authority after the older GS391 installer has completed.
 
-Presentation only. It does not change discovery, candidate membership, Webull market
-data, VWAP/SuperTrend evidence, participation, expansion, scoring, ranking,
-qualification, thresholds, readiness, alerts/audio, execution, or orders.
+GS414/GS436/GS462/GS463 remain presentation-only. GS464 owns its separate VWAP-truth
+contract and changes no thresholds, qualification, readiness, execution, or orders.
 """
 from __future__ import annotations
 
@@ -61,6 +61,13 @@ def _install_gs463() -> None:
     install_gs463()
 
 
+def _install_gs464() -> None:
+    """Restore session-aware primary VWAP after the legacy GS391 chain converges."""
+    from .gs464_session_aware_vwap_parity import install as install_gs464
+
+    install_gs464()
+
+
 def final_enriched_opportunity_records(
     records: list[dict], *, actionable_function=None
 ) -> list[dict]:
@@ -77,8 +84,10 @@ def install() -> None:
     """Freeze final enrichment/order across the complete Opportunity State render."""
     from . import ui
 
-    # Reassert both current attention and final state authority at the very end of
-    # Walter's late runtime chain. GS463 must sit outside GS462 and all older sorters.
+    # GS391 lives inside the legacy late chain. Reassert GS464 first so all subsequent
+    # evidence/presentation layers see the same session-aware primary VWAP authority.
+    # GS463 then remains the outermost operator-order contract after GS462 enrichment.
+    _install_gs464()
     _install_gs462()
     _install_gs463()
 
