@@ -16,6 +16,9 @@ GS392 reuses it as the final operator presentation/audio boundary so inherited
 wrapper markers cannot reintroduce card-order drift.
 GS469 reuses it as the final Webull 30s continuity boundary so a warm deployment can
 rebind the retained live provider and repair a stale TICK transport before scanning.
+GS470 reuses it immediately outside GS469 so a retained real Live Webull provider
+cannot remain REST-only merely because its warm runtime lost the streaming-enable
+state; it also persists always-on 30s stream health for live acceptance checks.
 
 GS410 keeps this late chain out of the parent ``mide`` package import lock. During
 ``mide.__init__`` the installer returns before importing GS386+; app.py's first
@@ -24,7 +27,7 @@ completed. This removes the cross-thread import-lock inversion exposed by Stream
 hot deployment without changing the installer order or any trading authority.
 
 Safety contract:
-- GS384/386/388/389/390/392/469 remain presentation/provenance/lifecycle/evidence only;
+- GS384/386/388/389/390/392/469/470 remain presentation/provenance/lifecycle/evidence only;
 - GS391 is the explicit exception: it corrects primary VWAP decision evidence, so
   existing downstream reclaim/crossover/alignment/rescoring recomputes from the
   corrected VWAP; thresholds, entry rules, alerts, execution, and orders are unchanged;
@@ -164,12 +167,15 @@ def install() -> None:
     from .gs391_webull_vwap_st_parity import install as install_gs391
     from .gs392_operator_order_audio import install as install_gs392
     from .gs469_30s_stream_continuity import install as install_gs469
+    from .gs470_30s_activation_truth import install as install_gs470
 
     # These installers bootstrap here after GS379 has installed the genuine Webull
     # stream boundary. GS391 corrects GS378's primary VWAP and wraps the recorder
-    # after GS390. GS392 remains the final legacy presentation/audio boundary, and
-    # GS469 then owns only provider/TICK continuity. They run before the GS384
-    # idempotence return so warm reloads cannot miss the continuity repair.
+    # after GS390. GS392 remains the final legacy presentation/audio boundary. GS469
+    # owns provider/TICK continuity and GS470 then guarantees that the real production
+    # provider is actually stream-enabled before initialize_quotes can bypass it.
+    # They run before the GS384 idempotence return so warm reloads cannot miss either
+    # the continuity repair or the activation/health boundary.
     install_gs386()
     install_gs388()
     install_gs389()
@@ -177,6 +183,7 @@ def install() -> None:
     install_gs391()
     install_gs392()
     install_gs469()
+    install_gs470()
 
     current_sources = webull_live.LiveWebullProvider.pipeline_sources
     if getattr(current_sources, "_gs384_signal_to_noise", False):
