@@ -20,12 +20,14 @@ late-runtime boundary, so only the actual outer GS414 wrapper can suppress rebin
 
 GS462 uses this final late-runtime boundary to reassert its presentation-only 30s/1m
 pre-flip attention layer after GS459/GS460/GS461 have converged. GS463 then applies
-one final state-first band so real LOOK NOW cards always remain above attention-only
-CHASE / WAIT lifts. GS464 also uses this same final late-runtime convergence point to
-restore session-aware VWAP authority after the older GS391 installer has completed.
+its attention/state ordering layer. GS464 restores session-aware VWAP authority after
+the older GS391 installer has completed. GS465 is intentionally last: it makes the
+visible card stack strictly state-contiguous and cleans up extreme-mover language so
+percentage move alone cannot manufacture LOOK NOW.
 
-GS414/GS436/GS462/GS463 remain presentation-only. GS464 owns its separate VWAP-truth
-contract and changes no thresholds, qualification, readiness, execution, or orders.
+GS414/GS436/GS462/GS463/GS465 remain presentation-only. GS464 owns its separate
+VWAP-truth contract and changes no thresholds, qualification, readiness, execution,
+or orders.
 """
 from __future__ import annotations
 
@@ -55,7 +57,7 @@ def _install_gs462() -> None:
 
 
 def _install_gs463() -> None:
-    """Reassert the final state-first operator ordering wrapper."""
+    """Reassert the state/attention ordering wrapper before GS465 cleanup."""
     from .gs463_state_first_operator_order import install as install_gs463
 
     install_gs463()
@@ -66,6 +68,13 @@ def _install_gs464() -> None:
     from .gs464_session_aware_vwap_parity import install as install_gs464
 
     install_gs464()
+
+
+def _install_gs465() -> None:
+    """Make final visible card order state-contiguous and extreme labels truthful."""
+    from .gs465_presentation_priority_cleanup import install as install_gs465
+
+    install_gs465()
 
 
 def final_enriched_opportunity_records(
@@ -86,10 +95,11 @@ def install() -> None:
 
     # GS391 lives inside the legacy late chain. Reassert GS464 first so all subsequent
     # evidence/presentation layers see the same session-aware primary VWAP authority.
-    # GS463 then remains the outermost operator-order contract after GS462 enrichment.
+    # GS465 is deliberately last so no attention-only lift can cross card-state bands.
     _install_gs464()
     _install_gs462()
     _install_gs463()
+    _install_gs465()
 
     current = ui.render_escalation_engine
     if getattr(current, FINAL_ORDER_OWNER_ATTR, False):
