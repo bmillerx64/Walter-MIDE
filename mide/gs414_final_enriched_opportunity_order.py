@@ -18,9 +18,10 @@ proof lets CHASE / WAIT render above LOOK NOW or DEVELOPING again. GS436 uses a
 private non-inherited owner sentinel instead and re-runs this installer at the final
 late-runtime boundary, so only the actual outer GS414 wrapper can suppress rebinding.
 
-GS462 also uses this final late-runtime boundary to reassert its presentation-only
-30s/1m pre-flip attention layer after GS459/GS460/GS461 have converged. This keeps the
-new EARLY WATCH ordering outside older wrappers without changing trading authority.
+GS462 uses this final late-runtime boundary to reassert its presentation-only 30s/1m
+pre-flip attention layer after GS459/GS460/GS461 have converged. GS463 then applies
+one final state-first band so real LOOK NOW cards always remain above attention-only
+CHASE / WAIT lifts.
 
 Presentation only. It does not change discovery, candidate membership, Webull market
 data, VWAP/SuperTrend evidence, participation, expansion, scoring, ranking,
@@ -53,6 +54,13 @@ def _install_gs462() -> None:
     install_gs462()
 
 
+def _install_gs463() -> None:
+    """Reassert the final state-first operator ordering wrapper."""
+    from .gs463_state_first_operator_order import install as install_gs463
+
+    install_gs463()
+
+
 def final_enriched_opportunity_records(
     records: list[dict], *, actionable_function=None
 ) -> list[dict]:
@@ -69,10 +77,10 @@ def install() -> None:
     """Freeze final enrichment/order across the complete Opportunity State render."""
     from . import ui
 
-    # This installer is deliberately invoked again at the very end of Walter's late
-    # runtime chain. Reassert GS462 here so its private ordering owner sits outside any
-    # GS459/legacy wrapper installed earlier in the same startup generation.
+    # Reassert both current attention and final state authority at the very end of
+    # Walter's late runtime chain. GS463 must sit outside GS462 and all older sorters.
     _install_gs462()
+    _install_gs463()
 
     current = ui.render_escalation_engine
     if getattr(current, FINAL_ORDER_OWNER_ATTR, False):
