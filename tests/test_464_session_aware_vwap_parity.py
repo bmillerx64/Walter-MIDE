@@ -100,8 +100,9 @@ def test_session_policy_retains_both_diagnostic_vwaps_after_open():
 def test_gs464_installs_at_final_late_boundary_before_presentation_layers():
     source = Path("mide/gs414_final_enriched_opportunity_order.py").read_text(encoding="utf-8")
     assert "gs464_session_aware_vwap_parity" in source
-    assert source.index("_install_gs464()") < source.index("_install_gs462()")
-    assert source.index("_install_gs462()") < source.index("_install_gs463()")
+    install_body = source.split('def install() -> None:', 1)[1]
+    assert install_body.index("_install_gs464()") < install_body.index("_install_gs462()")
+    assert install_body.index("_install_gs462()") < install_body.index("_install_gs463()")
 
 
 def test_gs464_scope_lock_adds_no_provider_or_execution_path():
