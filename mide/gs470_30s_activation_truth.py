@@ -1,49 +1,24 @@
-"""GS470/GS471: enforce production 30-second truth across warm Streamlit generations.
+"""GS470/GS471: hard-bind genuine Webull 30-second truth across warm runtimes.
 
-Fresh Flight Recorder #73 proved the first GS470 deployment was not actually bound to
-Walter's retained live runtime. Build ``a41ab40b0aa1`` produced 19 current-runtime
-scans and 47 GS390 validation-symbol observations with zero non-null 30-second
-snapshots, and the promised ``stream_30s_health`` block was absent from every scan.
-That combination localizes the failure to the same hot-reload ownership seam GS427
-previously found in Flight Recorder: installing wrappers on the newest module/class
-objects is not enough when Streamlit retains an older ScanContext, provider class, or
-recorder function graph.
+Flight Recorder #73 proved GS470's first clean-module wrapper never reached Walter's
+retained Streamlit runtime: current build a41ab40b0aa1 produced 19 scans / 47 GS390
+symbol observations with zero canonical 30s snapshots, and none of those scans carried
+the promised ``stream_30s_health`` block. GS471 therefore applies the same retained-
+function/object strategy already proven by GS427.
 
-This module therefore keeps GS470's clean-process wrappers and adds the GS471 hard
-bind:
-- bind the *actual* provider currently stored in ScanContext, regardless of which
-  module generation created it;
-- intercept later ``provider_instance`` assignments on that retained context class so
-  a newly-created provider is activated before its first ``initialize_quotes`` call;
-- rehydrate GS379's observational 30s state without clearing valid live bars;
-- if the retained provider class missed GS379's TRADE aggregation hook, attach that
-  hook to the provider's actual class;
-- if the retained WebullSDKClient class missed GS379's TICK transport hook, attach it
-  to the actual SDK class when a stream factory is already present;
-- retire an inherited subscription when activation/hook repair makes its captured
-  callback obsolete or when it has no/stale TICK heartbeat, so the next ordinary
-  initialize cycle creates a fresh genuine Webull TICK subscription;
-- hard-bind ``stream_30s_health`` into the exact recorder globals dictionary reached
-  by the retained ``FlightRecorder.record_scan`` function graph.
-
-Safety contract:
-- genuine Webull OpenAPI TICK remains the only 30s source;
-- no synthetic 30s bars and no historical 30s fallback are introduced;
-- injected/test providers are never force-enabled;
-- discovery, scoring, ranking, participation/expansion, VWAP/ST formulas,
-  qualification, readiness, alerts, execution, session authority and orders are
-  unchanged.
+This remains market-data lifecycle / diagnostics only. Genuine Webull TICK is the only
+30s source. There is no synthetic/history fallback and no change to discovery, scores,
+VWAP/ST formulas, qualification, readiness, alerts, execution or orders.
 """
 from __future__ import annotations
 
 from collections import deque
 from datetime import datetime, timezone
 from functools import wraps
-import weakref
 from typing import Any
+import weakref
 
 from .market_data import EventType, MarketEvent
-
 
 AUTHORITY = "LIVE_WEBULL_PRODUCTION_30S_ACTIVATION"
 THIRTY_SECOND_HISTORY = 240
@@ -64,20 +39,18 @@ def _identity(value: Any) -> tuple[str, str]:
 
 
 def _production_sdk_graph(provider) -> bool:
-    """Recognize Walter's real SDK-owned Live Webull graph without enabling injections."""
     if provider is None:
         return False
-    snapshot_client = getattr(provider, "_snapshot_client", None)
-    if _identity(snapshot_client) != ("mide.webull_live", "WebullOpenAPIClient"):
+    snapshot = getattr(provider, "_snapshot_client", None)
+    if _identity(snapshot) != ("mide.webull_live", "WebullOpenAPIClient"):
         return False
-    sdk = getattr(snapshot_client, "sdk", None)
+    sdk = getattr(snapshot, "sdk", None)
     if _identity(sdk) != ("mide.webull_sdk", "WebullSDKClient"):
         return False
-    if getattr(provider, "_stream_class", None) is not None:
-        return False
-    if getattr(provider, "_bootstrap", None) is not None:
-        return False
-    return True
+    return (
+        getattr(provider, "_stream_class", None) is None
+        and getattr(provider, "_bootstrap", None) is None
+    )
 
 
 def _stream_diagnostics(provider) -> dict:
@@ -96,12 +69,11 @@ def _stream_diagnostics(provider) -> dict:
 
 
 def _ensure_gs379_state(provider) -> bool:
-    """Hydrate missing GS379 observational state without clearing live retained bars."""
-    changed = False
+    """Create only missing observational state; never clear retained live bars."""
     lock = getattr(provider, "_lock", None)
     if lock is None:
         return False
-
+    changed = False
     with lock:
         if not isinstance(getattr(provider, "_gs379_30s_current", None), dict):
             provider._gs379_30s_current = {}
@@ -109,7 +81,6 @@ def _ensure_gs379_state(provider) -> bool:
         if not isinstance(getattr(provider, "_gs379_30s_closed", None), dict):
             provider._gs379_30s_closed = {}
             changed = True
-
     stream = _stream_diagnostics(provider)
     defaults = {
         "tick_messages_received": 0,
@@ -150,18 +121,18 @@ def _last_provider():
 
 
 def _patch_retained_provider_event(provider) -> bool:
-    """Attach GS379's TRADE aggregation to the actual retained provider class."""
+    """Attach GS379 TRADE aggregation to the actual retained provider class."""
     from . import gs379_webull_stream_data_truth as gs379
 
-    provider_class = type(provider)
-    current = getattr(provider_class, "_on_event", None)
+    owner = type(provider)
+    current = getattr(owner, "_on_event", None)
     if not callable(current):
         return False
     if getattr(current, "_gs379_tick_aggregation", False) or getattr(
         current, _PROVIDER_EVENT_OWNER, False
     ):
-        if not callable(getattr(provider_class, "stream_30s_bars", None)):
-            provider_class.stream_30s_bars = gs379._stream_30s_bars
+        if not callable(getattr(owner, "stream_30s_bars", None)):
+            owner.stream_30s_bars = gs379._stream_30s_bars
         return False
 
     @wraps(current)
@@ -171,11 +142,12 @@ def _patch_retained_provider_event(provider) -> bool:
             if event.symbol not in self._gs379_30s_closed:
                 with self._lock:
                     self._gs379_30s_closed.setdefault(
-                        event.symbol,
-                        deque(maxlen=THIRTY_SECOND_HISTORY),
+                        event.symbol, deque(maxlen=THIRTY_SECOND_HISTORY)
                     )
             if not gs379._record_tick(self, event):
                 return
+            # TICK volume is trade size; preserve the existing snapshot cache's
+            # cumulative-volume meaning while still letting base _on_event update price.
             payload = dict(event.payload)
             payload["trade_size"] = payload.pop("volume", None)
             event = MarketEvent(
@@ -192,21 +164,21 @@ def _patch_retained_provider_event(provider) -> bool:
     on_event._gs379_tick_aggregation = True
     on_event._gs471_original = current
     setattr(on_event, _PROVIDER_EVENT_OWNER, True)
-    provider_class._on_event = on_event
-    provider_class.stream_30s_bars = gs379._stream_30s_bars
+    owner._on_event = on_event
+    owner.stream_30s_bars = gs379._stream_30s_bars
     return True
 
 
 def _patch_retained_sdk_stream(provider) -> bool:
-    """Attach GS379's TICK transport to the actual retained SDK adapter class."""
+    """Attach official GS379 TICK transport to the actual retained SDK class."""
     from . import gs379_webull_stream_data_truth as gs379
 
     snapshot = getattr(provider, "_snapshot_client", None)
     sdk = getattr(snapshot, "sdk", None)
     data_client = getattr(sdk, "sdk_client", None)
     factory = getattr(data_client, "_walter_streaming_client_factory", None)
-    sdk_class = type(sdk) if sdk is not None else None
-    current = getattr(sdk_class, "stream", None) if sdk_class is not None else None
+    owner = type(sdk) if sdk is not None else None
+    current = getattr(owner, "stream", None) if owner is not None else None
     if not callable(current) or not callable(factory):
         return False
     if getattr(current, "_gs379_tick_transport", False) or getattr(
@@ -216,7 +188,9 @@ def _patch_retained_sdk_stream(provider) -> bool:
 
     @wraps(current)
     def stream(self, callback):
-        active_factory = getattr(self.sdk_client, "_walter_streaming_client_factory", None)
+        active_factory = getattr(
+            self.sdk_client, "_walter_streaming_client_factory", None
+        )
         if not callable(active_factory):
             raise RuntimeError("Webull OpenAPI SDK lacks DataStreamingClient")
         return gs379.OfficialWebullTickTransport(active_factory(), callback)
@@ -224,7 +198,7 @@ def _patch_retained_sdk_stream(provider) -> bool:
     stream._gs379_tick_transport = True
     stream._gs471_original = current
     setattr(stream, _SDK_STREAM_OWNER, True)
-    sdk_class.stream = stream
+    owner.stream = stream
     return True
 
 
@@ -240,21 +214,20 @@ def _tick_age_seconds(provider) -> float | None:
     return max(0.0, (now_ms - stamp) / 1000.0)
 
 
-def _retire_obsolete_subscription(provider, *, force: bool = False) -> tuple[bool, str | None]:
-    """Retire a captured old callback or dead TICK transport before next initialize."""
-    subscription = getattr(provider, "_subscription", None)
-    if subscription is None:
+def _retire_obsolete_subscription(
+    provider, *, force: bool = False
+) -> tuple[bool, str | None]:
+    """Drop a captured old callback/dead TICK stream so normal init can reopen it."""
+    if getattr(provider, "_subscription", None) is None:
         return False, None
-
     age = _tick_age_seconds(provider)
-    reason = None
     if force:
         reason = "runtime 30s hook/activation changed; subscription callback must be rebound"
     elif age is None:
         reason = "subscribed Webull transport has no observed TICK heartbeat"
     elif age > STALE_TICK_SECONDS:
         reason = f"last Webull TICK heartbeat is {age:.1f}s old"
-    if reason is None:
+    else:
         return False, None
 
     from . import gs379_webull_stream_data_truth as gs379
@@ -264,18 +237,15 @@ def _retire_obsolete_subscription(provider, *, force: bool = False) -> tuple[boo
 
 
 def activate_production_30s(provider) -> dict:
-    """Hard-bind the actual Live Webull provider before snapshot completion."""
+    """Hard-bind the actual production provider before its snapshot cycle."""
     from . import gs379_webull_stream_data_truth as gs379
 
     production = _production_sdk_graph(provider)
     stream = _stream_diagnostics(provider)
     enabled_before = bool(getattr(provider, "_enable_streaming", False)) if provider is not None else False
-    state_rehydrated = False
-    enabled_now = False
-    rebound = False
-    provider_event_patched = False
-    sdk_stream_patched = False
-    subscription_retired = False
+    state_rehydrated = enabled_now = rebound = False
+    provider_event_patched = sdk_stream_patched = False
+    retired = False
     retirement_reason = None
 
     if production:
@@ -293,13 +263,13 @@ def activate_production_30s(provider) -> dict:
         if active is not provider:
             gs379._register_active_provider(provider)
             rebound = True
-        subscription_retired, retirement_reason = _retire_obsolete_subscription(
+        retired, retirement_reason = _retire_obsolete_subscription(
             provider,
             force=bool(enabled_now or provider_event_patched or sdk_stream_patched),
         )
         _remember_provider(provider)
 
-    stream["gs470_30s_activation_truth"] = {
+    truth = {
         "authority": AUTHORITY,
         "production_sdk_graph": production,
         "streaming_enabled_before": enabled_before,
@@ -309,23 +279,23 @@ def activate_production_30s(provider) -> dict:
         "active_provider_reasserted": rebound,
         "retained_provider_event_hook_patched": provider_event_patched,
         "retained_sdk_stream_hook_patched": sdk_stream_patched,
-        "subscription_retired_for_rebind": subscription_retired,
+        "subscription_retired_for_rebind": retired,
         "subscription_retirement_reason": retirement_reason,
         "runtime_hard_bind": True,
         "genuine_webull_tick_only": True,
         "synthetic_30s_bars": False,
         "entry_authority_changed": False,
     }
-    return dict(stream["gs470_30s_activation_truth"])
+    stream["gs470_30s_activation_truth"] = truth
+    return dict(truth)
 
 
 def _safe_activate(provider) -> dict:
-    """Never let observational stream repair break Walter's snapshot scan path."""
+    """An observational repair may never break the authoritative REST snapshot scan."""
     try:
         return activate_production_30s(provider)
     except Exception as exc:
-        stream = _stream_diagnostics(provider)
-        stream["gs471_runtime_hard_bind_error"] = type(exc).__name__
+        _stream_diagnostics(provider)["gs471_runtime_hard_bind_error"] = type(exc).__name__
         return {
             "authority": AUTHORITY,
             "production_sdk_graph": _production_sdk_graph(provider),
@@ -356,14 +326,14 @@ def _last_tick_age_seconds(last_tick_ms: Any) -> float | None:
 
 
 def _stream_factory_present(provider) -> bool:
-    snapshot_client = getattr(provider, "_snapshot_client", None)
-    sdk = getattr(snapshot_client, "sdk", None)
+    snapshot = getattr(provider, "_snapshot_client", None)
+    sdk = getattr(snapshot, "sdk", None)
     data_client = getattr(sdk, "sdk_client", None)
     return callable(getattr(data_client, "_walter_streaming_client_factory", None))
 
 
 def stream_30s_health(provider) -> dict:
-    """Return bounded non-secret liveness evidence even when zero 30s bars exist."""
+    """Persist liveness truth even before the first 30s bar can close."""
     if provider is None:
         return {
             "authority": AUTHORITY,
@@ -389,8 +359,8 @@ def stream_30s_health(provider) -> dict:
     activation = dict(stream.get("gs470_30s_activation_truth") or {})
     last_tick = stream.get("last_tick_timestamp_ms")
     provider_event = getattr(type(provider), "_on_event", None)
-    snapshot_client = getattr(provider, "_snapshot_client", None)
-    sdk = getattr(snapshot_client, "sdk", None)
+    snapshot = getattr(provider, "_snapshot_client", None)
+    sdk = getattr(snapshot, "sdk", None)
     sdk_stream = getattr(type(sdk), "stream", None) if sdk is not None else None
     return {
         "authority": AUTHORITY,
@@ -481,13 +451,13 @@ def _install_recorder_health() -> None:
 
 
 def _active_recorder_globals() -> dict[str, Any]:
-    """Use GS427's proven retained-function lookup instead of assuming module identity."""
+    """Locate the globals dictionary the retained record_scan actually invokes."""
     try:
         from . import gs427_flight_recorder_latency_hard_bind as gs427
 
-        globals_dict = gs427._active_recorder_globals()
-        if isinstance(globals_dict, dict):
-            return globals_dict
+        result = gs427._active_recorder_globals()
+        if isinstance(result, dict):
+            return result
     except Exception:
         pass
     from . import flight_recorder
@@ -496,7 +466,6 @@ def _active_recorder_globals() -> dict[str, Any]:
 
 
 def _install_hard_recorder_health() -> None:
-    """Bind health to the exact persistence global reached by active record_scan."""
     from . import flight_recorder
 
     globals_dict = _active_recorder_globals()
@@ -518,14 +487,14 @@ def _install_hard_recorder_health() -> None:
         flight_recorder.persist_replayable_scan = persist_with_hard_bound_30s_health
 
 
-def _bind_context_class(context) -> None:
-    """Activate every future provider assignment on the actual retained context class."""
+def _bind_context_class(context) -> bool:
+    """Activate future provider assignments on a mutable retained ScanContext class."""
     if context is None:
-        return
-    context_class = type(context)
-    current = getattr(context_class, "__setattr__", None)
+        return False
+    owner = type(context)
+    current = getattr(owner, "__setattr__", None)
     if not callable(current) or getattr(current, _CONTEXT_SETATTR_OWNER, False):
-        return
+        return False
 
     @wraps(current)
     def context_setattr(self, name, value):
@@ -535,11 +504,17 @@ def _bind_context_class(context) -> None:
 
     context_setattr._gs471_original = current
     setattr(context_setattr, _CONTEXT_SETATTR_OWNER, True)
-    context_class.__setattr__ = context_setattr
+    try:
+        owner.__setattr__ = context_setattr
+    except (AttributeError, TypeError):
+        # Test/compatibility contexts may use immutable built-in classes such as
+        # SimpleNamespace. The retained production ScanContext is a normal Python
+        # dataclass and is patchable; an immutable compatibility class is simply read.
+        return False
+    return True
 
 
 def _install_scan_context_hard_bind() -> None:
-    """Reach the actual retained provider before app.py starts its first quote cycle."""
     from . import completed_scan
 
     current = completed_scan.scan_context
