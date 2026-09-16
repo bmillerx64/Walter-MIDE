@@ -33,19 +33,17 @@ def test_fngr_shape_standalone_1m_ignition_is_developing_not_look_now(monkeypatc
 
     assert view["state"] == unified.DEVELOPING
     assert "has not yet earned LOOK NOW" in view["reason"]
-    assert view["look_now_semantics"]["legacy_reason_demoted"] is True
+    assert view["look_now_semantics"]["legacy_1m_ignition_demoted"] is True
 
 
-def test_generic_current_attention_no_longer_manufactures_look_now(monkeypatch):
+def test_fresh_event_attention_contract_is_preserved(monkeypatch):
     monkeypatch.setattr(gs467, "bottom_up_urgency", lambda _record: _weak_urgency())
-    view = gs467.consolidated_look_now(
-        lambda _record: _look(
-            "A current attention trigger says this symbol deserves a chart review."
-        ),
-        {"symbol": "ATTN"},
+    original = _look(
+        "A current attention trigger says this symbol deserves a chart review."
     )
-    assert view["state"] == unified.DEVELOPING
-    assert "Current 1m/attention evidence" in view["reason"]
+    view = gs467.consolidated_look_now(lambda _record: original, {"symbol": "NEWS"})
+    assert view is original
+    assert view["state"] == unified.LOOK_NOW
 
 
 def test_30s_1m_early_watch_stays_visible_but_does_not_keep_look_now(monkeypatch):
