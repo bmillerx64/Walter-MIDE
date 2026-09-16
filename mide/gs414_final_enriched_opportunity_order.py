@@ -27,10 +27,12 @@ operator-awareness freshness exception for current extreme leaders whose source 
 freeze during a halt/pause. GS467 narrows standalone legacy 1m ignition so it cannot
 manufacture LOOK NOW without stronger bottom-up structure. GS468 is the final VWAP
 truth veto: numeric current price/VWAP evidence that says below cannot render as LOOK
-NOW or WATCH FOR ENTRY even when an older categorical field says otherwise.
+NOW or WATCH FOR ENTRY even when an older categorical field says otherwise. GS474
+then expires GS460 compression-owned LOOK NOW once the newly joined timeframe rung
+is no longer fresh, so an urgent verb cannot persist as a stale condition.
 
-GS414/GS436/GS462/GS463/GS465/GS466/GS467/GS468 remain presentation-only. GS464 owns
-its separate VWAP-truth calculation contract and changes no thresholds,
+GS414/GS436/GS462/GS463/GS465/GS466/GS467/GS468/GS474 remain presentation-only. GS464
+owns its separate VWAP-truth calculation contract and changes no thresholds,
 qualification, readiness, execution, or orders.
 """
 from __future__ import annotations
@@ -102,6 +104,13 @@ def _install_gs468() -> None:
     install_gs468()
 
 
+def _install_gs474() -> None:
+    """Expire only stale GS460 compression-owned LOOK NOW urgency."""
+    from .gs474_fresh_look_now_expiry import install as install_gs474
+
+    install_gs474()
+
+
 def final_enriched_opportunity_records(
     records: list[dict], *, actionable_function=None
 ) -> list[dict]:
@@ -122,7 +131,8 @@ def install() -> None:
     # evidence/presentation layers see the same session-aware primary VWAP authority.
     # GS465 remains the final card-order contract; GS466 changes only visibility of
     # awareness-only current extremes; GS467 adjudicates standalone 1m urgency; GS468
-    # then enforces the final numeric VWAP truth invariant.
+    # enforces numeric VWAP truth; GS474 then enforces LOOK NOW freshness for GS460's
+    # compression-only attention path.
     _install_gs464()
     _install_gs462()
     _install_gs463()
@@ -130,6 +140,7 @@ def install() -> None:
     _install_gs466()
     _install_gs467()
     _install_gs468()
+    _install_gs474()
 
     current = ui.render_escalation_engine
     if getattr(current, FINAL_ORDER_OWNER_ATTR, False):
