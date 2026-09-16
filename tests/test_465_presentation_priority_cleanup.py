@@ -1,6 +1,7 @@
 from pathlib import Path
 
 from mide import gs310_unified_opportunity_state as unified
+from mide import gs333_extreme_mover_operator_priority as gs333
 from mide import gs457_maturation_leader_priority as gs457
 from mide import gs459_price_trajectory_attention as gs459
 from mide import gs462_preflip_ignition_watch as gs462
@@ -202,6 +203,65 @@ def test_do_not_chase_and_halt_labels_are_never_softened(monkeypatch):
         return event
 
     assert gs465.cleaned_extreme_event(halted, {})["label"] == "HALTED · WATCH RESUME"
+
+
+def test_two_generic_extremes_keep_one_watch_banner_owner_for_continuity(monkeypatch):
+    rows = [
+        {"symbol": "BDRX", "pct_change": 81.8, "dollar_volume": 2_000_000},
+        {"symbol": "TRUG", "pct_change": 78.7, "dollar_volume": 2_000_000},
+    ]
+    monkeypatch.setattr(
+        unified,
+        "opportunity_state",
+        lambda record: {"state": unified.DEVELOPING, "reason": "test"},
+    )
+
+    def watch_event(record):
+        return {
+            "symbol": record["symbol"],
+            "pct_change": record["pct_change"],
+            "halted": False,
+            "label": "EXTREME MOVER · WATCH",
+        }
+
+    monkeypatch.setattr(gs333, "extreme_market_event", watch_event)
+    selected, event = gs465.prioritized_extreme_with_watch_continuity(
+        lambda _rows: (None, None), rows
+    )
+
+    assert selected is rows[0]
+    assert event["symbol"] == "BDRX"
+    assert event["label"] == "EXTREME MOVER · WATCH"
+
+
+def test_generic_extreme_watch_yields_to_non_extreme_actionable_setup(monkeypatch):
+    rows = [
+        {"symbol": "HOT", "pct_change": 90.0, "dollar_volume": 2_000_000},
+        {"symbol": "SETUP", "pct_change": 20.0, "dollar_volume": 1_000_000},
+    ]
+    monkeypatch.setattr(
+        unified,
+        "opportunity_state",
+        lambda record: {
+            "state": unified.DEVELOPING,
+            "reason": "test",
+        },
+    )
+
+    def maybe_extreme(record):
+        if record["symbol"] != "HOT":
+            return None
+        return {
+            "symbol": "HOT",
+            "pct_change": 90.0,
+            "halted": False,
+            "label": "EXTREME MOVER · WATCH",
+        }
+
+    monkeypatch.setattr(gs333, "extreme_market_event", maybe_extreme)
+    assert gs465.prioritized_extreme_with_watch_continuity(
+        lambda _rows: (None, None), rows
+    ) == (None, None)
 
 
 def test_gs465_is_last_at_the_final_presentation_boundary():
