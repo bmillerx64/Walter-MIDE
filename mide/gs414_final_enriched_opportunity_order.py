@@ -24,13 +24,14 @@ its attention/state ordering layer. GS464 restores session-aware VWAP authority 
 the older GS391 installer has completed. GS465 makes the visible card stack strictly
 state-contiguous and cleans up extreme-mover language. GS466 reasserts the
 operator-awareness freshness exception for current extreme leaders whose source bars
-freeze during a halt/pause. GS467 is the final Opportunity State semantic boundary:
-it prevents generic attention and standalone legacy 1m ignition from manufacturing
-LOOK NOW unless stronger bottom-up structure independently supports that urgency.
+freeze during a halt/pause. GS467 narrows standalone legacy 1m ignition so it cannot
+manufacture LOOK NOW without stronger bottom-up structure. GS468 is the final VWAP
+truth veto: numeric current price/VWAP evidence that says below cannot render as LOOK
+NOW or WATCH FOR ENTRY even when an older categorical field says otherwise.
 
-GS414/GS436/GS462/GS463/GS465/GS466/GS467 remain presentation-only. GS464 owns its
-separate VWAP-truth contract and changes no thresholds, qualification, readiness,
-execution, or orders.
+GS414/GS436/GS462/GS463/GS465/GS466/GS467/GS468 remain presentation-only. GS464 owns
+its separate VWAP-truth calculation contract and changes no thresholds,
+qualification, readiness, execution, or orders.
 """
 from __future__ import annotations
 
@@ -88,10 +89,17 @@ def _install_gs466() -> None:
 
 
 def _install_gs467() -> None:
-    """Make final LOOK NOW semantics consistent with the bottom-up ignition model."""
+    """Narrow standalone legacy 1m ignition LOOK NOW semantics."""
     from .gs467_look_now_semantic_consolidation import install as install_gs467
 
     install_gs467()
+
+
+def _install_gs468() -> None:
+    """Make numeric current VWAP truth a final urgency veto."""
+    from .gs468_vwap_truth_veto import install as install_gs468
+
+    install_gs468()
 
 
 def final_enriched_opportunity_records(
@@ -113,13 +121,15 @@ def install() -> None:
     # GS391 lives inside the legacy late chain. Reassert GS464 first so all subsequent
     # evidence/presentation layers see the same session-aware primary VWAP authority.
     # GS465 remains the final card-order contract; GS466 changes only visibility of
-    # awareness-only current extremes; GS467 then adjudicates the final state meaning.
+    # awareness-only current extremes; GS467 adjudicates standalone 1m urgency; GS468
+    # then enforces the final numeric VWAP truth invariant.
     _install_gs464()
     _install_gs462()
     _install_gs463()
     _install_gs465()
     _install_gs466()
     _install_gs467()
+    _install_gs468()
 
     current = ui.render_escalation_engine
     if getattr(current, FINAL_ORDER_OWNER_ATTR, False):
