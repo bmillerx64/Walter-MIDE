@@ -1,25 +1,25 @@
-"""GS467: make LOOK NOW mean one consistent degree of operator urgency.
+"""GS467: make standalone 1m ignition stop manufacturing LOOK NOW.
 
 Live validation on 2026-09-16 exposed a semantic collision on FNGR. Walter displayed
 LOOK NOW from GS393's permissive 1m ignition rule even though the newer bottom-up
-30s -> 1m -> 3m model would classify the same shape as early-watch evidence unless
+30s -> 1m -> 3m model would classify that same shape as early-watch evidence unless
 stronger structure joins.
 
-GS467 is a final presentation adjudicator. It does not remove 1m reclaim/ST evidence;
-it only prevents two legacy weak meanings from owning the yellow LOOK NOW state:
+GS467 is a final presentation adjudicator. It preserves Walter's established fresh
+news / current-event LOOK NOW contract and all specific structural LOOK NOW paths.
+It changes only the legacy GS393 standalone 1m VWAP-reclaim / bullish-1m-ST path.
+That 1m evidence remains useful, visible and explanatory, but it no longer owns the
+yellow LOOK NOW state by itself.
 
-* generic current-attention alone;
-* standalone GS393 1m VWAP reclaim / bullish 1m SuperTrend ignition.
+A legacy 1m ignition may still retain LOOK NOW when stronger bottom-up evidence
+independently supports urgency: either GS460 has active 30s->1m flip-price compression
+with flow, or GS462 has JET FUEL (30s seed + supportive 1m + supportive 3m + flow).
+Existing reset/retest, consolidation re-arm, fresh ST/VWAP maturation, fresh-news and
+other event-attention LOOK NOW paths are left unchanged.
 
-A weak legacy LOOK NOW remains valid when current bottom-up evidence independently
-supports urgency: either GS460 has active 30s->1m flip-price compression with flow,
-or GS462 has JET FUEL (30s seed + supportive 1m + supportive 3m + flow). Existing
-specific structural LOOK NOW reasons such as reset/retest, consolidation re-arm, and
-fresh ST/VWAP maturation are left unchanged.
-
-Demoted records remain visible as DEVELOPING / EARLY WATCH context. No discovery,
-market-data request, indicator formula, threshold, qualification, readiness, alert
-permission, execution rule, or order behavior changes.
+Demoted 1m-only records remain visible as DEVELOPING / EARLY WATCH context. No
+discovery, market-data request, indicator formula, threshold, qualification,
+readiness, alert permission, execution rule, or order behavior changes.
 """
 from __future__ import annotations
 
@@ -29,17 +29,11 @@ from functools import wraps
 _LOOK_NOW_OWNER_ATTR = "_walter_gs467_look_now_semantics_owner"
 _PROVENANCE = "GS467_LOOK_NOW_SEMANTICS"
 
-_LEGACY_WEAK_PREFIXES = (
-    "1m ignition:",
-    "a current attention trigger says this symbol deserves a chart review",
-    "current market-attention leader",
-)
 
-
-def legacy_weak_look_now(view: dict) -> bool:
-    """Return True only for the two legacy LOOK NOW meanings GS467 is retiring."""
+def legacy_1m_ignition_look_now(view: dict) -> bool:
+    """Return True only for the legacy GS393 standalone 1m ignition reason."""
     reason = str(view.get("reason") or "").strip().lower()
-    return any(reason.startswith(prefix) for prefix in _LEGACY_WEAK_PREFIXES)
+    return reason.startswith("1m ignition:")
 
 
 def bottom_up_urgency(record: dict) -> dict:
@@ -57,13 +51,13 @@ def bottom_up_urgency(record: dict) -> dict:
 
 
 def consolidated_look_now(original, record: dict) -> dict:
-    """Demote only weak legacy LOOK NOW states that lack stronger current structure."""
+    """Demote only standalone GS393 1m LOOK NOW when stronger structure is absent."""
     from . import gs310_unified_opportunity_state as unified
 
     base = original(record)
     if str(base.get("state") or "") != unified.LOOK_NOW:
         return base
-    if not legacy_weak_look_now(base):
+    if not legacy_1m_ignition_look_now(base):
         return base
 
     urgency = bottom_up_urgency(record)
@@ -87,8 +81,8 @@ def consolidated_look_now(original, record: dict) -> dict:
         )
     else:
         view["reason"] = (
-            "Current 1m/attention evidence is worth monitoring, but it has not yet "
-            "earned LOOK NOW."
+            "Current 1m VWAP/SuperTrend ignition is worth monitoring, but it has not "
+            "yet earned LOOK NOW."
         )
     view["next_step"] = (
         "Keep it visible and wait for stronger current structure: compressed 30s->1m "
@@ -96,7 +90,7 @@ def consolidated_look_now(original, record: dict) -> dict:
         "re-arm, or fresh ST/VWAP maturation."
     )
     view["look_now_semantics"] = {
-        "legacy_reason_demoted": True,
+        "legacy_1m_ignition_demoted": True,
         "bottom_up_compression": bool((urgency.get("compression") or {}).get("active")),
         "early_watch": bool(preflip.get("active")),
         "jet_fuel": bool(preflip.get("jet_fuel")),
@@ -112,7 +106,7 @@ def _inherit(wrapper, wrapped) -> None:
 
 
 def install() -> None:
-    """Install the final LOOK NOW semantic adjudicator across trader-facing bindings."""
+    """Install the final 1m-ignition semantic adjudicator across trader-facing bindings."""
     from . import gs310_unified_opportunity_state as unified
     from . import gs311_unified_voice as voice
     from . import gs314_state_consistency as consistency
