@@ -1,0 +1,197 @@
+"""GS465: make Walter's visible priority language internally consistent.
+
+Live validation on 2026-09-16 exposed two presentation contradictions:
+
+* GS333 could label a +75% current mover ``EXTREME MOVER · LOOK NOW`` merely because
+  it was not more than 5% above VWAP. That label could therefore mean "large move"
+  rather than "current structure has earned immediate chart review".
+* GS463 deliberately let attention-only ignition/maturation lifts cross Opportunity
+  State boundaries. A CHASE / WAIT card with an attention lift could consequently
+  render above DEVELOPING, producing visually alternating CHASE / WAIT -> DEVELOPING
+  -> CHASE / WAIT stacks even though every individual card was truthful.
+
+GS465 separates those jobs cleanly:
+
+1. The Opportunity State card stack is state-first and contiguous:
+   WATCH FOR ENTRY > LOOK NOW > DEVELOPING > CHASE / WAIT > HALTED/other.
+   Ignition/maturation/trajectory evidence remains useful only as a tie-breaker
+   *within the same state*.
+2. An extreme mover no longer earns the words LOOK NOW from percentage move alone.
+   Near-VWAP extremes become ``EXTREME MOVER · WATCH`` unless the current unified
+   state independently earned LOOK NOW through a specific structural reason. A real
+   WATCH FOR ENTRY remains labeled as such.
+
+This module is presentation-only. It changes no discovery membership, provider
+request, indicator formula, VWAP/ST threshold, qualification, readiness, alert
+permission, execution rule, or order behavior.
+"""
+from __future__ import annotations
+
+from functools import wraps
+
+_ORDER_OWNER_ATTR = "_walter_gs465_state_contiguous_order_owner"
+_EXTREME_OWNER_ATTR = "_walter_gs465_extreme_semantics_owner"
+
+WATCH_FOR_ENTRY_BAND = 60
+LOOK_NOW_BAND = 50
+DEVELOPING_BAND = 40
+CHASE_WAIT_BAND = 30
+HALTED_BAND = 20
+OTHER_BAND = 10
+
+
+def strict_state_band(record: dict) -> int:
+    """Return the non-negotiable visible card-state band."""
+    from . import gs310_unified_opportunity_state as unified
+
+    state = str(unified.opportunity_state(record).get("state") or "")
+    if state == unified.WATCH_FOR_ENTRY:
+        return WATCH_FOR_ENTRY_BAND
+    if state == unified.LOOK_NOW:
+        return LOOK_NOW_BAND
+    if state == unified.DEVELOPING:
+        return DEVELOPING_BAND
+    if state == unified.CHASE_WAIT:
+        return CHASE_WAIT_BAND
+    if state == unified.HALTED:
+        return HALTED_BAND
+    return OTHER_BAND
+
+
+def attention_tiebreak(record: dict) -> tuple[int, float, float]:
+    """Rank attention evidence only inside an already-equal Opportunity State."""
+    from . import gs457_maturation_leader_priority as gs457
+    from . import gs459_price_trajectory_attention as gs459
+    from . import gs462_preflip_ignition_watch as gs462
+
+    preflip = gs462.preflip_ignition_watch(record)
+    if preflip.get("active"):
+        one_gap = (preflip.get("one_minute") or {}).get("st_gap_pct")
+        three_gap = (preflip.get("three_minute") or {}).get("st_gap_pct")
+        try:
+            one_gap = float(one_gap)
+        except (TypeError, ValueError):
+            one_gap = 999.0
+        try:
+            three_gap = float(three_gap)
+        except (TypeError, ValueError):
+            three_gap = 999.0
+        return (60 if preflip.get("jet_fuel") else 55, -one_gap, -three_gap)
+
+    maturation = gs457.maturation_attention(record)
+    if maturation.get("fresh_maturation"):
+        return (50, 0.0, 0.0)
+    if gs459.trajectory_attention(record).get("active"):
+        return (45, 0.0, 0.0)
+    if maturation.get("sustained_confirmation"):
+        return (40, 0.0, 0.0)
+    return (0, 0.0, 0.0)
+
+
+def ordered_state_contiguous_records(records: list[dict], baseline_order=None) -> list[dict]:
+    """Keep states contiguous while preserving useful within-state urgency."""
+    rows = list(baseline_order(records) if baseline_order is not None else (records or []))
+    # Stable multi-pass sort: baseline tie behavior survives unless there is explicit
+    # same-state attention evidence; the final state pass can never be crossed.
+    rows.sort(key=attention_tiebreak, reverse=True)
+    rows.sort(key=strict_state_band, reverse=True)
+    return rows
+
+
+def _specific_look_now(view: dict) -> bool:
+    """Distinguish structural LOOK NOW from generic market-attention LOOK NOW."""
+    from . import gs310_unified_opportunity_state as unified
+
+    if str(view.get("state") or "") != unified.LOOK_NOW:
+        return False
+    reason = str(view.get("reason") or "").strip().lower()
+    generic = (
+        "a current attention trigger says this symbol deserves a chart review",
+        "current market-attention leader",
+    )
+    return bool(reason and not any(text in reason for text in generic))
+
+
+def cleaned_extreme_event(original, record: dict) -> dict | None:
+    """Keep extreme-mover awareness without manufacturing LOOK NOW semantics."""
+    from . import gs310_unified_opportunity_state as unified
+
+    event = original(record)
+    if not event:
+        return event
+    if event.get("halted") or "DO NOT CHASE" in str(event.get("label") or "").upper():
+        return event
+
+    try:
+        view = unified.opportunity_state(record)
+    except Exception:
+        view = {}
+    state = str(view.get("state") or "")
+
+    cleaned = dict(event)
+    if state == unified.WATCH_FOR_ENTRY:
+        cleaned["label"] = "EXTREME MOVER · WATCH FOR ENTRY"
+        cleaned["guidance"] = (
+            "The normal opportunity state has earned WATCH FOR ENTRY. Use the same "
+            "entry evidence and risk discipline as any other setup."
+        )
+    elif _specific_look_now(view):
+        cleaned["label"] = "EXTREME MOVER · LOOK NOW"
+        cleaned["guidance"] = (
+            "Current structure independently earned LOOK NOW; the large percentage "
+            "move is context, not the reason for urgency."
+        )
+    else:
+        cleaned["label"] = "EXTREME MOVER · WATCH"
+        cleaned["guidance"] = (
+            "Major mover worth monitoring, but the current structure has not earned "
+            "LOOK NOW. Let normal VWAP/ST/ignition evidence promote it."
+        )
+    return cleaned
+
+
+def _inherit(wrapper, wrapped) -> None:
+    for name, value in getattr(wrapped, "__dict__", {}).items():
+        if name.startswith("_gs") and not hasattr(wrapper, name):
+            setattr(wrapper, name, value)
+
+
+def _install_order() -> None:
+    from . import gs369_escalation_priority_order as gs369
+
+    current = gs369.ordered_escalation_records
+    if getattr(current, _ORDER_OWNER_ATTR, False):
+        return
+
+    def ordered_escalation_records(records: list[dict]) -> list[dict]:
+        return ordered_state_contiguous_records(records, baseline_order=current)
+
+    _inherit(ordered_escalation_records, current)
+    ordered_escalation_records._gs465_presentation_priority_cleanup = True
+    ordered_escalation_records._gs465_original = current
+    setattr(ordered_escalation_records, _ORDER_OWNER_ATTR, True)
+    gs369.ordered_escalation_records = ordered_escalation_records
+
+
+def _install_extreme_semantics() -> None:
+    from . import gs333_extreme_mover_operator_priority as extreme
+
+    current = extreme.extreme_market_event
+    if getattr(current, _EXTREME_OWNER_ATTR, False):
+        return
+
+    @wraps(current)
+    def extreme_market_event(record: dict) -> dict | None:
+        return cleaned_extreme_event(current, record)
+
+    _inherit(extreme_market_event, current)
+    extreme_market_event._gs465_presentation_priority_cleanup = True
+    extreme_market_event._gs465_original = current
+    setattr(extreme_market_event, _EXTREME_OWNER_ATTR, True)
+    extreme.extreme_market_event = extreme_market_event
+
+
+def install() -> None:
+    """Install final visible card ordering plus truthful extreme-mover language."""
+    _install_order()
+    _install_extreme_semantics()
