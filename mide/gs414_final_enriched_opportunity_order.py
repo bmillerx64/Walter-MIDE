@@ -21,11 +21,12 @@ late-runtime boundary, so only the actual outer GS414 wrapper can suppress rebin
 GS462 uses this final late-runtime boundary to reassert its presentation-only 30s/1m
 pre-flip attention layer after GS459/GS460/GS461 have converged. GS463 then applies
 its attention/state ordering layer. GS464 restores session-aware VWAP authority after
-the older GS391 installer has completed. GS465 is intentionally last: it makes the
-visible card stack strictly state-contiguous and cleans up extreme-mover language so
-percentage move alone cannot manufacture LOOK NOW.
+the older GS391 installer has completed. GS465 makes the visible card stack strictly
+state-contiguous and cleans up extreme-mover language. GS466 then reasserts the
+operator-awareness freshness exception for current extreme leaders whose source bars
+freeze during a halt/pause, without restoring any trade authority.
 
-GS414/GS436/GS462/GS463/GS465 remain presentation-only. GS464 owns its separate
+GS414/GS436/GS462/GS463/GS465/GS466 remain presentation-only. GS464 owns its separate
 VWAP-truth contract and changes no thresholds, qualification, readiness, execution,
 or orders.
 """
@@ -77,6 +78,13 @@ def _install_gs465() -> None:
     install_gs465()
 
 
+def _install_gs466() -> None:
+    """Keep frozen current extreme leaders visible in awareness-only presentation."""
+    from .gs466_extreme_awareness_continuity import install as install_gs466
+
+    install_gs466()
+
+
 def final_enriched_opportunity_records(
     records: list[dict], *, actionable_function=None
 ) -> list[dict]:
@@ -95,11 +103,13 @@ def install() -> None:
 
     # GS391 lives inside the legacy late chain. Reassert GS464 first so all subsequent
     # evidence/presentation layers see the same session-aware primary VWAP authority.
-    # GS465 is deliberately last so no attention-only lift can cross card-state bands.
+    # GS465 remains the final card-order contract; GS466 changes only visibility of
+    # awareness-only current extremes before that ordered collection is frozen.
     _install_gs464()
     _install_gs462()
     _install_gs463()
     _install_gs465()
+    _install_gs466()
 
     current = ui.render_escalation_engine
     if getattr(current, FINAL_ORDER_OWNER_ATTR, False):
