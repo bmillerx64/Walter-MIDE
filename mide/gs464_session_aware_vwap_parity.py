@@ -117,6 +117,10 @@ def _install_primary_authority() -> None:
     current = gs378.primary_vwap_context
     if getattr(current, _OWNER_ATTR, False):
         return
+    # Preserve the installed GS391/legacy provenance markers so wrapper-integrity
+    # diagnostics continue to describe the complete chain even though GS464 now owns
+    # the final decision policy.
+    _inherit(session_aware_primary_vwap_context, current)
     session_aware_primary_vwap_context._gs464_session_aware_vwap_parity = True
     session_aware_primary_vwap_context._gs464_original = current
     setattr(session_aware_primary_vwap_context, _OWNER_ATTR, True)
