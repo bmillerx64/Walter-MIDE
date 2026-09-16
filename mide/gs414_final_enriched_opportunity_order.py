@@ -22,13 +22,15 @@ GS462 uses this final late-runtime boundary to reassert its presentation-only 30
 pre-flip attention layer after GS459/GS460/GS461 have converged. GS463 then applies
 its attention/state ordering layer. GS464 restores session-aware VWAP authority after
 the older GS391 installer has completed. GS465 makes the visible card stack strictly
-state-contiguous and cleans up extreme-mover language. GS466 then reasserts the
+state-contiguous and cleans up extreme-mover language. GS466 reasserts the
 operator-awareness freshness exception for current extreme leaders whose source bars
-freeze during a halt/pause, without restoring any trade authority.
+freeze during a halt/pause. GS467 is the final Opportunity State semantic boundary:
+it prevents generic attention and standalone legacy 1m ignition from manufacturing
+LOOK NOW unless stronger bottom-up structure independently supports that urgency.
 
-GS414/GS436/GS462/GS463/GS465/GS466 remain presentation-only. GS464 owns its separate
-VWAP-truth contract and changes no thresholds, qualification, readiness, execution,
-or orders.
+GS414/GS436/GS462/GS463/GS465/GS466/GS467 remain presentation-only. GS464 owns its
+separate VWAP-truth contract and changes no thresholds, qualification, readiness,
+execution, or orders.
 """
 from __future__ import annotations
 
@@ -85,6 +87,13 @@ def _install_gs466() -> None:
     install_gs466()
 
 
+def _install_gs467() -> None:
+    """Make final LOOK NOW semantics consistent with the bottom-up ignition model."""
+    from .gs467_look_now_semantic_consolidation import install as install_gs467
+
+    install_gs467()
+
+
 def final_enriched_opportunity_records(
     records: list[dict], *, actionable_function=None
 ) -> list[dict]:
@@ -104,12 +113,13 @@ def install() -> None:
     # GS391 lives inside the legacy late chain. Reassert GS464 first so all subsequent
     # evidence/presentation layers see the same session-aware primary VWAP authority.
     # GS465 remains the final card-order contract; GS466 changes only visibility of
-    # awareness-only current extremes before that ordered collection is frozen.
+    # awareness-only current extremes; GS467 then adjudicates the final state meaning.
     _install_gs464()
     _install_gs462()
     _install_gs463()
     _install_gs465()
     _install_gs466()
+    _install_gs467()
 
     current = ui.render_escalation_engine
     if getattr(current, FINAL_ORDER_OWNER_ATTR, False):
