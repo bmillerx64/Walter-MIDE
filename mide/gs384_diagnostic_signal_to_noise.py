@@ -170,6 +170,7 @@ def install() -> None:
     from .gs392_operator_order_audio import install as install_gs392
     from .gs469_30s_stream_continuity import install as install_gs469
     from .gs470_30s_activation_truth import install as install_gs470
+    from .gs488_webull_connection_limit_backoff import install as install_gs488
     from .gs473_operator_attention_audio import install as install_gs473
 
     # These installers bootstrap here after GS379 has installed the genuine Webull
@@ -188,6 +189,7 @@ def install() -> None:
     install_gs392()
     install_gs469()
     install_gs470()
+    install_gs488()
     install_gs473()
 
     current_sources = webull_live.LiveWebullProvider.pipeline_sources
