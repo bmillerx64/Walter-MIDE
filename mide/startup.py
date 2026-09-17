@@ -48,6 +48,7 @@ def ensure_late_runtime_installers() -> None:
     from .gs478_sparse_history_warm_seed import install as install_gs478
     from .gs479_headline_catalyst_magnitude import install as install_gs479
     from .gs480_catalyst_story_intelligence import install as install_gs480
+    from .gs481_live_evidence_hard_bind import install as install_gs481
 
     install_late_chain()
     # GS453 is deliberately outside the established GS392->GS404 presentation chain.
@@ -120,6 +121,11 @@ def ensure_late_runtime_installers() -> None:
     # request, and writes publication/awareness truth into the active recorder graph.
     # This is awareness/observability only; all trading authority remains downstream.
     install_gs480()
+    # GS481 uses GS427's proven retained-recorder globals after GS480 has populated its
+    # bounded story traces. It persists those traces plus sanitized Webull stream
+    # subscription-failure context. It performs no network repair and changes no
+    # trading authority.
+    install_gs481()
     # GS428 runs only after GS413 is active. It removes the obsolete GS412 ten-second
     # completed-scan handoff delay from the production watchdog singleton while the
     # process-wide scheduler owner and no-overlap watchdog remain authoritative.
@@ -272,8 +278,9 @@ ensure_reclaim_watch()
 # that effective acquisition boundary, GS426 removes repeated same-day Yahoo free-
 # float refreshes without changing float gates, GS427 hard-binds latency/build evidence
 # to the active recorder call graph, GS480 adds story-level catalyst/ticker/news-clock
-# truth without trading authority, GS428 releases obsolete post-scan scheduler deadtime,
-# GS435 removes stale-owner due latency, GS445 removes append-only backup recompression,
+# truth without trading authority, GS481 hard-binds that news trace plus sanitized
+# stream-failure truth, GS428 releases obsolete post-scan scheduler deadtime, GS435
+# removes stale-owner due latency, GS445 removes append-only backup recompression,
 # GS446/GS448 defer the two large backup payloads until operator click, GS459 extracts
 # the operator's sparkline-like price path evidence from already-owned 1m bars, GS460
 # adds bottom-up ST flip-price compression attention from already-owned 30s/1m/3m/5m
