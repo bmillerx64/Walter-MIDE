@@ -9,16 +9,23 @@ memory only looked at the immediately previous pulse, so the earlier leader stat
 could be forgotten before the constructive reset arrived.
 
 GS477 adds presentation/audio memory only. A current Webull mover that was previously
->5% above VWAP remains a "proven leader" in a bounded 90-minute memory. If it later
+>5% above VWAP remains a proven leader in a bounded 90-minute memory. If it later
 returns to the existing +/-2% near-VWAP window with fresh 30s + 1m bullish structure
 and supporting participation/flow, Walter emits RESET WATCH while preserving the
 current Opportunity State. If primary VWAP is then reclaimed with 1m also above VWAP,
 Walter may render LOOK NOW for chart review. 3m confirmation is additive and gets its
 own stronger explanation when Walter's existing 3m evidence turns bullish.
 
-This does not change discovery, market data, indicator formulas, scanner gates,
-ranking scores, qualification, readiness, anti-chase, execution or orders. It never
-sets qualified_for_watch/entry/alert and never turns a below-VWAP reset into LOOK NOW.
+GS477 deliberately does not own ``ui.actionable_candidate_records``. The GS414 final
+render boundary enriches a detached snapshot and restores the exact public callable it
+received. That preserves GS414's exception-safety contract while still letting the
+same enriched snapshot drive visible state. The audio wrapper performs the same
+bounded evidence enrichment on its own input, after which established escalation audio
+retains priority.
+
+No discovery, market data, indicator formulas, scanner gates, ranking scores,
+qualification, readiness, anti-chase, execution or orders change. GS477 never grants
+qualified_for_watch/entry/alert and never turns a below-VWAP reset into LOOK NOW.
 """
 from __future__ import annotations
 
@@ -42,7 +49,6 @@ RESET_WATCH = "RESET_WATCH"
 REIGNITION = "REIGNITION"
 THREE_MINUTE_CONFIRMATION = "THREE_MINUTE_CONFIRMATION"
 _PROVENANCE = "PROVEN_LEADER_RESET_REIGNITION"
-_RECORDS_OWNER = "_walter_gs477_leader_reset_records_owner"
 _STATE_OWNER = "_walter_gs477_leader_reset_state_owner"
 _AUDIO_OWNER = "_walter_gs477_leader_reset_audio_owner"
 
@@ -85,7 +91,7 @@ def _timeframes(record: dict) -> dict:
 
 
 def _tf(record: dict, label: str) -> dict:
-    detail = (_timeframes(record).get(label) or {})
+    detail = _timeframes(record).get(label) or {}
     if not isinstance(detail, dict):
         return {"bullish": False, "above_vwap": False, "available": False}
     bullish = bool(
@@ -98,12 +104,17 @@ def _tf(record: dict, label: str) -> dict:
         if "current_above_vwap" in detail
         else detail.get("above_vwap")
     )
-    available = detail.get("data_available") is not False and bool(detail)
-    return {"bullish": bullish, "above_vwap": above, "available": available}
+    return {
+        "bullish": bullish,
+        "above_vwap": above,
+        "available": detail.get("data_available") is not False and bool(detail),
+    }
 
 
 def _current_webull_mover(record: dict) -> bool:
-    reasons = " | ".join(str(value or "") for value in _field(record, "discovery_reasons", []) or [])
+    reasons = " | ".join(
+        str(value or "") for value in _field(record, "discovery_reasons", []) or []
+    )
     return bool(
         "Webull native: day_gainers" in reasons
         or "Webull native: five_minute_movers" in reasons
@@ -114,13 +125,19 @@ def _fresh_source(record: dict) -> bool:
     from .gs373_operator_visibility_freshness import MAX_OPERATOR_BAR_AGE_SECONDS
 
     age = _number(
-        _field(record, "source_bar_age_seconds", _field(record, "source_bar_age", _field(record, "bar_age_seconds")))
+        _field(
+            record,
+            "source_bar_age_seconds",
+            _field(record, "source_bar_age", _field(record, "bar_age_seconds")),
+        )
     )
     return age is not None and 0.0 <= age <= MAX_OPERATOR_BAR_AGE_SECONDS
 
 
 def _supporting_flow(record: dict) -> tuple[bool, float, float, float]:
-    participation = _number(_field(record, "participation_score", _field(record, "participation_surge_score", 0.0))) or 0.0
+    participation = _number(
+        _field(record, "participation_score", _field(record, "participation_surge_score", 0.0))
+    ) or 0.0
     volume_acceleration = _number(_field(record, "volume_acceleration", 0.0)) or 0.0
     dollar_flow = _number(
         _field(
@@ -153,9 +170,12 @@ def _marker(record: dict) -> str:
 
 
 def _remember_extension(record: dict, now: float) -> LeaderMemory | None:
-    symbol = str(record.get("symbol") or _decision(record).get("symbol") or "").strip().upper()
+    symbol = str(
+        record.get("symbol") or _decision(record).get("symbol") or ""
+    ).strip().upper()
     if not symbol:
         return None
+
     current = _leaders.get(symbol)
     distance = _number(_field(record, "vwap_distance_pct"))
     if (
@@ -213,10 +233,13 @@ def leader_reset_evidence(record: dict, memory: LeaderMemory | None, *, now: flo
         and current_mover
         and fresh_source
     )
-    reclaimed = bool(distance is not None and 0.0 <= distance <= MAX_REIGNITION_VWAP_DISTANCE_PCT)
+    reclaimed = bool(
+        distance is not None and 0.0 <= distance <= MAX_REIGNITION_VWAP_DISTANCE_PCT
+    )
     reignition = bool(reset_watch and reclaimed and one.get("above_vwap"))
-    three_confirmed = bool(reignition and three.get("bullish") and three.get("above_vwap"))
-
+    three_confirmed = bool(
+        reignition and three.get("bullish") and three.get("above_vwap")
+    )
     stage = (
         THREE_MINUTE_CONFIRMATION
         if three_confirmed
@@ -226,6 +249,7 @@ def leader_reset_evidence(record: dict, memory: LeaderMemory | None, *, now: flo
         if reset_watch
         else "NONE"
     )
+
     marker = _marker(record)
     stage_fresh = False
     if memory is not None:
@@ -237,7 +261,7 @@ def leader_reset_evidence(record: dict, memory: LeaderMemory | None, *, now: flo
             memory.transition_marker = marker
             stage_fresh = True
         elif memory.transition_marker == marker:
-            # Keep repeated rendering of the same scan deterministic.
+            # Rendering and audio may inspect the same scan independently.
             stage_fresh = True
 
     return {
@@ -275,12 +299,8 @@ def apply_leader_reset_marks(records: list[dict], *, now: float | None = None) -
     """Attach bounded leader-reset evidence without mutating scanner records."""
     now = monotonic() if now is None else now
     output: list[dict] = []
-    current_symbols: set[str] = set()
 
     for record in records or []:
-        symbol = str(record.get("symbol") or _decision(record).get("symbol") or "").strip().upper()
-        if symbol:
-            current_symbols.add(symbol)
         memory = _remember_extension(record, now)
         evidence = leader_reset_evidence(record, memory, now=now)
         if evidence.get("active"):
@@ -318,6 +338,13 @@ def augment_leader_reset_records(records: list[dict], visible: list[dict]) -> li
     return output
 
 
+def enrich_visible_records(records: list[dict], actionable_function) -> list[dict]:
+    """Enrich a detached render snapshot without replacing the public UI callable."""
+    enriched = apply_leader_reset_marks(records)
+    visible = list(actionable_function(enriched) or [])
+    return augment_leader_reset_records(enriched, visible)
+
+
 def leader_reset_opportunity_state(original, record: dict) -> dict:
     """Turn a confirmed reset reclaim into LOOK NOW; below VWAP remains a watch."""
     from . import gs310_unified_opportunity_state as unified
@@ -350,11 +377,8 @@ def leader_reset_opportunity_state(original, record: dict) -> dict:
         )
         return view
 
-    # Re-ignition is only defined on/above primary VWAP and within the existing
-    # anti-chase boundary, so this wrapper cannot manufacture below-VWAP urgency.
     if distance is None or distance < 0.0 or distance > MAX_REIGNITION_VWAP_DISTANCE_PCT:
         return view
-
     if base.get("state") == unified.CHASE_WAIT:
         return view
 
@@ -422,26 +446,6 @@ def _inherit(wrapper, wrapped) -> None:
             setattr(wrapper, name, value)
 
 
-def _install_records() -> None:
-    from . import ui
-
-    current = ui.actionable_candidate_records
-    if getattr(current, _RECORDS_OWNER, False):
-        return
-
-    @wraps(current)
-    def leader_reset_records(records: list[dict]) -> list[dict]:
-        enriched = apply_leader_reset_marks(records)
-        visible = current(enriched)
-        return augment_leader_reset_records(enriched, visible)
-
-    _inherit(leader_reset_records, current)
-    leader_reset_records._gs477_leader_reset_reignition = True
-    leader_reset_records._gs477_original = current
-    setattr(leader_reset_records, _RECORDS_OWNER, True)
-    ui.actionable_candidate_records = leader_reset_records
-
-
 def _install_state() -> None:
     from . import gs310_unified_opportunity_state as unified
     from . import gs311_unified_voice as voice
@@ -476,10 +480,12 @@ def _install_audio() -> None:
 
     @wraps(current)
     def alert_phrase(records: list[dict]) -> str:
+        # Update bounded leader memory even when an established alert has priority.
+        enriched = apply_leader_reset_marks(records)
         established = current(records)
         if established:
             return established
-        return leader_reset_audio_phrase(records)
+        return leader_reset_audio_phrase(enriched)
 
     _inherit(alert_phrase, current)
     alert_phrase._gs477_leader_reset_reignition = True
@@ -489,7 +495,6 @@ def _install_audio() -> None:
 
 
 def install() -> None:
-    """Install after GS474 at Walter's final presentation boundary."""
+    """Install state/audio only; GS414 owns detached record enrichment/restoration."""
     _install_state()
-    _install_records()
     _install_audio()
