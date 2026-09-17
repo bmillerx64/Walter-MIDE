@@ -8,18 +8,19 @@ A formerly quiet symbol can therefore erupt with 12-19 genuine traded minutes an
 silently discarded before Walter evaluates the move.
 
 GS478 bridges only that 12-19-bar gap. During the existing ``stage6_current_session``
-request it fetches real completed Webull 1-minute history for the sparse symbols and
-prepends only enough prior-session rows to satisfy the obsolete 20-row outer guard.
-The base analyzer immediately filters the frame back to the latest trading date; since
-there are already at least 12 real current-session rows, its legacy ``<12`` fallback
-never runs. VWAP, SuperTrend, volume acceleration, participation, price path, session
-high/low and every trading decision therefore remain based on today's real bars.
-GS378 likewise filters captured history to the latest Eastern trading date.
+request it fetches a tiny bounded tail of real completed Webull 1-minute history for
+those sparse symbols and prepends only enough prior-session rows to satisfy the obsolete
+20-row outer guard. The base analyzer immediately filters the frame back to the latest
+trading date; because at least 12 real current-session rows already exist, its legacy
+``<12`` fallback never runs. VWAP, SuperTrend, volume acceleration, participation,
+price path, session high/low and every trading decision therefore remain based on
+today's real bars. GS378 likewise filters captured history to the latest Eastern date.
 
-If fewer than 12 real current-session bars exist, GS478 does nothing: Walter keeps the
-existing insufficient-data behavior rather than manufacturing evidence. No synthetic
-or fill-forward bars are created, no 30-second fallback is introduced, and no scanner,
-qualification, readiness, ranking, alert, execution or order rule changes.
+The bridge request is deliberately separate from Stage 6's completed-session volume
+profile request, so GS478 cannot change that profile's established data contract. If
+fewer than 12 real current-session bars exist, GS478 does nothing rather than fabricate
+evidence. No synthetic/fill-forward bars, no historical 30-second fallback, and no
+scanner, qualification, readiness, ranking, alert, execution or order rule changes.
 """
 from __future__ import annotations
 
@@ -31,12 +32,11 @@ import pandas as pd
 
 AUTHORITY = "HISTORY_SUFFICIENCY_BRIDGE_ONLY"
 CURRENT_REASON = "stage6_current_session"
-PROFILE_REASON = "stage6_historical_profile"
 BRIDGE_REASON = "stage6_sparse_history_bridge"
 MIN_REAL_SESSION_BARS = 12
 LEGACY_OUTER_GATE_BARS = 20
-PROFILE_LOOKBACK_DAYS = 14
-PROFILE_HISTORY_BARS = 1200
+BRIDGE_LOOKBACK_DAYS = 14
+BRIDGE_HISTORY_BARS = 32
 _OWNER = "_walter_gs478_sparse_history_bridge_owner"
 
 
@@ -74,27 +74,10 @@ def _bridge_rows(client, prior_rows, current_rows) -> tuple[list[dict], int]:
         return current, 0
 
     prior = list(prior_rows or [])
-    if not prior:
-        return current, 0
     needed = LEGACY_OUTER_GATE_BARS - current_count
-    seed = prior[-needed:]
-    if len(seed) < needed:
+    if len(prior) < needed:
         return current, 0
-    return seed + current, len(seed)
-
-
-def _merge_profile_result(
-    wanted: list[str],
-    prefetched: dict[str, list[dict]],
-    fetched: dict[str, list[dict]],
-) -> dict[str, list[dict]]:
-    result = {}
-    for symbol in wanted:
-        if symbol in prefetched:
-            result[symbol] = list(prefetched[symbol])
-        elif symbol in fetched:
-            result[symbol] = list(fetched[symbol])
-    return result
+    return prior[-needed:] + current, needed
 
 
 def _inherit(wrapper, wrapped) -> None:
@@ -117,12 +100,10 @@ def install() -> None:
         if not callable(original_bars):
             return current_analyze(client, candidates, news_index, discovery_reasons)
 
-        prefetched_profiles: dict[str, list[dict]] = {}
         bridged: dict[str, int] = {}
         sparse_counts: dict[str, int] = {}
         under_minimum: dict[str, int] = {}
         bridge_request_count = 0
-        profile_reuse_count = 0
         had_instance_bars = False
         prior_instance_bars: Any = None
         instance_dict = getattr(client, "__dict__", None)
@@ -131,22 +112,11 @@ def install() -> None:
             prior_instance_bars = instance_dict.get("bars")
 
         def bridge_bars(symbols, **kwargs):
-            nonlocal bridge_request_count, profile_reuse_count
+            nonlocal bridge_request_count
             wanted = _symbols(symbols)
+            result = original_bars(wanted, **kwargs)
             reason = str(kwargs.get("history_reason") or "")
             timeframe = str(kwargs.get("timeframe") or "").strip().lower()
-
-            # If Stage 6 later asks for the completed profile history we already
-            # fetched for a sparse symbol, reuse that exact payload. Fetch only peers
-            # that were not part of the bridge so the normal profile contract remains.
-            if reason == PROFILE_REASON and timeframe in {"1min", "1m", "m1"}:
-                reusable = [symbol for symbol in wanted if symbol in prefetched_profiles]
-                remaining = [symbol for symbol in wanted if symbol not in prefetched_profiles]
-                fetched = original_bars(remaining, **kwargs) if remaining else {}
-                profile_reuse_count += len(reusable)
-                return _merge_profile_result(wanted, prefetched_profiles, fetched or {})
-
-            result = original_bars(wanted, **kwargs)
             if reason != CURRENT_REASON or timeframe not in {"1min", "1m", "m1"}:
                 return result
 
@@ -163,22 +133,18 @@ def install() -> None:
             if not bridge_symbols:
                 return result
 
-            session_start = kwargs.get("start")
-            if not isinstance(session_start, pd.Timestamp):
-                try:
-                    session_start = pd.Timestamp(session_start)
-                except Exception:
-                    session_start = None
-            if session_start is None:
+            try:
+                session_start = pd.Timestamp(kwargs.get("start"))
+            except Exception:
                 return result
             if session_start.tzinfo is None:
                 session_start = session_start.tz_localize("America/New_York")
 
             bridge_kwargs = {
-                "start": (session_start - timedelta(days=PROFILE_LOOKBACK_DAYS)).to_pydatetime(),
+                "start": (session_start - timedelta(days=BRIDGE_LOOKBACK_DAYS)).to_pydatetime(),
                 "end": session_start.to_pydatetime(),
                 "timeframe": "1Min",
-                "limit": PROFILE_HISTORY_BARS,
+                "limit": BRIDGE_HISTORY_BARS,
                 "force_batch": True,
                 "history_reason": BRIDGE_REASON,
             }
@@ -192,12 +158,9 @@ def install() -> None:
                 prior = {}
 
             for symbol in bridge_symbols:
-                prior_rows = list(prior.get(symbol) or [])
-                if prior_rows:
-                    prefetched_profiles[symbol] = prior_rows
                 merged, used = _bridge_rows(
                     client,
-                    prior_rows,
+                    (prior or {}).get(symbol) or [],
                     result.get(symbol) or [],
                 )
                 if used:
@@ -231,10 +194,11 @@ def install() -> None:
                 "bridged_prior_rows": dict(sorted(bridged.items())),
                 "below_safe_minimum_counts": dict(sorted(under_minimum.items())),
                 "bridge_history_requests": bridge_request_count,
-                "profile_payloads_reused": profile_reuse_count,
+                "bridge_history_bar_limit": BRIDGE_HISTORY_BARS,
                 "minimum_real_session_bars": MIN_REAL_SESSION_BARS,
                 "legacy_outer_gate_bars": LEGACY_OUTER_GATE_BARS,
                 "synthetic_bars": 0,
+                "volume_profile_contract_changed": False,
                 "thirty_second_history_added": False,
                 "trading_logic_changed": False,
             }
