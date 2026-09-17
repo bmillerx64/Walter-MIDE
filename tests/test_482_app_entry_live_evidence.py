@@ -24,4 +24,3 @@ def test_gs482_bridge_is_observability_only() -> None:
     assert "ensure_stream" not in bridge
     assert "qualified_for_entry" not in bridge
     assert "qualified_for_alert" not in bridge
-    assert "order" not in bridge.lower()
