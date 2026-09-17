@@ -1392,6 +1392,16 @@ def _run_live_pipeline(
                 "GS489 Webull connection-limit bind unavailable error_type=%s",
                 type(exc).__name__,
             )
+        # GS490 sits outside GS489 on the exact retained provider. It blocks only
+        # creation of a new TICK connection outside weekday 04:00-20:00 ET.
+        try:
+            gs490 = importlib.import_module("mide.gs490_webull_stream_window_guard")
+            gs490.install_for_provider(client)
+        except Exception as exc:
+            logging.getLogger(__name__).warning(
+                "GS490 Webull stream-window bind unavailable error_type=%s",
+                type(exc).__name__,
+            )
         logging.getLogger(__name__).warning(
             "Walter quote/bars/stream provider: WEBULL SDK; symbol master: ALPACA /v2/assets"
         )
