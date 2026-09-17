@@ -836,6 +836,19 @@ def record_scan_safely(
         "exception": None,
     })
     try:
+        binder = importlib.import_module("mide.gs487_cached_recorder_instance_bind")
+        installed_now = bool(binder.install_for_recorder(recorder))
+        diagnostics["gs487_cached_recorder_instance_bind"] = {
+            "installed_now": installed_now,
+            "error": None,
+        }
+    except Exception as exc:
+        diagnostics["gs487_cached_recorder_instance_bind"] = {
+            "installed_now": False,
+            "error": type(exc).__name__,
+        }
+
+    try:
         try:
             result = recorder.record_scan(
                 **scan_data, recent_news_log=recent_news_log
