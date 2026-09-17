@@ -4,6 +4,12 @@ from mide.startup import instrument_startup, log_startup, startup_step
 
 log_startup("entering app.py")
 
+# GS482: Streamlit re-executes app.py even when imported MIDE modules survive a
+# warm deploy. Reassert GS481 from this hard boundary so its news/stream-failure
+# evidence reaches the retained Flight Recorder graph. Observability only.
+from mide.gs481_live_evidence_hard_bind import install as _install_gs481_live_evidence
+_install_gs481_live_evidence()
+
 from mide.startup_memory import checkpoint as memory_checkpoint
 
 memory_checkpoint("app.py bootstrap")
