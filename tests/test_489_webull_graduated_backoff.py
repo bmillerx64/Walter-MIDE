@@ -87,7 +87,8 @@ def test_retained_flat_gs488_state_is_extended_without_early_retry():
     assert state["gs489_retained_deadline_extended"] is True
 
 
-def test_exact_old_gs488_wrapper_is_upgraded_in_place_not_nested():
+def test_exact_old_gs488_wrapper_is_upgraded_in_place_not_nested(monkeypatch):
+    monkeypatch.setattr(gs489.time, "time", lambda: 1100.0)
     provider = Provider()
     state = gs489._state(provider)
     state.update(
