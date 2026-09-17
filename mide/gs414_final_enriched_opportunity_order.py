@@ -29,11 +29,14 @@ manufacture LOOK NOW without stronger bottom-up structure. GS468 is the final VW
 truth veto: numeric current price/VWAP evidence that says below cannot render as LOOK
 NOW or WATCH FOR ENTRY even when an older categorical field says otherwise. GS474
 then expires GS460 compression-owned LOOK NOW once the newly joined timeframe rung
-is no longer fresh, so an urgent verb cannot persist as a stale condition.
+is no longer fresh, so an urgent verb cannot persist as a stale condition. GS475
+hard-binds session-aware Webull snapshot price truth at the same late-runtime boundary
+so PRE/ATH/OVN movers cannot enter the existing pipeline with a stale RTH price.
 
 GS414/GS436/GS462/GS463/GS465/GS466/GS467/GS468/GS474 remain presentation-only. GS464
-owns its separate VWAP-truth calculation contract and changes no thresholds,
-qualification, readiness, execution, or orders.
+owns its separate VWAP-truth calculation contract. GS475 owns only snapshot source
+price truth. Neither changes thresholds, qualification, readiness, execution, or
+orders.
 """
 from __future__ import annotations
 
@@ -111,6 +114,13 @@ def _install_gs474() -> None:
     install_gs474()
 
 
+def _install_gs475() -> None:
+    """Hard-bind session-aware Webull snapshot source-price truth."""
+    from .gs475_premarket_snapshot_truth import install as install_gs475
+
+    install_gs475()
+
+
 def final_enriched_opportunity_records(
     records: list[dict], *, actionable_function=None
 ) -> list[dict]:
@@ -127,12 +137,14 @@ def install() -> None:
     """Freeze final enrichment/order across the complete Opportunity State render."""
     from . import ui
 
-    # GS391 lives inside the legacy late chain. Reassert GS464 first so all subsequent
-    # evidence/presentation layers see the same session-aware primary VWAP authority.
-    # GS465 remains the final card-order contract; GS466 changes only visibility of
-    # awareness-only current extremes; GS467 adjudicates standalone 1m urgency; GS468
-    # enforces numeric VWAP truth; GS474 then enforces LOOK NOW freshness for GS460's
-    # compression-only attention path.
+    # GS475 is data-truth only and must bind before any live provider snapshot can be
+    # consumed. GS391 lives inside the legacy late chain; reassert GS464 next so all
+    # subsequent evidence/presentation layers see the same session-aware primary VWAP
+    # authority. GS465 remains the final card-order contract; GS466 changes only
+    # visibility of awareness-only current extremes; GS467 adjudicates standalone 1m
+    # urgency; GS468 enforces numeric VWAP truth; GS474 then enforces LOOK NOW
+    # freshness for GS460's compression-only attention path.
+    _install_gs475()
     _install_gs464()
     _install_gs462()
     _install_gs463()
