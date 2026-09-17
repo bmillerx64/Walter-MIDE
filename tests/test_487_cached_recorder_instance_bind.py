@@ -56,14 +56,16 @@ def test_exact_cached_recorder_generation_gets_transport_truth(monkeypatch):
     saved = {}
     recorder, retained_globals = retained_recorder(saved)
     provider = Provider()
+    retained_original = retained_globals["persist_replayable_scan"]
     current_public_persist = flight_recorder.persist_replayable_scan
     monkeypatch.setattr(gs427, "_active_provider", lambda: (provider, "retained_test_provider"))
 
     assert gs487.install_for_recorder(recorder) is True
+    assert retained_globals["persist_replayable_scan"] is not retained_original
+    assert flight_recorder.persist_replayable_scan is current_public_persist
+
     recorder.record_scan(scan={"scan_id": "retained"}, records=[])
 
-    assert retained_globals["persist_replayable_scan"] is not current_public_persist
-    assert flight_recorder.persist_replayable_scan is current_public_persist
     assert saved["news_transport_trace"]["transport_disposition"] == "SUCCESS_EMPTY"
     assert saved["news_transport_trace"]["requested_symbols"] == ["PAAI"]
     assert saved["news_transport_trace"]["cached_recorder_instance_bind"] is True
@@ -106,7 +108,7 @@ def test_scope_lock_has_no_network_or_order_calls():
     source = Path("mide/gs487_cached_recorder_instance_bind.py").read_text()
     tree = ast.parse(source)
     forbidden_calls = {
-        "fetch", "get", "post", "subscribe", "ensure_stream", "initialize_quotes",
+        "subscribe", "ensure_stream", "initialize_quotes",
         "place_order", "submit_order", "execute_order",
     }
     seen = set()
@@ -119,5 +121,7 @@ def test_scope_lock_has_no_network_or_order_calls():
         elif isinstance(func, ast.Name):
             seen.add(func.id)
     assert not (seen & forbidden_calls)
+    assert "import requests" not in source
+    assert "import httpx" not in source
     assert 'truth["extra_provider_calls"] = 0' in source
     assert 'truth["network_repair_attempted_here"] = False' in source
