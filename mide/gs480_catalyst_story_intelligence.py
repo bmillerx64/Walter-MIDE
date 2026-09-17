@@ -53,8 +53,7 @@ _EXCHANGE_TICKER_RE = re.compile(
     r"(?P<symbol>[A-Z][A-Z0-9.-]{0,9})(?:\)|\b)",
 )
 _TICKER_LABEL_RE = re.compile(
-    r"\b(?:ticker|ticker\s+symbol|symbol)\s*[:#-]?\s*(?P<symbol>[A-Z][A-Z0-9.-]{0,9})\b",
-    re.IGNORECASE,
+    r"\b(?i:ticker(?:\s+symbol)?|symbol)\s*[:#-]?\s*(?P<symbol>[A-Z][A-Z0-9.-]{0,9})\b"
 )
 _CASHTAG_RE = re.compile(r"(?<![$A-Za-z0-9])\$(?P<symbol>[A-Z]{1,6})(?![A-Za-z0-9])")
 
@@ -515,7 +514,7 @@ def _install_targeted_handoff() -> None:
                 returned.append(row)
                 identities.add(identity)
                 handoff_ids.add(identity)
-            handoff_symbols.add(symbol)
+                handoff_symbols.add(symbol)
 
         returned.sort(key=lambda item: _utc(item.get("created_at")) or datetime.min.replace(tzinfo=UTC), reverse=True)
         selected = news_module.index_news(returned)
@@ -542,7 +541,7 @@ def _install_targeted_handoff() -> None:
                 "flags": list(item.get("flags") or []),
                 "explicit_symbols": list(item.get("explicit_symbols") or []),
                 "story_context": deepcopy(item.get("story_context") or {}),
-                "marketwide_handoff": symbol in handoff_symbols or identity in handoff_ids,
+                "marketwide_handoff": identity in handoff_ids,
             }
         _LATEST_TARGETED_TRACE = deepcopy(trace)
         self.metrics["gs480_story_intelligence"] = {
