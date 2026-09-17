@@ -54,52 +54,14 @@ def test_after_hours_uses_extended_price_but_rth_preserves_regular_price():
     assert "_walter_snapshot_price_source" not in rth["data"][0]
 
 
-def test_overnight_uses_overnight_price_only_when_it_is_usable():
+def test_overnight_falls_back_to_regular_snapshot_truth():
     overnight = gs475.apply_snapshot_session_truth(_payload(), now_et=_et(21, 0))
-    assert overnight["data"][0]["price"] == "7.90"
-    assert overnight["data"][0]["last_trade_time"] == 300
-    assert overnight["data"][0]["_walter_snapshot_session"] == "OVN"
-
-    missing = gs475.apply_snapshot_session_truth(
-        _payload(ovn_price="0", ovn_trade_time=None), now_et=_et(21, 0)
-    )
-    assert missing["data"][0]["price"] == "1.43"
-    assert missing["data"][0]["last_trade_time"] == 100
+    assert overnight["data"][0]["price"] == "1.43"
+    assert overnight["data"][0]["last_trade_time"] == 100
+    assert "_walter_snapshot_price_source" not in overnight["data"][0]
 
 
-def test_gs475_forces_optional_extended_fields_and_self_heals_warm_sdk_instances(monkeypatch):
-    calls = []
-
-    def base_stock_snapshot(self, symbols, *, extended_hours=False):
-        calls.append((tuple(symbols), extended_hours))
-        return _payload()
-
-    original = webull_sdk.WebullSDKClient.stock_snapshot
-    monkeypatch.setattr(webull_sdk.WebullSDKClient, "stock_snapshot", base_stock_snapshot)
-    monkeypatch.setattr(gs475, "_now_eastern", lambda: _et(8, 26))
-
-    try:
-        gs475.install()
-        wrapped = webull_sdk.WebullSDKClient.stock_snapshot
-        client = object.__new__(webull_sdk.WebullSDKClient)
-        result = client.stock_snapshot(["HOT"])
-
-        assert calls == [(('HOT',), True)]
-        assert result["data"][0]["price"] == "8.37"
-        assert client.last_snapshot_extended_requested is True
-        assert client.last_snapshot_session_price_field == "ext_price"
-        assert getattr(wrapped, gs475.OWNER_ATTR, False) is True
-
-        gs475.install()
-        assert webull_sdk.WebullSDKClient.stock_snapshot is wrapped
-    finally:
-        # gs475.install() directly replaces the class attribute after monkeypatch has
-        # recorded its own value. Restore the real pre-test callable explicitly so
-        # this regression cannot leak the runtime installer into unrelated SDK tests.
-        webull_sdk.WebullSDKClient.stock_snapshot = original
-
-
-def test_gs475_flows_through_existing_webull_normalization(monkeypatch):
+def test_gs476_premarket_requests_extended_without_night_entitlement(monkeypatch):
     calls = []
 
     class SDK:
@@ -120,12 +82,87 @@ def test_gs475_flows_through_existing_webull_normalization(monkeypatch):
         "symbols": "HOT",
         "category": "US_STOCK",
         "extend_hour_required": True,
-        "overnight_required": True,
     }]
     assert snapshots["HOT"]["latestTrade"]["p"] == 8.37
     assert snapshots["HOT"]["latestTrade"]["t"] == 200
     assert snapshots["HOT"]["dailyBar"]["v"] == 23000000.0
     assert snapshots["HOT"]["prevDailyBar"]["c"] == 1.46
+
+
+def test_gs476_rth_uses_plain_snapshot_request(monkeypatch):
+    calls = []
+
+    class SDK:
+        def get_snapshot(self, **kwargs):
+            calls.append(kwargs)
+            return _payload()
+
+    original = webull_sdk.WebullSDKClient.stock_snapshot
+    monkeypatch.setattr(gs475, "_now_eastern", lambda: _et(10, 23))
+    try:
+        gs475.install()
+        client = WebullOpenAPIClient("k", "s", sdk_client=SDK())
+        snapshots = client.snapshots(["HOT"])
+    finally:
+        webull_sdk.WebullSDKClient.stock_snapshot = original
+
+    assert calls == [{"symbols": "HOT", "category": "US_STOCK"}]
+    assert snapshots["HOT"]["latestTrade"]["p"] == 1.43
+
+
+def test_gs476_overnight_never_requests_night_feed(monkeypatch):
+    calls = []
+
+    class SDK:
+        def get_snapshot(self, **kwargs):
+            calls.append(kwargs)
+            return _payload()
+
+    original = webull_sdk.WebullSDKClient.stock_snapshot
+    monkeypatch.setattr(gs475, "_now_eastern", lambda: _et(21, 0))
+    try:
+        gs475.install()
+        client = WebullOpenAPIClient("k", "s", sdk_client=SDK())
+        snapshots = client.snapshots(["HOT"])
+    finally:
+        webull_sdk.WebullSDKClient.stock_snapshot = original
+
+    assert calls == [{"symbols": "HOT", "category": "US_STOCK"}]
+    assert snapshots["HOT"]["latestTrade"]["p"] == 1.43
+
+
+def test_gs476_replaces_retained_gs475_wrapper(monkeypatch):
+    calls = []
+
+    def base_stock_snapshot(self, symbols, *, extended_hours=False):
+        calls.append((tuple(symbols), extended_hours))
+        return _payload()
+
+    def retained_gs475(self, symbols, *, extended_hours=False):
+        raise AssertionError("retained GS475 wrapper must be unwrapped, not stacked")
+
+    retained_gs475._gs475_original = base_stock_snapshot
+    setattr(retained_gs475, gs475.LEGACY_OWNER_ATTR, True)
+
+    original = webull_sdk.WebullSDKClient.stock_snapshot
+    monkeypatch.setattr(webull_sdk.WebullSDKClient, "stock_snapshot", retained_gs475)
+    monkeypatch.setattr(gs475, "_now_eastern", lambda: _et(10, 23))
+    try:
+        gs475.install()
+        wrapped = webull_sdk.WebullSDKClient.stock_snapshot
+        client = object.__new__(webull_sdk.WebullSDKClient)
+        result = client.stock_snapshot(["HOT"])
+
+        assert calls == [(('HOT',), False)]
+        assert result["data"][0]["price"] == "1.43"
+        assert client.last_snapshot_extended_requested is False
+        assert client.last_snapshot_overnight_requested is False
+        assert getattr(wrapped, gs475.OWNER_ATTR, False) is True
+
+        gs475.install()
+        assert webull_sdk.WebullSDKClient.stock_snapshot is wrapped
+    finally:
+        webull_sdk.WebullSDKClient.stock_snapshot = original
 
 
 def test_gs475_is_bound_before_final_late_runtime_presentation_chain():
@@ -135,12 +172,13 @@ def test_gs475_is_bound_before_final_late_runtime_presentation_chain():
     assert install_body.index("_install_gs475()") < install_body.index("_install_gs464()")
 
 
-def test_gs475_scope_is_data_truth_only():
+def test_gs476_scope_is_data_truth_and_transport_safety_only():
     source = Path("mide/gs475_premarket_snapshot_truth.py").read_text(encoding="utf-8")
 
     assert "WebullSDKClient.stock_snapshot = stock_snapshot_with_session_truth" in source
-    assert "extended_hours=True" in source
-    assert "ext_price" in source and "ovn_price" in source
+    assert "extend_hour_required=True" in source
+    assert "overnight_required=True" not in source
+    assert "ext_price" in source
     assert "scanner_v2" not in source
     assert "trader_priority_sort_key" not in source
     assert "qualified_for_entry =" not in source
