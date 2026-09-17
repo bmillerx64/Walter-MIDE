@@ -31,9 +31,10 @@ NOW or WATCH FOR ENTRY even when an older categorical field says otherwise. GS47
 then expires GS460 compression-owned LOOK NOW once the newly joined timeframe rung
 is no longer fresh, so an urgent verb cannot persist as a stale condition. GS475
 hard-binds session-aware Webull snapshot price truth at the same late-runtime boundary
-so PRE/ATH/OVN movers cannot enter the existing pipeline with a stale RTH price.
-GS477 adds bounded presentation/audio memory for a proven leader that resets toward
-VWAP and then re-ignites; it changes no scanner or trading authority.
+so PRE/ATH movers cannot enter the existing pipeline with a stale RTH price. GS477
+adds bounded presentation/audio memory for a proven leader that resets toward VWAP
+and re-ignites. Its record enrichment occurs only on GS414's detached render snapshot,
+so the exact public actionable callable is still restored even when rendering fails.
 
 GS414/GS436/GS462/GS463/GS465/GS466/GS467/GS468/GS474/GS477 remain presentation-only.
 GS464 owns its separate VWAP-truth calculation contract. GS475 owns only snapshot
@@ -123,7 +124,7 @@ def _install_gs475() -> None:
 
 
 def _install_gs477() -> None:
-    """Remember proven leaders through a constructive reset and re-ignition."""
+    """Bind leader-reset state/audio without owning the public actionable callable."""
     from .gs477_leader_reset_reignition import install as install_gs477
 
     install_gs477()
@@ -135,9 +136,12 @@ def final_enriched_opportunity_records(
     """Build the complete enriched presentation collection, then sort it once."""
     from . import ui
     from .gs369_escalation_priority_order import ordered_escalation_records
+    from .gs477_leader_reset_reignition import enrich_visible_records
 
     actionable = actionable_function or ui.actionable_candidate_records
-    enriched = list(actionable(records) or [])
+    # GS477 operates on a detached snapshot here instead of permanently wrapping the
+    # public actionable callable. That preserves GS414's exact restoration invariant.
+    enriched = enrich_visible_records(list(records or []), actionable)
     return ordered_escalation_records(enriched)
 
 
@@ -151,7 +155,7 @@ def install() -> None:
     # authority. GS465 remains the final card-order contract; GS466 changes only
     # visibility of awareness-only current extremes; GS467 adjudicates standalone 1m
     # urgency; GS468 enforces numeric VWAP truth; GS474 enforces LOOK NOW freshness;
-    # GS477 then adds bounded leader-reset attention without trading authority.
+    # GS477 then adds bounded leader-reset state/audio without trading authority.
     _install_gs475()
     _install_gs464()
     _install_gs462()
