@@ -13,6 +13,8 @@ from mide.gs484_fmp_transport_truth import install as _install_gs484_fmp_transpo
 _install_gs484_fmp_transport_truth()
 from mide.gs485_retained_news_transport_hard_bind import install as _install_gs485_retained_news_transport
 _install_gs485_retained_news_transport()
+from mide.gs486_top_level_transport_truth import install as _install_gs486_top_level_transport_truth
+_install_gs486_top_level_transport_truth()
 
 from mide.startup_memory import checkpoint as memory_checkpoint
 
