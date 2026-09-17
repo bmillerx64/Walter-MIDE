@@ -47,6 +47,7 @@ def ensure_late_runtime_installers() -> None:
     from .gs461_cascade_runway import install as install_gs461
     from .gs478_sparse_history_warm_seed import install as install_gs478
     from .gs479_headline_catalyst_magnitude import install as install_gs479
+    from .gs480_catalyst_story_intelligence import install as install_gs480
 
     install_late_chain()
     # GS453 is deliberately outside the established GS392->GS404 presentation chain.
@@ -113,6 +114,12 @@ def ensure_late_runtime_installers() -> None:
     # GS427 is the final recorder-only binding. It makes GS425 timing/build identity
     # survive a retained pre-deploy FlightRecorder.record_scan function graph.
     install_gs427()
+    # GS480 must run after GS427. It retains the already-returned FMP story excerpt,
+    # recognizes only explicit exchange/ticker references, catalogs story semantics,
+    # hands a market-wide story into the targeted catalyst stage without another
+    # request, and writes publication/awareness truth into the active recorder graph.
+    # This is awareness/observability only; all trading authority remains downstream.
+    install_gs480()
     # GS428 runs only after GS413 is active. It removes the obsolete GS412 ten-second
     # completed-scan handoff delay from the production watchdog singleton while the
     # process-wide scheduler owner and no-overlap watchdog remain authoritative.
@@ -264,13 +271,14 @@ ensure_reclaim_watch()
 # headline-stated economic scale as presentation metadata only, GS425 then measures
 # that effective acquisition boundary, GS426 removes repeated same-day Yahoo free-
 # float refreshes without changing float gates, GS427 hard-binds latency/build evidence
-# to the active recorder call graph, GS428 releases obsolete post-scan scheduler
-# deadtime, GS435 removes stale-owner due latency, GS445 removes append-only backup
-# recompression, GS446/GS448 defer the two large backup payloads until operator click,
-# GS459 extracts the operator's sparkline-like price path evidence from already-owned
-# 1m bars, GS460 adds bottom-up ST flip-price compression attention from already-owned
-# 30s/1m/3m/5m evidence, GS461 adds factual 10m/15m/30m/1h cascade-runway context only
-# for that active compression, GS449 bounds the full startup object-graph profiler to
-# once per process, GS450 releases its tracemalloc bookkeeping after that report,
-# GS453 corrects bounded constructive-extension presentation after the legacy state
-# chain, and GS436 hard-binds the final enriched Opportunity State ordering boundary.
+# to the active recorder call graph, GS480 adds story-level catalyst/ticker/news-clock
+# truth without trading authority, GS428 releases obsolete post-scan scheduler deadtime,
+# GS435 removes stale-owner due latency, GS445 removes append-only backup recompression,
+# GS446/GS448 defer the two large backup payloads until operator click, GS459 extracts
+# the operator's sparkline-like price path evidence from already-owned 1m bars, GS460
+# adds bottom-up ST flip-price compression attention from already-owned 30s/1m/3m/5m
+# evidence, GS461 adds factual 10m/15m/30m/1h cascade-runway context only for that
+# active compression, GS449 bounds the full startup object-graph profiler to once per
+# process, GS450 releases its tracemalloc bookkeeping after that report, GS453 corrects
+# bounded constructive-extension presentation after the legacy state chain, and GS436
+# hard-binds the final enriched Opportunity State ordering boundary.
