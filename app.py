@@ -11,6 +11,8 @@ from mide.gs481_live_evidence_hard_bind import install as _install_gs481_live_ev
 _install_gs481_live_evidence()
 from mide.gs484_fmp_transport_truth import install as _install_gs484_fmp_transport_truth
 _install_gs484_fmp_transport_truth()
+from mide.gs485_retained_news_transport_hard_bind import install as _install_gs485_retained_news_transport
+_install_gs485_retained_news_transport()
 
 from mide.startup_memory import checkpoint as memory_checkpoint
 
