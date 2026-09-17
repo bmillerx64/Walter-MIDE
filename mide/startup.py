@@ -45,6 +45,7 @@ def ensure_late_runtime_installers() -> None:
     from .gs459_price_trajectory_attention import install as install_gs459
     from .gs460_st_flip_compression_ignition import install as install_gs460
     from .gs461_cascade_runway import install as install_gs461
+    from .gs478_sparse_history_warm_seed import install as install_gs478
 
     install_late_chain()
     # GS453 is deliberately outside the established GS392->GS404 presentation chain.
@@ -93,8 +94,13 @@ def ensure_late_runtime_installers() -> None:
     # GS424 owns only the persistent provider's Stage-6 acquisition boundary and never
     # changes the evidence produced by GS423 or any trading contract.
     install_gs424()
-    # GS425 runs outside GS424 so it measures the exact effective history boundary and
-    # persists the already-computed architecture timing summary into Flight Recorder.
+    # GS478 sits outside the already-installed GS378 analyzer chain. It bridges only
+    # the obsolete 20-row history admission guard for symbols with 12-19 genuine
+    # current-session bars, using real prior Webull rows that are filtered back out
+    # before analysis. Under 12 current bars remains insufficient; no synthetic data.
+    install_gs478()
+    # GS425 runs outside GS424/GS478 so it measures the exact effective history
+    # boundary and persists the architecture timing summary into Flight Recorder.
     install_gs425()
     # GS426 caches only the secondary free-float reference lookup across warm scans;
     # the established conservative float decision remains authoritative.
@@ -249,16 +255,16 @@ ensure_reclaim_watch()
 # GS423 also runs at this boundary, after the entire GS421/422 chain, so it can own
 # the final convergence wrapper even across a warm Streamlit deployment. GS424 then
 # installs the persistent-provider warm-history cache after all evidence wrappers,
-# GS425 measures that final acquisition boundary without changing it, GS426 removes
-# repeated same-day Yahoo free-float refreshes without changing float gates, GS427
-# hard-binds latency/build evidence to the active recorder call graph, GS428 releases
-# obsolete post-scan scheduler deadtime, GS435 removes stale-owner due latency, GS445
-# removes append-only backup recompression, GS446/GS448 defer the two large backup
-# payloads until operator click, GS459 extracts the operator's sparkline-like price
-# path evidence from already-owned 1m bars, GS460 adds bottom-up ST flip-price
-# compression attention from already-owned 30s/1m/3m/5m evidence, GS461 adds factual
-# 10m/15m/30m/1h cascade-runway context only for that active compression, GS449 bounds
-# the full startup object-graph profiler to once per process, GS450 releases its
-# tracemalloc bookkeeping after that report, GS453 corrects bounded constructive-
-# extension presentation after the legacy state chain, and GS436 hard-binds the final
-# enriched Opportunity State ordering boundary.
+# GS478 bridges the 12-19 real-bar sufficiency gap without synthetic data, GS425 then
+# measures that effective acquisition boundary, GS426 removes repeated same-day Yahoo
+# free-float refreshes without changing float gates, GS427 hard-binds latency/build
+# evidence to the active recorder call graph, GS428 releases obsolete post-scan
+# scheduler deadtime, GS435 removes stale-owner due latency, GS445 removes append-only
+# backup recompression, GS446/GS448 defer the two large backup payloads until operator
+# click, GS459 extracts the operator's sparkline-like price path evidence from already-
+# owned 1m bars, GS460 adds bottom-up ST flip-price compression attention from already-
+# owned 30s/1m/3m/5m evidence, GS461 adds factual 10m/15m/30m/1h cascade-runway context
+# only for that active compression, GS449 bounds the full startup object-graph profiler
+# to once per process, GS450 releases its tracemalloc bookkeeping after that report,
+# GS453 corrects bounded constructive-extension presentation after the legacy state
+# chain, and GS436 hard-binds the final enriched Opportunity State ordering boundary.
