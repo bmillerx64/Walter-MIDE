@@ -1,46 +1,51 @@
-"""GS478: warm-seed lagging 1m indicators when today's traded bars are sparse.
+"""GS478: admit sparse but usable current-session movers without synthetic bars.
 
-Sep. 17 PAAI validation exposed an acquisition/indicator-continuity gap rather than a
-scanner-threshold problem. Stage 6 requests Webull 1-minute history from the current
-04:00 ET session and currently drops a candidate when fewer than 20 populated bars are
-returned. A formerly quiet symbol can therefore become a major live mover before it
-has accumulated twenty actual minute bars, even though Walter already has legitimate
-completed-session Webull history for the same symbol.
+Sep. 17 PAAI validation exposed a history-sufficiency mismatch, not a scanner-threshold
+problem. Stage 6 fetches Webull 1-minute bars from 04:00 ET and has two different
+minimums: an older outer guard drops any symbol with fewer than 20 returned bars,
+while the actual session analyzer already treats 12 current-session bars as usable.
+A formerly quiet symbol can therefore erupt with 12-19 genuine traded minutes and be
+silently discarded before Walter evaluates the move.
 
-GS478 uses only real official-provider 1m bars. For a symbol with 1-19 current-session
-bars, it keeps up to 80 completed prior-session bars as a bounded seed for lagging
-1-minute SuperTrend and EMA65 calculation. Primary/session VWAP, participation,
-volume acceleration, price-path evidence, current-session highs/lows and 30-second
-truth remain based only on today's live session. No synthetic/fill-forward bars are
-created, and slower timeframe confirmation is not manufactured from the seed.
+GS478 bridges only that 12-19-bar gap. During the existing ``stage6_current_session``
+request it fetches real completed Webull 1-minute history for the sparse symbols and
+prepends only enough prior-session rows to satisfy the obsolete 20-row outer guard.
+The base analyzer immediately filters the frame back to the latest trading date; since
+there are already at least 12 real current-session rows, its legacy ``<12`` fallback
+never runs. VWAP, SuperTrend, volume acceleration, participation, price path, session
+high/low and every trading decision therefore remain based on today's real bars.
+GS378 likewise filters captured history to the latest Eastern trading date.
 
-The completed-history request already paid for by Stage 6's volume profile is reused
-when available. A bounded batch backfill is made only for a sparse symbol whose
-completed-session profile was already cached before GS478 and therefore has no retained
-seed rows. The seed cache resets automatically by trading date.
+If fewer than 12 real current-session bars exist, GS478 does nothing: Walter keeps the
+existing insufficient-data behavior rather than manufacturing evidence. No synthetic
+or fill-forward bars are created, no 30-second fallback is introduced, and no scanner,
+qualification, readiness, ranking, alert, execution or order rule changes.
 """
 from __future__ import annotations
 
-from datetime import datetime
-from typing import Iterable
+from datetime import timedelta
+from functools import wraps
+from typing import Any
 
 import pandas as pd
 
-AUTHORITY = "ONE_MINUTE_INDICATOR_CONTINUITY_ONLY"
-MIN_INDICATOR_BARS = 20
-SEED_BARS = 80
-SEED_HISTORY_LIMIT = 240
-CACHE_ATTR = "_walter_gs478_sparse_indicator_seed"
-HISTORY_REASON = "stage6_sparse_indicator_seed"
+AUTHORITY = "HISTORY_SUFFICIENCY_BRIDGE_ONLY"
+CURRENT_REASON = "stage6_current_session"
+PROFILE_REASON = "stage6_historical_profile"
+BRIDGE_REASON = "stage6_sparse_history_bridge"
+MIN_REAL_SESSION_BARS = 12
+LEGACY_OUTER_GATE_BARS = 20
+PROFILE_LOOKBACK_DAYS = 14
+PROFILE_HISTORY_BARS = 1200
+_OWNER = "_walter_gs478_sparse_history_bridge_owner"
 
 
-def _state(client, session_key) -> dict:
-    state = getattr(client, CACHE_ATTR, None)
-    anchor = str(session_key)
-    if not isinstance(state, dict) or state.get("anchor") != anchor:
-        state = {"anchor": anchor, "frames": {}}
-        setattr(client, CACHE_ATTR, state)
-    return state
+def _symbols(values) -> list[str]:
+    return list(dict.fromkeys(
+        str(value or "").strip().upper()
+        for value in values or []
+        if str(value or "").strip()
+    ))
 
 
 def _frame(client, rows) -> pd.DataFrame:
@@ -53,146 +58,190 @@ def _frame(client, rows) -> pd.DataFrame:
     return frame.sort_index()
 
 
-def _prior_seed(client, rows, session_start) -> pd.DataFrame:
+def _current_bar_count(client, rows) -> int:
     frame = _frame(client, rows)
     if frame.empty:
-        return frame
-    try:
-        boundary = pd.Timestamp(session_start)
-        prior = frame.loc[frame.index < boundary].copy()
-    except Exception:
-        prior = frame.copy()
-    return prior.tail(SEED_BARS).copy()
+        return 0
+    latest_date = frame.index[-1].date()
+    return int((frame.index.date == latest_date).sum())
 
 
-def _remember_frame(state: dict, symbol: str, frame: pd.DataFrame) -> None:
-    if frame is None or frame.empty:
-        return
-    state["frames"][symbol] = frame.tail(SEED_BARS).copy()
+def _bridge_rows(client, prior_rows, current_rows) -> tuple[list[dict], int]:
+    """Prepend the minimum real prior rows needed to clear the legacy 20-row guard."""
+    current = list(current_rows or [])
+    current_count = _current_bar_count(client, current)
+    if not (MIN_REAL_SESSION_BARS <= current_count < LEGACY_OUTER_GATE_BARS):
+        return current, 0
+
+    prior = list(prior_rows or [])
+    if not prior:
+        return current, 0
+    needed = LEGACY_OUTER_GATE_BARS - current_count
+    seed = prior[-needed:]
+    if len(seed) < needed:
+        return current, 0
+    return seed + current, len(seed)
 
 
-def prepare_sparse_indicator_seeds(
-    client,
-    symbols: Iterable[str],
-    current_raw: dict[str, list[dict]],
-    historical_raw: dict[str, list[dict]],
-    *,
-    history_start: datetime,
-    session_start,
-    session_key,
-) -> dict:
-    """Retain/recover real prior 1m bars only for sparse current-session symbols."""
-    wanted = list(dict.fromkeys(
-        str(symbol or "").strip().upper() for symbol in symbols if str(symbol or "").strip()
-    ))
-    state = _state(client, session_key)
-
-    # Reuse the already-paid completed-session history before considering any backfill.
-    reused = 0
-    for symbol, rows in (historical_raw or {}).items():
-        symbol = str(symbol or "").strip().upper()
-        if not symbol or symbol not in wanted:
-            continue
-        seed = _prior_seed(client, rows, session_start)
-        if not seed.empty:
-            _remember_frame(state, symbol, seed)
-            reused += 1
-
-    sparse: list[str] = []
+def _merge_profile_result(
+    wanted: list[str],
+    prefetched: dict[str, list[dict]],
+    fetched: dict[str, list[dict]],
+) -> dict[str, list[dict]]:
+    result = {}
     for symbol in wanted:
-        current = _frame(client, (current_raw or {}).get(symbol) or [])
-        if 0 < len(current) < MIN_INDICATOR_BARS:
-            sparse.append(symbol)
+        if symbol in prefetched:
+            result[symbol] = list(prefetched[symbol])
+        elif symbol in fetched:
+            result[symbol] = list(fetched[symbol])
+    return result
 
-    missing_seed = [symbol for symbol in sparse if symbol not in state["frames"]]
-    backfill = {}
-    if missing_seed:
+
+def _inherit(wrapper, wrapped) -> None:
+    for name, value in getattr(wrapped, "__dict__", {}).items():
+        if name.startswith("_gs") and not hasattr(wrapper, name):
+            setattr(wrapper, name, value)
+
+
+def install() -> None:
+    """Install outside GS378 and bridge only one Stage-6 history sufficiency mismatch."""
+    from . import discovery
+
+    current_analyze = discovery.analyze_candidates
+    if getattr(current_analyze, _OWNER, False):
+        return
+
+    @wraps(current_analyze)
+    def analyze_with_sparse_history_bridge(client, candidates, news_index, discovery_reasons):
+        original_bars = getattr(client, "bars", None)
+        if not callable(original_bars):
+            return current_analyze(client, candidates, news_index, discovery_reasons)
+
+        prefetched_profiles: dict[str, list[dict]] = {}
+        bridged: dict[str, int] = {}
+        sparse_counts: dict[str, int] = {}
+        under_minimum: dict[str, int] = {}
+        bridge_request_count = 0
+        profile_reuse_count = 0
+        had_instance_bars = False
+        prior_instance_bars: Any = None
+        instance_dict = getattr(client, "__dict__", None)
+        if isinstance(instance_dict, dict):
+            had_instance_bars = "bars" in instance_dict
+            prior_instance_bars = instance_dict.get("bars")
+
+        def bridge_bars(symbols, **kwargs):
+            nonlocal bridge_request_count, profile_reuse_count
+            wanted = _symbols(symbols)
+            reason = str(kwargs.get("history_reason") or "")
+            timeframe = str(kwargs.get("timeframe") or "").strip().lower()
+
+            # If Stage 6 later asks for the completed profile history we already
+            # fetched for a sparse symbol, reuse that exact payload. Fetch only peers
+            # that were not part of the bridge so the normal profile contract remains.
+            if reason == PROFILE_REASON and timeframe in {"1min", "1m", "m1"}:
+                reusable = [symbol for symbol in wanted if symbol in prefetched_profiles]
+                remaining = [symbol for symbol in wanted if symbol not in prefetched_profiles]
+                fetched = original_bars(remaining, **kwargs) if remaining else {}
+                profile_reuse_count += len(reusable)
+                return _merge_profile_result(wanted, prefetched_profiles, fetched or {})
+
+            result = original_bars(wanted, **kwargs)
+            if reason != CURRENT_REASON or timeframe not in {"1min", "1m", "m1"}:
+                return result
+
+            result = dict(result or {})
+            bridge_symbols = []
+            for symbol in wanted:
+                count = _current_bar_count(client, result.get(symbol) or [])
+                if 0 < count < MIN_REAL_SESSION_BARS:
+                    under_minimum[symbol] = count
+                elif MIN_REAL_SESSION_BARS <= count < LEGACY_OUTER_GATE_BARS:
+                    sparse_counts[symbol] = count
+                    bridge_symbols.append(symbol)
+
+            if not bridge_symbols:
+                return result
+
+            session_start = kwargs.get("start")
+            if not isinstance(session_start, pd.Timestamp):
+                try:
+                    session_start = pd.Timestamp(session_start)
+                except Exception:
+                    session_start = None
+            if session_start is None:
+                return result
+            if session_start.tzinfo is None:
+                session_start = session_start.tz_localize("America/New_York")
+
+            bridge_kwargs = {
+                "start": (session_start - timedelta(days=PROFILE_LOOKBACK_DAYS)).to_pydatetime(),
+                "end": session_start.to_pydatetime(),
+                "timeframe": "1Min",
+                "limit": PROFILE_HISTORY_BARS,
+                "force_batch": True,
+                "history_reason": BRIDGE_REASON,
+            }
+            try:
+                prior = original_bars(bridge_symbols, **bridge_kwargs) or {}
+                bridge_request_count += 1
+            except Exception as exc:
+                warnings = getattr(client, "warnings", None)
+                if isinstance(warnings, list):
+                    warnings.append(f"Sparse Stage-6 history bridge unavailable: {exc}")
+                prior = {}
+
+            for symbol in bridge_symbols:
+                prior_rows = list(prior.get(symbol) or [])
+                if prior_rows:
+                    prefetched_profiles[symbol] = prior_rows
+                merged, used = _bridge_rows(
+                    client,
+                    prior_rows,
+                    result.get(symbol) or [],
+                )
+                if used:
+                    result[symbol] = merged
+                    bridged[symbol] = used
+            return result
+
+        patched = False
         try:
-            backfill = client.bars(
-                missing_seed,
-                start=history_start,
-                end=pd.Timestamp(session_start).to_pydatetime(),
-                timeframe="1Min",
-                limit=SEED_HISTORY_LIMIT,
-                force_batch=True,
-                history_reason=HISTORY_REASON,
-            )
-        except Exception as exc:
-            warnings = getattr(client, "warnings", None)
-            if isinstance(warnings, list):
-                warnings.append(f"Sparse 1m indicator seed unavailable: {exc}")
-            backfill = {}
-        for symbol in missing_seed:
-            seed = _prior_seed(client, (backfill or {}).get(symbol) or [], session_start)
-            if not seed.empty:
-                _remember_frame(state, symbol, seed)
+            setattr(client, "bars", bridge_bars)
+            patched = True
+            records = current_analyze(client, candidates, news_index, discovery_reasons)
+        finally:
+            if patched:
+                try:
+                    if had_instance_bars:
+                        setattr(client, "bars", prior_instance_bars)
+                    else:
+                        delattr(client, "bars")
+                except Exception:
+                    try:
+                        setattr(client, "bars", original_bars)
+                    except Exception:
+                        pass
 
-    available = [symbol for symbol in sparse if symbol in state["frames"]]
-    diagnostics = getattr(client, "diagnostics", None)
-    if isinstance(diagnostics, dict):
-        diagnostics["gs478_sparse_history_warm_seed"] = {
-            "authority": AUTHORITY,
-            "current_symbols": len(wanted),
-            "sparse_symbols": list(sparse),
-            "seed_available_symbols": list(available),
-            "reused_profile_history_symbols": reused,
-            "backfill_requested_symbols": list(missing_seed),
-            "backfill_returned_symbols": sorted(
-                symbol for symbol in missing_seed if symbol in state["frames"]
-            ),
-            "seed_bars_max": SEED_BARS,
-            "minimum_indicator_bars": MIN_INDICATOR_BARS,
-            "synthetic_bars": 0,
-            "vwap_seeded": False,
-            "participation_seeded": False,
-            "thirty_second_seeded": False,
-            "slower_timeframes_seeded": False,
-        }
-    return state
+        diagnostics = getattr(client, "diagnostics", None)
+        if isinstance(diagnostics, dict):
+            diagnostics["gs478_sparse_history_bridge"] = {
+                "authority": AUTHORITY,
+                "sparse_current_bar_counts": dict(sorted(sparse_counts.items())),
+                "bridged_prior_rows": dict(sorted(bridged.items())),
+                "below_safe_minimum_counts": dict(sorted(under_minimum.items())),
+                "bridge_history_requests": bridge_request_count,
+                "profile_payloads_reused": profile_reuse_count,
+                "minimum_real_session_bars": MIN_REAL_SESSION_BARS,
+                "legacy_outer_gate_bars": LEGACY_OUTER_GATE_BARS,
+                "synthetic_bars": 0,
+                "thirty_second_history_added": False,
+                "trading_logic_changed": False,
+            }
+        return records
 
-
-def indicator_frame_for_session(
-    client,
-    symbol: str,
-    session: pd.DataFrame,
-    *,
-    session_key,
-) -> tuple[pd.DataFrame, dict]:
-    """Return seeded 1m indicator history while leaving the live session untouched."""
-    symbol = str(symbol or "").strip().upper()
-    current_count = len(session) if session is not None else 0
-    detail = {
-        "used": False,
-        "current_session_bars": current_count,
-        "prior_seed_bars": 0,
-        "indicator_bars": current_count,
-        "source": "current_session_only",
-        "authority": AUTHORITY,
-    }
-    if session is None or session.empty or current_count >= MIN_INDICATOR_BARS:
-        return session, detail
-
-    state = _state(client, session_key)
-    seed = state["frames"].get(symbol)
-    if seed is None or seed.empty:
-        detail["source"] = "insufficient_real_history"
-        return session, detail
-
-    combined = pd.concat([seed.tail(SEED_BARS), session]).sort_index()
-    combined = combined[~combined.index.duplicated(keep="last")]
-    detail.update({
-        "prior_seed_bars": len(seed.tail(SEED_BARS)),
-        "indicator_bars": len(combined),
-        "source": "completed_webull_1m_plus_current_session",
-    })
-    if len(combined) < MIN_INDICATOR_BARS:
-        return session, detail
-
-    detail["used"] = True
-    return combined, detail
-
-
-def reset_sparse_indicator_seed(client) -> None:
-    """Test/operator helper; ordinary production reset is automatic by session key."""
-    if hasattr(client, CACHE_ATTR):
-        delattr(client, CACHE_ATTR)
+    _inherit(analyze_with_sparse_history_bridge, current_analyze)
+    analyze_with_sparse_history_bridge._gs478_sparse_history_bridge = True
+    analyze_with_sparse_history_bridge._gs478_original = current_analyze
+    setattr(analyze_with_sparse_history_bridge, _OWNER, True)
+    discovery.analyze_candidates = analyze_with_sparse_history_bridge
