@@ -9,6 +9,8 @@ log_startup("entering app.py")
 # evidence reaches the retained Flight Recorder graph. Observability only.
 from mide.gs481_live_evidence_hard_bind import install as _install_gs481_live_evidence
 _install_gs481_live_evidence()
+from mide.gs484_fmp_transport_truth import install as _install_gs484_fmp_transport_truth
+_install_gs484_fmp_transport_truth()
 
 from mide.startup_memory import checkpoint as memory_checkpoint
 
