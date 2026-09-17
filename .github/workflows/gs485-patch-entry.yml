@@ -1,0 +1,57 @@
+name: GS485 patch entry
+
+on:
+  push:
+    branches: [codex/gs485-retained-news-transport-hard-bind]
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: codex/gs485-retained-news-transport-hard-bind
+      - name: Patch app and startup installers
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          app = Path('app.py')
+          text = app.read_text()
+          anchor = 'from mide.gs484_fmp_transport_truth import install as _install_gs484_fmp_transport_truth\n_install_gs484_fmp_transport_truth()\n'
+          addition = anchor + 'from mide.gs485_retained_news_transport_hard_bind import install as _install_gs485_retained_news_transport\n_install_gs485_retained_news_transport()\n'
+          if '_install_gs485_retained_news_transport()' not in text:
+              if anchor not in text:
+                  raise SystemExit('app GS484 anchor missing')
+              text = text.replace(anchor, addition, 1)
+          app.write_text(text)
+
+          startup = Path('mide/startup.py')
+          text = startup.read_text()
+          import_anchor = '    from .gs484_fmp_transport_truth import install as install_gs484\n'
+          import_addition = import_anchor + '    from .gs485_retained_news_transport_hard_bind import install as install_gs485\n'
+          if 'from .gs485_retained_news_transport_hard_bind import install as install_gs485' not in text:
+              if import_anchor not in text:
+                  raise SystemExit('startup GS484 import anchor missing')
+              text = text.replace(import_anchor, import_addition, 1)
+
+          call_anchor = '    install_gs484()\n    # GS483 bounds Flight Recorder read-side memory.'
+          call_addition = '''    install_gs484()\n    # GS485 patches the exact retained GS481 function-global dictionary reachable\n    # from the active recorder graph so warm Streamlit generations receive GS484.\n    install_gs485()\n    # GS483 bounds Flight Recorder read-side memory.'''
+          if '    install_gs485()\n' not in text:
+              if call_anchor not in text:
+                  raise SystemExit('startup GS484 call anchor missing')
+              text = text.replace(call_anchor, call_addition, 1)
+          startup.write_text(text)
+          PY
+      - name: Commit installer patch
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add app.py mide/startup.py
+          git diff --cached --quiet && exit 0
+          git commit -m "GS485: bind retained news transport at app entry"
+          git push origin HEAD:codex/gs485-retained-news-transport-hard-bind
