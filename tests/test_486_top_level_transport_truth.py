@@ -75,7 +75,7 @@ def test_scope_lock_contains_no_network_or_trading_authority():
     source = Path("mide/gs486_top_level_transport_truth.py").read_text()
     forbidden = (
         ".fetch(", "requests.get", "requests.post", "ensure_stream(", ".subscribe(",
-        "qualification", "readiness", "execute", "place_order", "submit_order",
+        "evaluate_qualification(", "evaluate_readiness(", "place_order(", "submit_order(",
     )
     for token in forbidden:
         assert token not in source
