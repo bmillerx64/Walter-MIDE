@@ -1,0 +1,57 @@
+name: GS486 patch entry
+
+on:
+  push:
+    branches: [codex/gs486-top-level-transport-truth]
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: codex/gs486-top-level-transport-truth
+      - name: Patch app and startup installers
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          app = Path('app.py')
+          text = app.read_text()
+          anchor = 'from mide.gs485_retained_news_transport_hard_bind import install as _install_gs485_retained_news_transport\n_install_gs485_retained_news_transport()\n'
+          addition = anchor + 'from mide.gs486_top_level_transport_truth import install as _install_gs486_top_level_transport_truth\n_install_gs486_top_level_transport_truth()\n'
+          if '_install_gs486_top_level_transport_truth()' not in text:
+              if anchor not in text:
+                  raise SystemExit('app GS485 anchor missing')
+              text = text.replace(anchor, addition, 1)
+          app.write_text(text)
+
+          startup = Path('mide/startup.py')
+          text = startup.read_text()
+          import_anchor = '    from .gs485_retained_news_transport_hard_bind import install as install_gs485\n'
+          import_addition = import_anchor + '    from .gs486_top_level_transport_truth import install as install_gs486\n'
+          if 'from .gs486_top_level_transport_truth import install as install_gs486' not in text:
+              if import_anchor not in text:
+                  raise SystemExit('startup GS485 import anchor missing')
+              text = text.replace(import_anchor, import_addition, 1)
+
+          call_anchor = '    install_gs485()\n    # GS483 bounds Flight Recorder read-side memory.'
+          call_addition = '''    install_gs485()\n    # GS486 writes independent top-level news/stream transport traces before the\n    # retained recorder chain so inner hot-reload generations cannot overwrite them.\n    install_gs486()\n    # GS483 bounds Flight Recorder read-side memory.'''
+          if '    install_gs486()\n' not in text:
+              if call_anchor not in text:
+                  raise SystemExit('startup GS485 call anchor missing')
+              text = text.replace(call_anchor, call_addition, 1)
+          startup.write_text(text)
+          PY
+      - name: Commit installer patch
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add app.py mide/startup.py
+          git diff --cached --quiet && exit 0
+          git commit -m "GS486: hard-bind top-level transport at app entry"
+          git push origin HEAD:codex/gs486-top-level-transport-truth
