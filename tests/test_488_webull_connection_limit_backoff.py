@@ -32,7 +32,7 @@ def _limit_failure(provider):
     return original
 
 
-def test_rc105_enters_five_minute_backoff_and_suppresses_per_scan_retries():
+def test_rc105_graduates_five_ten_fifteen_minute_backoff_and_suppresses_per_scan_retries():
     provider = Provider()
     original = _limit_failure(provider)
 
@@ -61,7 +61,89 @@ def test_rc105_enters_five_minute_backoff_and_suppresses_per_scan_retries():
     assert provider.calls == 2
     retried = gs488.backoff_snapshot(provider, now=1301.0)
     assert retried["consecutive_limit_failures"] == 2
-    assert retried["seconds_remaining"] == 300.0
+    assert retried["cooldown_seconds"] == 600.0
+    assert retried["seconds_remaining"] == 600.0
+
+    assert gs488.ensure_stream_with_backoff(
+        original, provider, ["PAAI"], now=1601.0
+    ) is False
+    assert provider.calls == 2
+
+    assert gs488.ensure_stream_with_backoff(
+        original, provider, ["PAAI"], now=1902.0
+    ) is False
+    assert provider.calls == 3
+    third = gs488.backoff_snapshot(provider, now=1902.0)
+    assert third["consecutive_limit_failures"] == 3
+    assert third["cooldown_seconds"] == 900.0
+    assert third["seconds_remaining"] == 900.0
+
+    assert gs488.ensure_stream_with_backoff(
+        original, provider, ["PAAI"], now=2803.0
+    ) is False
+    fourth = gs488.backoff_snapshot(provider, now=2803.0)
+    assert fourth["consecutive_limit_failures"] == 4
+    assert fourth["cooldown_seconds"] == 900.0
+
+
+
+def test_retained_flat_backoff_is_extended_in_place_without_early_retry():
+    provider = Provider()
+    state = gs488._state(provider)
+    state.update(
+        active=True,
+        cooldown_seconds=300.0,
+        next_retry_epoch=1300.0,
+        consecutive_limit_failures=5,
+        last_limit_failure_epoch=1000.0,
+        last_limit_failure="WEBULL_RC105_CONNECTION_LIMIT",
+    )
+
+    snap = gs488.backoff_snapshot(provider, now=1100.0)
+    assert snap["active"] is True
+    assert snap["cooldown_seconds"] == 900.0
+    assert snap["next_retry_epoch"] == 1900.0
+    assert snap["seconds_remaining"] == 800.0
+    assert snap["gs489_retained_deadline_extended"] is True
+
+
+def test_retained_gs488_instance_wrapper_is_upgraded_in_place_not_nested():
+    provider = Provider()
+    state = gs488._state(provider)
+    state.update(
+        active=True,
+        cooldown_seconds=300.0,
+        next_retry_epoch=1300.0,
+        consecutive_limit_failures=5,
+        last_limit_failure_epoch=1000.0,
+    )
+    calls = {"original": 0}
+
+    def original(_symbols):
+        calls["original"] += 1
+        return False
+
+    namespace = {
+        "ensure_stream_with_backoff": lambda original_fn, active_provider, symbols, now=None: original_fn(symbols),
+        "original": original,
+        "provider": provider,
+    }
+    exec(
+        "def retained(symbols):\n"
+        "    return ensure_stream_with_backoff(original, provider, symbols, now=1100.0)\n",
+        namespace,
+    )
+    retained = namespace["retained"]
+    setattr(retained, gs488._OWNER, True)
+    setattr(retained, gs488._PROVIDER_OWNER, True)
+    provider.ensure_stream = retained
+
+    assert gs488.install_for_provider(provider) is True
+    assert provider.ensure_stream is retained
+    assert getattr(retained, gs488._OWNER) == gs488.REVISION
+    assert provider.ensure_stream(["PAAI"]) is False
+    assert calls["original"] == 0
+    assert gs488.backoff_snapshot(provider, now=1100.0)["cooldown_seconds"] == 900.0
 
 
 def test_unrelated_stream_failure_keeps_existing_retry_behavior():
@@ -165,5 +247,7 @@ def test_scope_lock_only_changes_stream_retry_lifecycle():
     )
     assert not any(token in source for token in forbidden)
     assert "COOLDOWN_SECONDS = 300.0" in source
+    assert "BACKOFF_SECONDS = (300.0, 600.0, 900.0)" in source
+    assert "REVISION = 2" in source
     assert "rest_snapshot_history_unchanged" in source
     assert '"trading_authority_changed": False' in source

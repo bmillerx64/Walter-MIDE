@@ -6,12 +6,14 @@ limit exceeded``.  Because ``initialize_quotes`` normally calls ``ensure_stream`
 every 60-second scan whenever no subscription exists, that remote rejection was being
 retried once per scan.
 
-GS488 adds a narrow five-minute cooldown only after Webull explicitly reports a
-connection-limit failure.  During that window Walter keeps the proven REST
-snapshot/history path fully active but suppresses redundant MQTT reconnect attempts.
-Unrelated stream failures retain the existing retry behavior, and an existing/healthy
-subscription is never blocked.  The cooldown lives on the session-retained provider,
-so ordinary Streamlit reruns preserve it without adding global account state.
+GS488 adds a narrow cooldown only after Webull explicitly reports a connection-limit
+failure. GS489 graduates repeated rc105 retries from 5 to 10 to 15 minutes rather than
+probing the same occupied account slot every five minutes indefinitely. During that
+window Walter keeps the proven REST snapshot/history path fully active but suppresses
+redundant MQTT reconnect attempts. Unrelated stream failures retain the existing retry
+behavior, and an existing/healthy subscription is never blocked. The cooldown lives
+on the session-retained provider, so ordinary Streamlit reruns preserve it without
+adding global account state.
 
 Warm-deploy safety matters here: Walter may retain a provider from an older Python
 class generation.  ``install_for_provider`` therefore wraps the exact provider object,
@@ -29,11 +31,13 @@ from typing import Any, Callable
 
 AUTHORITY = "WEBULL_CONNECTION_LIMIT_CONTAINMENT"
 COOLDOWN_SECONDS = 300.0
+BACKOFF_SECONDS = (300.0, 600.0, 900.0)
 _OWNER = "_walter_gs488_connection_limit_backoff"
 _PROVIDER_OWNER = "_walter_gs488_provider_instance_backoff"
 _GS470_OWNER = "_walter_gs488_gs470_provider_bind"
 _GS487_OWNER = "_walter_gs488_gs487_provider_bind"
 _TRACE_OWNER = "_walter_gs488_stream_trace"
+REVISION = 2
 
 
 def _stream(provider) -> dict:
@@ -58,6 +62,41 @@ def _is_connection_limit(value: Any) -> bool:
     )
 
 
+def _cooldown_for_failures(failures: Any) -> float:
+    """Return 5m, 10m, then a capped 15m rc105 retry interval."""
+    try:
+        count = max(1, int(failures))
+    except (TypeError, ValueError):
+        count = 1
+    return BACKOFF_SECONDS[min(count - 1, len(BACKOFF_SECONDS) - 1)]
+
+
+def _refresh_active_deadline(provider, *, now: float) -> dict:
+    """Upgrade a retained flat GS488 cooldown without forcing an early retry."""
+    state = _state(provider)
+    if not state.get("active") or getattr(provider, "_subscription", None) is not None:
+        return state
+    failures = int(state.get("consecutive_limit_failures", 0) or 0)
+    if failures <= 0:
+        return state
+    cooldown = _cooldown_for_failures(failures)
+    try:
+        last_failure = float(state.get("last_limit_failure_epoch"))
+    except (TypeError, ValueError):
+        last_failure = now
+    desired_deadline = last_failure + cooldown
+    try:
+        current_deadline = float(state.get("next_retry_epoch"))
+    except (TypeError, ValueError):
+        current_deadline = 0.0
+    state["cooldown_seconds"] = cooldown
+    if desired_deadline > current_deadline:
+        state["next_retry_epoch"] = desired_deadline
+        state["gs489_retained_deadline_extended"] = True
+    state["gs489_graduated_backoff"] = True
+    return state
+
+
 def _state(provider) -> dict:
     stream = _stream(provider)
     state = stream.get("gs488_connection_limit_backoff")
@@ -66,6 +105,8 @@ def _state(provider) -> dict:
             "authority": AUTHORITY,
             "active": False,
             "cooldown_seconds": COOLDOWN_SECONDS,
+            "backoff_schedule_seconds": list(BACKOFF_SECONDS),
+            "gs489_graduated_backoff": True,
             "next_retry_epoch": None,
             "consecutive_limit_failures": 0,
             "suppressed_attempts": 0,
@@ -85,6 +126,8 @@ def backoff_snapshot(provider, *, now: float | None = None) -> dict:
             "provider_present": False,
             "active": False,
             "cooldown_seconds": COOLDOWN_SECONDS,
+            "backoff_schedule_seconds": list(BACKOFF_SECONDS),
+            "gs489_graduated_backoff": True,
             "next_retry_epoch": None,
             "seconds_remaining": None,
             "consecutive_limit_failures": 0,
@@ -93,7 +136,7 @@ def backoff_snapshot(provider, *, now: float | None = None) -> dict:
             "trading_authority_changed": False,
         }
     current = float(time.time() if now is None else now)
-    state = dict(_state(provider))
+    state = dict(_refresh_active_deadline(provider, now=current))
     deadline = state.get("next_retry_epoch")
     try:
         remaining = max(0.0, float(deadline) - current) if deadline is not None else 0.0
@@ -121,7 +164,7 @@ def ensure_stream_with_backoff(
 ):
     """Delegate once unless a recent explicit Webull connection-limit rejection exists."""
     current = float(time.time() if now is None else now)
-    state = _state(provider)
+    state = _refresh_active_deadline(provider, now=current)
 
     # A real live subscription always wins.  Backoff may never suppress upkeep of a
     # stream that actually recovered between scans.
@@ -131,6 +174,7 @@ def ensure_stream_with_backoff(
             state["active"] = False
             state["next_retry_epoch"] = None
             state["consecutive_limit_failures"] = 0
+            state["cooldown_seconds"] = COOLDOWN_SECONDS
         return result
 
     deadline = state.get("next_retry_epoch")
@@ -153,16 +197,19 @@ def ensure_stream_with_backoff(
         state["active"] = False
         state["next_retry_epoch"] = None
         state["consecutive_limit_failures"] = 0
+        state["cooldown_seconds"] = COOLDOWN_SECONDS
         state["last_recovery_epoch"] = current
         return result
 
     if _is_connection_limit(newest):
         state["active"] = True
-        state["cooldown_seconds"] = COOLDOWN_SECONDS
-        state["next_retry_epoch"] = current + COOLDOWN_SECONDS
-        state["consecutive_limit_failures"] = int(
-            state.get("consecutive_limit_failures", 0) or 0
-        ) + 1
+        failures = int(state.get("consecutive_limit_failures", 0) or 0) + 1
+        cooldown = _cooldown_for_failures(failures)
+        state["cooldown_seconds"] = cooldown
+        state["backoff_schedule_seconds"] = list(BACKOFF_SECONDS)
+        state["gs489_graduated_backoff"] = True
+        state["next_retry_epoch"] = current + cooldown
+        state["consecutive_limit_failures"] = failures
         state["last_limit_failure"] = "WEBULL_RC105_CONNECTION_LIMIT"
         state["last_limit_failure_epoch"] = current
     else:
@@ -173,23 +220,41 @@ def ensure_stream_with_backoff(
     return result
 
 
+def _upgrade_wrapper_global(function, name: str, value: Any) -> bool:
+    """Replace one referenced helper inside a retained older GS488 wrapper."""
+    globals_dict = getattr(function, "__globals__", None)
+    if not isinstance(globals_dict, dict) or name not in globals_dict:
+        return False
+    globals_dict[name] = value
+    return True
+
+
 def install_for_provider(provider) -> bool:
-    """Patch the exact retained provider instance, regardless of class generation."""
+    """Patch or in-place upgrade the exact retained provider instance."""
     if provider is None:
         return False
     current = getattr(provider, "ensure_stream", None)
     if not callable(current):
         return False
     function = getattr(current, "__func__", current)
-    if getattr(function, _OWNER, False) or getattr(current, _PROVIDER_OWNER, False):
+    marker = getattr(function, _OWNER, None) or getattr(current, _PROVIDER_OWNER, None)
+    if marker == REVISION:
+        _refresh_active_deadline(provider, now=time.time())
         return False
+    if marker:
+        if not _upgrade_wrapper_global(function, "ensure_stream_with_backoff", ensure_stream_with_backoff):
+            return False
+        setattr(function, _OWNER, REVISION)
+        setattr(function, _PROVIDER_OWNER, REVISION)
+        _refresh_active_deadline(provider, now=time.time())
+        return True
 
     @wraps(current)
     def guarded(symbols):
         return ensure_stream_with_backoff(current, provider, symbols)
 
-    setattr(guarded, _OWNER, True)
-    setattr(guarded, _PROVIDER_OWNER, True)
+    setattr(guarded, _OWNER, REVISION)
+    setattr(guarded, _PROVIDER_OWNER, REVISION)
     guarded._gs488_original = current
     try:
         provider.ensure_stream = guarded
@@ -203,7 +268,12 @@ def _install_clean_class() -> None:
     from . import webull_live
 
     current = webull_live.LiveWebullProvider.ensure_stream
-    if getattr(current, _OWNER, False):
+    marker = getattr(current, _OWNER, None)
+    if marker == REVISION:
+        return
+    if marker:
+        if _upgrade_wrapper_global(current, "ensure_stream_with_backoff", ensure_stream_with_backoff):
+            setattr(current, _OWNER, REVISION)
         return
 
     @wraps(current)
@@ -212,7 +282,7 @@ def _install_clean_class() -> None:
             lambda active_symbols: current(self, active_symbols), self, symbols
         )
 
-    setattr(ensure_stream, _OWNER, True)
+    setattr(ensure_stream, _OWNER, REVISION)
     ensure_stream._gs488_original = current
     webull_live.LiveWebullProvider.ensure_stream = ensure_stream
 
@@ -221,7 +291,12 @@ def _install_retained_activation_bind() -> None:
     from . import gs470_30s_activation_truth as gs470
 
     current = gs470._safe_activate
-    if getattr(current, _GS470_OWNER, False):
+    marker = getattr(current, _GS470_OWNER, None)
+    if marker == REVISION:
+        return
+    if marker:
+        if _upgrade_wrapper_global(current, "install_for_provider", install_for_provider):
+            setattr(current, _GS470_OWNER, REVISION)
         return
 
     @wraps(current)
@@ -229,7 +304,7 @@ def _install_retained_activation_bind() -> None:
         install_for_provider(provider)
         return current(provider)
 
-    setattr(safe_activate, _GS470_OWNER, True)
+    setattr(safe_activate, _GS470_OWNER, REVISION)
     safe_activate._gs488_original = current
     gs470._safe_activate = safe_activate
 
@@ -242,7 +317,12 @@ def _install_recorder_provider_bind() -> None:
     from . import gs487_cached_recorder_instance_bind as gs487
 
     current = gs487.install_for_recorder
-    if getattr(current, _GS487_OWNER, False):
+    marker = getattr(current, _GS487_OWNER, None)
+    if marker == REVISION:
+        return
+    if marker:
+        if _upgrade_wrapper_global(current, "install_for_provider", install_for_provider):
+            setattr(current, _GS487_OWNER, REVISION)
         return
 
     @wraps(current)
@@ -251,7 +331,7 @@ def _install_recorder_provider_bind() -> None:
         install_for_provider(provider)
         return current(recorder)
 
-    setattr(install_for_recorder, _GS487_OWNER, True)
+    setattr(install_for_recorder, _GS487_OWNER, REVISION)
     install_for_recorder._gs488_original = current
     gs487.install_for_recorder = install_for_recorder
 
@@ -260,7 +340,12 @@ def _install_stream_trace() -> None:
     from . import gs481_live_evidence_hard_bind as gs481
 
     current = gs481._stream_failure_truth
-    if getattr(current, _TRACE_OWNER, False):
+    marker = getattr(current, _TRACE_OWNER, None)
+    if marker == REVISION:
+        return
+    if marker:
+        if _upgrade_wrapper_global(current, "backoff_snapshot", backoff_snapshot):
+            setattr(current, _TRACE_OWNER, REVISION)
         return
 
     @wraps(current)
@@ -270,7 +355,7 @@ def _install_stream_trace() -> None:
         truth["gs488_connection_limit_containment"] = True
         return truth
 
-    setattr(stream_failure_truth, _TRACE_OWNER, True)
+    setattr(stream_failure_truth, _TRACE_OWNER, REVISION)
     stream_failure_truth._gs488_original = current
     gs481._stream_failure_truth = stream_failure_truth
 

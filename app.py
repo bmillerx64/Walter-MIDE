@@ -1382,6 +1382,16 @@ def _run_live_pipeline(
             client = LiveWebullProvider(
                 app_key, app_secret, universe_client=universe_client)
             context.provider_instance = client
+        # GS489 uses a unique module boundary so a warm Streamlit session cannot
+        # satisfy the graduated rc105 policy from a retained pre-GS489 module.
+        try:
+            gs489 = importlib.import_module("mide.gs489_webull_graduated_backoff")
+            gs489.install_for_provider(client)
+        except Exception as exc:
+            logging.getLogger(__name__).warning(
+                "GS489 Webull connection-limit bind unavailable error_type=%s",
+                type(exc).__name__,
+            )
         logging.getLogger(__name__).warning(
             "Walter quote/bars/stream provider: WEBULL SDK; symbol master: ALPACA /v2/assets"
         )
