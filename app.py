@@ -837,16 +837,12 @@ def record_scan_safely(
     })
     try:
         binder = importlib.import_module("mide.gs487_cached_recorder_instance_bind")
-        installed_now = bool(binder.install_for_recorder(recorder))
-        diagnostics["gs487_cached_recorder_instance_bind"] = {
-            "installed_now": installed_now,
-            "error": None,
-        }
+        binder.install_for_recorder(recorder)
     except Exception as exc:
-        diagnostics["gs487_cached_recorder_instance_bind"] = {
-            "installed_now": False,
-            "error": type(exc).__name__,
-        }
+        logging.getLogger(__name__).warning(
+            "Flight Recorder GS487 cached-instance bind skipped (%s)",
+            type(exc).__name__,
+        )
 
     try:
         try:
