@@ -1,0 +1,53 @@
+name: GS483 patch startup
+
+on:
+  push:
+    branches: [codex/gs483-resource-containment]
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: codex/gs483-resource-containment
+      - name: Patch startup installer
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path('mide/startup.py')
+          text = path.read_text()
+          import_anchor = '    from .gs481_live_evidence_hard_bind import install as install_gs481\n'
+          import_line = '    from .gs483_resource_containment import install as install_gs483\n'
+          if import_line not in text:
+              if import_anchor not in text:
+                  raise SystemExit('GS481 import anchor missing')
+              text = text.replace(import_anchor, import_anchor + import_line, 1)
+
+          call_anchor = '    install_gs481()\n    # GS428 runs only after GS413 is active.'
+          call_block = '''    install_gs481()\n    # GS483 bounds Flight Recorder read-side memory. It changes only recorder\n    # retrieval helpers; on-disk evidence and all trading semantics stay unchanged.\n    install_gs483()\n    # GS428 runs only after GS413 is active.'''
+          if '    install_gs483()\n' not in text:
+              if call_anchor not in text:
+                  raise SystemExit('GS481 call anchor missing')
+              text = text.replace(call_anchor, call_block, 1)
+
+          footer_anchor = 'stream-failure truth, GS428 releases obsolete post-scan scheduler deadtime'
+          footer_replacement = 'stream-failure truth, GS483 bounds append-only Flight Recorder read memory, GS428 releases obsolete post-scan scheduler deadtime'
+          if footer_anchor in text:
+              text = text.replace(footer_anchor, footer_replacement, 1)
+
+          path.write_text(text)
+          PY
+      - name: Commit startup patch
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add mide/startup.py
+          git diff --cached --quiet && exit 0
+          git commit -m "GS483: install resource containment at late startup"
+          git push origin HEAD:codex/gs483-resource-containment
