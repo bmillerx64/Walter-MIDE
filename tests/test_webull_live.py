@@ -91,7 +91,12 @@ def test_missing_declared_sdk_fails_once_with_explicit_package(monkeypatch):
 def test_sdk_snapshot_arguments_and_normalization():
     class SDK:
         def get_stock_snapshot(self, **kwargs):
-            assert kwargs == {"symbols": "HYFM", "category": "US_STOCK"}
+            assert kwargs == {
+                "symbols": "HYFM",
+                "category": "US_STOCK",
+                "extend_hour_required": True,
+                "overnight_required": True,
+            }
             return {"data": [{"symbol": "HYFM", "last_price": "3.25", "volume": 9}]}
     result = WebullOpenAPIClient("k", "s", sdk_client=SDK()).snapshots(["HYFM"])
     assert result["HYFM"]["latestTrade"]["p"] == 3.25
