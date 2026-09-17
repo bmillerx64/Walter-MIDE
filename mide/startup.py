@@ -50,6 +50,7 @@ def ensure_late_runtime_installers() -> None:
     from .gs480_catalyst_story_intelligence import install as install_gs480
     from .gs481_live_evidence_hard_bind import install as install_gs481
     from .gs484_fmp_transport_truth import install as install_gs484
+    from .gs485_retained_news_transport_hard_bind import install as install_gs485
     from .gs483_resource_containment import install as install_gs483
 
     install_late_chain()
@@ -131,6 +132,9 @@ def ensure_late_runtime_installers() -> None:
     # GS484 reads only the already-populated NewsService metrics from the active
     # provider and binds sanitized transport provenance into GS481 news truth.
     install_gs484()
+    # GS485 patches the exact retained GS481 function-global dictionary reachable
+    # from the active recorder graph so warm Streamlit generations receive GS484.
+    install_gs485()
     # GS483 bounds Flight Recorder read-side memory. It changes only recorder
     # retrieval helpers; on-disk evidence and all trading semantics stay unchanged.
     install_gs483()
