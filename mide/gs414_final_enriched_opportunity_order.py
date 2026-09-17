@@ -32,11 +32,12 @@ then expires GS460 compression-owned LOOK NOW once the newly joined timeframe ru
 is no longer fresh, so an urgent verb cannot persist as a stale condition. GS475
 hard-binds session-aware Webull snapshot price truth at the same late-runtime boundary
 so PRE/ATH/OVN movers cannot enter the existing pipeline with a stale RTH price.
+GS477 adds bounded presentation/audio memory for a proven leader that resets toward
+VWAP and then re-ignites; it changes no scanner or trading authority.
 
-GS414/GS436/GS462/GS463/GS465/GS466/GS467/GS468/GS474 remain presentation-only. GS464
-owns its separate VWAP-truth calculation contract. GS475 owns only snapshot source
-price truth. Neither changes thresholds, qualification, readiness, execution, or
-orders.
+GS414/GS436/GS462/GS463/GS465/GS466/GS467/GS468/GS474/GS477 remain presentation-only.
+GS464 owns its separate VWAP-truth calculation contract. GS475 owns only snapshot
+source-price truth. None changes qualification, readiness, execution, or orders.
 """
 from __future__ import annotations
 
@@ -121,6 +122,13 @@ def _install_gs475() -> None:
     install_gs475()
 
 
+def _install_gs477() -> None:
+    """Remember proven leaders through a constructive reset and re-ignition."""
+    from .gs477_leader_reset_reignition import install as install_gs477
+
+    install_gs477()
+
+
 def final_enriched_opportunity_records(
     records: list[dict], *, actionable_function=None
 ) -> list[dict]:
@@ -142,8 +150,8 @@ def install() -> None:
     # subsequent evidence/presentation layers see the same session-aware primary VWAP
     # authority. GS465 remains the final card-order contract; GS466 changes only
     # visibility of awareness-only current extremes; GS467 adjudicates standalone 1m
-    # urgency; GS468 enforces numeric VWAP truth; GS474 then enforces LOOK NOW
-    # freshness for GS460's compression-only attention path.
+    # urgency; GS468 enforces numeric VWAP truth; GS474 enforces LOOK NOW freshness;
+    # GS477 then adds bounded leader-reset attention without trading authority.
     _install_gs475()
     _install_gs464()
     _install_gs462()
@@ -153,6 +161,7 @@ def install() -> None:
     _install_gs467()
     _install_gs468()
     _install_gs474()
+    _install_gs477()
 
     current = ui.render_escalation_engine
     if getattr(current, FINAL_ORDER_OWNER_ATTR, False):
