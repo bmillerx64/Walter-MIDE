@@ -84,19 +84,24 @@ def test_official_sdk_uses_installed_package_layout(monkeypatch, tmp_path):
 def test_missing_declared_sdk_fails_once_with_explicit_package(monkeypatch):
     def missing(_name): raise ImportError("missing official SDK")
     monkeypatch.setattr("mide.webull_sdk.importlib.import_module", missing)
-    with pytest.raises(RuntimeError) as error: create_official_client("key", "secret")
+    with pytest.raises(RuntimeError) as error:
+        create_official_client("key", "secret")
     assert str(error.value) == "Required Webull SDK package is not installed: webull-openapi-python-sdk"
 
 
-def test_sdk_snapshot_arguments_and_normalization():
+def test_sdk_snapshot_arguments_and_normalization(monkeypatch):
+    # This is a base-adapter contract test. Production may have the GS475/476 live
+    # session wrapper installed, so explicitly unwrap to the captured SDK boundary.
+    current = WebullSDKClient.stock_snapshot
+    monkeypatch.setattr(
+        WebullSDKClient,
+        "stock_snapshot",
+        getattr(current, "_gs475_original", current),
+    )
+
     class SDK:
         def get_stock_snapshot(self, **kwargs):
-            assert kwargs == {
-                "symbols": "HYFM",
-                "category": "US_STOCK",
-                "extend_hour_required": True,
-                "overnight_required": True,
-            }
+            assert kwargs == {"symbols": "HYFM", "category": "US_STOCK"}
             return {"data": [{"symbol": "HYFM", "last_price": "3.25", "volume": 9}]}
     result = WebullOpenAPIClient("k", "s", sdk_client=SDK()).snapshots(["HYFM"])
     assert result["HYFM"]["latestTrade"]["p"] == 3.25
@@ -120,7 +125,15 @@ def test_sdk_snapshot_decodes_nested_bytes_before_dataframe_serialization():
     assert result["HYFM"]["latestTrade"]["t"] == "2026-08-04T14:30:00Z"
 
 
-def test_sdk_snapshot_only_requests_extended_hours_when_explicitly_enabled():
+def test_sdk_snapshot_only_requests_extended_hours_when_explicitly_enabled(monkeypatch):
+    # Preserve the low-level adapter's explicit optional-session contract while the
+    # GS476 production wrapper decides which entitled session flags Walter should use.
+    current = WebullSDKClient.stock_snapshot
+    monkeypatch.setattr(
+        WebullSDKClient,
+        "stock_snapshot",
+        getattr(current, "_gs475_original", current),
+    )
     calls = []
     class SDK:
         def get_snapshot(self, **kwargs): calls.append(kwargs); return {"data": []}
@@ -185,7 +198,8 @@ def test_invalid_symbol_isolated_without_hiding_other_sdk_failures():
     assert provider.diagnostics["webull_stream"]["snapshot_unsupported_symbols"] == ["BADADR"]
     class AuthFailure(Rest):
         def snapshots(self, symbols): raise PermissionError("authorization denied")
-    with pytest.raises(PermissionError, match="authorization denied"): LiveWebullProvider("key", "secret", rest_client=AuthFailure(), universe_client=Universe()).initialize_quotes(["GOOD", "ALSO"])
+    with pytest.raises(PermissionError, match="authorization denied"):
+        LiveWebullProvider("key", "secret", rest_client=AuthFailure(), universe_client=Universe()).initialize_quotes(["GOOD", "ALSO"])
 
 
 def test_named_invalid_snapshot_symbols_are_removed_in_one_retry():
@@ -255,7 +269,8 @@ def test_http_trace_logs_request_and_response_without_secrets(caplog):
     class Response: status_code = 404; headers = {"content-type": "application/json"}; text = '{"error":"not found"}'
     class Transport:
         def request(self, method, url, **kwargs): return Response()
-    with caplog.at_level("INFO"): TracedHTTPTransport(Transport()).request("POST", "https://api.webull.com/missing", headers={"x-signature": "secret", "accept": "application/json"}, json={})
+    with caplog.at_level("INFO"):
+        TracedHTTPTransport(Transport()).request("POST", "https://api.webull.com/missing", headers={"x-signature": "secret", "accept": "application/json"}, json={})
     output = caplog.text
     assert "method=POST" in output and "url=https://api.webull.com/missing" in output and "status=404" in output and '{"error":"not found"}' in output
     assert "secret" not in output and "<redacted>" in output
