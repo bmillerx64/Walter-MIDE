@@ -49,6 +49,7 @@ def ensure_late_runtime_installers() -> None:
     from .gs479_headline_catalyst_magnitude import install as install_gs479
     from .gs480_catalyst_story_intelligence import install as install_gs480
     from .gs481_live_evidence_hard_bind import install as install_gs481
+    from .gs484_fmp_transport_truth import install as install_gs484
     from .gs483_resource_containment import install as install_gs483
 
     install_late_chain()
@@ -127,6 +128,9 @@ def ensure_late_runtime_installers() -> None:
     # subscription-failure context. It performs no network repair and changes no
     # trading authority.
     install_gs481()
+    # GS484 reads only the already-populated NewsService metrics from the active
+    # provider and binds sanitized transport provenance into GS481 news truth.
+    install_gs484()
     # GS483 bounds Flight Recorder read-side memory. It changes only recorder
     # retrieval helpers; on-disk evidence and all trading semantics stay unchanged.
     install_gs483()
