@@ -74,22 +74,29 @@ def test_gs475_forces_optional_extended_fields_and_self_heals_warm_sdk_instances
         calls.append((tuple(symbols), extended_hours))
         return _payload()
 
+    original = webull_sdk.WebullSDKClient.stock_snapshot
     monkeypatch.setattr(webull_sdk.WebullSDKClient, "stock_snapshot", base_stock_snapshot)
     monkeypatch.setattr(gs475, "_now_eastern", lambda: _et(8, 26))
 
-    gs475.install()
-    wrapped = webull_sdk.WebullSDKClient.stock_snapshot
-    client = object.__new__(webull_sdk.WebullSDKClient)
-    result = client.stock_snapshot(["HOT"])
+    try:
+        gs475.install()
+        wrapped = webull_sdk.WebullSDKClient.stock_snapshot
+        client = object.__new__(webull_sdk.WebullSDKClient)
+        result = client.stock_snapshot(["HOT"])
 
-    assert calls == [("HOT", True)]
-    assert result["data"][0]["price"] == "8.37"
-    assert client.last_snapshot_extended_requested is True
-    assert client.last_snapshot_session_price_field == "ext_price"
-    assert getattr(wrapped, gs475.OWNER_ATTR, False) is True
+        assert calls == [(('HOT',), True)]
+        assert result["data"][0]["price"] == "8.37"
+        assert client.last_snapshot_extended_requested is True
+        assert client.last_snapshot_session_price_field == "ext_price"
+        assert getattr(wrapped, gs475.OWNER_ATTR, False) is True
 
-    gs475.install()
-    assert webull_sdk.WebullSDKClient.stock_snapshot is wrapped
+        gs475.install()
+        assert webull_sdk.WebullSDKClient.stock_snapshot is wrapped
+    finally:
+        # gs475.install() directly replaces the class attribute after monkeypatch has
+        # recorded its own value. Restore the real pre-test callable explicitly so
+        # this regression cannot leak the runtime installer into unrelated SDK tests.
+        webull_sdk.WebullSDKClient.stock_snapshot = original
 
 
 def test_gs475_flows_through_existing_webull_normalization(monkeypatch):
