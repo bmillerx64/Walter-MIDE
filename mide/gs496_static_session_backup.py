@@ -28,6 +28,8 @@ import html
 import json
 from pathlib import Path
 import secrets
+import threading
+from time import monotonic
 from typing import Any
 from zipfile import ZIP_DEFLATED, ZipFile
 
@@ -37,6 +39,10 @@ STATIC_DIR = Path("static")
 BACKUP_PREFIX = "walter-session-backup-"
 CHUNK_BYTES = 1024 * 1024
 SESSION_KEY = "_walter_gs496_session_backup"
+JOB_SESSION_KEY = "_walter_gs506_backup_job_id"
+JOB_POLL_SECONDS = 2.0
+_JOB_LOCK = threading.Lock()
+_JOBS: dict[str, dict[str, Any]] = {}
 
 
 def _captured_size(path: Path) -> int:
@@ -93,6 +99,7 @@ def build_session_backup_archive(
     output_dir: str | Path = STATIC_DIR,
     now: datetime | None = None,
     token: str | None = None,
+    captured_sizes: dict[str, int] | None = None,
 ) -> dict[str, Any]:
     """Create one bounded-memory, point-in-time ZIP snapshot on disk."""
     candidate_path = Path(candidate_history_path)
@@ -100,10 +107,21 @@ def build_session_backup_archive(
     directory = Path(output_dir)
     directory.mkdir(parents=True, exist_ok=True)
 
-    captured = {
-        "candidate_history.jsonl": _captured_size(candidate_path),
-        "flight_recorder.jsonl": _captured_size(flight_path),
-    }
+    captured = dict(captured_sizes or {})
+    if not captured:
+        captured = {
+            "candidate_history.jsonl": _captured_size(candidate_path),
+            "flight_recorder.jsonl": _captured_size(flight_path),
+        }
+    else:
+        captured = {
+            "candidate_history.jsonl": max(
+                0, int(captured.get("candidate_history.jsonl") or 0)
+            ),
+            "flight_recorder.jsonl": max(
+                0, int(captured.get("flight_recorder.jsonl") or 0)
+            ),
+        }
     instant = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
     suffix = str(token or secrets.token_hex(12)).replace("/", "")[:24] or "backup"
     filename = (
@@ -167,6 +185,105 @@ def build_session_backup_archive(
     }
 
 
+def _job_snapshot(job_id: str) -> dict[str, Any] | None:
+    with _JOB_LOCK:
+        job = _JOBS.get(str(job_id))
+        return dict(job) if isinstance(job, dict) else None
+
+
+def _set_job(job_id: str, **updates: Any) -> None:
+    with _JOB_LOCK:
+        job = _JOBS.setdefault(str(job_id), {})
+        job.update(updates)
+
+
+def start_session_backup_job(
+    candidate_history_path: str | Path,
+    flight_recorder_path: str | Path,
+    *,
+    output_dir: str | Path = STATIC_DIR,
+    now: datetime | None = None,
+) -> dict[str, Any]:
+    """Start one point-in-time backup on a background thread.
+
+    The source sizes are captured synchronously before the worker starts. That keeps
+    the backup point-in-time even while the append-only files continue growing.
+    """
+    candidate_path = Path(candidate_history_path)
+    flight_path = Path(flight_recorder_path)
+    captured = {
+        "candidate_history.jsonl": _captured_size(candidate_path),
+        "flight_recorder.jsonl": _captured_size(flight_path),
+    }
+    instant = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+    job_id = secrets.token_hex(12)
+    started = monotonic()
+    initial = {
+        "job_id": job_id,
+        "status": "running",
+        "started_at_utc": instant.isoformat(),
+        "candidate_history_bytes": captured["candidate_history.jsonl"],
+        "flight_recorder_bytes": captured["flight_recorder.jsonl"],
+        "source_bytes_total": sum(captured.values()),
+        "elapsed_seconds": 0.0,
+        "trading_logic_changed": False,
+    }
+    with _JOB_LOCK:
+        _JOBS[job_id] = dict(initial)
+
+    def worker() -> None:
+        try:
+            info = build_session_backup_archive(
+                candidate_path,
+                flight_path,
+                output_dir=output_dir,
+                now=instant,
+                token=job_id,
+                captured_sizes=captured,
+            )
+        except Exception as exc:
+            _set_job(
+                job_id,
+                status="failed",
+                finished_at_utc=datetime.now(timezone.utc).isoformat(),
+                elapsed_seconds=round(monotonic() - started, 2),
+                error_type=type(exc).__name__,
+                error_message=str(exc)[:500],
+            )
+            return
+        _set_job(
+            job_id,
+            status="completed",
+            finished_at_utc=datetime.now(timezone.utc).isoformat(),
+            elapsed_seconds=round(monotonic() - started, 2),
+            result=info,
+        )
+
+    threading.Thread(
+        target=worker,
+        name=f"walter-session-backup-{job_id[:8]}",
+        daemon=True,
+    ).start()
+    return initial
+
+
+def session_backup_job_status(job_id: str) -> dict[str, Any] | None:
+    """Return one immutable UI-safe status snapshot."""
+    job = _job_snapshot(job_id)
+    if not isinstance(job, dict):
+        return None
+    if job.get("status") == "running":
+        started_at = str(job.get("started_at_utc") or "")
+        try:
+            started_dt = datetime.fromisoformat(started_at)
+            elapsed = datetime.now(timezone.utc) - started_dt.astimezone(timezone.utc)
+            job["elapsed_seconds"] = max(0.0, round(elapsed.total_seconds(), 1))
+        except Exception:
+            pass
+    job.pop("thread", None)
+    return job
+
+
 def backup_link_markup(info: dict[str, Any]) -> str:
     filename = html.escape(str(info.get("filename") or ""), quote=True)
     href = html.escape(str(info.get("href") or ""), quote=True)
@@ -186,19 +303,51 @@ def _render_backup_controls(candidate_history_path: Path, flight_recorder_path: 
     import streamlit as st
 
     st.caption(
-        "Safe backup uses a disk-backed ZIP so large recorder/history bytes are not "
-        "registered in Streamlit widget memory."
+        "Safe backup is built on a background thread from captured file sizes, so "
+        "AutoScan reruns cannot cancel a large point-in-time ZIP."
     )
+
+    job_id = str(st.session_state.get(JOB_SESSION_KEY) or "")
+    job = session_backup_job_status(job_id) if job_id else None
+    running = bool(job and job.get("status") == "running")
+
     if st.button(
         "Prepare Session Backup",
         key="walter-gs496-prepare-session-backup",
         width="stretch",
+        disabled=running,
     ):
-        with st.spinner("Preparing point-in-time backup…"):
-            st.session_state[SESSION_KEY] = build_session_backup_archive(
-                candidate_history_path,
-                flight_recorder_path,
-            )
+        job = start_session_backup_job(
+            candidate_history_path,
+            flight_recorder_path,
+        )
+        job_id = str(job["job_id"])
+        st.session_state[JOB_SESSION_KEY] = job_id
+        st.session_state.pop(SESSION_KEY, None)
+        running = True
+
+    if running and isinstance(job, dict):
+        source_mb = float(job.get("source_bytes_total") or 0) / (1024 * 1024)
+        elapsed = float(job.get("elapsed_seconds") or 0)
+        st.info(
+            f"Preparing {source_mb:.1f} MB point-in-time backup in the background "
+            f"({elapsed:.0f}s elapsed). AutoScan can keep running."
+        )
+        return
+
+    if isinstance(job, dict) and job.get("status") == "failed":
+        st.error(
+            "Backup build failed: "
+            + str(job.get("error_type") or "Error")
+            + " — "
+            + str(job.get("error_message") or "unknown error")
+        )
+        return
+
+    if isinstance(job, dict) and job.get("status") == "completed":
+        result = job.get("result")
+        if isinstance(result, dict):
+            st.session_state[SESSION_KEY] = result
 
     info = st.session_state.get(SESSION_KEY)
     if not isinstance(info, dict):
@@ -219,7 +368,7 @@ def render_session_backup_controls(
     candidate_history_path: str | Path,
     flight_recorder_path: str | Path,
 ) -> None:
-    """Render backup controls in a fragment so backup clicks do not rerun Walter."""
+    """Render a self-refreshing backup fragment without rerunning Walter."""
     import streamlit as st
 
     candidate_path = Path(candidate_history_path)
@@ -230,7 +379,7 @@ def render_session_backup_controls(
         _render_backup_controls(candidate_path, flight_path)
         return
 
-    @fragment
+    @fragment(run_every=JOB_POLL_SECONDS)
     def backup_fragment() -> None:
         _render_backup_controls(candidate_path, flight_path)
 
