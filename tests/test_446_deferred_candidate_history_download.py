@@ -121,30 +121,23 @@ def test_render_time_gzip_mode_stays_gzip_if_file_is_truncated_before_click(tmp_
     assert gzip.decompress(downloaded) == replacement
 
 
-def test_gs446_is_installed_after_gs445_before_app_sidebar_render():
+def test_gs446_remains_installed_for_legacy_export_compatibility():
     startup = Path("mide/startup.py").read_text(encoding="utf-8")
     app = Path("app.py").read_text(encoding="utf-8")
 
     assert "from .gs446_deferred_candidate_history_download import install as install_gs446" in startup
     assert startup.index("install_gs445()") < startup.index("install_gs446()")
     assert startup.index("install_gs446()") < startup.index("install_gs416()")
-    assert app.index('log_startup("entering app.py")') < app.index(
-        '"Download Candidate History"'
-    )
+    assert "render_session_backup_controls" in app
 
 
-def test_gs446_preserves_sidebar_contract_and_existing_streamlit_pin():
+def test_gs446_live_sidebar_is_superseded_without_changing_streamlit_pin():
     app = Path("app.py").read_text(encoding="utf-8")
     requirements = Path("requirements.txt").read_text(encoding="utf-8")
-    start = app.index('"Download Candidate History"')
-    block = app[start : start + 320]
 
-    # app.py remains unchanged: its existing eager-looking call is intentionally
-    # intercepted by the default MemoryStore wrapper and now returns a callable.
-    assert "data=get_store().export_bytes()" in block
-    assert 'file_name="candidate_history.jsonl"' in block
-    assert 'mime="application/x-ndjson"' in block
-    assert 'use_container_width=True' in block
+    assert "data=get_store().export_bytes()" not in app
+    assert 'st.download_button(\n        "Download Candidate History"' not in app
+    assert "render_session_backup_controls" in app
     assert "streamlit==1.62.0" in requirements
     assert requirements.startswith("# GS445 deployment marker:")
 
