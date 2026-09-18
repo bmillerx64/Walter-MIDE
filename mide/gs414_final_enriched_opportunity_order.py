@@ -144,6 +144,13 @@ def _install_gs493() -> None:
     install_gs493()
 
 
+def _install_gs495() -> None:
+    """Clarify extreme LOOK NOW location semantics without changing state."""
+    from .gs495_extreme_look_now_reset_language import install as install_gs495
+
+    install_gs495()
+
+
 def final_enriched_opportunity_records(
     records: list[dict], *, actionable_function=None
 ) -> list[dict]:
@@ -182,6 +189,7 @@ def install() -> None:
     _install_gs477()
     _install_gs492()
     _install_gs493()
+    _install_gs495()
 
     current = ui.render_escalation_engine
     if getattr(current, FINAL_ORDER_OWNER_ATTR, False):
