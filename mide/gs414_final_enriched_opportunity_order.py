@@ -137,6 +137,13 @@ def _install_gs492() -> None:
     install_gs492()
 
 
+def _install_gs493() -> None:
+    """Expose exact 3m SuperTrend retest geometry in Opportunity State."""
+    from .gs493_3m_st_retest_truth import install as install_gs493
+
+    install_gs493()
+
+
 def final_enriched_opportunity_records(
     records: list[dict], *, actionable_function=None
 ) -> list[dict]:
@@ -174,6 +181,7 @@ def install() -> None:
     _install_gs474()
     _install_gs477()
     _install_gs492()
+    _install_gs493()
 
     current = ui.render_escalation_engine
     if getattr(current, FINAL_ORDER_OWNER_ATTR, False):
