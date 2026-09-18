@@ -76,10 +76,15 @@ def test_store_wrapper_rotates_then_normal_append_creates_fresh_active_file(tmp_
     _set_mtime(active, datetime(2026, 9, 18, 15, 0, tzinfo=ET))
 
     from mide import gs501_session_history_rollover as gs501
+    original_eastern_time = gs501.eastern_time
     monkeypatch.setattr(
         gs501,
         "eastern_time",
-        lambda value=None: datetime(2026, 9, 21, 4, 5, tzinfo=ET),
+        lambda value=None: (
+            datetime(2026, 9, 21, 4, 5, tzinfo=ET)
+            if value is None
+            else original_eastern_time(value)
+        ),
     )
 
     class Store:
