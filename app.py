@@ -212,6 +212,7 @@ memory_checkpoint("scanner import", object_name="mide.scanner_v2")
 from mide.memory import MemoryStore
 from mide.flight_recorder import FlightRecorder
 from mide.gs496_static_session_backup import render_session_backup_controls
+from mide.gs498_mission_ranking_direction import mission_ranked_records
 from mide.decision_engine import expansion_candidate_diagnostic
 memory_checkpoint("cache stores import", object_name="MemoryStore, FlightRecorder")
 from mide.memory_profile import compact_previous_record, profile as memory_profile, release_temporaries
@@ -234,7 +235,6 @@ from mide.ui import (
     actionable_candidate_records,
     rejected_candidates_table,
     rejection_diagnostics,
-    trader_priority_sort_key,
     render_walter_mission_control,
     render_early_setups,
     render_live_opportunity_feed,
@@ -1935,7 +1935,7 @@ def _run_live_pipeline(
             history.append(results)
 
     def rank(records):
-        ranked_records = sorted(records, key=trader_priority_sort_key)
+        ranked_records = mission_ranked_records(records)
         state["runtime_stages"]["Ranked"] = runtime_stage_observation(
             ranked_records
         )
