@@ -118,13 +118,14 @@ def test_gs445_install_reuses_gs364_memory_and_flight_export_wrappers(tmp_path, 
         gs445.reset_state()
 
 
-def test_gs445_is_installed_before_sidebar_backup_materialization():
+def test_gs445_legacy_export_helper_remains_installed_under_gs496():
     startup = Path("mide/startup.py").read_text(encoding="utf-8")
     app = Path("app.py").read_text(encoding="utf-8")
 
     assert "from .gs445_incremental_backup_exports import install as install_gs445" in startup
     assert startup.index("install_gs445()") < startup.index("install_gs416()")
-    assert app.index('log_startup("entering app.py")') < app.index("data=get_store().export_bytes()")
+    assert "render_session_backup_controls" in app
+    assert "data=get_store().export_bytes()" not in app
 
 
 def test_gs445_scope_lock_and_clean_runtime_marker():
