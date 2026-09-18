@@ -49,6 +49,7 @@ def ensure_late_runtime_installers() -> None:
     from .gs479_headline_catalyst_magnitude import install as install_gs479
     from .gs480_catalyst_story_intelligence import install as install_gs480
     from .gs502_benzinga_breaking_news import install as install_gs502
+    from .gs503_catalyst_company_scale import install as install_gs503
     from .gs481_live_evidence_hard_bind import install as install_gs481
     from .gs484_fmp_transport_truth import install as install_gs484
     from .gs485_retained_news_transport_hard_bind import install as install_gs485
@@ -131,6 +132,11 @@ def ensure_late_runtime_installers() -> None:
     # fetched articles through GS298/315/480. Without a Benzinga API credential it
     # performs zero network calls and leaves the established FMP path unchanged.
     install_gs502()
+    # GS503 uses only already-fetched Webull native-radar market_value plus the
+    # catalyst facts GS479/480 already extracted. It adds operator context such as
+    # stated contract value / current market cap and straight-line annualized scale
+    # for disclosed multi-year contracts; it has no score/rank/readiness authority.
+    install_gs503()
     # GS481 uses GS427's proven retained-recorder globals after GS480 has populated its
     # bounded story traces. It persists those traces plus sanitized Webull stream
     # subscription-failure context. It performs no network repair and changes no
