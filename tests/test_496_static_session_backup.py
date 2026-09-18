@@ -76,7 +76,7 @@ def test_new_backup_replaces_prior_generated_archive(tmp_path):
     assert (output / second["filename"]).exists()
 
 
-def test_link_is_static_download_not_streamlit_download_widget():
+def test_legacy_static_link_helper_remains_valid_but_live_delivery_is_native():
     info = {
         "filename": "walter-session-backup-test.zip",
         "href": "/app/static/walter-session-backup-test.zip",
@@ -86,9 +86,16 @@ def test_link_is_static_download_not_streamlit_download_widget():
     markup = gs496.backup_link_markup(info)
     assert 'href="/app/static/walter-session-backup-test.zip"' in markup
     assert 'download="walter-session-backup-test.zip"' in markup
-    assert "st.download_button(" not in Path(
-        "mide/gs496_static_session_backup.py"
-    ).read_text(encoding="utf-8")
+
+    source = Path("mide/gs496_static_session_backup.py").read_text(
+        encoding="utf-8"
+    )
+    render_start = source.index("def _render_backup_controls")
+    render_end = source.index("def render_session_backup_controls", render_start)
+    render = source[render_start:render_end]
+    assert "st.download_button(" in render
+    assert "data=open_prepared_archive" in render
+    assert "st.markdown(backup_link_markup" not in render
 
 
 def test_live_app_uses_gs496_and_static_serving():
