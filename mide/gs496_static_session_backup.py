@@ -178,7 +178,11 @@ def build_session_backup_archive(
     return {
         "authority": AUTHORITY,
         "filename": filename,
-        "href": f"app/static/{filename}",
+        # Use an origin-root absolute path. Raw HTML rendered inside Streamlit's
+        # frontend can live under a /~+/ route; a relative "app/static/..." href
+        # then resolves to /~+/app/static/... and Community Cloud reports the
+        # generated file as unavailable even though it exists on disk.
+        "href": f"/app/static/{filename}",
         "generated_at_utc": instant.isoformat(),
         "candidate_history_bytes": captured["candidate_history.jsonl"],
         "flight_recorder_bytes": captured["flight_recorder.jsonl"],
