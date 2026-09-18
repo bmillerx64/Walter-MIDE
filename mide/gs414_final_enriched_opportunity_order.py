@@ -130,6 +130,13 @@ def _install_gs477() -> None:
     install_gs477()
 
 
+def _install_gs492() -> None:
+    """Make fresh bottom-up runner maturation transitions audibly distinct."""
+    from .gs492_maturation_transition_audio import install as install_gs492
+
+    install_gs492()
+
+
 def final_enriched_opportunity_records(
     records: list[dict], *, actionable_function=None
 ) -> list[dict]:
@@ -166,6 +173,7 @@ def install() -> None:
     _install_gs468()
     _install_gs474()
     _install_gs477()
+    _install_gs492()
 
     current = ui.render_escalation_engine
     if getattr(current, FINAL_ORDER_OWNER_ATTR, False):
