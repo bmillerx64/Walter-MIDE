@@ -7,6 +7,9 @@
 # GS506 deployment marker: force one clean Streamlit Community Cloud runtime so
 # background session-backup workers replace the prior synchronous backup fragment.
 # No dependency versions change in this deployment-only activation.
+# GS507 deployment marker: force one clean runtime so streamed backup members use
+# ZIP64 when the active Candidate History exceeds the classic ZIP member limit.
+# No dependency versions change in this deployment-only activation.
 # GS442 deployment marker: force one clean Streamlit Community Cloud runtime so
 # the operator alignment card renders Walter's canonical 30s/1m/3m evidence ladder.
 # No dependency versions change in this deployment-only activation.
