@@ -79,15 +79,20 @@ def test_memory_store_append_persists_bounded_projection(tmp_path):
 
 
 def test_persisted_row_stays_bounded_as_live_history_grows():
-    small = compact_candidate_history_record(_record(count=5))
-    large = compact_candidate_history_record(_record(count=500))
+    small_source = _record(count=5)
+    large_source = _record(count=500)
+    small = compact_candidate_history_record(small_source)
+    large = compact_candidate_history_record(large_source)
 
     small_bytes = len(json.dumps(small, default=str))
     large_bytes = len(json.dumps(large, default=str))
+    raw_large_bytes = len(json.dumps(large_source, default=str))
 
-    # Once the retained tails are full, persistence size should not grow with
-    # lifetime scan count.
-    assert large_bytes == small_bytes
+    # Once the retained tails are full, persistence size is effectively flat.
+    # Larger sequence numbers can add a few digits, but lifetime history length
+    # must no longer drive row size.
+    assert large_bytes <= small_bytes + 100
+    assert large_bytes < raw_large_bytes * 0.05
 
 
 def test_scope_lock_is_persistence_only():
