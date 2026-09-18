@@ -252,6 +252,7 @@ from mide.ui import (
 )
 memory_checkpoint("UI import", object_name="mide.ui")
 from mide.live_opportunity_feed import update_opportunity_feed
+from mide.trader_priority import trader_priority_sort_key
 from mide.early_setup import newly_entered_symbols
 from mide.time_service import format_eastern_time, market_clock, market_phase_at
 from mide.watchdog import ScanAlreadyRunning
