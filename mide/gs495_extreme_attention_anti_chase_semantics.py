@@ -8,12 +8,11 @@ CHASE / WAIT.
 
 GS495 does not suppress attention. It aligns the extraordinary-event banner with
 Walter's already-established GS310 anti-chase geometry:
-* >2% above VWAP: LOOK NOW remains, but the label explicitly says
-  EXTENDED / WATCH RESET and the guidance says attention only / do not chase.
-* <=2% above VWAP: ordinary EXTREME MOVER · LOOK NOW wording remains.
-* halts retain HALTED · WATCH RESUME priority.
-* the existing >5% extreme branch remains semantically covered by the stricter
-  >2% anti-chase presentation rule; no threshold used by trading logic changes.
+* when the already-final extreme label independently says LOOK NOW and price is
+  >2% above VWAP, LOOK NOW remains but explicitly adds EXTENDED / WATCH RESET;
+* generic EXTREME MOVER · WATCH remains WATCH;
+* the existing >5% EXTREME MOVER · DO NOT CHASE remains unchanged;
+* <=2% labels and halts remain unchanged.
 
 Presentation only. No discovery, market data, indicators, scores, ranking, gates,
 qualification, readiness, audio authority, execution, or orders change.
@@ -31,7 +30,8 @@ def truthful_extreme_market_event(original, record: dict) -> dict | None:
     event = original(record)
     if not isinstance(event, dict):
         return event
-    if event.get("halted"):
+    label = str(event.get("label") or "").upper()
+    if event.get("halted") or "DO NOT CHASE" in label:
         return event
 
     try:
@@ -39,7 +39,11 @@ def truthful_extreme_market_event(original, record: dict) -> dict | None:
     except (TypeError, ValueError):
         distance = None
 
-    if distance is None or distance <= ANTI_CHASE_VWAP_DISTANCE_PCT:
+    if (
+        distance is None
+        or distance <= ANTI_CHASE_VWAP_DISTANCE_PCT
+        or "LOOK NOW" not in label
+    ):
         return event
 
     view = deepcopy(event)
