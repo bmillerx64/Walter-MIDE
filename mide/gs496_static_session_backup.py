@@ -105,7 +105,7 @@ def build_session_backup_archive(
         "flight_recorder.jsonl": _captured_size(flight_path),
     }
     instant = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
-    suffix = str(token or secrets.token_hex(4)).replace("/", "")[:24] or "backup"
+    suffix = str(token or secrets.token_hex(12)).replace("/", "")[:24] or "backup"
     filename = (
         f"{BACKUP_PREFIX}{instant.strftime('%Y%m%dT%H%M%SZ')}-{suffix}.zip"
     )
