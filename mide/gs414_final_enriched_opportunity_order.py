@@ -151,6 +151,13 @@ def _install_gs495() -> None:
     install_gs495()
 
 
+def _install_gs497() -> None:
+    """Let current Mission Ranking own non-entry operator priority."""
+    from .gs497_rank_aware_attention_order import install as install_gs497
+
+    install_gs497()
+
+
 def final_enriched_opportunity_records(
     records: list[dict], *, actionable_function=None
 ) -> list[dict]:
@@ -190,6 +197,7 @@ def install() -> None:
     _install_gs492()
     _install_gs493()
     _install_gs495()
+    _install_gs497()
 
     current = ui.render_escalation_engine
     if getattr(current, FINAL_ORDER_OWNER_ATTR, False):
