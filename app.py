@@ -216,6 +216,7 @@ memory_checkpoint("scanner import", object_name="mide.scanner_v2")
 from mide.memory import MemoryStore
 from mide.flight_recorder import FlightRecorder
 from mide.gs496_static_session_backup import render_session_backup_controls
+from mide.gs510_compact_analysis_bundle import render_compact_analysis_bundle_controls
 from mide.gs498_mission_ranking_direction import mission_ranked_records
 from mide.decision_engine import expansion_candidate_diagnostic
 memory_checkpoint("cache stores import", object_name="MemoryStore, FlightRecorder")
@@ -1204,6 +1205,10 @@ with st.sidebar:
         "or deploying Walter."
     )
     render_session_backup_controls(get_store().path, get_flight_recorder().path)
+    render_compact_analysis_bundle_controls(
+        get_store().path,
+        get_flight_recorder().path,
+    )
     run_scan = st.button(
         "Run live scan",
         type="primary",
