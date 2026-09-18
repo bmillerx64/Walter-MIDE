@@ -6,6 +6,7 @@ from datetime import datetime, timedelta, timezone
 import importlib
 import json
 import logging
+import os
 from pathlib import Path
 import re
 from threading import Lock
@@ -24,6 +25,9 @@ _SECRET_HEADER_PARTS = ("authorization", "signature", "secret", "token", "cookie
 _HISTORY_BAR_RATE_LOCK = Lock()
 _HISTORY_BAR_LAST_CALL = 0.0
 _HISTORY_BAR_MIN_INTERVAL_SECONDS = 1.05
+_PERSISTED_TOKEN_ENV = "WEBULL_OPENAPI_PERSISTED_TOKEN"
+_RUNTIME_TOKEN_DIR_ENV = "WEBULL_OPENAPI_TOKEN_DIR"
+_RUNTIME_TOKEN_DIR_DEFAULT = ".walter_webull_token"
 
 
 def _suppress_official_sdk_logging() -> None:
@@ -187,6 +191,49 @@ def _install_http_trace(sdk_client) -> bool:
     return False
 
 
+def _seed_persisted_token(api_client) -> tuple[bool, bool]:
+    """Restore a durable 2FA token secret into the SDK's local token store.
+
+    Streamlit Community Cloud does not guarantee local file persistence across
+    container replacement. When WEBULL_OPENAPI_PERSISTED_TOKEN is configured as
+    a root-level Streamlit secret/environment variable, materialize it into the
+    official SDK's token.txt format before DataClient initialization. Existing
+    non-empty local token state wins so an SDK-refreshed token is not overwritten
+    during ordinary reruns inside the same container.
+
+    The token value is never logged, returned, or persisted in repository files.
+    """
+    token = str(os.getenv(_PERSISTED_TOKEN_ENV) or "").strip()
+    if not token:
+        return False, False
+
+    configured_dir = str(os.getenv(_RUNTIME_TOKEN_DIR_ENV) or "").strip()
+    token_dir = Path(configured_dir or _RUNTIME_TOKEN_DIR_DEFAULT).expanduser()
+    token_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        token_dir.chmod(0o700)
+    except OSError:
+        pass
+
+    api_client.set_token_dir(str(token_dir))
+    token_file = token_dir / "token.txt"
+
+    if token_file.is_file():
+        try:
+            first_line = token_file.read_text(encoding="utf-8").splitlines()[0].strip()
+        except (OSError, IndexError):
+            first_line = ""
+        if first_line:
+            return True, False
+
+    token_file.write_text(f"{token}\n0\nNORMAL\n", encoding="utf-8")
+    try:
+        token_file.chmod(0o600)
+    except OSError:
+        pass
+    return True, True
+
+
 def create_official_client(app_key: str, app_secret: str):
     """Construct the SDK's published data clients without package discovery."""
     try:
@@ -204,7 +251,10 @@ def create_official_client(app_key: str, app_secret: str):
     _suppress_official_sdk_logging()
 
     api_client = core_module.ApiClient(app_key=app_key, app_secret=app_secret, region_id="us")
+    token_configured, token_seeded = _seed_persisted_token(api_client)
     data_client = data_module.DataClient(api_client)
+    data_client._walter_persisted_token_configured = token_configured
+    data_client._walter_persisted_token_seeded = token_seeded
     data_client._walter_streaming_client_factory = lambda: (
         streaming_module.DataStreamingClient(api_client)
     )
