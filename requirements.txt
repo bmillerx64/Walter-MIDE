@@ -1,3 +1,6 @@
+# GS504 deployment marker: force one clean Streamlit Community Cloud runtime so
+# the final categorical LOOK NOW bell and entry-urgency siren load everywhere.
+# No dependency versions change in this deployment-only activation.
 # GS445 deployment marker: force one clean Streamlit Community Cloud runtime so
 # append-only Candidate History / Flight Recorder exports reuse incremental gzip state.
 # No dependency versions change in this deployment-only activation.
