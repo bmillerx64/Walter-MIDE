@@ -18,28 +18,40 @@ def _record(**overrides):
     return row
 
 
-def test_ssm_style_extreme_event_keeps_attention_but_states_watch_reset():
-    event = gs333.extreme_market_event(_record())
-    assert event is not None
+def test_structural_look_now_that_is_extended_gets_watch_reset_qualifier():
+    def original(_record):
+        return {
+            "symbol": "SSM",
+            "label": "EXTREME MOVER · LOOK NOW",
+            "guidance": "Current structure independently earned LOOK NOW.",
+            "vwap_distance_pct": 4.4,
+            "halted": False,
+        }
+
+    event = gs495.truthful_extreme_market_event(original, _record(vwap_distance_pct=4.4))
     assert event["label"] == "EXTREME MOVER · LOOK NOW · EXTENDED / WATCH RESET"
     assert event["anti_chase_active"] is True
     assert "Urgent attention only" in event["guidance"]
     assert "do not chase" in event["guidance"].lower()
-    assert "<=2% VWAP working zone" in event["guidance"]
     assert event["entry_authority_changed"] is False
 
 
-def test_extreme_inside_existing_two_percent_working_zone_keeps_plain_look_now():
+def test_generic_extreme_watch_is_not_promoted_back_to_look_now():
+    event = gs333.extreme_market_event(_record(vwap_distance_pct=4.4))
+    assert event is not None
+    assert event["label"] == "EXTREME MOVER · WATCH"
+
+
+def test_existing_over_five_percent_do_not_chase_contract_is_preserved():
+    event = gs333.extreme_market_event(_record(vwap_distance_pct=48.0))
+    assert event is not None
+    assert event["label"] == "EXTREME MOVER · DO NOT CHASE"
+
+
+def test_inside_existing_two_percent_zone_preserves_current_final_semantics():
     event = gs333.extreme_market_event(_record(vwap_distance_pct=1.8))
     assert event is not None
-    assert event["label"] == "EXTREME MOVER · LOOK NOW"
-    assert "anti_chase_active" not in event
-
-
-def test_exact_two_percent_boundary_is_not_relabeled_extended():
-    event = gs333.extreme_market_event(_record(vwap_distance_pct=2.0))
-    assert event is not None
-    assert event["label"] == "EXTREME MOVER · LOOK NOW"
+    assert event["label"] == "EXTREME MOVER · WATCH"
 
 
 def test_halt_still_outranks_extended_semantics():
@@ -48,8 +60,20 @@ def test_halt_still_outranks_extended_semantics():
     assert event["label"] == "HALTED · WATCH RESUME"
 
 
-def test_markup_renders_both_attention_and_anti_chase_truth():
-    event = gs333.extreme_market_event(_record(vwap_distance_pct=4.4))
+def test_markup_can_render_both_attention_and_anti_chase_truth():
+    event = gs495.truthful_extreme_market_event(
+        lambda _record: {
+            "symbol": "SSM",
+            "pct_change": 82.9,
+            "vwap_distance_pct": 4.4,
+            "trend": True,
+            "halted": False,
+            "headline": "",
+            "label": "EXTREME MOVER · LOOK NOW",
+            "guidance": "Current structure independently earned LOOK NOW.",
+        },
+        _record(vwap_distance_pct=4.4),
+    )
     markup = gs333.extreme_event_markup(event)
     assert "LOOK NOW" in markup
     assert "EXTENDED / WATCH RESET" in markup
