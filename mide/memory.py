@@ -3,6 +3,8 @@ from pathlib import Path
 import json
 from datetime import datetime, timezone
 
+from .gs499_candidate_history_containment import compact_candidate_history_record
+
 
 class MemoryStore:
     def __init__(self, path="data/candidate_history.jsonl"):
@@ -46,7 +48,8 @@ class MemoryStore:
             return
         with self.path.open("a", encoding="utf-8") as handle:
             for item in records:
-                handle.write(json.dumps(item, default=str) + "\n")
+                persisted = compact_candidate_history_record(item)
+                handle.write(json.dumps(persisted, default=str) + "\n")
 
     def enrich_velocity(self, records, previous=None):
         """Add prior-score velocity fields using an optional preloaded history map.
