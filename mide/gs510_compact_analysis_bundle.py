@@ -180,7 +180,7 @@ def build_analysis_bundle(
                 archive,
                 flight_path,
                 "flight_recorder.jsonl",
-                int(captured.get("flight_recorder.jsonl") or 0),
+                captured_size=int(captured.get("flight_recorder.jsonl") or 0),
             )
             manifest = {
                 "authority": AUTHORITY,
