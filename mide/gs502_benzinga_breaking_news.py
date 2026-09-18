@@ -361,11 +361,30 @@ def merge_breaking_news_discovery(
         now=current,
         limit=gs298.NEWS_SEED_LIMIT,
     )
-    output, updated_reasons, added = gs298.merge_news_seeds(
-        list(seeds),
-        reasons,
-        selected,
-    )
+    output = list(seeds)
+    updated_reasons = {
+        str(symbol): list(values)
+        for symbol, values in (reasons or {}).items()
+    }
+    existing = {str(symbol or "").strip().upper() for symbol in output}
+    added = []
+    for item in selected:
+        symbol = str(item.get("symbol") or "").strip().upper()
+        if not symbol or symbol in existing:
+            continue
+        seed_type = str(item.get("seed_type") or "")
+        if seed_type == "morning_mover_attention":
+            label = "Benzinga breaking mover attention seed"
+        elif seed_type == "story_material_attention":
+            label = "Benzinga story material attention seed"
+        else:
+            label = "Benzinga breaking material news seed"
+        output.append(symbol)
+        existing.add(symbol)
+        updated_reasons.setdefault(symbol, []).append(
+            f"{label}: {str(item.get('source') or 'Benzinga').strip()}"
+        )
+        added.append(dict(item))
 
     selected_symbols = [
         str(item.get("symbol") or "").strip().upper()
