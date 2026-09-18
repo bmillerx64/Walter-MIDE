@@ -1402,6 +1402,16 @@ def _run_live_pipeline(
                 "GS490 Webull stream-window bind unavailable error_type=%s",
                 type(exc).__name__,
             )
+        # GS494 gives a partially returned official Webull snapshot batch one
+        # bounded retry for only the omitted symbols before Price Gate evaluates.
+        try:
+            gs494 = importlib.import_module("mide.gs494_partial_snapshot_recovery")
+            gs494.install_for_provider(client)
+        except Exception as exc:
+            logging.getLogger(__name__).warning(
+                "GS494 Webull partial-snapshot bind unavailable error_type=%s",
+                type(exc).__name__,
+            )
         logging.getLogger(__name__).warning(
             "Walter quote/bars/stream provider: WEBULL SDK; symbol master: ALPACA /v2/assets"
         )
