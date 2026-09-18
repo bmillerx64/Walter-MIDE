@@ -363,11 +363,31 @@ def _render_backup_controls(candidate_history_path: Path, flight_recorder_path: 
     if not filename or not (STATIC_DIR / filename).exists():
         st.session_state.pop(SESSION_KEY, None)
         return
-    st.markdown(backup_link_markup(info), unsafe_allow_html=True)
+    archive_path = STATIC_DIR / filename
+
+    def open_prepared_archive():
+        # Streamlit 1.62 accepts a callable that returns a file-like object. This
+        # defers browser payload materialization until the operator clicks and avoids
+        # Community Cloud's unreliable runtime-generated static-file route.
+        return archive_path.open("rb")
+
+    st.download_button(
+        label=(
+            f"⬇ Download prepared backup "
+            f"({float(info.get('archive_bytes') or 0) / (1024 * 1024):.1f} MB ZIP / "
+            f"{float(info.get('source_bytes_total') or 0) / (1024 * 1024):.1f} MB source)"
+        ),
+        data=open_prepared_archive,
+        file_name=filename,
+        mime="application/zip",
+        key=f"walter-gs509-download-{filename}",
+        on_click="ignore",
+        width="stretch",
+    )
     st.caption(
         "Prepared at "
         + str(info.get("generated_at_utc") or "")
-        + ". Prepare again whenever you need a newer snapshot."
+        + ". Native deferred download; Prepare again whenever you need a newer snapshot."
     )
 
 
