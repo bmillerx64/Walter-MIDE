@@ -119,16 +119,15 @@ def test_download_metadata_marks_large_deferred_recorder_as_gzip(monkeypatch):
         monkeypatch.setattr(st, "download_button", original)
 
 
-def test_gs448_installs_after_gs446_and_before_sidebar_export():
+def test_gs448_remains_installed_for_legacy_export_compatibility():
     startup = Path("mide/startup.py").read_text(encoding="utf-8")
     app = Path("app.py").read_text(encoding="utf-8")
 
     assert "from .gs448_deferred_flight_recorder_download import install as install_gs448" in startup
     assert startup.index("install_gs446()") < startup.index("install_gs448()")
     assert startup.index("install_gs448()") < startup.index("install_gs416()")
-    assert app.index('log_startup("entering app.py")') < app.index(
-        'data=flight_recorder_download_bytes(get_flight_recorder())'
-    )
+    assert "render_session_backup_controls" in app
+    assert 'data=flight_recorder_download_bytes(get_flight_recorder())' not in app
 
 
 def test_gs448_scope_lock_is_export_memory_only():

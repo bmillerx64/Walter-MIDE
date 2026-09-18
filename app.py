@@ -211,6 +211,7 @@ from mide.scanner_v2 import (
 memory_checkpoint("scanner import", object_name="mide.scanner_v2")
 from mide.memory import MemoryStore
 from mide.flight_recorder import FlightRecorder
+from mide.gs496_static_session_backup import render_session_backup_controls
 from mide.decision_engine import expansion_candidate_diagnostic
 memory_checkpoint("cache stores import", object_name="MemoryStore, FlightRecorder")
 from mide.memory_profile import compact_previous_record, profile as memory_profile, release_temporaries
@@ -1194,18 +1195,10 @@ with st.sidebar:
                 st.error(f"Webull Connection Test failed: {type(exc).__name__}: {exc}")
     st.subheader("Session backups")
     st.caption(
-        "Download both files before refreshing, restarting, or deploying Walter."
+        "Prepare one point-in-time disk-backed ZIP before refreshing, restarting, "
+        "or deploying Walter."
     )
-    st.download_button(
-        "Download Candidate History",
-        data=get_store().export_bytes(),
-        file_name="candidate_history.jsonl",
-        mime="application/x-ndjson",
-        use_container_width=True,
-    )
-    # Filled after scan orchestration below so its payload cannot be a snapshot
-    # taken before a just-requested scan appends to the recorder.
-    flight_recorder_download_slot = st.empty()
+    render_session_backup_controls(get_store().path, get_flight_recorder().path)
     run_scan = st.button(
         "Run live scan",
         type="primary",
@@ -2290,15 +2283,6 @@ if mode.startswith("Live ") and should_scan and not st.session_state[STOP_REQUES
         st.info(
             "Walter remains online and will retry automatically with backoff."
         )
-with flight_recorder_download_slot:
-    st.download_button(
-        "Download Flight Recorder",
-        data=flight_recorder_download_bytes(get_flight_recorder()),
-        file_name="flight_recorder.jsonl",
-        mime="application/x-ndjson",
-        use_container_width=True,
-    )
-
 completed_scan = completed_scan_for_view(st.session_state, "Radar")
 last_scan_failure = st.session_state.get(LAST_SCAN_FAILURE_KEY)
 if completed_scan and completed_scan.diagnostics.get("webull_stock_data_cache", {}).get("active"):
