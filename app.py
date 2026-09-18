@@ -1943,7 +1943,7 @@ def _run_live_pipeline(
             client.diagnostics, "ranked", ranked_records,
             statement=(
                 "WalterArchitectureV1._assess(\"Expansion Assessment\", ...) "
-                "then sorted(records, key=trader_priority_sort_key)"
+                "then mission_ranked_records(records)"
             ),
         )
         return ranked_records
