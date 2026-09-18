@@ -58,7 +58,16 @@ def _fmt_price(value: float | None) -> str:
 
 
 def three_minute_st_retest_truth(record: dict) -> dict:
-    detail = _timeframe_detail(record, "3m")
+    # Runtime rows normally expose timeframes at top level; replay/recorder evidence
+    # may carry the same canonical fields under decision_time_evidence.
+    source = record
+    if not isinstance(record.get("timeframes"), dict):
+        decision = _decision(record)
+        if isinstance(decision.get("timeframes"), dict):
+            source = dict(decision)
+            source.update(record)
+            source["timeframes"] = decision["timeframes"]
+    detail = _timeframe_detail(source, "3m")
     price = _number(_field(record, "price"))
     st_value = _number(detail.get("current_supertrend"))
     bullish = bool(detail.get("bullish"))
