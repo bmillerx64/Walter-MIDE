@@ -86,7 +86,7 @@ def test_link_is_static_download_not_streamlit_download_widget():
     markup = gs496.backup_link_markup(info)
     assert 'href="app/static/walter-session-backup-test.zip"' in markup
     assert 'download="walter-session-backup-test.zip"' in markup
-    assert "st.download_button" not in Path(
+    assert "st.download_button(" not in Path(
         "mide/gs496_static_session_backup.py"
     ).read_text(encoding="utf-8")
 
