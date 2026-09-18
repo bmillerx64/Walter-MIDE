@@ -80,6 +80,12 @@ def distinct_action_markup(markup: str) -> str:
     return text
 
 
+def _install_gs504() -> None:
+    from .gs504_distinct_attention_alarm import install as install_gs504
+
+    install_gs504()
+
+
 def _install_gs442() -> None:
     from .gs442_alignment_ladder_truth import install as install_gs442
 
@@ -93,7 +99,9 @@ def install() -> None:
     current = broker.browser_broker_markup
     if getattr(current, "_gs441_distinct_action_audio", False):
         # Warm sessions may already own GS441. Still converge the newer final
-        # operator-presentation layer without rebinding the audio wrapper.
+        # categorical audio layer and operator-presentation layer without rebinding
+        # the historical GS441 wrapper.
+        _install_gs504()
         _install_gs442()
         return
 
@@ -104,4 +112,5 @@ def install() -> None:
     browser_broker_markup._gs441_distinct_action_audio = True
     browser_broker_markup._gs441_original = current
     broker.browser_broker_markup = browser_broker_markup
+    _install_gs504()
     _install_gs442()
