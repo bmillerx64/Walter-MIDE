@@ -63,7 +63,10 @@ def _write_snapshot_member(
     """Copy exactly the captured prefix of one append-only file into the ZIP."""
     remaining = max(0, int(captured_size))
     copied = 0
-    with archive.open(arcname, "w") as target:
+    # allowZip64 on the archive is not sufficient when a streamed member can
+    # exceed 2 GiB and its final size is unknown at open time. Python's zipfile
+    # requires force_zip64=True for that writer path.
+    with archive.open(arcname, "w", force_zip64=True) as target:
         if remaining <= 0 or not source.exists():
             return 0
         with source.open("rb") as handle:
