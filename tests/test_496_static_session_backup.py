@@ -79,12 +79,12 @@ def test_new_backup_replaces_prior_generated_archive(tmp_path):
 def test_link_is_static_download_not_streamlit_download_widget():
     info = {
         "filename": "walter-session-backup-test.zip",
-        "href": "app/static/walter-session-backup-test.zip",
+        "href": "/app/static/walter-session-backup-test.zip",
         "archive_bytes": 2 * 1024 * 1024,
         "source_bytes_total": 20 * 1024 * 1024,
     }
     markup = gs496.backup_link_markup(info)
-    assert 'href="app/static/walter-session-backup-test.zip"' in markup
+    assert 'href="/app/static/walter-session-backup-test.zip"' in markup
     assert 'download="walter-session-backup-test.zip"' in markup
     assert "st.download_button(" not in Path(
         "mide/gs496_static_session_backup.py"
