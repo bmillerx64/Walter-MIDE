@@ -42,7 +42,7 @@ def test_trug_entry_regression_says_not_at_3m_st_yet():
     assert "VWAP touch does NOT count" in view["next_step"]
 
 
-def test_within_existing_two_percent_band_confirms_3m_st_retest():
+def test_within_existing_two_percent_band_is_proximity_not_proof_of_retest():
     record = _record(price=0.5200, st=0.5153, bullish=True)
     truth = gs493.three_minute_st_retest_truth(record)
     assert truth["state"] == "ST_RETEST_CONFIRMED"
@@ -52,7 +52,8 @@ def test_within_existing_two_percent_band_confirms_3m_st_retest():
         lambda _record: {"state": "DEVELOPING", "reason": "", "next_step": "Watch structure."},
         record,
     )
-    assert view["next_step"].startswith("3M ST RETEST CONFIRMED:")
+    assert view["next_step"].startswith("NEAR 3M ST · PROXIMITY ONLY:")
+    assert "does NOT prove a held retest" in view["next_step"]
     assert "Watch structure." in view["next_step"]
 
 

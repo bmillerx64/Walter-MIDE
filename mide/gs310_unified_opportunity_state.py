@@ -79,6 +79,33 @@ def _attention(record: dict) -> tuple[str, ...]:
         evidence.append("VOLUME_ACCELERATION")
     return tuple(evidence)
 
+def look_now_context(record: dict, view: dict) -> str:
+    """Explain why LOOK NOW owns attention without changing the state itself."""
+    if str(view.get("state") or "") != LOOK_NOW:
+        return ""
+    if record.get("reference_data_blocked_awareness"):
+        return "REFERENCE DATA BLOCKED"
+    if record.get("operator_reset_retest_look_now"):
+        return "RESET / RETEST"
+
+    reason = str(view.get("reason") or "").upper()
+    try:
+        from .gs455_early_ignition_3m_confirmation import progression_signal
+
+        if progression_signal(record).get("active"):
+            return "STRUCTURE MATURING"
+    except Exception:
+        pass
+    if any(token in reason for token in (
+        "EARLY IGNITION",
+        "BOTTOM-UP",
+        "ST/VWAP",
+        "RE-IGNITION",
+    )):
+        return "STRUCTURE MATURING"
+    return "MARKET ATTENTION"
+
+
 
 def opportunity_state(record: dict) -> dict:
     """Return one current trader-facing state from already-computed evidence."""
@@ -269,6 +296,12 @@ def _target_markup(item: dict, role: str, primary: dict | None = None) -> str:
         if provenance
         else ""
     )
+    context = look_now_context(record, view)
+    context_markup = (
+        f"<div class='small'><b>Attention type:</b> {html.escape(context)}</div>"
+        if context
+        else ""
+    )
 
     return (
         f"<div class='mission-target{pulse_class}' style='--mission-color:{view['color']}'>"
@@ -286,6 +319,7 @@ def _target_markup(item: dict, role: str, primary: dict | None = None) -> str:
         f"aria-valuemax='100' aria-valuenow='{confidence}'>"
         f"<div class='opportunity-meter-fill' style='--opportunity:{confidence}%'></div></div></div>"
         f"<div class='small'>{html.escape(view['reason'])}</div>"
+        f"{context_markup}"
         f"{priority_markup}"
         f"<div class='mission-section-title'>ENTRY PATH</div>"
         f"<div class='mission-path'>{checklist}</div>"
@@ -377,11 +411,13 @@ def install() -> None:
                 f"{html.escape(entry['detail'])}</li>"
                 for entry in view["evidence"]
             )
+            context = look_now_context(record, view)
+            context_suffix = f" · {context}" if context else ""
             ui.st.markdown(
                 f"<div class='recommendation-box' style='--recommendation-color:{view['color']}'>"
                 f"<div class='recommendation-label'>"
                 f"{html.escape(str(record.get('symbol') or '').upper())} · "
-                f"{html.escape(view['state'])}</div>"
+                f"{html.escape(view['state'] + context_suffix)}</div>"
                 f"<div class='recommendation-message'>{html.escape(view['reason'])}</div>"
                 f"<ul class='escalation-list'>{evidence}</ul>"
                 f"<div class='small'>Next: {html.escape(view['next_step'])}</div></div>",

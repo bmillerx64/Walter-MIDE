@@ -8,7 +8,8 @@ before the stated setup occurred.
 GS493 reuses GS462's established 2% near-ST attention band and adds presentation-only
 truth to every visible Opportunity State when a current 3m ST line is available:
 
-* ST RETEST CONFIRMED: current price is on/above the bullish 3m ST line and within 2%.
+* NEAR 3M ST: current price is on/above the bullish 3m ST line and within 2%; this
+  is proximity only until GS514 confirms a held retest event from session bars.
 * NOT AT 3M ST YET: 3m remains bullish but current price is still >2% above the line.
 * 3M ST LOST / RECLAIM WATCH: 3m is no longer bullish or price is below the ST line.
 
@@ -108,9 +109,9 @@ def _guardrail_text(truth: dict) -> str:
 
     if truth.get("state") == "ST_RETEST_CONFIRMED":
         return (
-            f"3M ST RETEST CONFIRMED: price {price} is {gap_text} above the current "
+            f"NEAR 3M ST · PROXIMITY ONLY: price {price} is {gap_text} above the current "
             f"3m SuperTrend line {st_value}, inside Walter's existing "
-            f"{NEAR_ST_LINE_PCT:.0f}% near-ST band."
+            f"{NEAR_ST_LINE_PCT:.0f}% near-ST band. Proximity alone does NOT prove a held retest."
         )
     if truth.get("state") == "3M_ST_LOST":
         relation = "below" if gap is not None and gap < 0 else "at"
