@@ -80,6 +80,13 @@ def install() -> None:
             # Preserve discovery-level exclusions rather than silently dropping
             # them before the live universe adapter can explain what happened.
             "rejected_symbols": list(report.get("rejected_symbols") or []),
+            "shadow_discovery": {
+                "relative_volume_page2": dict(
+                    (report.get("supplemental_breadth") or {}).get(
+                        "shadow_relative_volume_page2"
+                    ) or {}
+                )
+            },
         })
         self.diagnostics["broad_source"] = "Webull native market attention"
         self.diagnostics.setdefault("market_data_sources", {})["universe_provider"] = (
