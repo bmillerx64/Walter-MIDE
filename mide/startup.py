@@ -50,6 +50,7 @@ def ensure_late_runtime_installers() -> None:
     from .gs480_catalyst_story_intelligence import install as install_gs480
     from .gs502_benzinga_breaking_news import install as install_gs502
     from .gs503_catalyst_company_scale import install as install_gs503
+    from .gs511_entry_window_vwap_truth import install as install_gs511
     from .gs481_live_evidence_hard_bind import install as install_gs481
     from .gs484_fmp_transport_truth import install as install_gs484
     from .gs485_retained_news_transport_hard_bind import install as install_gs485
@@ -137,6 +138,10 @@ def ensure_late_runtime_installers() -> None:
     # stated contract value / current market cap and straight-line annualized scale
     # for disclosed multi-year contracts; it has no score/rank/readiness authority.
     install_gs503()
+    # GS511 closes a presentation/audio contradiction exposed by live NCPL evidence:
+    # Entry Window Open must obey the same established <=2% above-VWAP working zone
+    # as Walter's unified Opportunity State and readiness checklist.
+    install_gs511()
     # GS481 uses GS427's proven retained-recorder globals after GS480 has populated its
     # bounded story traces. It persists those traces plus sanitized Webull stream
     # subscription-failure context. It performs no network repair and changes no
