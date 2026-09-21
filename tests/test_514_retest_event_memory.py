@@ -226,3 +226,38 @@ def test_scope_lock_is_memory_and_presentation_only():
     )
     assert not any(token in source for token in forbidden)
     assert "PRESENTATION_MEMORY_ONLY" in source
+
+
+
+def test_held_retest_memory_overrides_current_near_st_proximity_label():
+    record = {
+        "symbol": "SDST",
+        "price": 0.1271,
+        "timeframes": {
+            "3m": {
+                "data_available": True,
+                "current_supertrend_bullish": True,
+                "current_above_vwap": True,
+                "current_close": 0.1271,
+                "st_vwap_line_cross": {
+                    "latest_supertrend_value": 0.1257,
+                    "latest_vwap_value": 0.1260,
+                },
+            }
+        },
+        "multitimeframe_maturation": {
+            "three_minute_st_retest_event": {
+                "available": True,
+                "active_memory": True,
+                "timestamp": "2026-09-21T14:00:00-04:00",
+                "age_seconds": 300.0,
+                "retest_low": 0.1258,
+                "supertrend_at_retest": 0.1257,
+            }
+        },
+    }
+
+    truth = gs514._memory_truth(gs493.three_minute_st_retest_truth, record)
+
+    assert truth["state"] == "PRIOR_ST_RETEST_HELD"
+    assert truth["prior_retest_event"]["active_memory"] is True
