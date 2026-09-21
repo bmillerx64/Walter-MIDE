@@ -26,6 +26,29 @@ from copy import deepcopy
 from typing import Callable
 
 AWARENESS_ONLY_KEY = "operator_awareness_only"
+REFERENCE_DATA_BLOCKED_KEY = "reference_data_blocked_awareness"
+FIVE_MINUTE_MOVER_REASON = "Webull native: five_minute_movers"
+
+
+def reference_data_blocked_mover(record: dict) -> bool:
+    """Keep a current 5m mover visible when float authority is unresolved, not failed."""
+    if str(record.get("terminal_stage") or "") != "Free-Float Gate":
+        return False
+    if str(record.get("terminal_outcome") or "").strip().lower() != "rejected":
+        return False
+    if record.get("free_float_verified") is not False:
+        return False
+
+    reasons = {str(value or "").strip() for value in record.get("discovery_reasons") or []}
+    if FIVE_MINUTE_MOVER_REASON not in reasons:
+        return False
+
+    status = str(record.get("free_float_verification_status") or "").strip().lower()
+    source = str(record.get("free_float_source") or "").strip().lower()
+    unresolved = status in {"refresh-unavailable-reject", "unavailable-reject"} or (
+        "unresolved" in source and "fail closed" in source
+    )
+    return unresolved
 
 
 def operator_awareness_eligible(record: dict) -> bool:
@@ -33,13 +56,20 @@ def operator_awareness_eligible(record: dict) -> bool:
     from .gs309_current_attention_mission import current_attention_provenance
     from .gs373_operator_visibility_freshness import operator_visible
 
-    return operator_visible(record) and bool(current_attention_provenance(record))
+    if not operator_visible(record):
+        return False
+    return bool(
+        current_attention_provenance(record)
+        or reference_data_blocked_mover(record)
+    )
 
 
 def awareness_record(record: dict) -> dict:
     """Return a presentation copy that cannot acquire trade authorization."""
     row = deepcopy(record)
     row[AWARENESS_ONLY_KEY] = True
+    if reference_data_blocked_mover(record):
+        row[REFERENCE_DATA_BLOCKED_KEY] = True
     row["qualified_for_entry"] = False
     row["qualified_for_alert"] = False
     row["advanced_state"] = False
@@ -103,6 +133,30 @@ def awareness_safe_opportunity_state(
         return view
 
     state = view.get("state")
+    if record.get(REFERENCE_DATA_BLOCKED_KEY):
+        if state == unified.HALTED:
+            return view
+        view["state"] = unified.LOOK_NOW
+        view["color"] = unified.STATE_COLORS[unified.LOOK_NOW]
+        view["reason"] = (
+            "Current Webull 5-minute mover, but free-float reference data is unresolved. "
+            "This is awareness only; entry remains locked."
+        )
+        view["next_step"] = (
+            "Open the chart now for awareness. Walter cannot rank or authorize entry "
+            "unless a later scan resolves the Free-Float Gate."
+        )
+        evidence = list(view.get("evidence") or [])
+        evidence.append(
+            {
+                "label": "Reference Data",
+                "passed": False,
+                "detail": "Free float unresolved · entry locked",
+            }
+        )
+        view["evidence"] = evidence
+        return view
+
     force_look_now = bool(
         state == unified.WATCH_FOR_ENTRY
         or (

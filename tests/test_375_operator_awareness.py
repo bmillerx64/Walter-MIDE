@@ -1,9 +1,11 @@
 from mide.gs310_unified_opportunity_state import LOOK_NOW, WATCH_FOR_ENTRY, opportunity_state
 from mide.gs375_operator_awareness import (
     AWARENESS_ONLY_KEY,
+    REFERENCE_DATA_BLOCKED_KEY,
     augment_operator_records,
     awareness_safe_opportunity_state,
     operator_awareness_eligible,
+    reference_data_blocked_mover,
 )
 
 
@@ -89,3 +91,80 @@ def test_existing_actionable_record_is_preserved_not_retagged():
 
     assert rows == [actionable]
     assert AWARENESS_ONLY_KEY not in rows[0]
+
+
+
+def test_sept21_jz_unresolved_five_minute_mover_stays_visible_awareness_only():
+    jz = _record(
+        symbol="JZ",
+        discovery_reasons=["Webull OpenAPI universe", "Webull native: five_minute_movers"],
+        vwap_relation="",
+        vwap_distance_pct=None,
+        source_bar_age_seconds=None,
+        terminal_stage="Free-Float Gate",
+        terminal_outcome="Rejected",
+        float_shares=float("inf"),
+        free_float_verified=False,
+        free_float_verification_status="refresh-unavailable-reject",
+        free_float_source="low-float live refresh unresolved; fail closed",
+    )
+
+    assert reference_data_blocked_mover(jz) is True
+    assert operator_awareness_eligible(jz) is True
+
+    awareness = augment_operator_records([jz], [])[0]
+    view = awareness_safe_opportunity_state(awareness)
+
+    assert awareness[AWARENESS_ONLY_KEY] is True
+    assert awareness[REFERENCE_DATA_BLOCKED_KEY] is True
+    assert awareness["qualified_for_entry"] is False
+    assert awareness["qualified_for_alert"] is False
+    assert view["state"] == LOOK_NOW
+    assert "reference data is unresolved" in view["reason"].lower()
+    assert "entry remains locked" in view["reason"].lower()
+
+
+def test_verified_above_limit_five_minute_mover_does_not_get_data_blocked_awareness():
+    over = _record(
+        symbol="OVER",
+        discovery_reasons=["Webull native: five_minute_movers"],
+        terminal_stage="Free-Float Gate",
+        terminal_outcome="Rejected",
+        free_float_verified=True,
+        free_float_verification_status="verified",
+        float_shares=75_000_000,
+    )
+
+    assert reference_data_blocked_mover(over) is False
+    assert operator_awareness_eligible(over) is False
+    assert augment_operator_records([over], []) == []
+
+
+def test_old_five_minute_mover_provenance_cannot_survive_after_leaving_live_universe():
+    stale = _record(
+        symbol="STALE5",
+        discovery_reasons=["Webull native: five_minute_movers"],
+        terminal_stage="Universe Construction",
+        terminal_outcome="Rejected",
+        free_float_verified=False,
+        free_float_verification_status="refresh-unavailable-reject",
+        free_float_source="low-float live refresh unresolved; fail closed",
+    )
+
+    assert reference_data_blocked_mover(stale) is False
+    assert operator_awareness_eligible(stale) is False
+
+
+def test_unresolved_absolute_volume_only_candidate_does_not_gain_special_awareness():
+    volume_only = _record(
+        symbol="UVOL",
+        discovery_reasons=["Webull native: absolute_volume"],
+        terminal_stage="Free-Float Gate",
+        terminal_outcome="Rejected",
+        free_float_verified=False,
+        free_float_verification_status="refresh-unavailable-reject",
+        free_float_source="low-float live refresh unresolved; fail closed",
+    )
+
+    assert reference_data_blocked_mover(volume_only) is False
+    assert operator_awareness_eligible(volume_only) is False
