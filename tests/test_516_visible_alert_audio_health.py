@@ -55,3 +55,29 @@ def test_scope_lock_is_alert_transport_presentation_only():
 def test_gs516_installs_after_gs515_discipline_layer():
     chain = Path("mide/gs392_operator_order_audio.py").read_text(encoding="utf-8")
     assert chain.index("install_gs515()") < chain.index("install_gs516()")
+
+
+
+def test_gs520_audio_health_is_anchored_in_sidebar_not_mission_placeholder():
+    module_source = Path("mide/gs516_visible_alert_audio_health.py").read_text(
+        encoding="utf-8"
+    )
+    app_source = Path("app.py").read_text(encoding="utf-8")
+
+    assert "render_walter_mission_control" not in module_source
+    assert "def render_sidebar_audio_health" in module_source
+    assert "render_sidebar_audio_health(st)" in app_source
+    assert app_source.index('"Alert voice"') < app_source.index(
+        "render_sidebar_audio_health(st)"
+    )
+
+
+def test_gs520_preserves_single_child_mission_slot_contract():
+    app_source = Path("app.py").read_text(encoding="utf-8")
+    module_source = Path("mide/gs516_visible_alert_audio_health.py").read_text(
+        encoding="utf-8"
+    )
+
+    assert "with mission_plan_slot:" in app_source
+    assert "render_walter_mission_control(actionable_records)" in app_source
+    assert "mission_plan_slot" not in module_source
