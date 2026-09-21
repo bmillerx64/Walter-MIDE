@@ -36,7 +36,9 @@ def test_shadow_discovery_is_scan_level_forensic_evidence_only(tmp_path):
 
 def test_gs523_does_not_add_shadow_rows_to_live_symbols():
     source = Path("mide/gs395_earlier_discovery_breadth.py").read_text(encoding="utf-8")
-    block = source[source.index("# GS523: observe"):source.index('output["supplemental_breadth"] = {')]
+    start = source.index("# GS523: observe")
+    end = source.index('output["supplemental_breadth"] = {', start)
+    block = source[start:end]
     assert 'ordered.append' not in block
     assert 'by_symbol[' not in block
     assert 'admitted.append' not in block
