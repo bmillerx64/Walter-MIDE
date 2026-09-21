@@ -119,13 +119,26 @@ def operator_first_sections(
 
 
 def developing_records(records: list[dict]) -> list[dict]:
+    """Return the strongest current Developing rows in Walter Priority order.
+
+    GS513: DEVELOPING NOW previously inherited raw section membership order and
+    truncated before sorting, while the detailed Developing section immediately below
+    used trader_priority_sort_key. Sep. 21 live evidence therefore rendered
+    SDST/GTEC/SCNI in the summary even though the same current records ranked
+    SCNI/SDST/GTEC by Walter Priority. Keep both surfaces on the same presentation
+    order; candidate membership and Mission Ranking are untouched.
+    """
+    from . import ui
+
     rows: list[dict] = []
     developing, _remaining = operator_first_sections(records)
     for _title, section_rows, _expanded in developing:
         rows.extend(section_rows)
-        if len(rows) >= MAX_DEVELOPING_ROWS:
-            break
-    return rows[:MAX_DEVELOPING_ROWS]
+    return sorted(
+        rows,
+        key=ui.trader_priority_sort_key,
+        reverse=True,
+    )[:MAX_DEVELOPING_ROWS]
 
 
 def _operator_label(record: dict) -> str:
