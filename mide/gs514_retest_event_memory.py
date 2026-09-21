@@ -271,49 +271,6 @@ def _memory_truth(original, record: dict) -> dict:
     return truth
 
 
-def _state_with_memory(original, record: dict) -> dict:
-    view = original(record)
-    truth = dict(view.get("three_minute_st_retest_truth") or {})
-    if truth.get("state") != "PRIOR_ST_RETEST_HELD":
-        return view
-
-    event = dict(truth.get("prior_retest_event") or _event_from_record(record))
-    sequence = discipline_sequence(record, event)
-    result = deepcopy(view)
-    result["three_minute_st_retest_truth"] = truth
-    result["discipline_sequence"] = sequence
-
-    age = _number(event.get("age_seconds"))
-    age_text = f"{age / 60.0:.0f}m ago" if age is not None else "earlier"
-    low_text = _fmt_price(event.get("retest_low"))
-    st_text = _fmt_price(event.get("supertrend_at_retest"))
-
-    if sequence["lower_timeframe_repair_complete"]:
-        guardrail = (
-            f"PRIOR 3M ST RETEST HELD: low {low_text} tested the 3m SuperTrend "
-            f"{st_text} {age_text} inside the existing {NEAR_ST_LINE_PCT:.0f}% band. "
-            "Lower-timeframe VWAP/30s/1m repair is now present; review the chart, but "
-            "existing readiness and entry authority still control."
-        )
-    else:
-        missing = []
-        if not sequence["vwap_acceptance"]:
-            missing.append("VWAP acceptance")
-        if not sequence["thirty_second_repaired"]:
-            missing.append("30s repair")
-        if not sequence["one_minute_repaired"]:
-            missing.append("1m repair")
-        guardrail = (
-            f"PRIOR 3M ST RETEST HELD: low {low_text} tested the 3m SuperTrend "
-            f"{st_text} {age_text}. Thesis checkpoint confirmed; entry trigger is NOT "
-            "earned yet. Still need " + ", ".join(missing) + "."
-        )
-
-    next_step = str(result.get("next_step") or "").strip()
-    if "PRIOR 3M ST RETEST HELD:" not in next_step:
-        result["next_step"] = f"{guardrail} {next_step}".strip()
-    return result
-
 
 def install() -> None:
     """Install retest reconstruction plus presentation memory after GS421/GS422/GS493."""
@@ -348,11 +305,7 @@ def install() -> None:
 
     current_state = gs493.state_with_3m_st_truth
     if not getattr(current_state, _OWNER_STATE, False):
-        @wraps(current_state)
-        def state_with_memory(original, record: dict) -> dict:
-            return _state_with_memory(current_state, original, record)
-
-        # The wrapper signature above intentionally follows state_with_3m_st_truth:
+        # Preserve GS493's established wrapper signature:
         # (original_opportunity_state_callable, record).
         def bound_state(original, record: dict) -> dict:
             view = current_state(original, record)
