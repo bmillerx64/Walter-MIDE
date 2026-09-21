@@ -94,7 +94,7 @@ def test_legacy_static_link_helper_remains_valid_but_live_delivery_is_native():
     render_end = source.index("def render_session_backup_controls", render_start)
     render = source[render_start:render_end]
     assert "st.download_button(" in render
-    assert "data=open_prepared_archive" in render
+    assert "data=materialize_prepared_archive" in render
     assert "st.markdown(backup_link_markup" not in render
 
 
