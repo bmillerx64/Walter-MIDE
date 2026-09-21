@@ -26,6 +26,9 @@ from functools import wraps
 from typing import Any
 
 SUPPLEMENTAL_FEED_KEYS = ("five_minute_movers", "absolute_volume")
+SHADOW_RVOL_PAGE_INDEX = 2
+SHADOW_RVOL_PAGE_SIZE = 20
+SHADOW_RVOL_KEY = "shadow_relative_volume_page2"
 SUPPLEMENTAL_PAGE_INDEX = 2
 SUPPLEMENTAL_PAGE_SIZE = 20
 SUPPLEMENTAL_UNIQUE_CAP = 20
@@ -164,6 +167,52 @@ def extend_report(client: Any, report: dict[str, Any]) -> dict[str, Any]:
     contract = str(output.get("discovery_contract") or "WEBULL_NATIVE_RADAR")
     if DISCOVERY_CONTRACT_SUFFIX not in contract:
         output["discovery_contract"] = f"{contract}_{DISCOVERY_CONTRACT_SUFFIX}"
+    # GS523: observe, but never admit, relative-volume page 2. This is a
+    # diagnostic-only shadow lane for discovery-latency cases such as AUUD.
+    # Its rows are intentionally excluded from output["symbols"] and therefore
+    # cannot reach snapshots, gates, ranking, alerts, or execution.
+    shadow_rvol = {
+        "status": "SKIPPED",
+        "page_index": SHADOW_RVOL_PAGE_INDEX,
+        "rows_returned": 0,
+        "symbols": [],
+        "rows": [],
+        "error": "",
+        "admitted_to_discovery": False,
+    }
+    rvol_feed = feed_by_key.get("relative_volume")
+    if rvol_feed is not None:
+        method = getattr(screener, rvol_feed.operation, None)
+        if callable(method):
+            arguments = dict(rvol_feed.arguments)
+            arguments["page_index"] = SHADOW_RVOL_PAGE_INDEX
+            arguments["page_size"] = SHADOW_RVOL_PAGE_SIZE
+            try:
+                raw = method(**arguments)
+                status_code = getattr(raw, "status_code", None)
+                if status_code is not None and int(status_code) >= 400:
+                    raise RuntimeError(f"Webull screener HTTP {status_code}")
+                rows = [
+                    native._normalize_row(
+                        row,
+                        rank=SHADOW_RVOL_PAGE_SIZE + index,
+                        source=rvol_feed,
+                    )
+                    for index, row in enumerate(native._rows(raw), start=1)
+                ]
+                rows = [row for row in rows if row.get("symbol")][:SHADOW_RVOL_PAGE_SIZE]
+                shadow_rvol.update(
+                    status="PASS",
+                    rows_returned=len(rows),
+                    symbols=[row["symbol"] for row in rows],
+                    rows=rows,
+                )
+            except Exception as exc:
+                shadow_rvol.update(
+                    status="CAUTION",
+                    error=f"{type(exc).__name__}: {exc}",
+                )
+
     output["supplemental_breadth"] = {
         "status": (
             "PASS"
@@ -180,6 +229,7 @@ def extend_report(client: Any, report: dict[str, Any]) -> dict[str, Any]:
         "unique_cap": SUPPLEMENTAL_UNIQUE_CAP,
         "maximum_discovery_symbols": 100,
         "relative_volume_role": "context/discovery only; no new ignition authority",
+        SHADOW_RVOL_KEY: shadow_rvol,
     }
     return output
 
