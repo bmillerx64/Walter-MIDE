@@ -477,7 +477,7 @@ def get_stock_data_with_fallback(
 def free_float_decision(
     snapshot: dict[str, object], max_free_float: int
 ) -> Decision:
-    """Apply the production float ceiling without treating missing data as a veto."""
+    """Apply the float ceiling while preserving explicit fail-closed sentinel truth."""
     updates = dict(snapshot)
     raw_value = next((updates.get(key) for key in (
         "free_float", "float_shares", "shares_float"
@@ -497,6 +497,25 @@ def free_float_decision(
             "Free float unavailable; configured limit unverified",
             updates,
         )
+
+    # GS518: Live free-float enrichment deliberately uses +/-infinity as a
+    # fail-closed sentinel when a required low-float refresh cannot be resolved.
+    # That sentinel is not a measured share count. Preserve its unverified status
+    # and rejection semantics instead of rewriting it as a verified above-limit
+    # company float, which hid JZ's actual Sep. 21 failure class in the audit trail.
+    if not math.isfinite(value):
+        status = str(updates.get("free_float_verification_status") or "").strip()
+        source = str(updates.get("free_float_source") or "").strip()
+        updates["free_float_verified"] = False
+        if not status or status == "verified":
+            status = "unavailable-reject"
+            updates["free_float_verification_status"] = status
+        reason = (
+            "Free float live refresh unresolved; fail closed"
+            if "refresh" in status.lower() or "refresh" in source.lower()
+            else "Free float unresolved; fail closed"
+        )
+        return Decision(False, "Free Float", reason, updates)
 
     updates.update(
         free_float_verified=True,
