@@ -206,3 +206,9 @@ def install() -> None:
     from .gs514_retest_event_memory import install as install_gs514
 
     install_gs514()
+
+    # GS515 makes GS514's thesis-vs-trigger sequence unmistakable on existing
+    # Opportunity State surfaces. Presentation only; no promotion or audio authority.
+    from .gs515_thesis_trigger_discipline import install as install_gs515
+
+    install_gs515()
