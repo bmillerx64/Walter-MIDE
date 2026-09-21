@@ -62,9 +62,15 @@ def emphasize_discipline(view: dict) -> dict:
     if state == "THESIS_HELD_TRIGGER_INCOMPLETE":
         result["discipline_label"] = "THESIS VALIDATED · TRIGGER NOT EARNED"
         result["discipline_ready"] = False
-        result["reason"] = (
+        existing_next = str(result.get("next_step") or "").strip()
+        discipline_next = (
             "THESIS VALIDATED · TRIGGER NOT EARNED. "
             "The 3m retest held, but lower-timeframe repair is incomplete."
+        )
+        result["next_step"] = (
+            f"{discipline_next} {existing_next}".strip()
+            if discipline_next not in existing_next
+            else existing_next
         )
         evidence.insert(
             0,
@@ -77,9 +83,15 @@ def emphasize_discipline(view: dict) -> dict:
     else:
         result["discipline_label"] = "THESIS VALIDATED · LOWER-TF REPAIR PRESENT"
         result["discipline_ready"] = True
-        result["reason"] = (
+        existing_next = str(result.get("next_step") or "").strip()
+        discipline_next = (
             "THESIS VALIDATED · LOWER-TF REPAIR PRESENT. "
             "Review the chart, but Walter's existing full entry/readiness rules still control."
+        )
+        result["next_step"] = (
+            f"{discipline_next} {existing_next}".strip()
+            if discipline_next not in existing_next
+            else existing_next
         )
         evidence.insert(
             0,
