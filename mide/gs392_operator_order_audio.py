@@ -212,3 +212,9 @@ def install() -> None:
     from .gs515_thesis_trigger_discipline import install as install_gs515
 
     install_gs515()
+
+    # GS516 keeps Chrome's actual parent-window AudioContext status visible after
+    # redeploy/reload and provides one-click re-arm/test without changing alert truth.
+    from .gs516_visible_alert_audio_health import install as install_gs516
+
+    install_gs516()
