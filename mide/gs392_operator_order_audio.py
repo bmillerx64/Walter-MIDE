@@ -199,3 +199,10 @@ def install() -> None:
     from .gs422_convergence_recorder_performance import install as install_gs422
 
     install_gs422()
+
+    # GS514 preserves a valid 3m SuperTrend retest after price has bounced away from
+    # the line, using only GS421's already-captured current-session bars. It is
+    # presentation memory only: thesis checkpoint versus lower-timeframe trigger.
+    from .gs514_retest_event_memory import install as install_gs514
+
+    install_gs514()
