@@ -307,6 +307,7 @@ def install() -> None:
     if not getattr(current_state, _OWNER_STATE, False):
         # Preserve GS493's established wrapper signature:
         # (original_opportunity_state_callable, record).
+        @wraps(current_state)
         def bound_state(original, record: dict) -> dict:
             view = current_state(original, record)
             truth = dict(view.get("three_minute_st_retest_truth") or {})
