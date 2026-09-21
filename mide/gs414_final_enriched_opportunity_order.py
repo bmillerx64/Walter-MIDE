@@ -165,6 +165,13 @@ def _install_gs497() -> None:
     install_gs497()
 
 
+def _install_gs517() -> None:
+    """Restore fresh maturation events above otherwise-authoritative Mission Ranking."""
+    from .gs517_fresh_event_priority import install as install_gs517
+
+    install_gs517()
+
+
 def final_enriched_opportunity_records(
     records: list[dict], *, actionable_function=None
 ) -> list[dict]:
@@ -208,6 +215,9 @@ def install() -> None:
     _install_gs493()
     _install_gs495()
     _install_gs497()
+    # GS517 is deliberately outside GS497: current bottom-up maturation is an event,
+    # while Mission Rank remains the stable priority for every non-fresh peer.
+    _install_gs517()
 
     current = ui.render_escalation_engine
     if getattr(current, FINAL_ORDER_OWNER_ATTR, False):
