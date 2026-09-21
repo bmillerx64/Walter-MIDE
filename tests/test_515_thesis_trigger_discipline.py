@@ -39,7 +39,8 @@ def test_incomplete_sequence_says_trigger_not_earned_without_state_promotion():
     assert result["color"] == "#60a5fa"
     assert result["discipline_ready"] is False
     assert result["discipline_label"] == "THESIS VALIDATED · TRIGGER NOT EARNED"
-    assert result["reason"].startswith("THESIS VALIDATED · TRIGGER NOT EARNED")
+    assert result["reason"] == "Old explanation."
+    assert result["next_step"].startswith("THESIS VALIDATED · TRIGGER NOT EARNED")
     assert result["evidence"][0] == {
         "label": "Entry sequence",
         "passed": False,
@@ -60,7 +61,8 @@ def test_repaired_sequence_still_does_not_change_existing_opportunity_state():
     assert result["state"] == "DEVELOPING"
     assert result["discipline_ready"] is True
     assert result["discipline_label"] == "THESIS VALIDATED · LOWER-TF REPAIR PRESENT"
-    assert "full entry/readiness rules still control" in result["reason"]
+    assert result["reason"] == "Old explanation."
+    assert "full entry/readiness rules still control" in result["next_step"]
     assert result["evidence"][0]["passed"] is True
     assert result["evidence"][0]["detail"] == "3m retest ✓ · VWAP ✓ · 30s ✓ · 1m ✓"
 
