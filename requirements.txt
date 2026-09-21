@@ -1,6 +1,9 @@
 # GS445 deployment marker: force one clean Streamlit Community Cloud runtime so
 # append-only Candidate History / Flight Recorder exports reuse incremental gzip state.
 # No dependency versions change in this deployment-only activation.
+# GS523 deployment marker: sample deeper Webull RVOL as forensic shadow evidence only.
+# Shadow rows never enter Walter's production discovery or trading authority.
+# No dependency versions change in this deployment-only activation.
 # GS522 deployment marker: full Session Backup keeps disk-backed ZIP creation but
 # uses the same click-deferred bytes transport that succeeded live for GS510.
 # No dependency versions change in this deployment-only activation.

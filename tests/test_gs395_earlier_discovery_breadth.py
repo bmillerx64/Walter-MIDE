@@ -28,11 +28,22 @@ class _Screener:
 
     def get_most_active(self, **kwargs):
         self.calls.append(("active", dict(kwargs)))
-        assert kwargs["rank_type"] == "VOLUME"
         assert kwargs["page_index"] == 2
         assert kwargs["page_size"] == 20
         if self.fail:
             raise RuntimeError("page 2 unavailable")
+        if kwargs["rank_type"] == "RELATIVE_VOLUME_10D":
+            return [
+                {
+                    "symbol": f"R{index:02d}",
+                    "price": 1.2 + index / 100,
+                    "change_ratio": 1.0 + index,
+                    "volume": 80_000 + index,
+                    "relative_volume_10d": 6.0 + index,
+                }
+                for index in range(1, 13)
+            ]
+        assert kwargs["rank_type"] == "VOLUME"
         return [
             {
                 "symbol": f"A{index:02d}",
@@ -78,9 +89,13 @@ def test_gs395_adds_only_bounded_5m_and_absolute_volume_page2_symbols():
     assert result["all_feeds_available"] is True
     assert "PLUS_PAGE2_5MIN_ABSOLUTE_MAX20_UNIQUE" in result["discovery_contract"]
 
-    # RVOL stays on its existing first-page/context role; GS395 does not request
-    # a deeper relative-volume page or make it a new ignition authority.
-    assert all(call[1].get("rank_type") != "RELATIVE_VOLUME_10D" for call in screener.calls)
+    # GS523 samples RVOL page 2 in a shadow-only lane. None of those rows may
+    # enter the production discovery universe or consume the 20-symbol admission cap.
+    shadow = result["supplemental_breadth"]["shadow_relative_volume_page2"]
+    assert shadow["status"] == "PASS"
+    assert shadow["symbols"] == [f"R{index:02d}" for index in range(1, 13)]
+    assert shadow["admitted_to_discovery"] is False
+    assert not any(symbol.startswith("R") for symbol in added)
     assert result["supplemental_breadth"]["relative_volume_role"].startswith("context/discovery")
 
 

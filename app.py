@@ -2160,6 +2160,11 @@ def _run_live_pipeline(
         candidates=state["candidates"], analyzed=state["analyzed"],
         records=ranked, settings=settings, scanner_v2=True,
         expansion_candidate_ledger=state["expansion_candidate_ledger"],
+        shadow_discovery=dict(
+            (client.diagnostics.get("webull_native_discovery") or {}).get(
+                "shadow_discovery"
+            ) or {}
+        ),
         runtime_diagnostics=recorder_runtime_diagnostics,
     )
     client.diagnostics["flight_recorder_runtime"] = recorder_runtime_diagnostics
