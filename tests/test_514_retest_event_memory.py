@@ -167,6 +167,15 @@ def test_repaired_lower_timeframes_still_do_not_grant_entry_authority():
             }
             for label in ("30s", "1m", "3m")
         },
+        "supertrend_30s_bullish": True,
+        "timeframe_alignment": {
+            "30s": {
+                "above_vwap": True,
+                "supertrend_bullish": True,
+                "supertrend_value": 1.14,
+                "vwap_value": 1.166,
+            }
+        },
         "multitimeframe_maturation": {
             "three_minute_st_retest_event": {
                 "available": True,
