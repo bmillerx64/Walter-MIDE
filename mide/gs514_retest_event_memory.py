@@ -259,7 +259,7 @@ def _memory_truth(original, record: dict) -> dict:
     truth = dict(original(record))
     event = _event_from_record(record)
     if (
-        truth.get("state") == "NOT_AT_3M_ST_YET"
+        truth.get("state") in {"NOT_AT_3M_ST_YET", "ST_RETEST_CONFIRMED"}
         and event.get("available")
         and event.get("active_memory")
     ):
