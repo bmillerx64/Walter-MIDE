@@ -1,3 +1,6 @@
+# GS522 deployment marker: full Session Backup keeps disk-backed ZIP creation but
+# uses the same click-deferred bytes transport that succeeded live for GS510.
+# No dependency versions change in this deployment-only activation.
 # GS445 deployment marker: force one clean Streamlit Community Cloud runtime so
 # append-only Candidate History / Flight Recorder exports reuse incremental gzip state.
 # No dependency versions change in this deployment-only activation.
