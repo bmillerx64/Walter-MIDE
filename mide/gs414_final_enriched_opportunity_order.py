@@ -137,6 +137,13 @@ def _install_gs492() -> None:
     install_gs492()
 
 
+def _install_gs512() -> None:
+    """Bridge Architecture-v1 gate truth into existing attention audio."""
+    from .gs512_audio_architecture_gate_bridge import install as install_gs512
+
+    install_gs512()
+
+
 def _install_gs493() -> None:
     """Expose exact 3m SuperTrend retest geometry in Opportunity State."""
     from .gs493_3m_st_retest_truth import install as install_gs493
@@ -195,6 +202,9 @@ def install() -> None:
     _install_gs474()
     _install_gs477()
     _install_gs492()
+    # GS512 must bind after GS473/GS492 exist. It changes only how those audio
+    # helpers read the already-authoritative Architecture audit gate decisions.
+    _install_gs512()
     _install_gs493()
     _install_gs495()
     _install_gs497()

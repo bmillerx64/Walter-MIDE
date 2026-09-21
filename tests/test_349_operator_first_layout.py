@@ -61,3 +61,39 @@ def test_developing_summary_is_empty_when_no_developing_rows(monkeypatch):
         lambda records: [("LOOK NOW (1)", [_record("HOT", state="LOOK NOW")], True)],
     )
     assert developing_now_markup([]) == ""
+
+
+def test_gs513_developing_summary_uses_same_walter_priority_as_detail(monkeypatch):
+    scni = {
+        **_record("SCNI"),
+        "current_momentum": 52.2,
+        "historical_strength": 41.1,
+        "participation_surge_score": 0.0,
+        "relative_strength_score": 8.1,
+        "alignment_score": 1.0,
+    }
+    sdst = {
+        **_record("SDST"),
+        "current_momentum": 46.8,
+        "historical_strength": 42.9,
+        "participation_surge_score": 0.0,
+        "relative_strength_score": 2.88,
+        "alignment_score": 0.0,
+    }
+    gtec = {
+        **_record("GTEC"),
+        "current_momentum": 42.7,
+        "historical_strength": 25.5,
+        "participation_surge_score": 0.0,
+        "relative_strength_score": 2.52,
+        "alignment_score": 0.0,
+    }
+    monkeypatch.setattr(
+        ui,
+        "scanner_v2_display_sections",
+        lambda records: [("DEVELOPING (3)", [sdst, gtec, scni], True)],
+    )
+
+    ordered = developing_records([sdst, gtec, scni])
+
+    assert [record["symbol"] for record in ordered] == ["SCNI", "SDST", "GTEC"]
