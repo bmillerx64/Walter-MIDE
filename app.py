@@ -217,6 +217,7 @@ from mide.memory import MemoryStore
 from mide.flight_recorder import FlightRecorder
 from mide.gs496_static_session_backup import render_session_backup_controls
 from mide.gs510_compact_analysis_bundle import render_compact_analysis_bundle_controls
+from mide.gs516_visible_alert_audio_health import render_sidebar_audio_health
 from mide.gs498_mission_ranking_direction import mission_ranked_records
 from mide.decision_engine import expansion_candidate_diagnostic
 memory_checkpoint("cache stores import", object_name="MemoryStore, FlightRecorder")
@@ -1105,6 +1106,9 @@ with st.sidebar:
         ),
         on_change=persist_selected_alert_voice,
     )
+    # GS520: keep browser audio transport status beside its controls. Rendering
+    # here stays inside the sidebar context and cannot replace mission_plan_slot.
+    render_sidebar_audio_health(st)
     active_voice = active_voice_identifier(
         (
             requested_voice
