@@ -365,11 +365,13 @@ def _render_backup_controls(candidate_history_path: Path, flight_recorder_path: 
         return
     archive_path = STATIC_DIR / filename
 
-    def open_prepared_archive():
-        # Streamlit 1.62 accepts a callable that returns a file-like object. This
-        # defers browser payload materialization until the operator clicks and avoids
-        # Community Cloud's unreliable runtime-generated static-file route.
-        return archive_path.open("rb")
+    def materialize_prepared_archive() -> bytes:
+        # Sept. 21 live validation showed Streamlit's deferred callable could build
+        # the full ZIP successfully yet fail while converting a returned BufferedReader
+        # into the browser download. The compact analysis bundle succeeded in the same
+        # runtime by returning bytes from its deferred callable. Match that proven
+        # transport while keeping ZIP creation disk-backed and click-deferred.
+        return archive_path.read_bytes()
 
     st.download_button(
         label=(
@@ -377,10 +379,10 @@ def _render_backup_controls(candidate_history_path: Path, flight_recorder_path: 
             f"({float(info.get('archive_bytes') or 0) / (1024 * 1024):.1f} MB ZIP / "
             f"{float(info.get('source_bytes_total') or 0) / (1024 * 1024):.1f} MB source)"
         ),
-        data=open_prepared_archive,
+        data=materialize_prepared_archive,
         file_name=filename,
         mime="application/zip",
-        key=f"walter-gs509-download-{filename}",
+        key=f"walter-gs522-download-{filename}",
         on_click="ignore",
         width="stretch",
     )
