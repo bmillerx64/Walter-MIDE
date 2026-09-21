@@ -118,6 +118,7 @@ class FlightRecorder:
         scanner_v2=True,
         recent_news_log=None,
         expansion_candidate_ledger=None,
+        shadow_discovery=None,
         timestamp=None,
     ) -> dict:
         timestamp = timestamp or datetime.now(timezone.utc)
@@ -427,6 +428,8 @@ class FlightRecorder:
             scan["recent_wire_news"] = recent_news_log
         if expansion_candidate_ledger is not None:
             scan["expansion_candidate_ledger"] = list(expansion_candidate_ledger)
+        if shadow_discovery is not None:
+            scan["shadow_discovery"] = shadow_discovery
         return persist_replayable_scan(self, scan, records)
 
     def latest_scan(self) -> dict | None:
