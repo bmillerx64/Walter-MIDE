@@ -6,8 +6,10 @@ had been destroyed. The old sessionStorage "armed" flag survived, while the actu
 Web Audio transport was no longer runnable. The existing GS352 control correctly
 detects this state, but it lives inside a collapsed Alert transport expander.
 
-GS516 adds one always-visible sidebar health control that observes the exact same
+GS516 adds one always-visible audio health control that observes the exact same
 GS367 parent-window broker and can re-arm/test tone + speech with one user gesture.
+GS520 anchors that control directly beside the sidebar audio settings instead of
+wrapping Walter's mission renderer.
 It polls browser transport state so a stale/reloaded AudioContext turns visibly red.
 
 Presentation/transport only. No alert semantics, tiers, phrases, scanning, market data,
@@ -168,36 +170,19 @@ def alert_audio_health_markup() -> str:
     """
 
 
-def _inherit(wrapper, wrapped) -> None:
-    for name, value in getattr(wrapped, "__dict__", {}).items():
-        if name.startswith("_gs") and not hasattr(wrapper, name):
-            setattr(wrapper, name, value)
+def render_sidebar_audio_health(st_module) -> None:
+    """Render transport health at the sidebar control boundary, never in mission slots."""
+    try:
+        st_module.components.v1.html(
+            alert_audio_health_markup(),
+            height=58,
+            scrolling=False,
+        )
+    except Exception:
+        # Browser transport controls must never interfere with the Radar itself.
+        pass
 
 
 def install() -> None:
-    """Add visible transport truth after Walter's final mission renderer is assembled."""
-    from . import ui
-
-    current = ui.render_walter_mission_control
-    if getattr(current, _OWNER, False):
-        return
-
-    def render_with_visible_audio_health(records: list[dict]) -> None:
-        current(records)
-        try:
-            ui.st.sidebar.markdown("**🔊 Alert audio**")
-            ui.st.sidebar.caption(
-                "If Walter redeploys or the page reloads, Chrome may require one click to re-arm audio."
-            )
-            ui.st.components.v1.html(
-                alert_audio_health_markup(),
-                height=58,
-                scrolling=False,
-            )
-        except Exception:
-            pass
-
-    _inherit(render_with_visible_audio_health, current)
-    setattr(render_with_visible_audio_health, _OWNER, True)
-    render_with_visible_audio_health._gs516_original = current
-    ui.render_walter_mission_control = render_with_visible_audio_health
+    """Compatibility hook; GS520 renders GS516 directly beside sidebar audio controls."""
+    return None
