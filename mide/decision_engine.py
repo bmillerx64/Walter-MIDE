@@ -6,6 +6,8 @@ Every decision is represented as an ordered, serializable audit trail.
 
 from __future__ import annotations
 
+from .gs528_canonical_entry_ready import canonical_candidate_status
+
 from dataclasses import dataclass
 import logging
 import re
@@ -424,7 +426,7 @@ def evaluate(records: Iterable[dict], policy: IdentityPolicy | None = None) -> l
                           if decision == "Rejected" and failed_step else None
                       ),
                       scanner_version="Decision Funnel 3.0",
-                      candidate_status=(record.get("candidate_status", "Entry Ready") if decision == "Attention Earned" else "Removed"),
+                      candidate_status=(canonical_candidate_status(record) if decision == "Attention Earned" else "Removed"),
                       status=(record.get("status", "WATCH NOW") if decision == "Attention Earned" else "PASS"))
         output.append(record)
     return output
