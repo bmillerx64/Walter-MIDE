@@ -81,3 +81,13 @@ def test_gs520_preserves_single_child_mission_slot_contract():
     assert "with mission_plan_slot:" in app_source
     assert "render_walter_mission_control(actionable_records)" in app_source
     assert "mission_plan_slot" not in module_source
+
+
+def test_gs524_audio_health_uses_practical_parent_window_bell():
+    markup = alert_audio_health_markup()
+    assert "root.speechSynthesis || window.speechSynthesis" in markup
+    assert "frequency * 1.5" in markup
+    assert "exponentialRampToValueAtTime(0.30" in markup
+    assert "strike(base, 523.25)" in markup
+    assert "strike(base + 0.42, 783.99)" in markup
+    assert "AUDIO READY · TEST PLAYING" in markup
