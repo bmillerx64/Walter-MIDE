@@ -78,3 +78,20 @@ def test_entry_contract_never_promotes_qualification():
     assert record["qualified_for_entry"] is False
     assert result["state"] == "LOOK NOW"
     assert result["entry_contract"]["qualified_for_entry"] is False
+
+
+def test_canonical_candidate_status_never_invents_entry_ready():
+    assert gs528.canonical_candidate_status({}) == "Strengthening"
+    assert gs528.canonical_candidate_status({"candidate_status": "Entry Ready", "qualified_for_entry": False}) == "Strengthening"
+    assert gs528.canonical_candidate_status({"candidate_status": "Watching", "qualified_for_entry": False}) == "Watching"
+    assert gs528.canonical_candidate_status({"qualified_for_entry": True}) == "Entry Ready"
+
+
+def test_runtime_fallbacks_no_longer_manufacture_entry_ready():
+    from pathlib import Path
+
+    app = Path("app.py").read_text(encoding="utf-8")
+    engine = Path("mide/decision_engine.py").read_text(encoding="utf-8")
+    assert 'item.get("candidate_status", "Entry Ready")' not in app
+    assert 'record.get("candidate_status", "Entry Ready")' not in engine
+    assert '"entry_ready": sum(' in app
