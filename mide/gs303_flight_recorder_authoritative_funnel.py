@@ -46,13 +46,22 @@ def recorder_records(records) -> list[dict]:
             # (GS530). Preserve its explicit gate diagnostics when populated.
             # Architecture-audit rehydration is now fallback-only for legacy or
             # partially enriched records.
+            scanner_v2_record = str(copied.get("scanner_version") or "").upper() == "V2"
             participation_gate = copied.get("participation_gate")
-            if not (isinstance(participation_gate, dict) and participation_gate):
+            if not (
+                scanner_v2_record
+                and isinstance(participation_gate, dict)
+                and participation_gate
+            ):
                 copied["participation_gate"] = _gate_from_audit(
                     _stage_audit(copied, "Participation Assessment")
                 )
             structure_gate = copied.get("structure_gate")
-            if not (isinstance(structure_gate, dict) and structure_gate):
+            if not (
+                scanner_v2_record
+                and isinstance(structure_gate, dict)
+                and structure_gate
+            ):
                 copied["structure_gate"] = _gate_from_audit(
                     _stage_audit(copied, "Expansion Assessment")
                 )
