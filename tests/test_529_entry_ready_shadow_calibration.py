@@ -77,3 +77,19 @@ def test_no_progression_means_no_shadow_relaxation(monkeypatch):
     )
     assert result["shadow_entry_ready"] is False
     assert result["trading_authority_changed"] is False
+
+
+def test_runtime_persists_shadow_without_using_it_for_entry_authority():
+    from pathlib import Path
+
+    scanner = Path("mide/scanner_v2.py").read_text(encoding="utf-8")
+    recorder = Path("mide/flight_recorder.py").read_text(encoding="utf-8")
+
+    assert "entry_ready_shadow = shadow_entry_calibration(" in scanner
+    assert '"gs529_entry_ready_shadow": entry_ready_shadow' in scanner
+    assert "entry_qualified = qualified_for_entry(" in scanner
+    assert "entry_ready_shadow" not in scanner[
+        scanner.index("entry_qualified = qualified_for_entry("):
+        scanner.index("record[\"qualified_for_entry\"] = entry_qualified")
+    ]
+    assert '"gs529_entry_ready_shadow": (record or {}).get(' in recorder
