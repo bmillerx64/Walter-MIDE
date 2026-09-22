@@ -93,6 +93,7 @@ def test_recorder_projection_never_mutates_authoritative_records():
 def test_explicit_scanner_v2_gates_are_preserved_after_gs530_bridge():
     record = {
         "symbol": "LIVEV2",
+        "scanner_version": "V2",
         "participation_gate": {
             "passed": False,
             "failed_reasons": ["1-minute volume not increasing"],
