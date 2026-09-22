@@ -8,11 +8,18 @@ def _record(**overrides):
         "participation_surge_diagnostics": {"participation_score": 67},
         "expansion_quality": 63,
         "vwap_relation": "above",
+        "timeframe_alignment": {
+            "30s": {
+                "above_vwap": True,
+                "supertrend_bullish": True,
+                "supertrend_value": 0.95,
+                "vwap_value": 0.99,
+            }
+        },
         "timeframes": {
             "30s": {
                 "current_close": 1.00,
                 "supertrend": True,
-                "above_vwap": True,
             },
             "1m": {
                 "current_close": 1.00,
