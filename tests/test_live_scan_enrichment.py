@@ -238,6 +238,10 @@ def test_get_stock_data_with_fallback_fails_cleanly_when_live_payload_is_malform
 
 
 def test_run_live_enrichment_path_passes_previous_state(monkeypatch, tmp_path):
+    monkeypatch.setattr(
+        "mide.scanner_v2.apply_scanner_v2",
+        lambda records, previous_by_symbol, scan_time=None: records,
+    )
     signature = inspect.signature(MemoryStore.enrich_velocity)
     assert list(signature.parameters) == ["self", "records", "previous"]
     assert signature.parameters["previous"].default is None
@@ -371,6 +375,10 @@ def test_run_live_enrichment_path_passes_previous_state(monkeypatch, tmp_path):
 def test_run_live_scanner_v1_enrichment_path_accepts_previous_state(
     monkeypatch, tmp_path
 ):
+    monkeypatch.setattr(
+        "mide.scanner_v2.apply_scanner_v2",
+        lambda records, previous_by_symbol, scan_time=None: records,
+    )
     __import__("app").st.session_state.walter_session_universe_cache = {}
     monkeypatch.setattr("app.get_secret", lambda name, default="": "secret")
     monkeypatch.setattr("app.st.status", lambda *args, **kwargs: DummyStatus())
