@@ -1,3 +1,5 @@
+# GS534 deployment marker: show true Expansion Assessment survivors separately
+# from canonical Entry Ready count in the Architecture Funnel. Presentation only.
 # GS445 deployment marker: force one clean Streamlit Community Cloud runtime so
 # append-only Candidate History / Flight Recorder exports reuse incremental gzip state.
 # No dependency versions change in this deployment-only activation.
