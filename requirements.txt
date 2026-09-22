@@ -1,6 +1,8 @@
 # GS445 deployment marker: force one clean Streamlit Community Cloud runtime so
 # append-only Candidate History / Flight Recorder exports reuse incremental gzip state.
 # No dependency versions change in this deployment-only activation.
+# GS531 deployment marker: fresh ordered 30s→1m→3m SuperTrend maturation may
+# satisfy only the entry ST trigger lock within 180 seconds. All other gates remain.
 # GS530 deployment marker: bridge canonical Scanner V2 enrichment into the live
 # Walter Architecture before Expansion so trigger/qualified_for_entry/GS529 truth exists.
 # Membership and architecture stage thresholds remain unchanged.
