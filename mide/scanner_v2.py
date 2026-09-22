@@ -182,6 +182,58 @@ def _trigger_st_age_seconds(
     )
 
 
+
+
+def _fresh_sequential_st_confirmation(
+    record: dict,
+    scan_time: datetime | None = None,
+    *,
+    max_age_seconds: float = 180.0,
+) -> dict:
+    """Return fresh ordered 30s→1m→3m maturation evidence for the entry ST lock.
+
+    This is intentionally narrower than generic bullish SuperTrend state:
+    the ladder must already confirm through at least 3m, and Walter must have
+    observed a new 1m or 3m confirmation event within the freshness window.
+    """
+    sequence = record.get("trend_confirmation_sequence") or {}
+    if int(sequence.get("progression_count") or 0) < 3:
+        return {"passed": False, "age_seconds": None, "timeframe": None}
+
+    if scan_time is None:
+        scan_time = datetime.now(timezone.utc)
+    if scan_time.tzinfo is None:
+        scan_time = scan_time.replace(tzinfo=timezone.utc)
+    now = scan_time.astimezone(timezone.utc)
+
+    freshest = None
+    for event in sequence.get("events") or []:
+        if (
+            event.get("event") != "confirmed"
+            or event.get("timeframe") not in {"1m", "3m"}
+            or not event.get("confirmed_at")
+        ):
+            continue
+        try:
+            confirmed = datetime.fromisoformat(
+                str(event["confirmed_at"]).replace("Z", "+00:00")
+            )
+        except ValueError:
+            continue
+        if confirmed.tzinfo is None:
+            confirmed = confirmed.replace(tzinfo=timezone.utc)
+        age = (now - confirmed.astimezone(timezone.utc)).total_seconds()
+        if -120.0 <= age <= max_age_seconds:
+            candidate = {
+                "passed": True,
+                "age_seconds": max(0.0, age),
+                "timeframe": event.get("timeframe"),
+                "confirmed_at": event.get("confirmed_at"),
+            }
+            if freshest is None or candidate["age_seconds"] < freshest["age_seconds"]:
+                freshest = candidate
+    return freshest or {"passed": False, "age_seconds": None, "timeframe": None}
+
 def trigger_diagnostics(
     record: dict, prior: dict | None = None, scan_time: datetime | None = None
 ) -> dict:
@@ -226,7 +278,11 @@ def trigger_diagnostics(
     distance = float(vwap.get("distance_pct", _num(record, "vwap_distance_pct")) or 0)
     st_age = _trigger_st_age_seconds(record, scan_time)
     fresh_st = bool(record.get("supertrend_30s_flip", record.get("supertrend_flip")))
-    st_passed = fresh_st and (st_age is None or st_age <= TRIGGER_ST_MAX_AGE_SECONDS)
+    sequential_st = _fresh_sequential_st_confirmation(record, scan_time)
+    discrete_st_passed = fresh_st and (
+        st_age is None or st_age <= TRIGGER_ST_MAX_AGE_SECONDS
+    )
+    st_passed = bool(discrete_st_passed or sequential_st.get("passed"))
     surge_score = float(surge.get("participation_score", 0) or 0)
 
     # Distinguish "data absent" from "data present but bad".  When expansion_quality
@@ -257,9 +313,16 @@ def trigger_diagnostics(
             "condition": "supertrend_flip",
             "passed": st_passed,
             "passed_reason": (
-                f"ST Flip {_format_seconds(st_age)} ago (Pass <{_format_seconds(max_st_age)})"
-                if st_age is not None
-                else "ST Flip detected (Age unavailable)"
+                (
+                    f"Ordered ST maturation reached {sequential_st.get('timeframe')} "
+                    f"{_format_seconds(sequential_st.get('age_seconds'))} ago"
+                )
+                if sequential_st.get("passed") and not discrete_st_passed
+                else (
+                    f"ST Flip {_format_seconds(st_age)} ago (Pass <{_format_seconds(max_st_age)})"
+                    if st_age is not None
+                    else "ST Flip detected (Age unavailable)"
+                )
             ),
             "failed_reason": (
                 f"ST Flip {_format_seconds(st_age)} ago (Fail; max {_format_seconds(max_st_age)})"
@@ -301,8 +364,15 @@ def trigger_diagnostics(
             else [check["failed_reason"] for check in failed if check["failed_reason"]]
         ),
         "failed_conditions": [check["condition"] for check in failed],
+        "supertrend_trigger_source": (
+            "discrete_flip"
+            if discrete_st_passed
+            else ("ordered_1m_3m_maturation" if sequential_st.get("passed") else None)
+        ),
+        "sequential_st_confirmation": sequential_st,
         "thresholds": {
             "st_max_age_seconds": max_st_age,
+            "sequential_st_max_age_seconds": 180,
             "vwap_floor_pct": vwap_floor,
             "surge_min_score": surge_floor,
             "expansion_quality_min": TRIGGER_EXPANSION_QUALITY_MIN,
