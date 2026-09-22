@@ -1,6 +1,9 @@
 # GS445 deployment marker: force one clean Streamlit Community Cloud runtime so
 # append-only Candidate History / Flight Recorder exports reuse incremental gzip state.
 # No dependency versions change in this deployment-only activation.
+# GS529 deployment marker: record observational Entry Ready shadow calibration
+# comparing the discrete ST trigger lock with fresh ordered 1m/3m maturation.
+# No qualification, readiness, alert, execution, or order authority changes.
 # GS528 deployment marker: ENTRY READY is reserved for qualified_for_entry=True;
 # non-qualified records expose SETTING UP plus exact blockers.
 # No qualification, threshold, readiness, execution, or order changes.
