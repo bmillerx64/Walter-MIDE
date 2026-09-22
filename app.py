@@ -1880,6 +1880,17 @@ def _run_live_pipeline(
             client, candidates, index_news(state["news"]), state["reasons"]
         )
         analyzed = history.enrich_velocity(analyzed, previous=previous)
+        # GS530: the live Walter Architecture must run the canonical Scanner V2
+        # enrichment before Expansion/Ranking. This is field enrichment only:
+        # Scanner V2 does not filter architecture membership here. Resolve the
+        # function dynamically so retained Streamlit modules receive the latest
+        # GS396+ patches and GS529 shadow instrumentation.
+        scanner_module = importlib.import_module("mide.scanner_v2")
+        analyzed = scanner_module.apply_scanner_v2(
+            analyzed,
+            previous,
+            scan_time=datetime.now(timezone.utc),
+        )
         analyzed_by_symbol = {item["symbol"]: item for item in analyzed}
         state["candidates"], state["analyzed"] = candidates, analyzed
         state["runtime_stages"]["Analyzed"] = runtime_stage_observation(analyzed)
@@ -1889,7 +1900,7 @@ def _run_live_pipeline(
         )
         observe_runtime_collection_count(
             client.diagnostics, "analyzed", state["analyzed"],
-            statement="analyzed = history.enrich_velocity(analyze_candidates(...))",
+            statement="analyzed = apply_scanner_v2(history.enrich_velocity(analyze_candidates(...)))",
         )
         result = {}
         for item in records:
