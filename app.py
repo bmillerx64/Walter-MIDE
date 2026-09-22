@@ -2145,6 +2145,9 @@ def _run_live_pipeline(
         "monitored": int(
             stage_trace.get("Participation Assessment", {}).get("output_count", 0) or 0
         ),
+        "expansion": int(
+            stage_trace.get("Expansion Assessment", {}).get("output_count", 0) or 0
+        ),
         "entry_ready": sum(
             1 for item in ranked if item.get("qualified_for_entry") is True
         ),
