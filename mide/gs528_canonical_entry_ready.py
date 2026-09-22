@@ -72,6 +72,16 @@ def entry_contract(record: dict) -> dict:
     }
 
 
+
+def canonical_candidate_status(record: dict, default: str = "Strengthening") -> str:
+    """Return a workflow label that cannot manufacture Entry Ready."""
+    if record.get("qualified_for_entry") is True:
+        return "Entry Ready"
+    existing = str(record.get("candidate_status") or "").strip()
+    if existing and existing != "Entry Ready":
+        return existing
+    return default
+
 def state_with_entry_contract(original, record: dict) -> dict:
     """Expose canonical entry truth without changing executable authority."""
     view = original(record)
