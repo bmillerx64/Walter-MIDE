@@ -27,8 +27,8 @@ def test_live_bridge_preserves_architecture_membership_semantics():
     ]
 
     forbidden = (
-        "if item.get("qualified_for_entry")",
-        "if item.get("qualified_for_watch")",
+        "if item.get(\"qualified_for_entry\")",
+        "if item.get(\"qualified_for_watch\")",
         "return [",
         "filter(",
         "mission_rank",
