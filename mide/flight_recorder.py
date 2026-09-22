@@ -351,6 +351,9 @@ class FlightRecorder:
                 "gs529_entry_ready_shadow": (record or {}).get(
                     "gs529_entry_ready_shadow"
                 ),
+                "gs532_retest_entry_shadow": (record or {}).get(
+                    "gs532_retest_entry_shadow"
+                ),
                 "opportunity_score": (record or {}).get("opportunity_score"),
                 "conviction_score": (record or {}).get(
                     "conviction_v2_score", (record or {}).get("conviction_score")

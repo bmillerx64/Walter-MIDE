@@ -12,6 +12,7 @@ from mide.quality_score import enrich_quality_score
 from mide.conviction import enrich_conviction
 from mide.early_setup import enrich_early_setups
 from mide.gs529_entry_ready_shadow_calibration import shadow_entry_calibration
+from mide.gs532_retest_entry_shadow import retest_entry_shadow
 from mide.trader_priority import (
     sortable_number as _sortable_number,
     trader_priority_sort_key,
@@ -1808,6 +1809,7 @@ def apply_scanner_v2(
         entry_ready_shadow = shadow_entry_calibration(
             record, trigger=trigger, structure_gate=structure_gate
         )
+        retest_ready_shadow = retest_entry_shadow(record)
 
         # Participation contributes explainable evidence; it never terminates
         # analysis or forces a rejection state.
@@ -1906,6 +1908,7 @@ def apply_scanner_v2(
                 "qualified_for_ranking": qualified_for_ranking,
                 "entry_blockers": entry_blockers,
                 "gs529_entry_ready_shadow": entry_ready_shadow,
+                "gs532_retest_entry_shadow": retest_ready_shadow,
                 "participation_gate": participation_gate,
                 "structure_gate": structure_gate,
                 "rejection_reason": None,
