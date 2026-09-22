@@ -1,3 +1,6 @@
+# GS531 deployment marker: allow strong current multi-timeframe ST progression
+# to satisfy only the ST trigger lock when the discrete flip scan was missed.
+# Participation, VWAP, expansion, structure, anti-chase, retest and execution remain unchanged.
 # GS445 deployment marker: force one clean Streamlit Community Cloud runtime so
 # append-only Candidate History / Flight Recorder exports reuse incremental gzip state.
 # No dependency versions change in this deployment-only activation.
