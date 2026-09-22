@@ -1,6 +1,9 @@
 # GS445 deployment marker: force one clean Streamlit Community Cloud runtime so
 # append-only Candidate History / Flight Recorder exports reuse incremental gzip state.
 # No dependency versions change in this deployment-only activation.
+# GS527 deployment marker: surface fresh 30s bullish flips with exceptional
+# volume/dollar-flow acceleration as attention-only EARLY SURGE WATCH events.
+# No entry, qualification, readiness, anti-chase, retest, execution, or order changes.
 # GS526 deployment marker: stop materially 3m-ST-stretched runners from presenting
 # as fresh DEVELOPING unless a new higher-timeframe maturation event re-arms attention.
 # Presentation semantics only; no trading-authority changes.

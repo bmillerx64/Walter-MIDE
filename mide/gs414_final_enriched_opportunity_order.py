@@ -186,6 +186,13 @@ def _install_gs526() -> None:
     install_gs526()
 
 
+def _install_gs527() -> None:
+    """Surface exceptional fresh 30s flow bursts before 1m confirmation."""
+    from .gs527_explosive_30s_surge_watch import install as install_gs527
+
+    install_gs527()
+
+
 def final_enriched_opportunity_records(
     records: list[dict], *, actionable_function=None
 ) -> list[dict]:
@@ -238,6 +245,9 @@ def install() -> None:
     # GS526 resolves the remaining GELS-style contradiction where a VWAP-near row
     # still says DEVELOPING despite being materially stretched from bullish 3m ST.
     _install_gs526()
+    # GS527 is a bounded early-attention event for exceptional fresh 30s flow bursts.
+    # It never promotes entry authority or relaxes confirmation requirements.
+    _install_gs527()
 
     current = ui.render_escalation_engine
     if getattr(current, FINAL_ORDER_OWNER_ATTR, False):
