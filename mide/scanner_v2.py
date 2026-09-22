@@ -88,6 +88,13 @@ TRIGGER_SURGE_MIN_SCORE: int = int(
 TRIGGER_EXPANSION_QUALITY_MIN: int = int(
     os.environ.get("WALTER_EXPANSION_QUALITY_MIN", "55")
 )
+# GS531: an already-current, orderly multi-timeframe ST ladder can satisfy the
+# trend trigger without requiring Walter to catch the exact discrete flip scan.
+# Three rungs means at least 30s/1m/3m-style current confirmation; all other
+# trigger locks, Structure, VWAP anti-chase and retest semantics remain intact.
+TRIGGER_ST_MIN_PROGRESSION: int = int(
+    os.environ.get("WALTER_ST_MIN_PROGRESSION", "3")
+)
 
 STRENGTHENING_REJECTION_BUCKETS = (
     "Below VWAP",
@@ -226,7 +233,16 @@ def trigger_diagnostics(
     distance = float(vwap.get("distance_pct", _num(record, "vwap_distance_pct")) or 0)
     st_age = _trigger_st_age_seconds(record, scan_time)
     fresh_st = bool(record.get("supertrend_30s_flip", record.get("supertrend_flip")))
-    st_passed = fresh_st and (st_age is None or st_age <= TRIGGER_ST_MAX_AGE_SECONDS)
+    trend = sequential_trend_confirmation(record, prior, scan_time)
+    progression_count = int(trend.get("progression_count") or 0)
+    mature_st_progression = bool(
+        record.get("supertrend_bullish")
+        and progression_count >= TRIGGER_ST_MIN_PROGRESSION
+    )
+    st_passed = bool(
+        (fresh_st and (st_age is None or st_age <= TRIGGER_ST_MAX_AGE_SECONDS))
+        or mature_st_progression
+    )
     surge_score = float(surge.get("participation_score", 0) or 0)
 
     # Distinguish "data absent" from "data present but bad".  When expansion_quality
@@ -257,14 +273,29 @@ def trigger_diagnostics(
             "condition": "supertrend_flip",
             "passed": st_passed,
             "passed_reason": (
-                f"ST Flip {_format_seconds(st_age)} ago (Pass <{_format_seconds(max_st_age)})"
-                if st_age is not None
-                else "ST Flip detected (Age unavailable)"
+                (
+                    f"ST Flip {_format_seconds(st_age)} ago "
+                    f"(Pass <{_format_seconds(max_st_age)})"
+                )
+                if fresh_st and st_age is not None
+                else (
+                    "ST Flip detected (Age unavailable)"
+                    if fresh_st
+                    else (
+                        f"Sequential ST progression {progression_count} rungs "
+                        f"(Pass ≥{TRIGGER_ST_MIN_PROGRESSION})"
+                        if mature_st_progression
+                        else ""
+                    )
+                )
             ),
             "failed_reason": (
                 f"ST Flip {_format_seconds(st_age)} ago (Fail; max {_format_seconds(max_st_age)})"
                 if fresh_st and st_age is not None
-                else f"ST Flip not detected (Requires flip within {_format_seconds(max_st_age)})"
+                else (
+                    "SuperTrend trigger absent "
+                    f"(requires fresh flip or ≥{TRIGGER_ST_MIN_PROGRESSION} current progression rungs)"
+                )
             ),
         },
         {
@@ -303,6 +334,7 @@ def trigger_diagnostics(
         "failed_conditions": [check["condition"] for check in failed],
         "thresholds": {
             "st_max_age_seconds": max_st_age,
+            "st_min_progression": TRIGGER_ST_MIN_PROGRESSION,
             "vwap_floor_pct": vwap_floor,
             "surge_min_score": surge_floor,
             "expansion_quality_min": TRIGGER_EXPANSION_QUALITY_MIN,
