@@ -40,13 +40,29 @@ def test_continuation_reignition_does_not_override_weak_participation():
     assert result["continuation_reignition"]["active"] is False
 
 
-def test_continuation_reignition_does_not_override_extension():
+def test_imcc_like_continuation_can_pass_at_1_73_percent_above_vwap():
     record = _base()
-    record["vwap_distance_pct"] = 1.8
-    record["strengthening_vwap_gate"]["distance_pct"] = 1.8
+    record["vwap_distance_pct"] = 1.73
+    record["strengthening_vwap_gate"]["distance_pct"] = 1.73
+    record["participation_surge_diagnostics"]["participation_score"] = 88.0
+    record["expansion_quality"] = 63.0
+    record["participation_surge_diagnostics"]["expansion_quality"] = 63.0
+    record["participation_surge_diagnostics"]["volume_acceleration"]["3m"] = 2.75
+    record["participation_surge_diagnostics"]["dollar_flow_acceleration"]["3m"] = 2.83
+    result = trigger_diagnostics(record)
+    assert result["checks"][1]["passed"] is True
+    assert result["continuation_reignition"]["active"] is True
+    assert result["passed"] is True
+
+
+def test_continuation_reignition_still_does_not_override_extension():
+    record = _base()
+    record["vwap_distance_pct"] = 2.1
+    record["strengthening_vwap_gate"]["distance_pct"] = 2.1
     result = trigger_diagnostics(record)
     assert result["checks"][1]["passed"] is False
     assert result["continuation_reignition"]["active"] is False
+    assert result["checks"][2]["passed"] is False
 
 
 def test_continuation_reignition_requires_multitimeframe_confirmation():
