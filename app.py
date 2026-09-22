@@ -219,6 +219,7 @@ from mide.gs496_static_session_backup import render_session_backup_controls
 from mide.gs510_compact_analysis_bundle import render_compact_analysis_bundle_controls
 from mide.gs516_visible_alert_audio_health import render_sidebar_audio_health
 from mide.gs498_mission_ranking_direction import mission_ranked_records
+from mide.gs528_canonical_entry_ready import canonical_candidate_status
 from mide.decision_engine import expansion_candidate_diagnostic
 memory_checkpoint("cache stores import", object_name="MemoryStore, FlightRecorder")
 from mide.memory_profile import compact_previous_record, profile as memory_profile, release_temporaries
@@ -1946,7 +1947,7 @@ def _run_live_pipeline(
                 {"decision_funnel": audit, "confluence_score": confluence,
                  "eligible": True,
                  "final_decision": "Attention Earned" if advanced else "Rejected",
-                 "candidate_status": item.get("candidate_status", "Entry Ready") if advanced else "Removed",
+                 "candidate_status": canonical_candidate_status(item) if advanced else "Removed",
                  "scanner_version": "Walter Architecture v1.0"},
             )
         state["pre_expansion_candidates"] = pre_expansion_candidate_diagnostics(
@@ -2133,8 +2134,8 @@ def _run_live_pipeline(
         "monitored": int(
             stage_trace.get("Participation Assessment", {}).get("output_count", 0) or 0
         ),
-        "entry_ready": int(
-            stage_trace.get("Expansion Assessment", {}).get("output_count", 0) or 0
+        "entry_ready": sum(
+            1 for item in ranked if item.get("qualified_for_entry") is True
         ),
         "snapshots_requested": state["scan_stage_counts"].get("snapshot_requests_sent", 0),
         "snapshots_received": state["scan_stage_counts"].get("snapshot_records_received", 0),
