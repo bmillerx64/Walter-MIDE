@@ -1,6 +1,9 @@
 # GS445 deployment marker: force one clean Streamlit Community Cloud runtime so
 # append-only Candidate History / Flight Recorder exports reuse incremental gzip state.
 # No dependency versions change in this deployment-only activation.
+# GS528 deployment marker: ENTRY READY is reserved for qualified_for_entry=True;
+# non-qualified records expose SETTING UP plus exact blockers.
+# No qualification, threshold, readiness, execution, or order changes.
 # GS527 deployment marker: surface fresh 30s bullish flips with exceptional
 # volume/dollar-flow acceleration as attention-only EARLY SURGE WATCH events.
 # No entry, qualification, readiness, anti-chase, retest, execution, or order changes.
