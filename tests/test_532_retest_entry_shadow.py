@@ -3,13 +3,22 @@ from mide.gs532_retest_entry_shadow import retest_entry_shadow
 
 def _record(**overrides):
     base = {
+        "price": 1.00,
         "vwap_distance_pct": 0.5,
         "participation_surge_diagnostics": {"participation_score": 67},
         "expansion_quality": 63,
         "vwap_relation": "above",
         "timeframes": {
-            "30s": {"available": True, "bullish": True, "above_vwap": True},
-            "1m": {"available": True, "bullish": True, "above_vwap": True},
+            "30s": {
+                "current_close": 1.00,
+                "supertrend": True,
+                "above_vwap": True,
+            },
+            "1m": {
+                "current_close": 1.00,
+                "current_supertrend_bullish": True,
+                "current_above_vwap": True,
+            },
         },
         "multitimeframe_maturation": {
             "three_minute_st_retest_event": {
@@ -45,7 +54,7 @@ def test_retest_shadow_requires_held_retest():
 
 def test_retest_shadow_requires_lower_tf_repair():
     record = _record()
-    record["timeframes"]["1m"]["above_vwap"] = False
+    record["timeframes"]["1m"]["current_above_vwap"] = False
     result = retest_entry_shadow(record)
     assert result["shadow_entry_ready"] is False
     assert "lower_timeframe_repair_complete" in result["failed_conditions"]
