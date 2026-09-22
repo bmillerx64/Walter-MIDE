@@ -1,3 +1,6 @@
+# GS525 deployment marker: expire stale 30s-derived Developing urgency after five
+# minutes unless fresh higher-timeframe maturation re-arms attention.
+# No discovery, ranking, readiness, anti-chase, retest, execution, or order change.
 # GS445 deployment marker: force one clean Streamlit Community Cloud runtime so
 # append-only Candidate History / Flight Recorder exports reuse incremental gzip state.
 # No dependency versions change in this deployment-only activation.
