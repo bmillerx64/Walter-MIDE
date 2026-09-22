@@ -1,6 +1,9 @@
 # GS445 deployment marker: force one clean Streamlit Community Cloud runtime so
 # append-only Candidate History / Flight Recorder exports reuse incremental gzip state.
 # No dependency versions change in this deployment-only activation.
+# GS532 deployment marker: observe a separate 3m-retest/lower-timeframe-repair
+# Entry Ready counterfactual without changing canonical entry authority.
+# Existing VWAP anti-chase, participation, expansion, readiness, and execution remain unchanged.
 # GS531 deployment marker: Flight Recorder preserves populated Scanner V2
 # participation/structure gate diagnostics; architecture audit is fallback-only.
 # No live qualification, ranking, readiness, execution, or order behavior changes.
