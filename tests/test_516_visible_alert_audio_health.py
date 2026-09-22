@@ -15,7 +15,7 @@ def test_visible_audio_health_exposes_stale_reload_state_and_direct_rearm():
     markup = alert_audio_health_markup()
     assert "AUDIO DISARMED AFTER RELOAD · RE-ARM" in markup
     assert "AUDIO NOT ARMED · RE-ARM" in markup
-    assert "AUDIO READY · TEST CONFIRMED" in markup
+    assert "AUDIO READY · TEST PLAYING" in markup
     assert "Re-arm / test" in markup
     assert "button.addEventListener('click', rearm)" in markup
     assert "ctx.resume" in markup
