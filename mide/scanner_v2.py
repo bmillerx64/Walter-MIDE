@@ -11,6 +11,7 @@ from mide.opportunity import enrich_opportunity
 from mide.quality_score import enrich_quality_score
 from mide.conviction import enrich_conviction
 from mide.early_setup import enrich_early_setups
+from mide.gs529_entry_ready_shadow_calibration import shadow_entry_calibration
 from mide.trader_priority import (
     sortable_number as _sortable_number,
     trader_priority_sort_key,
@@ -1801,6 +1802,12 @@ def apply_scanner_v2(
         # this result.  classify_state receives it via _trigger= to avoid a
         # second call with the same inputs.
         trigger = trigger_diagnostics(record, prior, scan_time)
+        # GS529 records a counterfactual only: would fresh ordered 1m/3m
+        # maturation satisfy the ST lock if all canonical non-ST locks and
+        # structure already pass? Live entry authority is unchanged.
+        entry_ready_shadow = shadow_entry_calibration(
+            record, trigger=trigger, structure_gate=structure_gate
+        )
 
         # Participation contributes explainable evidence; it never terminates
         # analysis or forces a rejection state.
@@ -1898,6 +1905,7 @@ def apply_scanner_v2(
                 "qualified_for_alert": alert_qualified,
                 "qualified_for_ranking": qualified_for_ranking,
                 "entry_blockers": entry_blockers,
+                "gs529_entry_ready_shadow": entry_ready_shadow,
                 "participation_gate": participation_gate,
                 "structure_gate": structure_gate,
                 "rejection_reason": None,
