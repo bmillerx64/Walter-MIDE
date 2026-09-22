@@ -193,6 +193,13 @@ def _install_gs527() -> None:
     install_gs527()
 
 
+def _install_gs528() -> None:
+    """Make Entry Ready a single canonical executable label."""
+    from .gs528_canonical_entry_ready import install as install_gs528
+
+    install_gs528()
+
+
 def final_enriched_opportunity_records(
     records: list[dict], *, actionable_function=None
 ) -> list[dict]:
@@ -248,6 +255,9 @@ def install() -> None:
     # GS527 is a bounded early-attention event for exceptional fresh 30s flow bursts.
     # It never promotes entry authority or relaxes confirmation requirements.
     _install_gs527()
+    # GS528 makes ENTRY READY mean qualified_for_entry=True and exposes blockers
+    # for everything else without changing any qualification predicate.
+    _install_gs528()
 
     current = ui.render_escalation_engine
     if getattr(current, FINAL_ORDER_OWNER_ATTR, False):
