@@ -179,6 +179,13 @@ def _install_gs525() -> None:
     install_gs525()
 
 
+def _install_gs526() -> None:
+    """Adjudicate materially 3m-stretched DEVELOPING presentation."""
+    from .gs526_3m_stretch_semantics import install as install_gs526
+
+    install_gs526()
+
+
 def final_enriched_opportunity_records(
     records: list[dict], *, actionable_function=None
 ) -> list[dict]:
@@ -228,6 +235,9 @@ def install() -> None:
     # GS525 is the final freshness adjudicator. It shortens only the 30s-derived
     # operator-attention lifetime and labels late standalone ignition truthfully.
     _install_gs525()
+    # GS526 resolves the remaining GELS-style contradiction where a VWAP-near row
+    # still says DEVELOPING despite being materially stretched from bullish 3m ST.
+    _install_gs526()
 
     current = ui.render_escalation_engine
     if getattr(current, FINAL_ORDER_OWNER_ATTR, False):
