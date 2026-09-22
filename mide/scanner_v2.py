@@ -211,7 +211,7 @@ def _continuation_reignition_st_pass(
         and surge_score >= 70
         and quality_available
         and expansion_quality >= 60
-        and TRIGGER_VWAP_FLOOR_PCT <= vwap_distance_pct <= 1.5
+        and TRIGGER_VWAP_FLOOR_PCT <= vwap_distance_pct <= 2.0
         and accel_3m >= 1.5
     )
     return passed, {
@@ -229,7 +229,7 @@ def _continuation_reignition_st_pass(
             "maximum_conflict_count": 0,
             "minimum_participation_surge_score": 70,
             "minimum_expansion_quality": 60,
-            "maximum_vwap_distance_pct": 1.5,
+            "maximum_vwap_distance_pct": 2.0,
             "minimum_three_minute_reacceleration": 1.5,
         },
         "authority": "SUPERTrend_TRIGGER_LOCK_ONLY",
