@@ -172,6 +172,13 @@ def _install_gs517() -> None:
     install_gs517()
 
 
+def _install_gs525() -> None:
+    """Expire stale 30s-derived operator urgency without losing the runner."""
+    from .gs525_fresh_attention_expiry import install as install_gs525
+
+    install_gs525()
+
+
 def final_enriched_opportunity_records(
     records: list[dict], *, actionable_function=None
 ) -> list[dict]:
@@ -218,6 +225,9 @@ def install() -> None:
     # GS517 is deliberately outside GS497: current bottom-up maturation is an event,
     # while Mission Rank remains the stable priority for every non-fresh peer.
     _install_gs517()
+    # GS525 is the final freshness adjudicator. It shortens only the 30s-derived
+    # operator-attention lifetime and labels late standalone ignition truthfully.
+    _install_gs525()
 
     current = ui.render_escalation_engine
     if getattr(current, FINAL_ORDER_OWNER_ATTR, False):
