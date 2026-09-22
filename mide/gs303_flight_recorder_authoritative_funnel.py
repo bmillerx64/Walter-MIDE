@@ -42,12 +42,20 @@ def recorder_records(records) -> list[dict]:
         copied = dict(record)
         audits = copied.get("architecture_audit")
         if isinstance(audits, (list, tuple)) and audits:
-            copied["participation_gate"] = _gate_from_audit(
-                _stage_audit(copied, "Participation Assessment")
-            )
-            copied["structure_gate"] = _gate_from_audit(
-                _stage_audit(copied, "Expansion Assessment")
-            )
+            # GS531: Scanner V2 is once again present in the live architecture
+            # (GS530). Preserve its explicit gate diagnostics when populated.
+            # Architecture-audit rehydration is now fallback-only for legacy or
+            # partially enriched records.
+            participation_gate = copied.get("participation_gate")
+            if not (isinstance(participation_gate, dict) and participation_gate):
+                copied["participation_gate"] = _gate_from_audit(
+                    _stage_audit(copied, "Participation Assessment")
+                )
+            structure_gate = copied.get("structure_gate")
+            if not (isinstance(structure_gate, dict) and structure_gate):
+                copied["structure_gate"] = _gate_from_audit(
+                    _stage_audit(copied, "Expansion Assessment")
+                )
             copied["qualified_for_ranking"] = bool(
                 str(copied.get("terminal_outcome") or "") == "Qualified and Ranked"
                 or copied.get("mission_rank") is not None
