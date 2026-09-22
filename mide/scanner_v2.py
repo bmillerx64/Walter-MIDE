@@ -183,6 +183,58 @@ def _trigger_st_age_seconds(
     )
 
 
+
+def _continuation_reignition_st_pass(
+    record: dict,
+    *,
+    surge_score: float,
+    expansion_quality: float,
+    quality_available: bool,
+    vwap_distance_pct: float,
+) -> tuple[bool, dict]:
+    """Bounded established-trend alternative to a fresh discrete ST flip."""
+    sequence = record.get("trend_confirmation_sequence") or {}
+    progression_count = int(sequence.get("progression_count") or 0)
+    conflict_count = int(sequence.get("conflict_count") or 0)
+    surge = record.get("participation_surge_diagnostics") or {}
+    volume_acceleration = surge.get("volume_acceleration") or {}
+    dollar_acceleration = surge.get("dollar_flow_acceleration") or {}
+    accel_3m = max(
+        float(volume_acceleration.get("3m") or 0),
+        float(dollar_acceleration.get("3m") or 0),
+    )
+    bullish = bool(record.get("supertrend_bullish"))
+    passed = bool(
+        bullish
+        and progression_count >= 3
+        and conflict_count == 0
+        and surge_score >= 70
+        and quality_available
+        and expansion_quality >= 60
+        and TRIGGER_VWAP_FLOOR_PCT <= vwap_distance_pct <= 1.5
+        and accel_3m >= 1.5
+    )
+    return passed, {
+        "active": passed,
+        "supertrend_bullish": bullish,
+        "progression_count": progression_count,
+        "conflict_count": conflict_count,
+        "participation_surge_score": round(float(surge_score), 2),
+        "expansion_quality": round(float(expansion_quality), 2)
+        if quality_available else None,
+        "vwap_distance_pct": round(float(vwap_distance_pct), 4),
+        "three_minute_reacceleration": round(float(accel_3m), 3),
+        "thresholds": {
+            "minimum_progression_count": 3,
+            "maximum_conflict_count": 0,
+            "minimum_participation_surge_score": 70,
+            "minimum_expansion_quality": 60,
+            "maximum_vwap_distance_pct": 1.5,
+            "minimum_three_minute_reacceleration": 1.5,
+        },
+        "authority": "SUPERTrend_TRIGGER_LOCK_ONLY",
+    }
+
 def trigger_diagnostics(
     record: dict, prior: dict | None = None, scan_time: datetime | None = None
 ) -> dict:
@@ -227,7 +279,9 @@ def trigger_diagnostics(
     distance = float(vwap.get("distance_pct", _num(record, "vwap_distance_pct")) or 0)
     st_age = _trigger_st_age_seconds(record, scan_time)
     fresh_st = bool(record.get("supertrend_30s_flip", record.get("supertrend_flip")))
-    st_passed = fresh_st and (st_age is None or st_age <= TRIGGER_ST_MAX_AGE_SECONDS)
+    fresh_st_passed = fresh_st and (
+        st_age is None or st_age <= TRIGGER_ST_MAX_AGE_SECONDS
+    )
     surge_score = float(surge.get("participation_score", 0) or 0)
 
     # Distinguish "data absent" from "data present but bad".  When expansion_quality
@@ -238,6 +292,15 @@ def trigger_diagnostics(
         raw_quality = surge.get("expansion_quality")
     quality_available = raw_quality is not None
     quality = float(raw_quality) if quality_available else 0.0
+
+    continuation_reignition, continuation_detail = _continuation_reignition_st_pass(
+        record,
+        surge_score=surge_score,
+        expansion_quality=quality,
+        quality_available=quality_available,
+        vwap_distance_pct=distance,
+    )
+    st_passed = bool(fresh_st_passed or continuation_reignition)
 
     vwap_floor = TRIGGER_VWAP_FLOOR_PCT
     surge_floor = TRIGGER_SURGE_MIN_SCORE
@@ -258,14 +321,27 @@ def trigger_diagnostics(
             "condition": "supertrend_flip",
             "passed": st_passed,
             "passed_reason": (
-                f"ST Flip {_format_seconds(st_age)} ago (Pass <{_format_seconds(max_st_age)})"
-                if st_age is not None
-                else "ST Flip detected (Age unavailable)"
+                (
+                    f"ST Flip {_format_seconds(st_age)} ago "
+                    f"(Pass <{_format_seconds(max_st_age)})"
+                    if st_age is not None
+                    else "ST Flip detected (Age unavailable)"
+                )
+                if fresh_st_passed
+                else (
+                    "Established ST continuation re-ignition: "
+                    f"{continuation_detail['progression_count']} TF confirmed, "
+                    f"participation {surge_score:.0f}, expansion {quality:.0f}, "
+                    f"3m re-accel {continuation_detail['three_minute_reacceleration']:.2f}x"
+                )
             ),
             "failed_reason": (
                 f"ST Flip {_format_seconds(st_age)} ago (Fail; max {_format_seconds(max_st_age)})"
                 if fresh_st and st_age is not None
-                else f"ST Flip not detected (Requires flip within {_format_seconds(max_st_age)})"
+                else (
+                    f"ST Flip not detected (Requires flip within {_format_seconds(max_st_age)}) "
+                    "or bounded continuation re-ignition"
+                )
             ),
         },
         {
@@ -302,6 +378,7 @@ def trigger_diagnostics(
             else [check["failed_reason"] for check in failed if check["failed_reason"]]
         ),
         "failed_conditions": [check["condition"] for check in failed],
+        "continuation_reignition": continuation_detail,
         "thresholds": {
             "st_max_age_seconds": max_st_age,
             "vwap_floor_pct": vwap_floor,
