@@ -1,6 +1,9 @@
 # GS445 deployment marker: force one clean Streamlit Community Cloud runtime so
 # append-only Candidate History / Flight Recorder exports reuse incremental gzip state.
 # No dependency versions change in this deployment-only activation.
+# GS533 deployment marker: allow a bounded established-trend continuation
+# re-ignition to satisfy only the SuperTrend trigger lock when fresh participation,
+# expansion, near-VWAP geometry, and 3m re-acceleration all agree.
 # GS532 deployment marker: observe a separate 3m-retest/lower-timeframe-repair
 # Entry Ready counterfactual without changing canonical entry authority.
 # Existing VWAP anti-chase, participation, expansion, readiness, and execution remain unchanged.
