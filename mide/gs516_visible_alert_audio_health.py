@@ -100,9 +100,9 @@ def alert_audio_health_markup() -> str:
 
       const testVoice = () => {
         try {
-          const synth = window.speechSynthesis || root.speechSynthesis;
+          const synth = root.speechSynthesis || window.speechSynthesis;
           const Utterance =
-            window.SpeechSynthesisUtterance || root.SpeechSynthesisUtterance;
+            root.SpeechSynthesisUtterance || window.SpeechSynthesisUtterance;
           if (!synth || !Utterance) return;
           const utterance = new Utterance('Walter alerts ready.');
           utterance.rate = 0.95;
@@ -132,16 +132,38 @@ def alert_audio_health_markup() -> str:
               paint('bad', 'AUDIO BLOCKED · CLICK AGAIN');
               return;
             }
-            const osc = ctx.createOscillator();
-            const gain = ctx.createGain();
-            gain.gain.value = 0.04;
-            osc.frequency.value = 660;
-            osc.connect(gain); gain.connect(ctx.destination);
-            osc.start();
-            osc.stop(ctx.currentTime + 0.10);
+            // GS524: the health control must prove an *audible* path, not merely
+            // a running AudioContext. Use a short two-strike bell at a practical
+            // level, in the same parent-window context used by GS367/GS504.
+            const strike = (start, frequency) => {
+              const osc = ctx.createOscillator();
+              const overtone = ctx.createOscillator();
+              const gain = ctx.createGain();
+              const overtoneGain = ctx.createGain();
+              osc.type = 'sine';
+              overtone.type = 'sine';
+              osc.frequency.setValueAtTime(frequency, start);
+              overtone.frequency.setValueAtTime(frequency * 1.5, start);
+              gain.gain.setValueAtTime(0.0001, start);
+              overtoneGain.gain.setValueAtTime(0.0001, start);
+              gain.gain.exponentialRampToValueAtTime(0.30, start + 0.015);
+              overtoneGain.gain.exponentialRampToValueAtTime(0.12, start + 0.015);
+              gain.gain.exponentialRampToValueAtTime(0.0001, start + 0.45);
+              overtoneGain.gain.exponentialRampToValueAtTime(0.0001, start + 0.45);
+              osc.connect(gain); gain.connect(ctx.destination);
+              overtone.connect(overtoneGain); overtoneGain.connect(ctx.destination);
+              osc.start(start); overtone.start(start);
+              osc.stop(start + 0.48); overtone.stop(start + 0.48);
+            };
+            const base = ctx.currentTime + 0.03;
+            strike(base, 523.25);
+            strike(base + 0.42, 783.99);
             markArmed();
             testVoice();
-            paint('ready', 'AUDIO READY · TEST CONFIRMED');
+            paint('ready', 'AUDIO READY · TEST PLAYING');
+            window.setTimeout(() => {
+              if (audioReady()) paint('ready', 'AUDIO READY');
+            }, 1800);
           };
           if (ctx.state === 'running') {
             play();
