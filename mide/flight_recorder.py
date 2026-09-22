@@ -348,6 +348,9 @@ class FlightRecorder:
                     if not c.get("passed")
                 ],
                 "trigger_diagnostics": trigger,
+                "gs529_entry_ready_shadow": (record or {}).get(
+                    "gs529_entry_ready_shadow"
+                ),
                 "opportunity_score": (record or {}).get("opportunity_score"),
                 "conviction_score": (record or {}).get(
                     "conviction_v2_score", (record or {}).get("conviction_score")
