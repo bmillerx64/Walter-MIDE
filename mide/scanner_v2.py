@@ -370,8 +370,15 @@ def trigger_diagnostics(
             else ("ordered_1m_3m_maturation" if sequential_st.get("passed") else None)
         ),
         "sequential_st_confirmation": sequential_st,
+        "supertrend_trigger_source": (
+            "discrete_flip"
+            if discrete_st_passed
+            else ("ordered_1m_3m_maturation" if sequential_st.get("passed") else None)
+        ),
+        "sequential_st_confirmation": sequential_st,
         "thresholds": {
             "st_max_age_seconds": max_st_age,
+            "sequential_st_max_age_seconds": 180,
             "sequential_st_max_age_seconds": 180,
             "vwap_floor_pct": vwap_floor,
             "surge_min_score": surge_floor,
