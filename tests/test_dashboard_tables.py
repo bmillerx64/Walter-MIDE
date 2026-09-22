@@ -521,13 +521,16 @@ def test_mission_control_header_tells_the_complete_funnel_story():
             "free_float_actual_failures": 33,
             "stage_3_analysis": 14,
             "monitored": 3,
+            "expansion": 3,
+            "candidates": 3,
             "entry_ready": 1,
         },
     )
 
     assert (
         "Universe: 737 → Price Gate: 184 → Validity Gate: 712 → Free-Float Gate: 14 "
-        "→ Catalyst Assessment: 14 → Participation Assessment: 3 → Expansion Assessment: 1"
+        "→ Catalyst Assessment: 14 → Participation Assessment: 3 → Expansion Assessment: 3 "
+        "→ Mission Ranking: 3 → Entry Ready: 1"
         " · Free-Float diagnostics: 184 evaluated · 14 passed · 170 failed · "
         "Lookup failures: 137 · Actual failures: 33"
     ) in markup

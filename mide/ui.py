@@ -525,8 +525,9 @@ def mission_control_header_markup(
             ("free_float", "Free-Float Gate"),
             ("stage_3_analysis", "Catalyst Assessment"),
             ("monitored", "Participation Assessment"),
-            ("entry_ready", "Expansion Assessment"),
+            ("expansion", "Expansion Assessment"),
             ("candidates", "Mission Ranking"),
+            ("entry_ready", "Entry Ready"),
         )
         architecture_flow = " → ".join(
             f"{label}: {int(funnel_counts[key])}"
