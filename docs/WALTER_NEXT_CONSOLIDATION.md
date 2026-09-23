@@ -206,3 +206,23 @@ acceleration >=1.25, and <=5% reclaimed VWAP distance for re-ignition.
 Because GS477's audio installer causes Presentation + Audio to load during startup,
 that authority's legacy UI delegates are now dynamic rather than frozen imports. This
 prevents consolidation from bypassing later validated UI wrappers.
+
+
+## Phase 10: authority hot-reload safety
+
+The six-component architecture must not freeze replaceable legacy callables merely
+because an authority module happened to import during package startup or a Streamlit
+warm rerun.
+
+This phase makes the remaining facade-style calls in **Discovery + News**,
+**Entry Authority**, and **Replay / Validation** resolve their current validated
+implementation at call time. Stable provider/recorder/store classes remain direct
+imports.
+
+Together with the dynamic delegates already added to Market Evidence and
+Presentation + Audio, this removes a class of stale-reference hazards where a later
+compatibility installer could correctly replace a legacy function while an authority
+continued calling an older captured copy.
+
+No strategy semantics, thresholds, provider requests, indicator formulas, scoring,
+ranking, qualification, Entry Ready meaning, alerts, execution, or orders change.

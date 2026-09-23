@@ -56,7 +56,7 @@ def test_app_uses_authority_seams_for_migrated_meaning_imports():
 
 
 def test_phase_one_facades_delegate_to_validated_implementations(monkeypatch):
-    from mide import decision_engine, discovery, flight_recorder, news, scanner_v2, ui
+    from mide import data_integrity, decision_engine, discovery, flight_recorder, news, scanner_v2, ui
     from mide.authorities import (
         discovery_news,
         entry_authority,
@@ -68,8 +68,13 @@ def test_phase_one_facades_delegate_to_validated_implementations(monkeypatch):
     from mide.gs498_mission_ranking_direction import mission_ranked_records
     from mide.gs528_canonical_entry_ready import canonical_candidate_status
 
-    assert discovery_news.build_seed_symbols is discovery.build_seed_symbols
-    assert discovery_news.index_news is news.index_news
+    seed_sentinel = lambda *args, **kwargs: ("seed", args, kwargs)
+    news_sentinel = lambda *args, **kwargs: ("news", args, kwargs)
+    monkeypatch.setattr(discovery, "build_seed_symbols", seed_sentinel)
+    monkeypatch.setattr(news, "index_news", news_sentinel)
+    assert discovery_news.build_seed_symbols("seed") == ("seed", ("seed",), {})
+    assert discovery_news.index_news("headline") == ("news", ("headline",), {})
+
     discovery_sentinel = lambda *args, **kwargs: ("discovery", args, kwargs)
     scanner_sentinel = lambda *args, **kwargs: ("scanner", args, kwargs)
     monkeypatch.setattr(discovery, "analyze_candidates", discovery_sentinel)
@@ -83,9 +88,19 @@ def test_phase_one_facades_delegate_to_validated_implementations(monkeypatch):
     assert thesis_state.evaluate is decision_engine.evaluate
     assert thesis_state.mission_ranked_records is mission_ranked_records
     assert entry_authority.canonical_candidate_status is canonical_candidate_status
+    trigger_sentinel = lambda *args, **kwargs: ("trigger", args, kwargs)
+    monkeypatch.setattr(scanner_v2, "trigger_diagnostics", trigger_sentinel)
+    assert entry_authority.trigger_diagnostics("entry") == ("trigger", ("entry",), {})
+
     presentation_sentinel = lambda *args, **kwargs: ("presentation", args, kwargs)
     monkeypatch.setattr(ui, "actionable_candidate_records", presentation_sentinel)
     assert presentation_audio.actionable_candidate_records("z", flag=True) == (
         "presentation", ("z",), {"flag": True}
     )
     assert replay_validation.FlightRecorder is flight_recorder.FlightRecorder
+    prefilter_sentinel = lambda *args, **kwargs: ("prefilter", args, kwargs)
+    integrity_sentinel = lambda *args, **kwargs: ("integrity", args, kwargs)
+    monkeypatch.setattr(flight_recorder, "prefilter_decision", prefilter_sentinel)
+    monkeypatch.setattr(data_integrity, "scan_integrity_report", integrity_sentinel)
+    assert replay_validation.prefilter_decision("row") == ("prefilter", ("row",), {})
+    assert replay_validation.scan_integrity_report("scan") == ("integrity", ("scan",), {})
