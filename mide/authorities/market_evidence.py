@@ -5,7 +5,10 @@ During Phase 1 it delegates to the current validated analyzers without changing
 thresholds, formulas, ordering, or evidence semantics.
 """
 
+from copy import deepcopy
+from dataclasses import dataclass
 from functools import wraps
+from time import monotonic
 from typing import Any
 
 import pandas as pd
@@ -337,8 +340,323 @@ def install_retest_event_memory() -> None:
         three_minute_st_retest_truth = truth_with_memory
 
 
+PROVEN_LEADER_EXTENSION_PCT = 5.0
+NEAR_VWAP_WINDOW_PCT = 2.0
+LEADER_MEMORY_TTL_SECONDS = 90 * 60.0
+MIN_LEADER_PARTICIPATION = 20.0
+MIN_LEADER_VOLUME_ACCELERATION = 1.0
+MIN_LEADER_DOLLAR_FLOW_ACCELERATION = 1.25
+MAX_REIGNITION_VWAP_DISTANCE_PCT = 5.0
+
+RESET_WATCH = "RESET_WATCH"
+REIGNITION = "REIGNITION"
+THREE_MINUTE_CONFIRMATION = "THREE_MINUTE_CONFIRMATION"
+LEADER_RESET_AUTHORITY = "OPERATOR_ATTENTION_ONLY"
+
+
+@dataclass
+class LeaderMemory:
+    extended_at: float
+    last_seen_at: float
+    max_vwap_distance_pct: float
+    peak_pct_change: float | None
+    extension_price: float | None
+    stage: str = "NONE"
+    transition_marker: str | None = None
+
+
+_leader_memory: dict[str, LeaderMemory] = {}
+
+
+def _leader_number(value: Any) -> float | None:
+    try:
+        return float(value) if value is not None and value != "" else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _leader_decision(record: dict) -> dict:
+    value = record.get("decision_time_evidence") or {}
+    return value if isinstance(value, dict) else {}
+
+
+def _leader_field(record: dict, key: str, default=None):
+    if key in record and record.get(key) is not None:
+        return record.get(key)
+    return _leader_decision(record).get(key, default)
+
+
+def _leader_timeframes(record: dict) -> dict:
+    value = _leader_field(record, "timeframes", {})
+    return value if isinstance(value, dict) else {}
+
+
+def _leader_tf(record: dict, label: str) -> dict:
+    detail = _leader_timeframes(record).get(label) or {}
+    if not isinstance(detail, dict):
+        return {"bullish": False, "above_vwap": False, "available": False}
+    bullish = bool(
+        detail.get("current_supertrend_bullish")
+        if "current_supertrend_bullish" in detail
+        else detail.get("supertrend_bullish", detail.get("supertrend"))
+    )
+    above = bool(
+        detail.get("current_above_vwap")
+        if "current_above_vwap" in detail
+        else detail.get("above_vwap")
+    )
+    return {
+        "bullish": bullish,
+        "above_vwap": above,
+        "available": detail.get("data_available") is not False and bool(detail),
+    }
+
+
+def _current_webull_mover(record: dict) -> bool:
+    reasons = " | ".join(
+        str(value or "")
+        for value in _leader_field(record, "discovery_reasons", []) or []
+    )
+    return bool(
+        "Webull native: day_gainers" in reasons
+        or "Webull native: five_minute_movers" in reasons
+    )
+
+
+def _leader_fresh_source(record: dict) -> bool:
+    from mide.gs373_operator_visibility_freshness import MAX_OPERATOR_BAR_AGE_SECONDS
+
+    age = _leader_number(
+        _leader_field(
+            record,
+            "source_bar_age_seconds",
+            _leader_field(record, "source_bar_age", _leader_field(record, "bar_age_seconds")),
+        )
+    )
+    return age is not None and 0.0 <= age <= MAX_OPERATOR_BAR_AGE_SECONDS
+
+
+def _leader_supporting_flow(record: dict) -> tuple[bool, float, float, float]:
+    participation = _leader_number(
+        _leader_field(
+            record,
+            "participation_score",
+            _leader_field(record, "participation_surge_score", 0.0),
+        )
+    ) or 0.0
+    volume_acceleration = _leader_number(
+        _leader_field(record, "volume_acceleration", 0.0)
+    ) or 0.0
+    dollar_flow = _leader_number(
+        _leader_field(
+            record,
+            "dollar_flow_acceleration_1m",
+            _leader_field(record, "dollar_flow_acceleration", 0.0),
+        )
+    ) or 0.0
+    active = bool(
+        participation >= MIN_LEADER_PARTICIPATION
+        and (
+            volume_acceleration >= MIN_LEADER_VOLUME_ACCELERATION
+            or dollar_flow >= MIN_LEADER_DOLLAR_FLOW_ACCELERATION
+        )
+    )
+    return active, participation, volume_acceleration, dollar_flow
+
+
+def _leader_marker(record: dict) -> str:
+    stamp = str(
+        _leader_field(
+            record,
+            "source_bar_timestamp",
+            _leader_field(record, "last_bar_timestamp", _leader_field(record, "bar_timestamp", "")),
+        )
+        or ""
+    )
+    price = _leader_number(_leader_field(record, "price"))
+    return f"{stamp}|{price if price is not None else ''}"
+
+
+def _remember_leader_extension(record: dict, now: float) -> LeaderMemory | None:
+    symbol = str(
+        record.get("symbol") or _leader_decision(record).get("symbol") or ""
+    ).strip().upper()
+    if not symbol:
+        return None
+
+    current = _leader_memory.get(symbol)
+    distance = _leader_number(_leader_field(record, "vwap_distance_pct"))
+    if (
+        distance is not None
+        and distance >= PROVEN_LEADER_EXTENSION_PCT
+        and _current_webull_mover(record)
+        and _leader_fresh_source(record)
+    ):
+        pct_change = _leader_number(_leader_field(record, "pct_change"))
+        price = _leader_number(_leader_field(record, "price"))
+        if current is None:
+            current = LeaderMemory(
+                extended_at=now,
+                last_seen_at=now,
+                max_vwap_distance_pct=distance,
+                peak_pct_change=pct_change,
+                extension_price=price,
+            )
+        else:
+            current.extended_at = now
+            current.last_seen_at = now
+            current.max_vwap_distance_pct = max(current.max_vwap_distance_pct, distance)
+            if pct_change is not None:
+                current.peak_pct_change = max(current.peak_pct_change or pct_change, pct_change)
+            current.extension_price = price or current.extension_price
+        _leader_memory[symbol] = current
+    elif current is not None:
+        current.last_seen_at = now
+    return current
+
+
+def leader_reset_evidence(
+    record: dict,
+    memory: LeaderMemory | None,
+    *,
+    now: float,
+) -> dict:
+    """Return bounded proven-leader reset/re-ignition evidence."""
+    distance = _leader_number(_leader_field(record, "vwap_distance_pct"))
+    thirty = _leader_tf(record, "30s")
+    one = _leader_tf(record, "1m")
+    three = _leader_tf(record, "3m")
+    flow, participation, volume_acceleration, dollar_flow = _leader_supporting_flow(record)
+    memory_age = (now - memory.extended_at) if memory is not None else None
+    memory_fresh = bool(
+        memory is not None
+        and memory_age is not None
+        and 0.0 <= memory_age <= LEADER_MEMORY_TTL_SECONDS
+    )
+    near_vwap = bool(distance is not None and abs(distance) <= NEAR_VWAP_WINDOW_PCT)
+    current_mover = _current_webull_mover(record)
+    fresh_source = _leader_fresh_source(record)
+
+    reset_watch = bool(
+        memory_fresh
+        and near_vwap
+        and thirty.get("bullish")
+        and thirty.get("above_vwap")
+        and one.get("bullish")
+        and flow
+        and current_mover
+        and fresh_source
+    )
+    reclaimed = bool(
+        distance is not None and 0.0 <= distance <= MAX_REIGNITION_VWAP_DISTANCE_PCT
+    )
+    reignition = bool(reset_watch and reclaimed and one.get("above_vwap"))
+    three_confirmed = bool(
+        reignition and three.get("bullish") and three.get("above_vwap")
+    )
+    stage = (
+        THREE_MINUTE_CONFIRMATION
+        if three_confirmed
+        else REIGNITION
+        if reignition
+        else RESET_WATCH
+        if reset_watch
+        else "NONE"
+    )
+
+    marker = _leader_marker(record)
+    stage_fresh = False
+    if memory is not None:
+        if stage == "NONE":
+            memory.stage = "NONE"
+            memory.transition_marker = None
+        elif stage != memory.stage:
+            memory.stage = stage
+            memory.transition_marker = marker
+            stage_fresh = True
+        elif memory.transition_marker == marker:
+            stage_fresh = True
+
+    return {
+        "active": stage != "NONE",
+        "stage": stage,
+        "stage_fresh": stage_fresh,
+        "authority": LEADER_RESET_AUTHORITY,
+        "entry_authority_changed": False,
+        "alert_authority_changed": False,
+        "memory_age_seconds": round(memory_age, 1) if memory_age is not None else None,
+        "memory_ttl_seconds": LEADER_MEMORY_TTL_SECONDS,
+        "prior_max_vwap_distance_pct": (
+            round(memory.max_vwap_distance_pct, 3) if memory is not None else None
+        ),
+        "prior_peak_pct_change": memory.peak_pct_change if memory is not None else None,
+        "current_vwap_distance_pct": distance,
+        "near_vwap": near_vwap,
+        "vwap_reclaimed": reclaimed,
+        "thirty_second_bullish": bool(thirty.get("bullish")),
+        "thirty_second_above_vwap": bool(thirty.get("above_vwap")),
+        "one_minute_bullish": bool(one.get("bullish")),
+        "one_minute_above_vwap": bool(one.get("above_vwap")),
+        "three_minute_bullish": bool(three.get("bullish")),
+        "three_minute_above_vwap": bool(three.get("above_vwap")),
+        "participation_score": round(participation, 1),
+        "volume_acceleration": round(volume_acceleration, 2),
+        "dollar_flow_acceleration": round(dollar_flow, 2),
+        "supporting_flow": flow,
+        "current_webull_mover": current_mover,
+        "fresh_source": fresh_source,
+    }
+
+
+def apply_leader_reset_marks(
+    records: list[dict],
+    *,
+    now: float | None = None,
+) -> list[dict]:
+    """Attach bounded leader-reset evidence without mutating scanner records."""
+    now = monotonic() if now is None else now
+    output: list[dict] = []
+
+    for record in records or []:
+        memory = _remember_leader_extension(record, now)
+        evidence = leader_reset_evidence(record, memory, now=now)
+        if evidence.get("active"):
+            row = deepcopy(record)
+            row["leader_reset_reignition"] = evidence
+            output.append(row)
+        else:
+            output.append(record)
+
+    stale = [
+        symbol
+        for symbol, memory in _leader_memory.items()
+        if now - memory.extended_at > LEADER_MEMORY_TTL_SECONDS
+    ]
+    for symbol in stale:
+        _leader_memory.pop(symbol, None)
+    return output
+
+
+def reset_leader_memory() -> None:
+    _leader_memory.clear()
+
+
 __all__ = [
     "analyze_candidates",
+    "reset_leader_memory",
+    "apply_leader_reset_marks",
+    "leader_reset_evidence",
+    "LeaderMemory",
+    "THREE_MINUTE_CONFIRMATION",
+    "REIGNITION",
+    "RESET_WATCH",
+    "MAX_REIGNITION_VWAP_DISTANCE_PCT",
+    "MIN_LEADER_DOLLAR_FLOW_ACCELERATION",
+    "MIN_LEADER_VOLUME_ACCELERATION",
+    "MIN_LEADER_PARTICIPATION",
+    "LEADER_MEMORY_TTL_SECONDS",
+    "NEAR_VWAP_WINDOW_PCT",
+    "PROVEN_LEADER_EXTENSION_PCT",
     "install_retest_event_memory",
     "memory_adjusted_retest_truth",
     "retest_event_from_record",

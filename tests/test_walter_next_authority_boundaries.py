@@ -83,5 +83,9 @@ def test_phase_one_facades_delegate_to_validated_implementations(monkeypatch):
     assert thesis_state.evaluate is decision_engine.evaluate
     assert thesis_state.mission_ranked_records is mission_ranked_records
     assert entry_authority.canonical_candidate_status is canonical_candidate_status
-    assert presentation_audio.actionable_candidate_records is ui.actionable_candidate_records
+    presentation_sentinel = lambda *args, **kwargs: ("presentation", args, kwargs)
+    monkeypatch.setattr(ui, "actionable_candidate_records", presentation_sentinel)
+    assert presentation_audio.actionable_candidate_records("z", flag=True) == (
+        "presentation", ("z",), {"flag": True}
+    )
     assert replay_validation.FlightRecorder is flight_recorder.FlightRecorder
