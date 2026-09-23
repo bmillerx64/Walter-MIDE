@@ -1,6 +1,9 @@
 # GS445 deployment marker: force one clean Streamlit Community Cloud runtime so
 # append-only Candidate History / Flight Recorder exports reuse incremental gzip state.
 # No dependency versions change in this deployment-only activation.
+# GS538 deployment marker: keep the final Opportunity State card renderer bound
+# to the current canonical operator sorter so WATCH FOR ENTRY cannot be displaced by
+# stale nested CHASE / WAIT ordering. Presentation only; trading authority unchanged.
 # GS537 deployment marker: use Webull PRE_MARKET gainers during the premarket
 # session so Walter discovers the same early leaders shown in Desktop Top Gainers.
 # Downstream price, float, participation, expansion, ranking, readiness, and execution stay unchanged.
