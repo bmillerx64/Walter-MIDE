@@ -55,7 +55,7 @@ def test_app_uses_authority_seams_for_migrated_meaning_imports():
     assert imported_from.isdisjoint(forbidden)
 
 
-def test_phase_one_facades_delegate_to_validated_implementations():
+def test_phase_one_facades_delegate_to_validated_implementations(monkeypatch):
     from mide import decision_engine, discovery, flight_recorder, news, scanner_v2, ui
     from mide.authorities import (
         discovery_news,
@@ -70,8 +70,16 @@ def test_phase_one_facades_delegate_to_validated_implementations():
 
     assert discovery_news.build_seed_symbols is discovery.build_seed_symbols
     assert discovery_news.index_news is news.index_news
-    assert market_evidence.analyze_candidates is discovery.analyze_candidates
-    assert market_evidence.apply_scanner_v2 is scanner_v2.apply_scanner_v2
+    discovery_sentinel = lambda *args, **kwargs: ("discovery", args, kwargs)
+    scanner_sentinel = lambda *args, **kwargs: ("scanner", args, kwargs)
+    monkeypatch.setattr(discovery, "analyze_candidates", discovery_sentinel)
+    monkeypatch.setattr(scanner_v2, "apply_scanner_v2", scanner_sentinel)
+    assert market_evidence.analyze_candidates("x", flag=True) == (
+        "discovery", ("x",), {"flag": True}
+    )
+    assert market_evidence.apply_scanner_v2("y", flag=False) == (
+        "scanner", ("y",), {"flag": False}
+    )
     assert thesis_state.evaluate is decision_engine.evaluate
     assert thesis_state.mission_ranked_records is mission_ranked_records
     assert entry_authority.canonical_candidate_status is canonical_candidate_status
