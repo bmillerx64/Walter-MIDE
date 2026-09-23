@@ -200,6 +200,13 @@ def _install_gs528() -> None:
     install_gs528()
 
 
+def _install_gs539() -> None:
+    """Make visible card order follow Participation/Expansion strength."""
+    from .gs539_pe_strength_order import install as install_gs539
+
+    install_gs539()
+
+
 def final_enriched_opportunity_records(
     records: list[dict], *, actionable_function=None
 ) -> list[dict]:
@@ -258,38 +265,49 @@ def install() -> None:
     # GS528 makes ENTRY READY mean qualified_for_entry=True and exposes blockers
     # for everything else without changing any qualification predicate.
     _install_gs528()
+    # GS539 is deliberately last: the user-facing card stack now follows the two
+    # visible strength numbers (Participation + Expansion) rather than hidden state
+    # or Mission Rank precedence. ENTRY READY and HALTED keep their safety priority.
+    _install_gs539()
 
-    current = ui.render_escalation_engine
-    if getattr(current, FINAL_ORDER_OWNER_ATTR, False):
-        # This is proof that the actual outer renderer is GS414/GS436. An inherited
-        # ``_gs414...`` marker alone is intentionally not sufficient.
-        _install_gs419()
-        return
+    def bind_final_order(attr: str, *, show_legend: bool = False) -> None:
+        current = getattr(ui, attr)
+        if getattr(current, FINAL_ORDER_OWNER_ATTR, False):
+            return
 
-    def render_with_final_enriched_order(records: list[dict]) -> None:
-        public_actionable = ui.actionable_candidate_records
-        ordered = final_enriched_opportunity_records(
-            records,
-            actionable_function=public_actionable,
-        )
+        def render_with_final_enriched_order(records: list[dict]) -> None:
+            public_actionable = ui.actionable_candidate_records
+            ordered = final_enriched_opportunity_records(
+                records,
+                actionable_function=public_actionable,
+            )
 
-        # Every nested Opportunity State wrapper must see the same already-enriched,
-        # already-ordered snapshot. The public callable is restored immediately after
-        # rendering so no scanner, alert, mission, or later dashboard path is changed.
-        def frozen_actionable(_records: list[dict]) -> list[dict]:
-            return list(ordered)
+            # GS332 routes the live Opportunity State cards through
+            # render_walter_mission_control. Freeze both public render paths so a
+            # nested legacy renderer cannot reintroduce an older card order.
+            def frozen_actionable(_records: list[dict]) -> list[dict]:
+                return list(ordered)
 
-        _inherit(frozen_actionable, public_actionable)
-        ui.actionable_candidate_records = frozen_actionable
-        try:
-            return current(list(ordered))
-        finally:
-            ui.actionable_candidate_records = public_actionable
+            _inherit(frozen_actionable, public_actionable)
+            ui.actionable_candidate_records = frozen_actionable
+            try:
+                if show_legend:
+                    ui.st.caption(
+                        "Order: P/E Strength (Participation + Expansion) descending. "
+                        "Color = structural state, not score."
+                    )
+                return current(list(ordered))
+            finally:
+                ui.actionable_candidate_records = public_actionable
 
-    _inherit(render_with_final_enriched_order, current)
-    render_with_final_enriched_order._gs414_final_enriched_opportunity_order = True
-    render_with_final_enriched_order._gs436_final_render_hard_bind = True
-    render_with_final_enriched_order._gs414_original = current
-    setattr(render_with_final_enriched_order, FINAL_ORDER_OWNER_ATTR, True)
-    ui.render_escalation_engine = render_with_final_enriched_order
+        _inherit(render_with_final_enriched_order, current)
+        render_with_final_enriched_order._gs414_final_enriched_opportunity_order = True
+        render_with_final_enriched_order._gs436_final_render_hard_bind = True
+        render_with_final_enriched_order._gs539_live_path_hard_bind = True
+        render_with_final_enriched_order._gs414_original = current
+        setattr(render_with_final_enriched_order, FINAL_ORDER_OWNER_ATTR, True)
+        setattr(ui, attr, render_with_final_enriched_order)
+
+    bind_final_order("render_escalation_engine")
+    bind_final_order("render_walter_mission_control", show_legend=True)
     _install_gs419()

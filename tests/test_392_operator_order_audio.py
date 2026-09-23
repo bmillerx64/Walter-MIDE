@@ -67,7 +67,10 @@ def test_gs392_rewraps_renderer_even_when_old_order_marker_was_inherited(monkeyp
         ]
     )
 
-    assert seen["symbols"] == ["WATCH", "LOOK", "DEV", "CHASE"]
+    # GS539 makes the visible card stack follow P/E Strength after WATCH/ENTRY
+    # safety semantics. WATCH and CHASE both score 85 here, so the prior canonical
+    # tie order keeps WATCH first; the stronger CHASE then precedes 20/20 LOOK/DEV.
+    assert seen["symbols"] == ["WATCH", "CHASE", "LOOK", "DEV"]
     assert getattr(ui.render_escalation_engine, "_gs392_final_operator_order", False)
 
 
