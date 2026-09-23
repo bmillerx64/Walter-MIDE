@@ -2,6 +2,7 @@ from pathlib import Path
 
 from mide import gs310_unified_opportunity_state as unified
 from mide import gs467_look_now_semantic_consolidation as gs467
+from mide.authorities import thesis_state
 
 
 def _look(reason: str):
@@ -23,7 +24,7 @@ def _weak_urgency(*, early=False, jet=False, compression=False):
 
 
 def test_fngr_shape_standalone_1m_ignition_is_developing_not_look_now(monkeypatch):
-    monkeypatch.setattr(gs467, "bottom_up_urgency", lambda _record: _weak_urgency())
+    monkeypatch.setattr(thesis_state, "bottom_up_urgency", lambda _record: _weak_urgency())
     view = gs467.consolidated_look_now(
         lambda _record: _look(
             "1m ignition: price freshly reclaimed/held VWAP while 1m SuperTrend is bullish."
@@ -37,7 +38,7 @@ def test_fngr_shape_standalone_1m_ignition_is_developing_not_look_now(monkeypatc
 
 
 def test_fresh_event_attention_contract_is_preserved(monkeypatch):
-    monkeypatch.setattr(gs467, "bottom_up_urgency", lambda _record: _weak_urgency())
+    monkeypatch.setattr(thesis_state, "bottom_up_urgency", lambda _record: _weak_urgency())
     original = _look(
         "A current attention trigger says this symbol deserves a chart review."
     )
@@ -91,7 +92,7 @@ def test_30s_1m_flip_compression_may_retain_existing_look_now(monkeypatch):
 
 
 def test_specific_structural_look_now_reasons_are_untouched(monkeypatch):
-    monkeypatch.setattr(gs467, "bottom_up_urgency", lambda _record: _weak_urgency())
+    monkeypatch.setattr(thesis_state, "bottom_up_urgency", lambda _record: _weak_urgency())
     reasons = (
         "Reset/retest: a current Webull mover returned to the near-VWAP window.",
         "Consolidation re-arm: 1m SuperTrend flipped bullish after a compressed reset.",
@@ -104,7 +105,7 @@ def test_specific_structural_look_now_reasons_are_untouched(monkeypatch):
 
 
 def test_non_look_now_states_are_never_changed(monkeypatch):
-    monkeypatch.setattr(gs467, "bottom_up_urgency", lambda _record: _weak_urgency())
+    monkeypatch.setattr(thesis_state, "bottom_up_urgency", lambda _record: _weak_urgency())
     for state in (unified.WATCH_FOR_ENTRY, unified.DEVELOPING, unified.CHASE_WAIT, unified.HALTED):
         original = {"state": state, "reason": "test"}
         assert gs467.consolidated_look_now(lambda _record, item=original: item, {}) is original
