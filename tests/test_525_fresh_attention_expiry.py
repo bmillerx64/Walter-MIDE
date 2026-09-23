@@ -1,4 +1,5 @@
 from mide import gs525_fresh_attention_expiry as gs525
+from mide.authorities import thesis_state
 
 
 def _view():
@@ -17,7 +18,7 @@ def _view():
 
 def test_stale_legacy_developing_gets_late_continuation_language(monkeypatch):
     record = {"supertrend_30s_last_flip_age_seconds": 13 * 60}
-    monkeypatch.setattr(gs525, "fresh_higher_maturation", lambda _record: False)
+    monkeypatch.setattr(thesis_state, "fresh_higher_maturation", lambda _record: False)
 
     result = gs525.tightened_opportunity_state(lambda _record: _view(), record)
 
@@ -29,7 +30,7 @@ def test_stale_legacy_developing_gets_late_continuation_language(monkeypatch):
 
 def test_five_minute_or_fresher_ignition_keeps_existing_semantics(monkeypatch):
     record = {"supertrend_30s_last_flip_age_seconds": 4 * 60}
-    monkeypatch.setattr(gs525, "fresh_higher_maturation", lambda _record: False)
+    monkeypatch.setattr(thesis_state, "fresh_higher_maturation", lambda _record: False)
 
     result = gs525.tightened_opportunity_state(lambda _record: _view(), record)
 
@@ -38,7 +39,7 @@ def test_five_minute_or_fresher_ignition_keeps_existing_semantics(monkeypatch):
 
 def test_fresh_higher_maturation_rearms_old_runner(monkeypatch):
     record = {"supertrend_30s_last_flip_age_seconds": 13 * 60}
-    monkeypatch.setattr(gs525, "fresh_higher_maturation", lambda _record: True)
+    monkeypatch.setattr(thesis_state, "fresh_higher_maturation", lambda _record: True)
 
     result = gs525.tightened_opportunity_state(lambda _record: _view(), record)
 
@@ -49,7 +50,7 @@ def test_non_legacy_developing_is_untouched(monkeypatch):
     record = {"supertrend_30s_last_flip_age_seconds": 13 * 60}
     view = _view()
     view["look_now_semantics"]["legacy_1m_ignition_demoted"] = False
-    monkeypatch.setattr(gs525, "fresh_higher_maturation", lambda _record: False)
+    monkeypatch.setattr(thesis_state, "fresh_higher_maturation", lambda _record: False)
 
     result = gs525.tightened_opportunity_state(lambda _record: view, record)
 
