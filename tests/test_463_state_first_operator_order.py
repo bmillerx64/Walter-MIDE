@@ -99,7 +99,7 @@ def test_gs463_is_reasserted_outside_gs462_at_final_presentation_boundary():
 
 
 def test_gs463_scope_lock_is_presentation_order_only():
-    source = Path("mide/gs463_state_first_operator_order.py").read_text(encoding="utf-8")
+    source = Path("mide/authorities/presentation_audio.py").read_text(encoding="utf-8")
     forbidden = (
         "qualified_for_entry =",
         "qualified_for_alert =",

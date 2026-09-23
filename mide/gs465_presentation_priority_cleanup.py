@@ -34,74 +34,33 @@ from __future__ import annotations
 
 from functools import wraps
 
+from .authorities import presentation_audio as _presentation
+
 _ORDER_OWNER_ATTR = "_walter_gs465_state_contiguous_order_owner"
 _EXTREME_OWNER_ATTR = "_walter_gs465_extreme_semantics_owner"
 _EXTREME_SELECTION_OWNER_ATTR = "_walter_gs465_extreme_selection_continuity_owner"
 
-WATCH_FOR_ENTRY_BAND = 60
-LOOK_NOW_BAND = 50
-DEVELOPING_BAND = 40
-CHASE_WAIT_BAND = 30
-HALTED_BAND = 20
-OTHER_BAND = 10
+WATCH_FOR_ENTRY_BAND = _presentation.CONTIGUOUS_WATCH_FOR_ENTRY_BAND
+LOOK_NOW_BAND = _presentation.CONTIGUOUS_LOOK_NOW_BAND
+DEVELOPING_BAND = _presentation.CONTIGUOUS_DEVELOPING_BAND
+CHASE_WAIT_BAND = _presentation.CONTIGUOUS_CHASE_WAIT_BAND
+HALTED_BAND = _presentation.CONTIGUOUS_HALTED_BAND
+OTHER_BAND = _presentation.CONTIGUOUS_OTHER_BAND
 
 
 def strict_state_band(record: dict) -> int:
-    """Return the non-negotiable visible card-state band."""
-    from . import gs310_unified_opportunity_state as unified
-
-    state = str(unified.opportunity_state(record).get("state") or "")
-    if state == unified.WATCH_FOR_ENTRY:
-        return WATCH_FOR_ENTRY_BAND
-    if state == unified.LOOK_NOW:
-        return LOOK_NOW_BAND
-    if state == unified.DEVELOPING:
-        return DEVELOPING_BAND
-    if state == unified.CHASE_WAIT:
-        return CHASE_WAIT_BAND
-    if state == unified.HALTED:
-        return HALTED_BAND
-    return OTHER_BAND
+    return _presentation.strict_state_band(record)
 
 
 def attention_tiebreak(record: dict) -> tuple[int, float, float]:
-    """Rank attention evidence only inside an already-equal Opportunity State."""
-    from . import gs457_maturation_leader_priority as gs457
-    from . import gs459_price_trajectory_attention as gs459
-    from . import gs462_preflip_ignition_watch as gs462
-
-    preflip = gs462.preflip_ignition_watch(record)
-    if preflip.get("active"):
-        one_gap = (preflip.get("one_minute") or {}).get("st_gap_pct")
-        three_gap = (preflip.get("three_minute") or {}).get("st_gap_pct")
-        try:
-            one_gap = float(one_gap)
-        except (TypeError, ValueError):
-            one_gap = 999.0
-        try:
-            three_gap = float(three_gap)
-        except (TypeError, ValueError):
-            three_gap = 999.0
-        return (60 if preflip.get("jet_fuel") else 55, -one_gap, -three_gap)
-
-    maturation = gs457.maturation_attention(record)
-    if maturation.get("fresh_maturation"):
-        return (50, 0.0, 0.0)
-    if gs459.trajectory_attention(record).get("active"):
-        return (45, 0.0, 0.0)
-    if maturation.get("sustained_confirmation"):
-        return (40, 0.0, 0.0)
-    return (0, 0.0, 0.0)
+    return _presentation.attention_tiebreak(record)
 
 
 def ordered_state_contiguous_records(records: list[dict], baseline_order=None) -> list[dict]:
-    """Keep states contiguous while preserving useful within-state urgency."""
-    rows = list(baseline_order(records) if baseline_order is not None else (records or []))
-    # Stable multi-pass sort: baseline tie behavior survives unless there is explicit
-    # same-state attention evidence; the final state pass can never be crossed.
-    rows.sort(key=attention_tiebreak, reverse=True)
-    rows.sort(key=strict_state_band, reverse=True)
-    return rows
+    return _presentation.ordered_state_contiguous_records(
+        records,
+        baseline_order=baseline_order,
+    )
 
 
 def _specific_look_now(view: dict) -> bool:
@@ -242,20 +201,7 @@ def _inherit(wrapper, wrapped) -> None:
 
 
 def _install_order() -> None:
-    from . import gs369_escalation_priority_order as gs369
-
-    current = gs369.ordered_escalation_records
-    if getattr(current, _ORDER_OWNER_ATTR, False):
-        return
-
-    def ordered_escalation_records(records: list[dict]) -> list[dict]:
-        return ordered_state_contiguous_records(records, baseline_order=current)
-
-    _inherit(ordered_escalation_records, current)
-    ordered_escalation_records._gs465_presentation_priority_cleanup = True
-    ordered_escalation_records._gs465_original = current
-    setattr(ordered_escalation_records, _ORDER_OWNER_ATTR, True)
-    gs369.ordered_escalation_records = ordered_escalation_records
+    _presentation.activate_operator_order_stage("state_contiguous")
 
 
 def _install_extreme_semantics() -> None:
