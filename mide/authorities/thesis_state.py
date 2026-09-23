@@ -197,6 +197,70 @@ def base_opportunity_state(record: dict) -> dict:
     }
 
 
+def state_with_ignition(original, record: dict) -> dict:
+    """Interpret primary ignition evidence as trader-facing LOOK NOW meaning."""
+    from mide.authorities import market_evidence
+
+    base = original(record)
+    evidence = market_evidence.ignition_evidence(record)
+    if not evidence["recent"]:
+        return base
+    if base.get("state") in {
+        WATCH_FOR_ENTRY,
+        CHASE_WAIT,
+        HALTED,
+    }:
+        return base
+
+    view = deepcopy(base)
+    view["state"] = LOOK_NOW
+    view["color"] = STATE_COLORS[LOOK_NOW]
+    trigger = evidence.get("trigger")
+    if trigger == "VWAP_RECLAIM_WITH_BULLISH_1M_ST":
+        view["reason"] = (
+            "1m ignition: price freshly reclaimed/held VWAP while 1m SuperTrend is bullish."
+        )
+    else:
+        view["reason"] = (
+            "1m ignition: SuperTrend turned bullish while price is holding above VWAP."
+        )
+    view["next_step"] = (
+        "Open the chart now. 3m confirmation may follow, but it is not required for "
+        "chart review; do not chase if price extends beyond the VWAP guard."
+    )
+    provenance = list(view.get("attention_provenance") or [])
+    if "FRESH_1M_IGNITION" not in provenance:
+        provenance.append("FRESH_1M_IGNITION")
+    view["attention_provenance"] = provenance
+    return view
+
+
+def install_ignition_state() -> None:
+    """Bind GS393 ignition meaning at the historical state install position."""
+    from mide import gs310_unified_opportunity_state as unified
+    from mide import gs311_unified_voice as voice
+    from mide import gs314_state_consistency as consistency
+    from mide import gs363_operator_attention_hierarchy as hierarchy
+
+    current = unified.opportunity_state
+    if getattr(current, "_gs393_ignition_truth", False):
+        calibrated = current
+    else:
+        original = current
+
+        def calibrated(record: dict) -> dict:
+            return state_with_ignition(original, record)
+
+        _inherit_state_wrapper(calibrated, current)
+        calibrated._gs393_ignition_truth = True
+        calibrated._gs393_original = original
+        unified.opportunity_state = calibrated
+
+    voice.opportunity_state = calibrated
+    consistency.opportunity_state = calibrated
+    hierarchy.opportunity_state = calibrated
+
+
 _LEADER_RESET_PROVENANCE = "PROVEN_LEADER_RESET_REIGNITION"
 _LEADER_RESET_STATE_OWNER = "_walter_gs477_leader_reset_state_owner"
 
@@ -1170,6 +1234,8 @@ __all__ = [
     "STATE_COLORS",
     "WATCH_FOR_ENTRY",
     "base_opportunity_state",
+    "install_ignition_state",
+    "state_with_ignition",
     "install_leader_reset_state",
     "leader_reset_opportunity_state",
     "install_3m_st_retest_truth",
