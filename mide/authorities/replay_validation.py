@@ -245,7 +245,57 @@ def install_catalyst_story_trace() -> None:
             globals_dict["persist_replayable_scan"] = wrapped
 
 
+# ---------------------------------------------------------------------------
+# GS502 Benzinga breaking-news Flight Recorder trace
+# ---------------------------------------------------------------------------
+
+_BENZINGA_RECORDER_OWNER = "_walter_gs502_benzinga_breaking_recorder_owner"
+
+
+def benzinga_breaking_news_trace_snapshot() -> dict:
+    """Read the current GS502 compatibility trace without freezing its container."""
+    from mide import gs502_benzinga_breaking_news as gs502
+
+    return deepcopy(dict(getattr(gs502, "_LATEST_TRACE", {}) or {}))
+
+
+def benzinga_breaking_news_recorder_wrapper(current):
+    """Persist the bounded GS502 transport/selection trace."""
+    if not callable(current) or getattr(current, _BENZINGA_RECORDER_OWNER, False):
+        return current
+
+    @wraps(current)
+    def persist_with_breaking_news(recorder, scan: dict, records, *args, **kwargs):
+        augmented = dict(scan)
+        augmented["benzinga_breaking_news_trace"] = (
+            benzinga_breaking_news_trace_snapshot()
+        )
+        return current(recorder, augmented, records, *args, **kwargs)
+
+    setattr(persist_with_breaking_news, _BENZINGA_RECORDER_OWNER, True)
+    persist_with_breaking_news._gs502_benzinga_breaking_news = True
+    persist_with_breaking_news._gs502_original = current
+    return persist_with_breaking_news
+
+
+def install_benzinga_breaking_news_trace() -> None:
+    """Bind GS502 recorder truth through Replay / Validation ownership."""
+    from mide import flight_recorder
+    from mide import gs427_flight_recorder_latency_hard_bind as gs427
+
+    globals_dict = gs427._active_recorder_globals()
+    current = globals_dict.get("persist_replayable_scan")
+    wrapped = benzinga_breaking_news_recorder_wrapper(current)
+    if callable(wrapped):
+        globals_dict["persist_replayable_scan"] = wrapped
+        if globals_dict is flight_recorder.__dict__:
+            flight_recorder.persist_replayable_scan = wrapped
+
+
 __all__ = [
+    "install_benzinga_breaking_news_trace",
+    "benzinga_breaking_news_recorder_wrapper",
+    "benzinga_breaking_news_trace_snapshot",
     "install_catalyst_story_trace",
     "catalyst_story_recorder_wrapper",
     "catalyst_story_trace_snapshots",
