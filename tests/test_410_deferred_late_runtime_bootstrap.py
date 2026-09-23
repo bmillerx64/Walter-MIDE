@@ -32,7 +32,7 @@ def test_runtime_entry_point_exists_before_app_imports_provider_and_ui_names():
     app_source = Path("app.py").read_text()
     entry = app_source.index('log_startup("entering app.py")')
     provider_import = app_source.index("from mide.config import Settings")
-    ui_import = app_source.index("from mide.ui import (")
+    ui_import = app_source.index("from mide.authorities.presentation_audio import (")
     assert entry < provider_import < ui_import
 
 
