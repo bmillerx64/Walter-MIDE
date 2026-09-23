@@ -920,6 +920,196 @@ def reset_extreme_banner_decay_state() -> None:
 
 
 # ---------------------------------------------------------------------------
+# Market-leader continuity presentation
+# ---------------------------------------------------------------------------
+
+MAJOR_MOVER_PCT = 20.0
+MIN_DOLLAR_VOLUME = 250_000.0
+LEADER_DOMINANCE = 78.0
+_MARKET_LEADER_CONTINUITY_OWNER = "_walter_gs443_market_leader_radar_continuity"
+
+
+def _market_leader_number(
+    record: dict,
+    *keys: str,
+    default: float | None = None,
+) -> float | None:
+    for key in keys:
+        value = record.get(key)
+        if value is None:
+            continue
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            continue
+    return default
+
+
+def _focused_mission_symbols(mission: dict | None) -> set[str]:
+    symbols: set[str] = set()
+    if not isinstance(mission, dict):
+        return symbols
+    for key in ("primary", "secondary"):
+        item = mission.get(key)
+        if not isinstance(item, dict):
+            continue
+        record = item.get("record")
+        if isinstance(record, dict):
+            symbol = str(record.get("symbol") or "").strip().upper()
+            if symbol:
+                symbols.add(symbol)
+    return symbols
+
+
+def market_leader_candidate(
+    records: Iterable[dict],
+    *,
+    mission: dict | None = None,
+) -> tuple[dict | None, dict | None]:
+    """Return one uncovered current leader for watch-only continuity."""
+    from mide.gs305_second_wave_attention import attention_evaluation
+    from mide.gs309_current_attention_mission import current_attention_provenance
+    from mide.gs333_extreme_mover_operator_priority import prioritized_extreme_event
+
+    rows = list(records or [])
+    focused = _focused_mission_symbols(mission)
+    displayed_extreme, _event = prioritized_extreme_event(rows)
+    displayed_extreme_symbol = (
+        str(displayed_extreme.get("symbol") or "").strip().upper()
+        if isinstance(displayed_extreme, dict)
+        else ""
+    )
+    choices: list[tuple[tuple[float, float, float], dict, dict]] = []
+
+    for record in rows:
+        symbol = str(record.get("symbol") or "").strip().upper()
+        if not symbol or symbol in focused or symbol == displayed_extreme_symbol:
+            continue
+
+        provenance = tuple(current_attention_provenance(record))
+        if "WEBULL_TOP_MOVER" not in provenance:
+            continue
+
+        pct_change = _market_leader_number(record, "pct_change", default=0.0) or 0.0
+        dollar_volume = (
+            _market_leader_number(record, "dollar_volume", default=0.0) or 0.0
+        )
+        dominance = (
+            _market_leader_number(
+                record,
+                "market_dominance_score",
+                default=0.0,
+            )
+            or 0.0
+        )
+        if pct_change < MAJOR_MOVER_PCT:
+            continue
+        if dollar_volume < MIN_DOLLAR_VOLUME:
+            continue
+        if dominance < LEADER_DOMINANCE:
+            continue
+
+        existing_attention = attention_evaluation(record)
+        if existing_attention.get("eligible"):
+            continue
+
+        distance = _market_leader_number(record, "vwap_distance_pct")
+        relation = str(record.get("vwap_relation") or "").strip().lower()
+        alignment = int(
+            _market_leader_number(record, "alignment_score", default=0.0) or 0
+        )
+
+        if distance is not None and distance > 5.0:
+            state = "WAIT FOR RESET"
+            guidance = (
+                "Dominant current mover, but extended above VWAP. Keep the chart "
+                "available; do not chase. Reassess only after a constructive reset."
+            )
+        elif relation != "above" or alignment < 2:
+            state = "STRUCTURE NOT READY"
+            guidance = (
+                "Dominant current mover with incomplete structure. Keep it on radar "
+                "while 30s → 1m → 3m alignment develops; normal qualification remains closed."
+            )
+        else:
+            state = "TRACK RE-IGNITION"
+            guidance = (
+                "Dominant current mover returning toward workable structure. Keep it "
+                "visible; normal qualification still decides whether any trade is justified."
+            )
+
+        event = {
+            "symbol": symbol,
+            "state": state,
+            "pct_change": round(pct_change, 1),
+            "dollar_volume": round(dollar_volume, 0),
+            "dominance": round(dominance, 1),
+            "vwap_distance_pct": None if distance is None else round(distance, 1),
+            "alignment_score": alignment,
+            "guidance": guidance,
+            "provenance": provenance,
+        }
+        choices.append(((dominance, pct_change, dollar_volume), record, event))
+
+    if not choices:
+        return None, None
+    _, record, event = max(choices, key=lambda item: item[0])
+    return record, event
+
+
+def market_leader_markup(event: dict) -> str:
+    """Render GS443's watch-only continuity strip."""
+    distance = event.get("vwap_distance_pct")
+    vwap_text = (
+        "VWAP distance unavailable"
+        if distance is None
+        else f"{abs(float(distance)):.1f}% {'above' if float(distance) >= 0 else 'below'} VWAP"
+    )
+    return (
+        "<div style='background:#0b1119;border:1px solid #36566f;border-radius:12px;"
+        "margin:8px 0 14px;padding:10px 12px'>"
+        "<div style='font-size:.76rem;letter-spacing:.09em;font-weight:950;color:#7dd3fc'>"
+        "MARKET LEADER RADAR · WATCH ONLY · NO ENTRY AUTHORITY</div>"
+        f"<div style='margin-top:5px;font-weight:900;color:#e6f4ff'>{html.escape(str(event['symbol']))}"
+        f" · {html.escape(str(event['state']))}</div>"
+        f"<div style='color:#c7d7e5;font-size:.86rem;margin-top:3px'>"
+        f"Move +{float(event['pct_change']):.1f}% · Dominance {float(event['dominance']):.1f}/100 · "
+        f"Alignment {int(event['alignment_score'])}/3 · {html.escape(vwap_text)}</div>"
+        f"<div style='color:#93a4b8;font-size:.81rem;margin-top:5px'>{html.escape(str(event['guidance']))}</div>"
+        "</div>"
+    )
+
+
+def install_market_leader_continuity() -> None:
+    """Bind GS443 at its historical presentation position."""
+    from mide import ui
+
+    current = ui.render_walter_mission_control
+    if getattr(current, _MARKET_LEADER_CONTINUITY_OWNER, False):
+        return
+
+    def render_walter_mission_control(records: list[dict]) -> None:
+        result = current(records)
+        if not _in_streamlit_run():
+            return result
+        mission = ui.walter_mission_control(records)
+        _record, event = market_leader_candidate(records, mission=mission)
+        if event is not None:
+            ui.st.markdown(market_leader_markup(event), unsafe_allow_html=True)
+        return result
+
+    _inherit_audio_wrapper(render_walter_mission_control, current)
+    render_walter_mission_control._gs443_market_leader_radar_continuity = True
+    render_walter_mission_control._gs443_original = current
+    setattr(
+        render_walter_mission_control,
+        _MARKET_LEADER_CONTINUITY_OWNER,
+        True,
+    )
+    ui.render_walter_mission_control = render_walter_mission_control
+
+
+# ---------------------------------------------------------------------------
 # Authoritative extreme-mover presentation semantics
 # ---------------------------------------------------------------------------
 #
@@ -1557,6 +1747,12 @@ def install_leader_reset_audio() -> None:
 
 __all__ = [
     "actionable_candidate_records",
+    "install_market_leader_continuity",
+    "market_leader_markup",
+    "market_leader_candidate",
+    "LEADER_DOMINANCE",
+    "MIN_DOLLAR_VOLUME",
+    "MAJOR_MOVER_PCT",
     "reset_extreme_banner_decay_state",
     "install_extreme_banner_decay",
     "prioritized_extreme_with_decay",
