@@ -27,7 +27,8 @@ class FakeLiveClient:
     def __init__(self,*_args): self._snapshot_client=FakeSnapshotClient()
     def snapshots(self,symbols): return {s:{"latestTrade":{"p":1.0}} for s in symbols}
 
-def test_native_radar_calls_four_feed_discovery_contract():
+def test_native_radar_calls_four_feed_discovery_contract(monkeypatch):
+    monkeypatch.setattr("mide.webull_native_radar.market_phase_at", lambda: "Live Market")
     client=FakeLiveClient(); report=fetch_native_radar(client)
     assert report["all_feeds_available"] is True
     assert report["discovery_feed_keys"]==["day_gainers","five_minute_movers","absolute_volume","relative_volume"]
@@ -51,12 +52,30 @@ def test_native_radar_calls_four_feed_discovery_contract():
     assert report["supplemental_breadth"]["status"]=="PASS"
     assert report["supplemental_breadth"]["shadow_relative_volume_page2"]["admitted_to_discovery"] is False
 
-def test_native_radar_normalizes_rows_and_provenance():
+def test_native_radar_normalizes_rows_and_provenance(monkeypatch):
+    monkeypatch.setattr("mide.webull_native_radar.market_phase_at", lambda: "Live Market")
     report=fetch_native_radar(FakeLiveClient()); day=report["feeds"]["day_gainers"]["rows"][0]
     assert day["symbol"]=="D1" and day["price"]==2.0 and day["source_feed"]=="day_gainers"
     assert report["symbols"][0]["sources"]==["day_gainers"] and report["symbols"][0]["ranks"]=={"day_gainers":1}
     fast=report["feeds"]["five_minute_movers"]["rows"][0]
     assert fast["symbol"]=="M1" and fast["source_feed"]=="five_minute_movers"
+
+
+
+def test_native_radar_uses_webull_premarket_gainers_during_premarket(monkeypatch):
+    """Premarket discovery must mirror Desktop's Pre-market Top Gainers session."""
+    monkeypatch.setattr("mide.webull_native_radar.market_phase_at", lambda: "Pre-Market")
+    client = FakeLiveClient()
+    report = fetch_native_radar(client)
+    calls = client._snapshot_client.sdk.sdk_client.screener.calls
+
+    assert calls[0][0] == "get_gainers_losers"
+    assert calls[0][1]["rank_type"] == "PRE_MARKET"
+    assert report["day_gainers_rank_type"] == "PRE_MARKET"
+    assert report["feeds"]["day_gainers"]["rank_type"] == "PRE_MARKET"
+    assert report["feeds"]["day_gainers"]["rows"][0]["source_feed"] == "day_gainers"
+    assert "day_gainers" in report["symbols"][0]["sources"]
+
 
 def test_native_radar_records_permission_errors_on_scanned_feed():
     class BrokenScreener(FakeScreener):
