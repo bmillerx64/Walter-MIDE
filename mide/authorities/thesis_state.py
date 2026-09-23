@@ -197,6 +197,318 @@ def base_opportunity_state(record: dict) -> dict:
     }
 
 
+RETEST_DISCIPLINE_AUTHORITY = "PRESENTATION_DISCIPLINE_ONLY"
+_RETEST_STATE_BIND_OWNER = "_walter_gs493_3m_st_retest_truth"
+_RETEST_MEMORY_STATE_OWNER = "_walter_gs514_retest_event_memory_state"
+_RETEST_DISCIPLINE_OWNER = "_walter_gs515_thesis_trigger_discipline"
+
+
+def _fmt_retest_price(value) -> str:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return "n/a"
+    if abs(number) < 1:
+        return f"{number:.4f}"
+    if abs(number) < 10:
+        return f"{number:.3f}"
+    return f"{number:.2f}"
+
+
+def _three_minute_guardrail_text(truth: dict) -> str:
+    price = _fmt_retest_price(truth.get("price"))
+    st_value = _fmt_retest_price(truth.get("three_minute_supertrend"))
+    try:
+        gap = float(truth.get("signed_gap_pct"))
+    except (TypeError, ValueError):
+        gap = None
+    gap_text = "n/a" if gap is None else f"{abs(gap):.1f}%"
+    near_limit = float(truth.get("near_st_line_limit_pct") or 2.0)
+
+    if truth.get("state") == "ST_RETEST_CONFIRMED":
+        return (
+            f"NEAR 3M ST · PROXIMITY ONLY: price {price} is {gap_text} above the current "
+            f"3m SuperTrend line {st_value}, inside Walter's existing "
+            f"{near_limit:.0f}% near-ST band. Proximity alone does NOT prove a held retest."
+        )
+    if truth.get("state") == "3M_ST_LOST":
+        relation = "below" if gap is not None and gap < 0 else "at"
+        return (
+            f"3M ST LOST / RECLAIM WATCH: price {price} is {gap_text} {relation} the "
+            f"current 3m SuperTrend line {st_value}, or the 3m trend state is bearish. "
+            "A prior retest thesis is no longer confirmed."
+        )
+    if truth.get("state") == "NOT_AT_3M_ST_YET":
+        return (
+            f"NOT AT 3M ST YET: price {price} remains {gap_text} above the current "
+            f"3m SuperTrend line {st_value}. A VWAP touch does NOT count as a 3m "
+            "SuperTrend retest."
+        )
+    return ""
+
+
+def base_state_with_3m_st_truth(original, record: dict) -> dict:
+    """Attach authoritative 3m-ST truth without changing the Opportunity State."""
+    from mide.authorities import market_evidence
+
+    base = original(record)
+    truth = market_evidence.three_minute_st_retest_truth(record)
+    if not truth.get("available"):
+        return base
+
+    view = deepcopy(base)
+    view["three_minute_st_retest_truth"] = truth
+    guardrail = _three_minute_guardrail_text(truth)
+    if not guardrail:
+        return view
+
+    next_step = str(view.get("next_step") or "").strip()
+    if guardrail not in next_step:
+        view["next_step"] = f"{guardrail} {next_step}".strip()
+    return view
+
+
+# Public presentation seam. GS514 and GS515 compatibility installation may wrap this
+# callable before GS493 binds it to the visible Opportunity State boundary.
+state_with_3m_st_truth = base_state_with_3m_st_truth
+
+
+def _supportive_timeframe(record: dict, label: str) -> bool:
+    from mide.gs462_preflip_ignition_watch import _timeframe_detail
+
+    detail = _timeframe_detail(record, label)
+    return bool(
+        detail.get("available")
+        and detail.get("bullish")
+        and detail.get("above_vwap")
+    )
+
+
+def discipline_sequence(record: dict, event: dict) -> dict:
+    """Describe thesis-vs-trigger sequencing without creating entry authority."""
+    relation = str(record.get("vwap_relation") or "").strip().lower()
+    try:
+        distance = float(record.get("vwap_distance_pct"))
+    except (TypeError, ValueError):
+        distance = None
+    near_vwap = bool(relation == "above" and (distance is None or distance <= 2.0))
+    thirty = _supportive_timeframe(record, "30s")
+    one = _supportive_timeframe(record, "1m")
+    repaired = bool(near_vwap and thirty and one)
+
+    from mide.authorities import market_evidence
+
+    return {
+        "three_minute_retest_held": bool(event.get("active_memory")),
+        "vwap_acceptance": near_vwap,
+        "thirty_second_repaired": thirty,
+        "one_minute_repaired": one,
+        "lower_timeframe_repair_complete": repaired,
+        "state": (
+            "THESIS_HELD_TRIGGER_REPAIRED"
+            if repaired
+            else "THESIS_HELD_TRIGGER_INCOMPLETE"
+        ),
+        "authority": market_evidence.RETEST_MEMORY_AUTHORITY,
+        "entry_authority_changed": False,
+        "readiness_authority_changed": False,
+    }
+
+
+def retest_memory_state(original, record: dict) -> dict:
+    """Add remembered-retet sequencing to the established 3m truth guardrail."""
+    from mide.authorities import market_evidence
+
+    view = original(record)
+    truth = dict(view.get("three_minute_st_retest_truth") or {})
+    if truth.get("state") != "PRIOR_ST_RETEST_HELD":
+        return view
+
+    event = dict(
+        truth.get("prior_retest_event")
+        or market_evidence.retest_event_from_record(record)
+    )
+    sequence = discipline_sequence(record, event)
+    result = deepcopy(view)
+    result["discipline_sequence"] = sequence
+
+    try:
+        age = float(event.get("age_seconds"))
+    except (TypeError, ValueError):
+        age = None
+    age_text = f"{age / 60.0:.0f}m ago" if age is not None else "earlier"
+    low_text = _fmt_retest_price(event.get("retest_low"))
+    st_text = _fmt_retest_price(event.get("supertrend_at_retest"))
+    near_limit = float(event.get("near_st_line_limit_pct") or 2.0)
+
+    if sequence["lower_timeframe_repair_complete"]:
+        guardrail = (
+            f"PRIOR 3M ST RETEST HELD: low {low_text} tested the 3m SuperTrend "
+            f"{st_text} {age_text} inside the existing {near_limit:.0f}% band. "
+            "Lower-timeframe VWAP/30s/1m repair is now present; review the chart, "
+            "but existing readiness and entry authority still control."
+        )
+    else:
+        missing = []
+        if not sequence["vwap_acceptance"]:
+            missing.append("VWAP acceptance")
+        if not sequence["thirty_second_repaired"]:
+            missing.append("30s repair")
+        if not sequence["one_minute_repaired"]:
+            missing.append("1m repair")
+        guardrail = (
+            f"PRIOR 3M ST RETEST HELD: low {low_text} tested the 3m SuperTrend "
+            f"{st_text} {age_text}. Thesis checkpoint confirmed; entry trigger is "
+            "NOT earned yet. Still need " + ", ".join(missing) + "."
+        )
+
+    next_step = str(result.get("next_step") or "").strip()
+    if "PRIOR 3M ST RETEST HELD:" not in next_step:
+        result["next_step"] = f"{guardrail} {next_step}".strip()
+    return result
+
+
+def _sequence_line(sequence: dict) -> str:
+    def mark(value: bool) -> str:
+        return "✓" if value else "○"
+
+    return (
+        f"3m retest {mark(bool(sequence.get('three_minute_retest_held')))} · "
+        f"VWAP {mark(bool(sequence.get('vwap_acceptance')))} · "
+        f"30s {mark(bool(sequence.get('thirty_second_repaired')))} · "
+        f"1m {mark(bool(sequence.get('one_minute_repaired')))}"
+    )
+
+
+def emphasize_discipline(view: dict) -> dict:
+    """Make thesis-vs-trigger sequencing explicit without promoting state."""
+    sequence = view.get("discipline_sequence") or {}
+    if not isinstance(sequence, dict):
+        return view
+
+    state = str(sequence.get("state") or "")
+    if state not in {
+        "THESIS_HELD_TRIGGER_INCOMPLETE",
+        "THESIS_HELD_TRIGGER_REPAIRED",
+    }:
+        return view
+
+    result = deepcopy(view)
+    existing_state = result.get("state")
+    existing_color = result.get("color")
+    evidence = list(result.get("evidence") or [])
+
+    if state == "THESIS_HELD_TRIGGER_INCOMPLETE":
+        result["discipline_label"] = "THESIS VALIDATED · TRIGGER NOT EARNED"
+        result["discipline_ready"] = False
+        existing_next = str(result.get("next_step") or "").strip()
+        discipline_next = (
+            "THESIS VALIDATED · TRIGGER NOT EARNED. "
+            "The 3m retest held, but lower-timeframe repair is incomplete."
+        )
+        result["next_step"] = (
+            f"{discipline_next} {existing_next}".strip()
+            if discipline_next not in existing_next
+            else existing_next
+        )
+        evidence.insert(
+            0,
+            {
+                "label": "Entry sequence",
+                "passed": False,
+                "detail": _sequence_line(sequence),
+            },
+        )
+    else:
+        result["discipline_label"] = "THESIS VALIDATED · LOWER-TF REPAIR PRESENT"
+        result["discipline_ready"] = True
+        existing_next = str(result.get("next_step") or "").strip()
+        discipline_next = (
+            "THESIS VALIDATED · LOWER-TF REPAIR PRESENT. "
+            "Review the chart, but Walter's existing full entry/readiness rules still control."
+        )
+        result["next_step"] = (
+            f"{discipline_next} {existing_next}".strip()
+            if discipline_next not in existing_next
+            else existing_next
+        )
+        evidence.insert(
+            0,
+            {
+                "label": "Entry sequence",
+                "passed": True,
+                "detail": _sequence_line(sequence),
+            },
+        )
+
+    result["evidence"] = evidence
+    result["discipline_authority"] = RETEST_DISCIPLINE_AUTHORITY
+    result["state"] = existing_state
+    if existing_color is not None:
+        result["color"] = existing_color
+    return result
+
+
+def install_retest_memory_state() -> None:
+    """Wrap the 3m truth presentation with held-retest memory before final binding."""
+    global state_with_3m_st_truth
+    current = state_with_3m_st_truth
+    if getattr(current, _RETEST_MEMORY_STATE_OWNER, False):
+        return
+
+    @wraps(current)
+    def bound_state(original, record: dict) -> dict:
+        return retest_memory_state(current, record)
+
+    setattr(bound_state, _RETEST_MEMORY_STATE_OWNER, True)
+    bound_state._gs514_original = current
+    state_with_3m_st_truth = bound_state
+
+
+def install_retest_discipline() -> None:
+    """Wrap remembered retest state with explicit thesis/trigger discipline."""
+    global state_with_3m_st_truth
+    current = state_with_3m_st_truth
+    if getattr(current, _RETEST_DISCIPLINE_OWNER, False):
+        return
+
+    @wraps(current)
+    def state_with_discipline(original, record: dict) -> dict:
+        return emphasize_discipline(current(original, record))
+
+    setattr(state_with_discipline, _RETEST_DISCIPLINE_OWNER, True)
+    state_with_discipline._gs515_original = current
+    state_with_3m_st_truth = state_with_discipline
+
+
+def install_3m_st_retest_truth() -> None:
+    """Bind the current retest presentation chain at the historical GS493 position."""
+    from mide import gs310_unified_opportunity_state as unified
+    from mide import gs311_unified_voice as voice
+    from mide import gs314_state_consistency as consistency
+    from mide import gs363_operator_attention_hierarchy as hierarchy
+
+    current = unified.opportunity_state
+    if getattr(current, _RETEST_STATE_BIND_OWNER, False):
+        calibrated = current
+    else:
+        retest_view = state_with_3m_st_truth
+
+        @wraps(current)
+        def calibrated(record: dict) -> dict:
+            return retest_view(current, record)
+
+        _inherit_state_wrapper(calibrated, current)
+        calibrated._gs493_3m_st_retest_truth = True
+        calibrated._gs493_original = current
+        setattr(calibrated, _RETEST_STATE_BIND_OWNER, True)
+        unified.opportunity_state = calibrated
+
+    voice.opportunity_state = calibrated
+    consistency.opportunity_state = calibrated
+    hierarchy.opportunity_state = calibrated
+
+
 _FRESH_LOOK_NOW_OWNER_ATTR = "_walter_gs474_fresh_look_now_expiry_owner"
 _COMPRESSION_PROVENANCE = "ST_FLIP_PRICE_COMPRESSION"
 
@@ -759,6 +1071,15 @@ __all__ = [
     "STATE_COLORS",
     "WATCH_FOR_ENTRY",
     "base_opportunity_state",
+    "install_3m_st_retest_truth",
+    "install_retest_discipline",
+    "install_retest_memory_state",
+    "emphasize_discipline",
+    "retest_memory_state",
+    "discipline_sequence",
+    "state_with_3m_st_truth",
+    "base_state_with_3m_st_truth",
+    "RETEST_DISCIPLINE_AUTHORITY",
     "stretch_adjusted_state",
     "materially_stretched_developing",
     "three_minute_st_retest_truth",
