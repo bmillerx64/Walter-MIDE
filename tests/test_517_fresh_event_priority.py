@@ -116,7 +116,7 @@ def test_scope_lock_is_presentation_order_only():
     )
     source = authority.split(
         "# Authoritative operator ordering", 1
-    )[1].split("FRESH_3M_SECONDS = 180.0", 1)[0]
+    )[1].split("# Base extraordinary-mover presentation", 1)[0]
     forbidden = (
         "qualified_for_entry =",
         "qualified_for_alert =",

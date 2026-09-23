@@ -301,3 +301,26 @@ authority.
 
 No discovery, market-data requests, indicators, ranking, qualification, Entry Ready,
 alerts, execution, or orders change.
+
+
+## Phase 14: base extraordinary-mover presentation ownership
+
+GS333 is now a compatibility facade. **Presentation + Audio** owns its original base
+responsibilities:
+
+- the +75% current-attention extraordinary-event description;
+- halt / >5% VWAP / ordinary extreme label and guidance construction;
+- priority selection among current extremes;
+- extraordinary-event markup;
+- action-first rendering; and
+- maintenance/voice observability routing to the sidebar.
+
+The selector deliberately resolves `gs333.extreme_market_event` dynamically at call
+time. That preserves the historical startup contract: GS393 can replace priority
+selection, GS465 can activate truthful extreme-label cleanup, and GS495 can activate
+the later anti-chase qualifier without the base authority bypassing those refinements.
+
+GS334/GS340's separate attention-only market-event lane is unchanged.
+
+No discovery membership, provider requests, evidence calculations, qualification,
+Entry Ready, alert authority, execution, or orders change.
