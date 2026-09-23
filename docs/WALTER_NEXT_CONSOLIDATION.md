@@ -101,3 +101,20 @@ The behavior is unchanged:
 `mide.gs528_canonical_entry_ready` is retained as a compatibility shim so historical
 imports and installer paths do not break, but it no longer owns entry meaning.  New
 Walter Next code must import canonical Entry Ready behavior from Entry Authority.
+
+
+## Phase 4: base Thesis / State ownership
+
+Walter's base Opportunity State interpretation now lives in
+`mide.authorities.thesis_state`.  GS310 retains its historical UI/install surface and
+re-exports the authoritative base function so the existing wrapper chain can remain
+intact while later state refinements are migrated individually.
+
+The authority exposes two deliberately different entry points:
+
+- `base_opportunity_state` is the single base evidence-to-thesis interpretation.
+- `opportunity_state` resolves the current outer GS310 compatibility callable so
+  Walter Next still receives every validated legacy refinement until it is absorbed.
+
+No later LOOK NOW, reclaim/retest, freshness, maturation, anti-chase, ranking, or Entry
+Authority wrapper is removed in this phase.  Existing parity locks must remain green.
