@@ -147,7 +147,7 @@ def test_gs497_installs_after_gs495_at_final_render_boundary():
 
 
 def test_scope_lock_is_presentation_order_only():
-    source = Path("mide/gs497_rank_aware_attention_order.py").read_text(
+    source = Path("mide/authorities/presentation_audio.py").read_text(
         encoding="utf-8"
     )
     forbidden = (
