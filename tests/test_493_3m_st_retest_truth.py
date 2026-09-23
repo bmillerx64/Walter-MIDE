@@ -109,7 +109,10 @@ def test_gs493_installs_after_gs492_at_final_late_boundary():
 
 
 def test_scope_lock_is_presentation_only():
-    source = Path("mide/gs493_3m_st_retest_truth.py").read_text(encoding="utf-8")
+    source = (
+        Path("mide/authorities/market_evidence.py").read_text(encoding="utf-8")
+        + Path("mide/authorities/thesis_state.py").read_text(encoding="utf-8")
+    )
     forbidden = (
         "qualified_for_entry =",
         "qualified_for_alert =",

@@ -2,6 +2,7 @@ from pathlib import Path
 
 from mide import gs493_3m_st_retest_truth as gs493
 from mide import gs515_thesis_trigger_discipline as gs515
+from mide.authorities import thesis_state
 
 
 def _view(sequence_state, **flags):
@@ -76,12 +77,12 @@ def test_no_discipline_sequence_is_untouched():
     assert gs515.emphasize_discipline(view) == view
 
 
-def test_install_wraps_gs493_state_helper_only_once():
-    before = gs493.state_with_3m_st_truth
+def test_install_wraps_authoritative_state_helper_only_once():
+    before = thesis_state.state_with_3m_st_truth
     gs515.install()
-    first = gs493.state_with_3m_st_truth
+    first = thesis_state.state_with_3m_st_truth
     gs515.install()
-    second = gs493.state_with_3m_st_truth
+    second = thesis_state.state_with_3m_st_truth
 
     assert first is second
     assert getattr(first, "_walter_gs515_thesis_trigger_discipline", False) is True
@@ -89,7 +90,7 @@ def test_install_wraps_gs493_state_helper_only_once():
 
 
 def test_scope_lock_is_presentation_only():
-    source = Path("mide/gs515_thesis_trigger_discipline.py").read_text(encoding="utf-8")
+    source = Path("mide/authorities/thesis_state.py").read_text(encoding="utf-8")
     forbidden = (
         "qualified_for_entry =",
         "qualified_for_alert =",

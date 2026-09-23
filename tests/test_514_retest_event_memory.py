@@ -210,7 +210,10 @@ def test_gs514_installs_after_selective_maturation_recorder():
 
 
 def test_scope_lock_is_memory_and_presentation_only():
-    source = Path("mide/gs514_retest_event_memory.py").read_text(encoding="utf-8")
+    source = (
+        Path("mide/authorities/market_evidence.py").read_text(encoding="utf-8")
+        + Path("mide/authorities/thesis_state.py").read_text(encoding="utf-8")
+    )
     forbidden = (
         "qualified_for_entry =",
         "qualified_for_alert =",
