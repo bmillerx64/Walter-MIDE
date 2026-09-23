@@ -5,6 +5,7 @@ During Phase 1 it delegates to the current validated analyzers without changing
 thresholds, formulas, ordering, or evidence semantics.
 """
 
+from collections.abc import Iterable, Mapping
 from copy import deepcopy
 from dataclasses import dataclass
 from functools import wraps
@@ -39,6 +40,377 @@ def participation_gate_rejection_diagnostics(*args, **kwargs):
 def strengthening_diagnostics(*args, **kwargs):
     from mide import scanner_v2
     return scanner_v2.strengthening_diagnostics(*args, **kwargs)
+
+
+# ---------------------------------------------------------------------------
+# Native market-awareness evidence
+# ---------------------------------------------------------------------------
+
+EXTREME_MOVER_PCT = 75.0
+MARKET_EVENT_LIMIT = 3
+
+LIQUIDITY_TREND_MIN_GAIN_PCT = 30.0
+LIQUIDITY_TREND_MIN_VOLUME = 50_000_000.0
+LIQUIDITY_TREND_MAX_PRICE = 5.0
+LIQUIDITY_TREND_MAX_RANK = 10
+LIQUIDITY_TREND_LIMIT = 2
+
+STRATEGY_LEADER_MIN_GAIN_PCT = 15.0
+STRATEGY_LEADER_MAX_DAY_GAINER_RANK = 10
+STRATEGY_LEADER_PRICE_CEILING = 5.0
+STRATEGY_LEADER_LIMIT = 5
+
+_LATEST_MARKET_EVENTS: list[dict] = []
+_market_event_liquidity_stage_active = False
+_MARKET_EVENT_CAPTURE_OWNER = "_walter_gs334_market_event_capture"
+_STRATEGY_LEADER_CAPTURE_OWNER = "_walter_gs377_strategy_leader_awareness"
+
+
+def _market_event_number(value, default: float | None = None) -> float | None:
+    try:
+        if value is None or value == "":
+            return default
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def base_market_event_rows(
+    native_rows: Iterable[dict] | None,
+    *,
+    threshold: float = EXTREME_MOVER_PCT,
+    limit: int = MARKET_EVENT_LIMIT,
+) -> list[dict]:
+    """Return GS334 extraordinary Day Gainers as attention-only evidence."""
+    events: list[dict] = []
+    for source in native_rows or []:
+        symbol = str(source.get("symbol") or "").strip().upper()
+        sources = {str(value or "") for value in source.get("sources") or []}
+        pct_change = _market_event_number(source.get("change_ratio"))
+        if not symbol or "day_gainers" not in sources or pct_change is None:
+            continue
+        if pct_change < float(threshold):
+            continue
+        ranks = source.get("ranks") or {}
+        rank = _market_event_number(ranks.get("day_gainers"), default=999.0) or 999.0
+        events.append(
+            {
+                "symbol": symbol,
+                "pct_change": round(pct_change, 2),
+                "rank": int(rank),
+                "price": _market_event_number(source.get("price")),
+                "volume": _market_event_number(source.get("volume")),
+                "sources": sorted(sources),
+                "attention_only": True,
+            }
+        )
+    events.sort(key=lambda row: (row["rank"], -row["pct_change"], row["symbol"]))
+    return events[: max(0, int(limit))]
+
+
+def high_liquidity_trend_rows(
+    native_rows: Iterable[dict] | None,
+    *,
+    min_gain_pct: float = LIQUIDITY_TREND_MIN_GAIN_PCT,
+    min_volume: float = LIQUIDITY_TREND_MIN_VOLUME,
+    max_price: float = LIQUIDITY_TREND_MAX_PRICE,
+    max_rank: int = LIQUIDITY_TREND_MAX_RANK,
+    limit: int = LIQUIDITY_TREND_LIMIT,
+) -> list[dict]:
+    """Return GS340 GPRO-like liquid trends as attention-only evidence."""
+    events: list[dict] = []
+    for source in native_rows or []:
+        symbol = str(source.get("symbol") or "").strip().upper()
+        sources = {str(value or "") for value in source.get("sources") or []}
+        pct_change = _market_event_number(source.get("change_ratio"))
+        price = _market_event_number(source.get("price"))
+        volume = _market_event_number(source.get("volume"))
+        ranks = source.get("ranks") or {}
+        rank = _market_event_number(ranks.get("day_gainers"), default=999.0) or 999.0
+
+        if not symbol or "day_gainers" not in sources:
+            continue
+        if pct_change is None or pct_change < float(min_gain_pct):
+            continue
+        if pct_change >= EXTREME_MOVER_PCT:
+            continue
+        if price is None or price <= 0 or price > float(max_price):
+            continue
+        if volume is None or volume < float(min_volume):
+            continue
+        if rank > int(max_rank):
+            continue
+
+        events.append(
+            {
+                "symbol": symbol,
+                "pct_change": round(pct_change, 2),
+                "rank": int(rank),
+                "price": price,
+                "volume": volume,
+                "sources": sorted(sources),
+                "attention_only": True,
+                "event_type": "high_liquidity_trend",
+            }
+        )
+
+    events.sort(key=lambda row: (row["rank"], -row["pct_change"], row["symbol"]))
+    return events[: max(0, int(limit))]
+
+
+def market_event_rows(
+    native_rows: Iterable[dict] | None,
+    *,
+    threshold: float = EXTREME_MOVER_PCT,
+    limit: int = MARKET_EVENT_LIMIT,
+) -> list[dict]:
+    """Return the historical GS334 row contract plus activated GS340 evidence."""
+    rows = list(native_rows or [])
+    baseline = base_market_event_rows(rows, threshold=threshold, limit=limit)
+    if not _market_event_liquidity_stage_active:
+        return baseline
+
+    extras = high_liquidity_trend_rows(rows)
+    seen = {str(event.get("symbol") or "").upper() for event in baseline}
+    combined = list(baseline)
+    for event in extras:
+        symbol = str(event.get("symbol") or "").upper()
+        if symbol not in seen:
+            combined.append(event)
+            seen.add(symbol)
+    return combined
+
+
+def activate_high_liquidity_trend_watch() -> None:
+    """Activate GS340 at its historical startup position without another wrapper."""
+    global _market_event_liquidity_stage_active
+
+    _market_event_liquidity_stage_active = True
+    market_event_rows._gs340_high_liquidity_trend_watch = True
+
+
+def completed_scan_market_events(state: Mapping[str, Any] | None) -> list[dict]:
+    """Read the durable market-event snapshot from completed-scan diagnostics."""
+    if not state:
+        return []
+    scan = state.get("completed_scan")
+    if scan is None:
+        context = state.get("scan_context")
+        scan = getattr(context, "completed_scan", None) if context is not None else None
+    diagnostics = getattr(scan, "diagnostics", None)
+    if not isinstance(diagnostics, dict):
+        return []
+    lane = diagnostics.get("market_event_lane")
+    if not isinstance(lane, dict):
+        return []
+    events = lane.get("events")
+    if not isinstance(events, list):
+        return []
+    return [dict(event) for event in events if isinstance(event, dict)]
+
+
+def _replace_latest_market_events(events: Iterable[dict] | None) -> None:
+    _LATEST_MARKET_EVENTS.clear()
+    _LATEST_MARKET_EVENTS.extend(
+        dict(event)
+        for event in events or []
+        if isinstance(event, dict)
+    )
+
+
+def install_market_event_capture() -> None:
+    """Capture GS334/GS340 awareness evidence from already-fetched native rows."""
+    from mide import webull_connection as connection
+    from mide.webull_live import LiveWebullProvider
+
+    current_assets = LiveWebullProvider.assets
+    if getattr(current_assets, _MARKET_EVENT_CAPTURE_OWNER, False):
+        return
+
+    @wraps(current_assets)
+    def assets_with_market_events(self):
+        _replace_latest_market_events([])
+        assets = current_assets(self)
+        native_rows = list(
+            (getattr(self, "_native_radar_prices", {}) or {}).values()
+        )
+        events = market_event_rows(native_rows)
+        _replace_latest_market_events(events)
+        diagnostics = getattr(self, "diagnostics", None)
+        if isinstance(diagnostics, dict):
+            diagnostics["market_event_lane"] = {
+                "source": "Webull native DAY_GAINERS",
+                "threshold_pct": EXTREME_MOVER_PCT,
+                "attention_only": True,
+                "events": [dict(event) for event in events],
+            }
+        return assets
+
+    assets_with_market_events._gs334_market_event_capture = True
+    assets_with_market_events._gs334_original = current_assets
+    setattr(assets_with_market_events, _MARKET_EVENT_CAPTURE_OWNER, True)
+    LiveWebullProvider.assets = assets_with_market_events
+    connection._webull_native_assets = assets_with_market_events
+
+
+def implied_previous_close(
+    price: float | None,
+    pct_change: float | None,
+) -> float | None:
+    """Recover GS377's prior-close reference from the native Day Gainer row."""
+    if price is None or pct_change is None:
+        return None
+    denominator = 1.0 + float(pct_change) / 100.0
+    if price <= 0 or denominator <= 0:
+        return None
+    return float(price) / denominator
+
+
+def strategy_leader_rows(
+    native_rows: Iterable[dict] | None,
+    *,
+    min_gain_pct: float = STRATEGY_LEADER_MIN_GAIN_PCT,
+    max_rank: int = STRATEGY_LEADER_MAX_DAY_GAINER_RANK,
+    price_ceiling: float = STRATEGY_LEADER_PRICE_CEILING,
+    limit: int = STRATEGY_LEADER_LIMIT,
+) -> list[dict]:
+    """Return GS377 strategy-relevant Day Gainers as attention-only evidence."""
+    leaders: list[dict] = []
+    for source in native_rows or []:
+        symbol = str(source.get("symbol") or "").strip().upper()
+        sources = {str(value or "") for value in source.get("sources") or []}
+        if not symbol or "day_gainers" not in sources:
+            continue
+
+        pct_change = _market_event_number(source.get("change_ratio"))
+        price = _market_event_number(source.get("price"))
+        volume = _market_event_number(source.get("volume"))
+        ranks = source.get("ranks") or {}
+        rank = _market_event_number(ranks.get("day_gainers"), default=999.0) or 999.0
+        if pct_change is None or pct_change < float(min_gain_pct):
+            continue
+        if rank > int(max_rank):
+            continue
+
+        prior_close = implied_previous_close(price, pct_change)
+        currently_in_range = price is not None and 0 < price <= float(price_ceiling)
+        launched_from_range = (
+            prior_close is not None and 0 < prior_close <= float(price_ceiling)
+        )
+        if not (currently_in_range or launched_from_range):
+            continue
+
+        leaders.append(
+            {
+                "symbol": symbol,
+                "pct_change": round(float(pct_change), 2),
+                "rank": int(rank),
+                "price": price,
+                "volume": volume,
+                "sources": sorted(sources),
+                "attention_only": True,
+                "event_type": "strategy_leader",
+                "strategy_price_reference": (
+                    "current_price"
+                    if currently_in_range
+                    else "implied_previous_close"
+                ),
+                "implied_previous_close": (
+                    round(prior_close, 4) if prior_close is not None else None
+                ),
+            }
+        )
+
+    leaders.sort(key=lambda row: (row["rank"], -row["pct_change"], row["symbol"]))
+    return leaders[: max(0, int(limit))]
+
+
+def merge_strategy_leader_events(
+    baseline_events: Iterable[dict] | None,
+    native_rows: Iterable[dict] | None,
+) -> list[dict]:
+    combined = [
+        dict(event)
+        for event in baseline_events or []
+        if isinstance(event, dict)
+    ]
+    seen = {
+        str(event.get("symbol") or "").strip().upper()
+        for event in combined
+        if str(event.get("symbol") or "").strip()
+    }
+    for event in strategy_leader_rows(native_rows):
+        symbol = str(event.get("symbol") or "").strip().upper()
+        if not symbol or symbol in seen:
+            continue
+        combined.append(dict(event))
+        seen.add(symbol)
+    return combined
+
+
+def publish_strategy_leader_awareness(
+    provider,
+    native_rows: Iterable[dict] | None,
+) -> list[dict]:
+    """Persist GS377's overlay into the same authoritative awareness snapshot."""
+    diagnostics = getattr(provider, "diagnostics", None)
+    lane_diagnostics = (
+        diagnostics.get("market_event_lane")
+        if isinstance(diagnostics, dict)
+        else None
+    )
+    if isinstance(lane_diagnostics, dict):
+        baseline = lane_diagnostics.get("events") or []
+    else:
+        baseline = _LATEST_MARKET_EVENTS
+
+    combined = merge_strategy_leader_events(baseline, native_rows)
+    _replace_latest_market_events(combined)
+
+    if isinstance(diagnostics, dict):
+        updated = dict(lane_diagnostics or {})
+        updated.setdefault("source", "Webull native DAY_GAINERS")
+        updated["attention_only"] = True
+        updated["events"] = [dict(event) for event in combined]
+        updated["strategy_leader_awareness"] = {
+            "min_gain_pct": STRATEGY_LEADER_MIN_GAIN_PCT,
+            "max_day_gainer_rank": STRATEGY_LEADER_MAX_DAY_GAINER_RANK,
+            "price_ceiling": STRATEGY_LEADER_PRICE_CEILING,
+            "limit": STRATEGY_LEADER_LIMIT,
+        }
+        diagnostics["market_event_lane"] = updated
+    return combined
+
+
+def install_strategy_leader_awareness() -> None:
+    """Overlay GS377 after GS334/GS340 without changing provider-call count."""
+    from mide import webull_connection as connection
+    from mide.webull_live import LiveWebullProvider
+
+    current_assets = LiveWebullProvider.assets
+    if getattr(current_assets, _STRATEGY_LEADER_CAPTURE_OWNER, False):
+        return
+
+    @wraps(current_assets)
+    def assets_with_strategy_leader_awareness(self):
+        assets = current_assets(self)
+        native_rows = list(
+            (getattr(self, "_native_radar_prices", {}) or {}).values()
+        )
+        publish_strategy_leader_awareness(self, native_rows)
+        return assets
+
+    assets_with_strategy_leader_awareness._gs377_strategy_leader_awareness = True
+    assets_with_strategy_leader_awareness._gs377_original = current_assets
+    setattr(
+        assets_with_strategy_leader_awareness,
+        _STRATEGY_LEADER_CAPTURE_OWNER,
+        True,
+    )
+    LiveWebullProvider.assets = assets_with_strategy_leader_awareness
+
+    if getattr(connection, "_webull_native_assets", None) is current_assets:
+        connection._webull_native_assets = assets_with_strategy_leader_awareness
 
 
 IGNITION_MAX_VWAP_DISTANCE_PCT = 2.0
@@ -785,6 +1157,29 @@ def reset_leader_memory() -> None:
 
 __all__ = [
     "analyze_candidates",
+    "install_strategy_leader_awareness",
+    "publish_strategy_leader_awareness",
+    "merge_strategy_leader_events",
+    "strategy_leader_rows",
+    "implied_previous_close",
+    "install_market_event_capture",
+    "completed_scan_market_events",
+    "activate_high_liquidity_trend_watch",
+    "high_liquidity_trend_rows",
+    "market_event_rows",
+    "base_market_event_rows",
+    "_LATEST_MARKET_EVENTS",
+    "STRATEGY_LEADER_LIMIT",
+    "STRATEGY_LEADER_PRICE_CEILING",
+    "STRATEGY_LEADER_MAX_DAY_GAINER_RANK",
+    "STRATEGY_LEADER_MIN_GAIN_PCT",
+    "LIQUIDITY_TREND_LIMIT",
+    "LIQUIDITY_TREND_MAX_RANK",
+    "LIQUIDITY_TREND_MAX_PRICE",
+    "LIQUIDITY_TREND_MIN_VOLUME",
+    "LIQUIDITY_TREND_MIN_GAIN_PCT",
+    "MARKET_EVENT_LIMIT",
+    "EXTREME_MOVER_PCT",
     "ignition_evidence",
     "IGNITION_RECLAIM_RECENT_BARS",
     "IGNITION_FLIP_RECENT_SECONDS",
