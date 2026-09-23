@@ -28,7 +28,7 @@ class FakeLiveClient:
     def snapshots(self,symbols): return {s:{"latestTrade":{"p":1.0}} for s in symbols}
 
 def test_native_radar_calls_four_feed_discovery_contract(monkeypatch):
-    monkeypatch.setattr("mide.webull_native_radar.market_phase_at", lambda: "Live Market")
+    monkeypatch.setattr("mide.time_service.market_phase_at", lambda: "Live Market")
     client=FakeLiveClient(); report=fetch_native_radar(client)
     assert report["all_feeds_available"] is True
     assert report["discovery_feed_keys"]==["day_gainers","five_minute_movers","absolute_volume","relative_volume"]
@@ -53,7 +53,7 @@ def test_native_radar_calls_four_feed_discovery_contract(monkeypatch):
     assert report["supplemental_breadth"]["shadow_relative_volume_page2"]["admitted_to_discovery"] is False
 
 def test_native_radar_normalizes_rows_and_provenance(monkeypatch):
-    monkeypatch.setattr("mide.webull_native_radar.market_phase_at", lambda: "Live Market")
+    monkeypatch.setattr("mide.time_service.market_phase_at", lambda: "Live Market")
     report=fetch_native_radar(FakeLiveClient()); day=report["feeds"]["day_gainers"]["rows"][0]
     assert day["symbol"]=="D1" and day["price"]==2.0 and day["source_feed"]=="day_gainers"
     assert report["symbols"][0]["sources"]==["day_gainers"] and report["symbols"][0]["ranks"]=={"day_gainers":1}
@@ -64,7 +64,7 @@ def test_native_radar_normalizes_rows_and_provenance(monkeypatch):
 
 def test_native_radar_uses_webull_premarket_gainers_during_premarket(monkeypatch):
     """Premarket discovery must mirror Desktop's Pre-market Top Gainers session."""
-    monkeypatch.setattr("mide.webull_native_radar.market_phase_at", lambda: "Pre-Market")
+    monkeypatch.setattr("mide.time_service.market_phase_at", lambda: "Pre-Market")
     client = FakeLiveClient()
     report = fetch_native_radar(client)
     calls = client._snapshot_client.sdk.sdk_client.screener.calls
