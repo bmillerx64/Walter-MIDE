@@ -1,6 +1,9 @@
 # GS445 deployment marker: force one clean Streamlit Community Cloud runtime so
 # append-only Candidate History / Flight Recorder exports reuse incremental gzip state.
 # No dependency versions change in this deployment-only activation.
+# GS540 deployment marker: preserve Webull market value, keep M&A projections out
+# of transaction-scale math, and corroborate shadow RVOL with targeted material news.
+# Discovery identity/context only; all downstream trading safeguards remain unchanged.
 # GS539 deployment marker: Opportunity State cards sort by visible P/E Strength
 # descending and both GS332 live render paths are hard-bound to the same frozen order.
 # Presentation only; Entry Ready and all trading authority remain unchanged.
