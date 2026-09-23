@@ -19,6 +19,8 @@ from mide.gs500_candidate_history_warm_bind import install as _install_gs500_can
 _install_gs500_candidate_history()
 from mide.gs501_session_history_rollover import install as _install_gs501_history_rollover
 _install_gs501_history_rollover()
+from mide.gs536_session_forensic_rollover import install as _install_gs536_forensic_rollover
+_install_gs536_forensic_rollover()
 
 from mide.startup_memory import checkpoint as memory_checkpoint
 
