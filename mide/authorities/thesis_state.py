@@ -13,7 +13,11 @@ authoritative base interpretation.
 
 from __future__ import annotations
 
+from copy import deepcopy
+from functools import wraps
+import math
 import sys
+from typing import Any
 
 
 LOOK_NOW = "LOOK NOW"
@@ -193,6 +197,150 @@ def base_opportunity_state(record: dict) -> dict:
     }
 
 
+_VWAP_TRUTH_OWNER_ATTR = "_walter_gs468_vwap_truth_veto_owner"
+_VWAP_TRUTH_PROVENANCE = "GS468_NUMERIC_VWAP_VETO"
+
+
+def _finite(value: Any) -> float | None:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    return number if math.isfinite(number) else None
+
+
+def _vwap_pair(close: Any, vwap: Any, source: str) -> dict:
+    close_n = _finite(close)
+    vwap_n = _finite(vwap)
+    available = close_n is not None and vwap_n not in (None, 0.0)
+    if not available:
+        return {
+            "source": source,
+            "available": False,
+            "close": close_n,
+            "vwap": vwap_n,
+            "distance_pct": None,
+            "above": None,
+        }
+    distance = (close_n - vwap_n) / vwap_n * 100.0
+    return {
+        "source": source,
+        "available": True,
+        "close": close_n,
+        "vwap": vwap_n,
+        "distance_pct": round(distance, 4),
+        "above": bool(distance >= 0.0),
+    }
+
+
+def current_vwap_truth(record: dict) -> dict:
+    """Return already-computed current numeric VWAP evidence without new data calls."""
+    top = _vwap_pair(
+        record.get("price"),
+        record.get("vwap_value"),
+        "snapshot_vs_primary_vwap",
+    )
+
+    one = dict((record.get("timeframes") or {}).get("1m") or {})
+    one_close = one.get("current_close")
+    one_vwap = one.get("current_vwap")
+    if one_vwap is None:
+        one_vwap = dict(one.get("st_vwap_line_cross") or {}).get("latest_vwap_value")
+    one_pair = _vwap_pair(one_close, one_vwap, "1m_close_vs_primary_vwap")
+
+    pairs = [item for item in (top, one_pair) if item.get("available")]
+    below = [item for item in pairs if item.get("above") is False]
+    above = [item for item in pairs if item.get("above") is True]
+    return {
+        "pairs": pairs,
+        "numeric_below": bool(below),
+        "numeric_above": bool(above),
+        "below_sources": [item["source"] for item in below],
+        "authority": "PRESENTATION_TRUTH_VETO_ONLY",
+        "additional_market_data_requests": 0,
+    }
+
+
+def _numeric_below_record(record: dict, truth: dict) -> dict:
+    """Return a detached state-input copy whose VWAP fields cannot contradict numbers."""
+    view_record = deepcopy(record)
+    pairs = list(truth.get("pairs") or [])
+    below = [item for item in pairs if item.get("above") is False]
+    if not below:
+        return view_record
+
+    chosen = next(
+        (item for item in below if item.get("source") == "snapshot_vs_primary_vwap"),
+        below[0],
+    )
+    view_record["vwap_relation"] = "below"
+    distance = _finite(chosen.get("distance_pct"))
+    if distance is not None:
+        view_record["vwap_distance_pct"] = round(distance, 4)
+    return view_record
+
+
+def vwap_truth_state(original, record: dict) -> dict:
+    """Apply the established numeric-below veto to a trader-facing thesis."""
+    truth = current_vwap_truth(record)
+    if not truth.get("numeric_below"):
+        return original(record)
+
+    state = original(_numeric_below_record(record, truth))
+    view = deepcopy(state)
+
+    if str(view.get("state") or "") in {LOOK_NOW, WATCH_FOR_ENTRY}:
+        view["state"] = DEVELOPING
+        view["color"] = STATE_COLORS[DEVELOPING]
+        view["reason"] = (
+            "Current numeric price/VWAP evidence is below VWAP; Walter will not elevate "
+            "this setup until VWAP is reclaimed."
+        )
+        view["next_step"] = (
+            "Keep it on background watch. Reassess only after current price and 1m "
+            "structure reclaim VWAP."
+        )
+
+    provenance = list(view.get("attention_provenance") or [])
+    if _VWAP_TRUTH_PROVENANCE not in provenance:
+        provenance.append(_VWAP_TRUTH_PROVENANCE)
+    view["attention_provenance"] = provenance
+    view["vwap_truth_veto"] = truth
+    return view
+
+
+def _inherit_state_wrapper(wrapper, wrapped) -> None:
+    for name, value in getattr(wrapped, "__dict__", {}).items():
+        if name.startswith("_gs") and not hasattr(wrapper, name):
+            setattr(wrapper, name, value)
+
+
+def install_vwap_truth() -> None:
+    """Bind numeric VWAP truth at the historical GS468 compatibility position."""
+    from mide import gs310_unified_opportunity_state as unified
+    from mide import gs311_unified_voice as voice
+    from mide import gs314_state_consistency as consistency
+    from mide import gs363_operator_attention_hierarchy as hierarchy
+
+    current = unified.opportunity_state
+    if getattr(current, _VWAP_TRUTH_OWNER_ATTR, False):
+        calibrated = current
+    else:
+        @wraps(current)
+        def calibrated(record: dict) -> dict:
+            return vwap_truth_state(current, record)
+
+        _inherit_state_wrapper(calibrated, current)
+        calibrated._gs468_vwap_truth_veto = True
+        calibrated._gs468_original = current
+        setattr(calibrated, _VWAP_TRUTH_OWNER_ATTR, True)
+        unified.opportunity_state = calibrated
+
+    voice.opportunity_state = calibrated
+    consistency.opportunity_state = calibrated
+    hierarchy.opportunity_state = calibrated
+
+
 def opportunity_state(record: dict) -> dict:
     """Return the fully calibrated current thesis through the compatibility surface.
 
@@ -241,6 +389,7 @@ __all__ = [
     "STATE_COLORS",
     "WATCH_FOR_ENTRY",
     "base_opportunity_state",
+    "current_vwap_truth",
     "behavioral_decision",
     "escalation_alert_phrase",
     "escalation_snapshot",
@@ -248,5 +397,6 @@ __all__ = [
     "evaluate",
     "mission_ranked_records",
     "opportunity_state",
+    "vwap_truth_state",
     "walter_mission_control",
 ]

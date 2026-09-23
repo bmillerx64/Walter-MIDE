@@ -118,3 +118,16 @@ The authority exposes two deliberately different entry points:
 
 No later LOOK NOW, reclaim/retest, freshness, maturation, anti-chase, ranking, or Entry
 Authority wrapper is removed in this phase.  Existing parity locks must remain green.
+
+
+## Phase 5: numeric VWAP truth ownership
+
+The GS468 numeric price/VWAP reconciliation rule now lives in
+`mide.authorities.thesis_state`.  This preserves the established invariant that
+contradictory current numeric evidence cannot allow LOOK NOW or WATCH FOR ENTRY while
+price is actually below VWAP.
+
+`mide.gs468_vwap_truth_veto` remains only as a compatibility shim at the historical
+installer position.  The rule still uses already-computed snapshot and 1m evidence,
+performs zero additional market-data requests, and changes no scoring, qualification,
+Entry Authority, indicator formula, threshold, alert, execution, or order behavior.
