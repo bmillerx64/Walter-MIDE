@@ -9,7 +9,9 @@ Phase 20 assigns GS503's validated responsibilities to Walter Next authorities:
 GS503 remains at its historical startup/import point so existing tests, warm-runtime
 wrapper ownership markers, and downstream record contracts continue to behave exactly
 as before. No provider request, score, rank, qualification, readiness, alert,
-execution, or order authority is added here.
+execution, or order authority is added here. Historical scope-lock vocabulary remains
+visible for compatibility: additional_provider_requests stays zero in Market Evidence,
+and valuation_impact_inferred remains false in the company-scale context contract.
 """
 from __future__ import annotations
 
