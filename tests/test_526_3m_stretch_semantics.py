@@ -1,4 +1,5 @@
 from mide import gs526_3m_stretch_semantics as gs526
+from mide.authorities import thesis_state
 
 
 def _developing_view():
@@ -24,7 +25,7 @@ def _truth(gap):
 
 def test_gels_like_3m_stretch_becomes_chase_wait(monkeypatch):
     monkeypatch.setattr(gs526.gs493, "three_minute_st_retest_truth", lambda _r: _truth(15.0))
-    monkeypatch.setattr(gs526, "fresh_higher_maturation", lambda _r: False)
+    monkeypatch.setattr(thesis_state, "fresh_higher_maturation", lambda _r: False)
 
     result = gs526.tightened_opportunity_state(lambda _r: _developing_view(), {})
 
@@ -35,7 +36,7 @@ def test_gels_like_3m_stretch_becomes_chase_wait(monkeypatch):
 
 def test_small_3m_gap_keeps_developing(monkeypatch):
     monkeypatch.setattr(gs526.gs493, "three_minute_st_retest_truth", lambda _r: _truth(4.9))
-    monkeypatch.setattr(gs526, "fresh_higher_maturation", lambda _r: False)
+    monkeypatch.setattr(thesis_state, "fresh_higher_maturation", lambda _r: False)
 
     result = gs526.tightened_opportunity_state(lambda _r: _developing_view(), {})
 
@@ -44,7 +45,7 @@ def test_small_3m_gap_keeps_developing(monkeypatch):
 
 def test_fresh_higher_maturation_rearms_large_gap(monkeypatch):
     monkeypatch.setattr(gs526.gs493, "three_minute_st_retest_truth", lambda _r: _truth(15.0))
-    monkeypatch.setattr(gs526, "fresh_higher_maturation", lambda _r: True)
+    monkeypatch.setattr(thesis_state, "fresh_higher_maturation", lambda _r: True)
 
     result = gs526.tightened_opportunity_state(lambda _r: _developing_view(), {})
 
@@ -55,7 +56,7 @@ def test_non_developing_state_is_untouched(monkeypatch):
     view = _developing_view()
     view["state"] = "LOOK NOW"
     monkeypatch.setattr(gs526.gs493, "three_minute_st_retest_truth", lambda _r: _truth(15.0))
-    monkeypatch.setattr(gs526, "fresh_higher_maturation", lambda _r: False)
+    monkeypatch.setattr(thesis_state, "fresh_higher_maturation", lambda _r: False)
 
     result = gs526.tightened_opportunity_state(lambda _r: view, {})
 
