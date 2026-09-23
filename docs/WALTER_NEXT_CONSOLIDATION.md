@@ -350,3 +350,20 @@ moved installers in its original order.
 
 No provider calls, market-data requests, indicator formulas, qualification, Entry
 Ready authority, execution, or orders change.
+
+
+## Phase 16: market-leader continuity ownership
+
+GS443 is now a compatibility facade. **Presentation + Audio** owns the watch-only
+continuity lane for a dominant current Webull mover that is not already represented by
+Mission, GS305 attention, or the single currently displayed extraordinary event.
+
+The existing contracts are unchanged: +20% move, $250k dollar volume, and 78 market
+dominance remain the established thresholds; the lane remains read-only, never plays
+audio, never manufactures LOOK NOW or Entry Ready, and never changes qualification.
+
+The historical GS442 cold/warm activation path still calls GS443's compatibility
+installer at the same point.
+
+GS334/GS340 remain untouched in this phase because their completed-scan/native-mover
+evidence capture crosses a different authority boundary that will be split separately.
