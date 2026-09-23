@@ -36,7 +36,10 @@ def install() -> None:
                               "error": f"SDK screener lacks {feed.operation}", "rows": []}
                 continue
             try:
-                args = dict(feed.arguments)
+                # GS537: consume the canonical session-aware feed arguments.
+                # This wrapper is the production discovery authority installed
+                # before webull_connection binds fetch_native_radar.
+                args = radar._feed_arguments(feed)
                 args["page_index"] = 1
                 args["page_size"] = 20
                 raw = method(**args)
@@ -69,7 +72,13 @@ def install() -> None:
                                 ),
                             })
                     rows = admitted
-                feeds[key] = {"label": feed.label, "status": "PASS", "error": "", "rows": rows}
+                feeds[key] = {
+                    "label": feed.label,
+                    "status": "PASS",
+                    "error": "",
+                    "rows": rows,
+                    "rank_type": args.get("rank_type"),
+                }
                 for row in rows:
                     symbol = row["symbol"]
                     entry = deduped.setdefault(symbol, {
@@ -102,6 +111,7 @@ def install() -> None:
             "all_feeds_available": all(feeds[key]["status"] == "PASS" for key in wanted_keys),
             "discovery_contract": radar.DISCOVERY_CONTRACT,
             "discovery_feed_keys": list(wanted_keys),
+            "day_gainers_rank_type": (feeds.get("day_gainers") or {}).get("rank_type"),
             "maximum_pre_dedupe_symbols": len(wanted_keys) * 20,
             "pages_requested_per_feed": 1,
             "rvol_discovery_min_gain_pct": radar.RVOL_DISCOVERY_MIN_GAIN_PCT,
