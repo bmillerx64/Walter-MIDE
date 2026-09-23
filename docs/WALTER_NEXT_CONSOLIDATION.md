@@ -165,3 +165,21 @@ The existing thresholds are unchanged: five minutes for 30s attention freshness 
 5% maximum 3m-ST gap for an ordinary DEVELOPING setup absent a fresh higher-timeframe
 maturation event. No discovery, provider calls, indicator formulas, scoring, ranking,
 qualification, Entry Authority, alerts, execution, or orders change.
+
+
+## Phase 8: 3m retest truth, memory, and discipline
+
+The 3-minute SuperTrend retest family is split across the correct authorities instead
+of remaining a cross-wrapped GS chain:
+
+- **Market Evidence** owns current 3m-ST truth, held-retest reconstruction from
+  already-captured session bars, and bounded retest memory.
+- **Thesis / State** owns the trader-facing guardrail, thesis-vs-trigger repair
+  sequence, and the explicit THESIS VALIDATED / TRIGGER NOT EARNED presentation.
+- **Entry Authority** remains unchanged and is still the only component that can grant
+  executable Entry Ready.
+
+GS493, GS514, and GS515 remain compatibility facades at their historical install
+positions so runtime ordering stays stable while ownership moves out of numbered
+patches. No new market-data request, threshold, indicator formula, qualification,
+ranking, readiness, alert, execution, or order behavior is introduced.
