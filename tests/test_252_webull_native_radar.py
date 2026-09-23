@@ -13,7 +13,7 @@ class FakeScreener:
     def __init__(self): self.calls=[]
     def get_gainers_losers(self, **kwargs):
         self.calls.append(("get_gainers_losers", kwargs)); prefix="D" if kwargs["rank_type"]=="DAY_1" else "M"
-        return {"data":[{"symbol":f"{prefix}{i}","name":f"{prefix} name {i}","price":1.0+i,"change_ratio":10.0+i,"volume":100_000*i,"relative_volume_10d":2.0+i} for i in range(1,4)]}
+        return {"data":[{"symbol":f"{prefix}{i}","name":f"{prefix} name {i}","price":1.0+i,"change_ratio":10.0+i,"volume":100_000*i,"relative_volume_10d":2.0+i,"market_value":10_000_000*i} for i in range(1,4)]}
     def get_most_active(self, **kwargs):
         self.calls.append(("get_most_active", kwargs)); prefix="R" if kwargs["rank_type"]=="RELATIVE_VOLUME_10D" else "V"
         return {"result":[{"ticker_symbol":f"{prefix}{i}","last_price":2.0+i,"pct_change":5.0+i,"total_volume":200_000*i,"rvol":3.0+i} for i in range(1,4)]}
@@ -57,6 +57,7 @@ def test_native_radar_normalizes_rows_and_provenance(monkeypatch):
     report=fetch_native_radar(FakeLiveClient()); day=report["feeds"]["day_gainers"]["rows"][0]
     assert day["symbol"]=="D1" and day["price"]==2.0 and day["source_feed"]=="day_gainers"
     assert report["symbols"][0]["sources"]==["day_gainers"] and report["symbols"][0]["ranks"]=={"day_gainers":1}
+    assert report["symbols"][0]["market_value"]==10_000_000
     fast=report["feeds"]["five_minute_movers"]["rows"][0]
     assert fast["symbol"]=="M1" and fast["source_feed"]=="five_minute_movers"
 
