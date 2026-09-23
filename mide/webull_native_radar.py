@@ -28,7 +28,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Callable
 
-from .time_service import market_phase_at
+from . import time_service
 
 
 @dataclass(frozen=True)
@@ -75,7 +75,7 @@ def _day_gainers_rank_type() -> str:
     """
     return (
         DAY_GAINERS_PREMARKET_RANK_TYPE
-        if market_phase_at() == "Pre-Market"
+        if time_service.market_phase_at() == "Pre-Market"
         else DAY_GAINERS_REGULAR_RANK_TYPE
     )
 
