@@ -566,6 +566,311 @@ def install_pe_strength_order() -> None:
     activate_operator_order_stage("pe_strength")
 
 
+# ---------------------------------------------------------------------------
+# Authoritative extreme-mover presentation semantics
+# ---------------------------------------------------------------------------
+#
+# GS333 remains the base extraordinary-event detector for now. GS465 and GS495 no
+# longer stack wrappers around it: one Presentation + Audio wrapper owns their staged
+# semantic corrections, while GS466's awareness-only stale-bar exception also lives
+# here.
+
+ANTI_CHASE_VWAP_DISTANCE_PCT = 2.0
+_EXTREME_EVENT_OWNER = "_walter_next_extreme_event_semantics_owner"
+_EXTREME_SELECTION_OWNER = "_walter_next_extreme_selection_continuity_owner"
+_EXTREME_AWARENESS_REASON_OWNER = "_walter_gs466_extreme_awareness_reason_owner"
+_EXTREME_AWARENESS_VISIBLE_OWNER = "_walter_gs466_extreme_awareness_visible_owner"
+
+
+def _specific_extreme_look_now(view: dict) -> bool:
+    from mide import gs310_unified_opportunity_state as unified
+
+    if str(view.get("state") or "") != unified.LOOK_NOW:
+        return False
+    reason = str(view.get("reason") or "").strip().lower()
+    generic = (
+        "a current attention trigger says this symbol deserves a chart review",
+        "current market-attention leader",
+    )
+    return bool(reason and not any(text in reason for text in generic))
+
+
+def _cleaned_extreme_value(event: dict | None, record: dict) -> dict | None:
+    """Apply GS465 truthful-label semantics to an already-detected extreme event."""
+    if not event:
+        return event
+    if event.get("halted") or "DO NOT CHASE" in str(event.get("label") or "").upper():
+        return event
+
+    from mide import gs310_unified_opportunity_state as unified
+
+    try:
+        view = unified.opportunity_state(record)
+    except Exception:
+        view = {}
+    state = str(view.get("state") or "")
+
+    cleaned = dict(event)
+    if state == unified.WATCH_FOR_ENTRY:
+        cleaned["label"] = "EXTREME MOVER · WATCH FOR ENTRY"
+        cleaned["guidance"] = (
+            "The normal opportunity state has earned WATCH FOR ENTRY. Use the same "
+            "entry evidence and risk discipline as any other setup."
+        )
+    elif _specific_extreme_look_now(view):
+        cleaned["label"] = "EXTREME MOVER · LOOK NOW"
+        cleaned["guidance"] = (
+            "Current structure independently earned LOOK NOW; the large percentage "
+            "move is context, not the reason for urgency."
+        )
+    else:
+        cleaned["label"] = "EXTREME MOVER · WATCH"
+        cleaned["guidance"] = (
+            "Major mover worth monitoring, but the current structure has not earned "
+            "LOOK NOW. Let normal VWAP/ST/ignition evidence promote it."
+        )
+    return cleaned
+
+
+def cleaned_extreme_event(original, record: dict) -> dict | None:
+    """Compatibility helper preserving GS465's original callable contract."""
+    return _cleaned_extreme_value(original(record), record)
+
+
+def _anti_chase_extreme_value(event: dict | None) -> dict | None:
+    """Apply GS495's <=2% VWAP working-zone qualifier to a final extreme event."""
+    if not isinstance(event, dict):
+        return event
+    label = str(event.get("label") or "").upper()
+    if event.get("halted") or "DO NOT CHASE" in label:
+        return event
+
+    try:
+        distance = float(event.get("vwap_distance_pct"))
+    except (TypeError, ValueError):
+        distance = None
+
+    if (
+        distance is None
+        or distance <= ANTI_CHASE_VWAP_DISTANCE_PCT
+        or "LOOK NOW" not in label
+    ):
+        return event
+
+    view = deepcopy(event)
+    view["label"] = "EXTREME MOVER · LOOK NOW · EXTENDED / WATCH RESET"
+    view["guidance"] = (
+        "Urgent attention only. Price is outside Walter's <=2% VWAP working zone; "
+        "do not chase. Keep the chart visible and wait for a constructive reset "
+        "toward VWAP before reconsidering."
+    )
+    view["anti_chase_active"] = True
+    view["entry_authority_changed"] = False
+    return view
+
+
+def truthful_extreme_market_event(original, record: dict) -> dict | None:
+    """Compatibility helper preserving GS495's original callable contract."""
+    return _anti_chase_extreme_value(original(record))
+
+
+def activate_extreme_event_stage(stage: str) -> None:
+    """Activate GS465/GS495 meaning inside one authoritative extreme-event wrapper."""
+    if stage not in {"cleanup", "anti_chase"}:
+        raise ValueError(f"unknown extreme-event stage: {stage}")
+
+    from mide import gs333_extreme_mover_operator_priority as gs333
+
+    current = gs333.extreme_market_event
+    if getattr(current, _EXTREME_EVENT_OWNER, False):
+        wrapper = current
+    else:
+        baseline = current
+
+        @wraps(baseline)
+        def extreme_market_event(record: dict) -> dict | None:
+            event = baseline(record)
+            active = set(
+                getattr(
+                    extreme_market_event,
+                    "_walter_next_extreme_event_stages",
+                    set(),
+                )
+            )
+            if "cleanup" in active:
+                event = _cleaned_extreme_value(event, record)
+            if "anti_chase" in active:
+                event = _anti_chase_extreme_value(event)
+            return event
+
+        _inherit_audio_wrapper(extreme_market_event, baseline)
+        setattr(extreme_market_event, _EXTREME_EVENT_OWNER, True)
+        extreme_market_event._walter_next_extreme_event_stages = set()
+        extreme_market_event._walter_next_extreme_event_baseline = baseline
+        gs333.extreme_market_event = extreme_market_event
+        wrapper = extreme_market_event
+
+    active = set(getattr(wrapper, "_walter_next_extreme_event_stages", set()))
+    active.add(stage)
+    wrapper._walter_next_extreme_event_stages = active
+
+    if stage == "cleanup":
+        wrapper._gs465_presentation_priority_cleanup = True
+        if not hasattr(wrapper, "_gs465_original"):
+            wrapper._gs465_original = getattr(
+                wrapper, "_walter_next_extreme_event_baseline", None
+            )
+    else:
+        wrapper._gs495_extreme_attention_anti_chase_semantics = True
+        if not hasattr(wrapper, "_gs495_original"):
+            wrapper._gs495_original = getattr(
+                wrapper, "_walter_next_extreme_event_baseline", None
+            )
+
+
+def _non_extreme_actionable_symbols(
+    rows: list[dict],
+    extreme_symbols: set[str],
+) -> set[str]:
+    from mide import gs310_unified_opportunity_state as unified
+
+    priority_states = {
+        unified.WATCH_FOR_ENTRY,
+        unified.LOOK_NOW,
+        unified.DEVELOPING,
+    }
+    symbols: set[str] = set()
+    for record in rows:
+        symbol = str(record.get("symbol") or "").strip().upper()
+        if not symbol or symbol in extreme_symbols:
+            continue
+        try:
+            state = str(unified.opportunity_state(record).get("state") or "")
+        except Exception:
+            continue
+        if state in priority_states:
+            symbols.add(symbol)
+    return symbols
+
+
+def prioritized_extreme_with_watch_continuity(original, records, *, now=None):
+    """Preserve GS465's generic extreme-WATCH single-banner continuity."""
+    from mide import gs333_extreme_mover_operator_priority as extreme
+
+    rows = list(records or [])
+    if now is None:
+        selected = original(rows)
+    else:
+        try:
+            selected = original(rows, now=now)
+        except TypeError:
+            selected = original(rows)
+    if selected and selected[0] is not None:
+        return selected
+
+    events: list[tuple[dict, dict]] = []
+    extreme_symbols: set[str] = set()
+    for record in rows:
+        event = extreme.extreme_market_event(record)
+        if not event:
+            continue
+        symbol = str(event.get("symbol") or record.get("symbol") or "").strip().upper()
+        if symbol:
+            extreme_symbols.add(symbol)
+        events.append((record, event))
+
+    if _non_extreme_actionable_symbols(rows, extreme_symbols):
+        return None, None
+
+    choices: list[tuple[tuple[float, float], dict, dict]] = []
+    for record, event in events:
+        if str(event.get("label") or "").upper() != "EXTREME MOVER · WATCH":
+            continue
+        try:
+            pct_change = float(event.get("pct_change") or 0.0)
+        except (TypeError, ValueError):
+            pct_change = 0.0
+        try:
+            dollar_volume = float(record.get("dollar_volume") or 0.0)
+        except (TypeError, ValueError):
+            dollar_volume = 0.0
+        choices.append(((pct_change, dollar_volume), record, event))
+
+    if not choices:
+        return None, None
+    _, record, event = max(choices, key=lambda item: item[0])
+    return record, event
+
+
+def install_extreme_selection_continuity() -> None:
+    """Bind GS465's selection fallback once at its historical install point."""
+    from mide import gs333_extreme_mover_operator_priority as gs333
+
+    current = gs333.prioritized_extreme_event
+    if getattr(current, _EXTREME_SELECTION_OWNER, False):
+        return
+
+    @wraps(current)
+    def prioritized_extreme_event(records, *, now=None):
+        return prioritized_extreme_with_watch_continuity(current, records, now=now)
+
+    _inherit_audio_wrapper(prioritized_extreme_event, current)
+    prioritized_extreme_event._gs465_presentation_priority_cleanup = True
+    prioritized_extreme_event._gs465_original = current
+    setattr(prioritized_extreme_event, _EXTREME_SELECTION_OWNER, True)
+    gs333.prioritized_extreme_event = prioritized_extreme_event
+
+
+def _source_bar_stale_reason(reason: str) -> bool:
+    return str(reason or "").strip().lower().startswith("source bar is ")
+
+
+def extreme_awareness_continuity(record: dict, *, base_reason: str) -> bool:
+    """Keep a current extreme mover visible when only its source-bar age is stale."""
+    if not _source_bar_stale_reason(base_reason):
+        return False
+    try:
+        from mide.gs333_extreme_mover_operator_priority import extreme_market_event
+
+        return extreme_market_event(record) is not None
+    except Exception:
+        return False
+
+
+def install_extreme_awareness_continuity() -> None:
+    """Bind GS466's awareness-only stale-bar exception at its historical position."""
+    from mide import gs373_operator_visibility_freshness as freshness
+
+    current_reason = freshness.operator_visibility_reason
+    if not getattr(current_reason, _EXTREME_AWARENESS_REASON_OWNER, False):
+        original_reason = current_reason
+
+        def operator_visibility_reason(record: dict) -> str:
+            reason = original_reason(record)
+            if extreme_awareness_continuity(record, base_reason=reason):
+                return ""
+            return reason
+
+        operator_visibility_reason._gs466_extreme_awareness_continuity = True
+        operator_visibility_reason._gs466_original = original_reason
+        setattr(
+            operator_visibility_reason,
+            _EXTREME_AWARENESS_REASON_OWNER,
+            True,
+        )
+        freshness.operator_visibility_reason = operator_visibility_reason
+
+    current_visible = freshness.operator_visible
+    if not getattr(current_visible, _EXTREME_AWARENESS_VISIBLE_OWNER, False):
+        def operator_visible(record: dict) -> bool:
+            return not freshness.operator_visibility_reason(record)
+
+        operator_visible._gs466_extreme_awareness_continuity = True
+        operator_visible._gs466_original = current_visible
+        setattr(operator_visible, _EXTREME_AWARENESS_VISIBLE_OWNER, True)
+        freshness.operator_visible = operator_visible
+
+
 FRESH_3M_SECONDS = 180.0
 _MATURATION_AUDIO_OWNER = "_walter_gs492_maturation_transition_audio"
 _AUDIO_GATE_BRIDGE_OWNER = "_walter_gs512_audio_architecture_gate_bridge"
@@ -899,6 +1204,14 @@ def install_leader_reset_audio() -> None:
 
 __all__ = [
     "actionable_candidate_records",
+    "install_extreme_awareness_continuity",
+    "extreme_awareness_continuity",
+    "install_extreme_selection_continuity",
+    "prioritized_extreme_with_watch_continuity",
+    "activate_extreme_event_stage",
+    "truthful_extreme_market_event",
+    "cleaned_extreme_event",
+    "ANTI_CHASE_VWAP_DISTANCE_PCT",
     "install_pe_strength_order",
     "install_pe_strength_state",
     "state_with_pe_strength",
