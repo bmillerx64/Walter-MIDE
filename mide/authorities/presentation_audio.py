@@ -1864,7 +1864,71 @@ def install_leader_reset_audio() -> None:
     escalation.escalation_alert_phrase = alert_phrase
 
 
+# ---------------------------------------------------------------------------
+# GS480 catalyst-story presentation facts
+# ---------------------------------------------------------------------------
+
+_CATALYST_STORY_OWNER = "_walter_gs480_story_why_owner"
+
+
+def catalyst_story_display_facts(record: dict) -> list[str]:
+    """Render bounded story facts from authoritative news evidence only."""
+    context = record.get("catalyst_story") or {}
+    categories = list(context.get("categories") or [])
+    quantities = list(context.get("quantities") or [])
+    facts: list[str] = []
+    if categories:
+        readable = [category.replace("_", " ").title() for category in categories[:3]]
+        facts.append("Story: " + " · ".join(readable))
+    role_facts: list[str] = []
+    for item in quantities:
+        role = str(item.get("role") or "")
+        if role in {
+            "DEAL_OR_BACKLOG",
+            "REVENUE",
+            "INVESTMENT_OR_FUNDING",
+            "DILUTION_OR_FINANCING",
+        }:
+            role_facts.append(
+                f"{item.get('text')} {role.replace('_', ' ').lower()}"
+            )
+        if len(role_facts) >= 3:
+            break
+    if role_facts:
+        facts.append(" · ".join(role_facts))
+    return facts
+
+
+def install_catalyst_story_presentation() -> None:
+    """Install GS480 story facts inside Presentation + Audio ownership."""
+    from mide import ui
+
+    current = ui._why_sections
+    if getattr(current, _CATALYST_STORY_OWNER, False):
+        return
+
+    @wraps(current)
+    def why_sections(record):
+        sections = dict(current(record))
+        facts = catalyst_story_display_facts(record)
+        if facts:
+            existing = str(sections.get("Catalyst") or "").strip()
+            addition = " · ".join(facts)
+            if addition not in existing:
+                sections["Catalyst"] = (
+                    f"{existing} · {addition}" if existing else addition
+                )
+        return sections
+
+    _inherit_audio_wrapper(why_sections, current)
+    setattr(why_sections, _CATALYST_STORY_OWNER, True)
+    why_sections._gs480_original = current
+    ui._why_sections = why_sections
+
+
 __all__ = [
+    "install_catalyst_story_presentation",
+    "catalyst_story_display_facts",
     "actionable_candidate_records",
     "install_market_event_presentation",
     "market_event_markup",

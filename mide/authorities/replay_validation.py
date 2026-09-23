@@ -6,6 +6,9 @@ functions resolve dynamically so warm Streamlit reruns cannot retain stale wrapp
 
 from __future__ import annotations
 
+from copy import deepcopy
+from functools import wraps
+
 from mide.flight_recorder import FlightRecorder
 from mide.mission_outcomes import MissionOutcomeStore
 
@@ -145,7 +148,107 @@ def scan_integrity_report(*args, **kwargs):
     return data_integrity.scan_integrity_report(*args, **kwargs)
 
 
+# ---------------------------------------------------------------------------
+# GS480 catalyst-story Flight Recorder truth
+# ---------------------------------------------------------------------------
+
+_CATALYST_STORY_RECORDER_OWNER = "_walter_gs480_story_recorder_owner"
+
+
+def catalyst_story_trace_snapshots() -> tuple[list[dict], dict[str, dict]]:
+    """Read GS480 compatibility snapshots without replacing authoritative containers."""
+    from mide import gs480_catalyst_story_intelligence as gs480
+
+    marketwide = getattr(gs480, "_LATEST_MARKETWIDE_TRACE", []) or []
+    targeted = getattr(gs480, "_LATEST_TARGETED_TRACE", {}) or {}
+    return marketwide, targeted
+
+
+def catalyst_story_recorder_wrapper(current):
+    """Persist story/news evidence through Replay / Validation ownership."""
+    if not callable(current) or getattr(current, _CATALYST_STORY_RECORDER_OWNER, False):
+        return current
+
+    @wraps(current)
+    def persist(self, scan, records):
+        marketwide, targeted_trace = catalyst_story_trace_snapshots()
+        record_by_symbol = {
+            str(item.get("symbol") or "").strip().upper(): item
+            for item in records or []
+            if item.get("symbol")
+        }
+        for path in scan.get("symbols", []) if isinstance(scan, dict) else []:
+            symbol = str(path.get("symbol") or "").strip().upper()
+            evidence = path.setdefault("evidence", {})
+            record = record_by_symbol.get(symbol) or {}
+            targeted = targeted_trace.get(symbol) or {}
+            headline = record.get("headline") or targeted.get("headline")
+            if headline:
+                evidence.update({
+                    "news_headline": str(headline)[:500],
+                    "news_created_at": record.get("news_created_at") or targeted.get("created_at"),
+                    "news_age_seconds_at_scan": record.get(
+                        "news_age_seconds_at_scan", targeted.get("age_seconds_at_scan")
+                    ),
+                    "news_source": record.get("news_source") or targeted.get("source"),
+                    "news_provider": record.get("news_provider") or targeted.get("provider"),
+                    "news_catalyst_score": record.get(
+                        "catalyst_score", targeted.get("catalyst_score")
+                    ),
+                    "news_explicit_symbols": list(
+                        record.get("news_explicit_symbols")
+                        or targeted.get("explicit_symbols")
+                        or []
+                    ),
+                    "catalyst_story": deepcopy(
+                        record.get("catalyst_story")
+                        or targeted.get("story_context")
+                        or {}
+                    ),
+                    "news_marketwide_handoff": bool(
+                        record.get(
+                            "news_marketwide_handoff",
+                            targeted.get("marketwide_handoff"),
+                        )
+                    ),
+                })
+        if isinstance(scan, dict):
+            scan["news_trace"] = {
+                "authority": "NEWS_AWARENESS_AND_OBSERVABILITY_ONLY",
+                "marketwide_selected": deepcopy(list(marketwide)),
+                "targeted": deepcopy(list(targeted_trace.values())),
+                "additional_provider_requests": 0,
+            }
+        return current(self, scan, records)
+
+    setattr(persist, _CATALYST_STORY_RECORDER_OWNER, True)
+    persist._gs480_original = current
+    return persist
+
+
+def install_catalyst_story_trace() -> None:
+    """Bind GS480 Flight Recorder story truth at its historical install position."""
+    from mide import flight_recorder
+
+    flight_recorder.persist_replayable_scan = catalyst_story_recorder_wrapper(
+        flight_recorder.persist_replayable_scan
+    )
+    try:
+        from mide import gs427_flight_recorder_latency_hard_bind as gs427
+        globals_dict = gs427._active_recorder_globals()
+    except Exception:
+        globals_dict = {}
+    if isinstance(globals_dict, dict):
+        active = globals_dict.get("persist_replayable_scan")
+        wrapped = catalyst_story_recorder_wrapper(active)
+        if callable(wrapped):
+            globals_dict["persist_replayable_scan"] = wrapped
+
+
 __all__ = [
+    "install_catalyst_story_trace",
+    "catalyst_story_recorder_wrapper",
+    "catalyst_story_trace_snapshots",
     "FlightRecorder",
     "install_ignition_validation_sequence",
     "build_validation_sequence_with_ignition",
