@@ -11,6 +11,7 @@ import html
 from collections.abc import Callable, Iterable
 from copy import deepcopy
 from functools import wraps
+from time import monotonic
 from typing import Any
 
 
@@ -803,6 +804,121 @@ def install_base_extreme_presentation() -> None:
         ui.play_alert = play_alert_in_sidebar
 
 
+EXTREME_DO_NOT_CHASE_TOP_TTL_SECONDS = 180.0
+_extreme_first_seen: dict[str, float] = {}
+
+
+def _actionable_operator_symbols(rows: list[dict]) -> set[str]:
+    """Return symbols whose current state outranks an extended DO-NOT-CHASE banner."""
+    from mide import gs310_unified_opportunity_state as unified
+
+    priority_states = {
+        unified.WATCH_FOR_ENTRY,
+        unified.LOOK_NOW,
+        unified.DEVELOPING,
+    }
+    symbols: set[str] = set()
+    for record in rows:
+        symbol = str(record.get("symbol") or "").strip().upper()
+        if not symbol:
+            continue
+        try:
+            state = unified.opportunity_state(record).get("state")
+        except Exception:
+            continue
+        if state in priority_states:
+            symbols.add(symbol)
+    return symbols
+
+
+def prioritized_extreme_with_decay(
+    records,
+    *,
+    now: float | None = None,
+) -> tuple[dict | None, dict | None]:
+    """Apply GS393/GS439 action-first TTL behavior to current extreme events."""
+    from mide import gs333_extreme_mover_operator_priority as extreme
+
+    stamp = monotonic() if now is None else float(now)
+    rows = list(records or [])
+    actionable_symbols = _actionable_operator_symbols(rows)
+    extreme_symbols: set[str] = set()
+    choices: list[tuple[tuple, dict, dict]] = []
+
+    for record in rows:
+        event = extreme.extreme_market_event(record)
+        if not event:
+            continue
+        symbol = str(event.get("symbol") or "").upper()
+        if not symbol:
+            continue
+        extreme_symbols.add(symbol)
+        _extreme_first_seen.setdefault(symbol, stamp)
+
+        label = str(event.get("label") or "").upper()
+        elapsed = max(0.0, stamp - _extreme_first_seen[symbol])
+        competing_action = any(
+            candidate_symbol != symbol for candidate_symbol in actionable_symbols
+        )
+        eligible = (
+            "HALTED" in label
+            or "LOOK NOW" in label
+            or (
+                not competing_action
+                and elapsed <= EXTREME_DO_NOT_CHASE_TOP_TTL_SECONDS
+            )
+        )
+        if not eligible:
+            continue
+
+        dollar_volume = _extreme_number(
+            record,
+            "dollar_volume",
+            default=0.0,
+        ) or 0.0
+        choices.append(
+            (
+                (
+                    1 if event.get("halted") else 0,
+                    float(event.get("pct_change") or 0.0),
+                    dollar_volume,
+                ),
+                record,
+                event,
+            )
+        )
+
+    for symbol in list(_extreme_first_seen):
+        if symbol not in extreme_symbols:
+            _extreme_first_seen.pop(symbol, None)
+
+    if not choices:
+        return None, None
+    _, record, event = max(choices, key=lambda item: item[0])
+    return record, event
+
+
+def install_extreme_banner_decay() -> None:
+    """Bind GS393/GS439 action-first extreme priority at its historical position."""
+    from mide import gs333_extreme_mover_operator_priority as extreme
+
+    current = extreme.prioritized_extreme_event
+    if getattr(current, "_gs439_action_first_extreme", False):
+        return
+
+    def prioritized_with_decay(records, *, now: float | None = None):
+        return prioritized_extreme_with_decay(records, now=now)
+
+    prioritized_with_decay._gs393_extreme_decay = True
+    prioritized_with_decay._gs439_action_first_extreme = True
+    prioritized_with_decay._gs393_original = current
+    extreme.prioritized_extreme_event = prioritized_with_decay
+
+
+def reset_extreme_banner_decay_state() -> None:
+    _extreme_first_seen.clear()
+
+
 # ---------------------------------------------------------------------------
 # Authoritative extreme-mover presentation semantics
 # ---------------------------------------------------------------------------
@@ -1441,6 +1557,10 @@ def install_leader_reset_audio() -> None:
 
 __all__ = [
     "actionable_candidate_records",
+    "reset_extreme_banner_decay_state",
+    "install_extreme_banner_decay",
+    "prioritized_extreme_with_decay",
+    "EXTREME_DO_NOT_CHASE_TOP_TTL_SECONDS",
     "install_base_extreme_presentation",
     "extreme_event_markup",
     "prioritized_extreme_event",

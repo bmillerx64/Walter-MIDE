@@ -324,3 +324,29 @@ GS334/GS340's separate attention-only market-event lane is unchanged.
 
 No discovery membership, provider requests, evidence calculations, qualification,
 Entry Ready, alert authority, execution, or orders change.
+
+
+## Phase 15: split GS393/GS439 across four authorities
+
+GS393/GS439 previously combined four unrelated responsibilities in one numbered
+module. Walter Next now separates them:
+
+- **Market Evidence** owns primary 1m ignition truth: fresh VWAP reclaim/hold or fresh
+  bullish 1m SuperTrend flip above VWAP, inside the existing +2% chase guard, with
+  the existing support-evidence requirement. The 150-second flip freshness and
+  2-bar reclaim freshness contracts are unchanged.
+- **Thesis / State** owns the interpretation that fresh ignition may promote an
+  otherwise-developing thesis to LOOK NOW, while never overriding Entry Ready,
+  CHASE / WAIT, or HALTED.
+- **Presentation + Audio** owns GS393/GS439's 180-second extended-extreme banner TTL
+  and the rule that a DO-NOT-CHASE extreme immediately yields the top sightline to a
+  workable WATCH FOR ENTRY / LOOK NOW / DEVELOPING peer.
+- **Replay / Validation** owns enrichment of the GS390 validation sequence with the
+  primary ignition definition while retaining literal ST-line/VWAP crossing as
+  secondary maturation evidence.
+
+The historical GS393 module remains a compatibility coordinator and invokes the
+moved installers in its original order.
+
+No provider calls, market-data requests, indicator formulas, qualification, Entry
+Ready authority, execution, or orders change.
