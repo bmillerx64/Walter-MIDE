@@ -61,3 +61,26 @@ currently span the largest number of historical wrappers.  Before moving logic, 
 parity fixtures from the frozen baseline for representative states: WAIT, DEVELOPING,
 LOOK NOW, ENTRY READY, extended/anti-chase, retest/reclaim, continuation/re-ignition,
 and halted/unsafe.
+
+
+## Phase 2 parity harness
+
+Before moving Thesis / State or Entry Authority logic, Walter Next freezes a small set
+of representative baseline behaviors behind the authority seams.  The parity cases
+cover:
+
+- DEVELOPING for constructive but insufficient participation;
+- LOOK NOW for current mover + fresh flow;
+- CHASE / WAIT for extension;
+- HALTED as the overriding safety state;
+- WATCH FOR ENTRY for aligned current evidence;
+- canonical ENTRY READY only when executable authority is true;
+- false legacy Entry Ready remaining SETTING UP;
+- continuation re-ignition satisfying the SuperTrend lock only inside the entry zone;
+- retest-entry shadow behavior; and
+- anti-chase remaining authoritative during retest evaluation.
+
+These tests are migration locks, not new strategy specifications.  As legacy logic is
+absorbed into the authority modules, the same inputs must keep producing the same
+meaning unless a later, separately reviewed strategy change intentionally revises the
+contract.
