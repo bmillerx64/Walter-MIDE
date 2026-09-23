@@ -197,6 +197,279 @@ def base_opportunity_state(record: dict) -> dict:
     }
 
 
+_FRESH_LOOK_NOW_OWNER_ATTR = "_walter_gs474_fresh_look_now_expiry_owner"
+_COMPRESSION_PROVENANCE = "ST_FLIP_PRICE_COMPRESSION"
+
+
+def _compression_owned(state: dict) -> bool:
+    provenance = list(state.get("attention_provenance") or [])
+    return _COMPRESSION_PROVENANCE in provenance or bool(state.get("st_flip_compression"))
+
+
+def fresh_look_now_state(original, record: dict) -> dict:
+    """Expire stale compression-owned LOOK NOW while preserving other urgency paths."""
+    base = original(record)
+    if str(base.get("state") or "") != LOOK_NOW:
+        return base
+    if not _compression_owned(base):
+        return base
+
+    from mide import gs460_st_flip_compression_ignition as gs460
+
+    signal = gs460.st_flip_compression(record)
+    if signal.get("fresh_join"):
+        return base
+
+    view = deepcopy(base)
+    view["state"] = DEVELOPING
+    view["color"] = STATE_COLORS[DEVELOPING]
+    view["st_flip_compression"] = signal
+    view["reason"] = (
+        "The bottom-up ST/VWAP ignition is no longer a fresh transition. The setup "
+        "remains worth monitoring, but it has not earned a current LOOK NOW cue."
+    )
+    view["next_step"] = (
+        "Keep it on watch for a newly joined timeframe rung, constructive reset/retest, "
+        "or other fresh evidence before Walter elevates it again."
+    )
+    provenance = list(view.get("attention_provenance") or [])
+    if "GS474_FRESH_LOOK_NOW_EXPIRY" not in provenance:
+        provenance.append("GS474_FRESH_LOOK_NOW_EXPIRY")
+    view["attention_provenance"] = provenance
+    view["gs474_look_now_freshness"] = {
+        "authority": "PRESENTATION_URGENCY_ONLY",
+        "compression_active": bool(signal.get("active")),
+        "fresh_join": bool(signal.get("fresh_join")),
+        "entry_authority_changed": False,
+        "alert_authority_changed": False,
+    }
+    return view
+
+
+def install_fresh_look_now_expiry() -> None:
+    """Bind compression freshness at the historical GS474 position."""
+    from mide import gs310_unified_opportunity_state as unified
+    from mide import gs311_unified_voice as voice
+    from mide import gs314_state_consistency as consistency
+    from mide import gs363_operator_attention_hierarchy as hierarchy
+
+    current = unified.opportunity_state
+    if getattr(current, _FRESH_LOOK_NOW_OWNER_ATTR, False):
+        calibrated = current
+    else:
+        @wraps(current)
+        def calibrated(record: dict) -> dict:
+            return fresh_look_now_state(current, record)
+
+        _inherit_state_wrapper(calibrated, current)
+        calibrated._gs474_fresh_look_now_expiry = True
+        calibrated._gs474_original = current
+        setattr(calibrated, _FRESH_LOOK_NOW_OWNER_ATTR, True)
+        unified.opportunity_state = calibrated
+
+    voice.opportunity_state = calibrated
+    consistency.opportunity_state = calibrated
+    hierarchy.opportunity_state = calibrated
+
+
+FRESH_30S_ATTENTION_SECONDS = 5 * 60.0
+_FRESH_ATTENTION_OWNER_ATTR = "_walter_gs525_fresh_attention_expiry_owner"
+_FRESH_ATTENTION_PROVENANCE = "GS525_LATE_IGNITION_CONTEXT"
+
+
+def thirty_second_flip_age(record: dict) -> float | None:
+    """Return canonical 30s flip age from already-computed tripwire evidence."""
+    age = _finite(record.get("supertrend_30s_last_flip_age_seconds"))
+    if age is not None:
+        return age
+    tripwire = record.get("thirty_second_tripwire") or {}
+    return _finite(tripwire.get("last_flip_age_seconds"))
+
+
+def fresh_higher_maturation(record: dict) -> bool:
+    """Reuse established fresh-rung truth; invent no new signal."""
+    try:
+        from mide import gs455_early_ignition_3m_confirmation as gs455
+
+        signal = gs455.progression_signal(record)
+        return bool(
+            signal.get("active")
+            and signal.get("new_rung") in {"1m", "3m", "5m", "10m", "15m"}
+        )
+    except Exception:
+        return False
+
+
+def stale_legacy_developing(record: dict, view: dict) -> bool:
+    """Identify only the late standalone-ignition presentation case."""
+    semantics = view.get("look_now_semantics") or {}
+    if not semantics.get("legacy_1m_ignition_demoted"):
+        return False
+    if semantics.get("bottom_up_compression") or semantics.get("jet_fuel"):
+        return False
+    age = thirty_second_flip_age(record)
+    if age is None or age <= FRESH_30S_ATTENTION_SECONDS:
+        return False
+    return not fresh_higher_maturation(record)
+
+
+def tighten_late_attention_state(original, record: dict) -> dict:
+    """Add truthful late-arrival context while preserving the canonical state."""
+    view = original(record)
+    if not stale_legacy_developing(record, view):
+        return view
+
+    age = thirty_second_flip_age(record)
+    minutes = (age or 0.0) / 60.0
+    updated = deepcopy(view)
+    provenance = list(updated.get("attention_provenance") or [])
+    if _FRESH_ATTENTION_PROVENANCE not in provenance:
+        provenance.append(_FRESH_ATTENTION_PROVENANCE)
+    updated["attention_provenance"] = provenance
+    updated["reason"] = (
+        f"LATE CONTINUATION WATCH: the earlier 30s ignition is {minutes:.1f} minutes "
+        "old. Keep the runner visible, but do not treat this as fresh Developing urgency."
+    )
+    updated["next_step"] = (
+        "Require a fresh 1m/3m maturation event, constructive reset/retest, VWAP reclaim, "
+        "or renewed acceleration before elevating operator urgency again."
+    )
+    updated["freshness_semantics"] = {
+        "late_legacy_ignition": True,
+        "thirty_second_flip_age_seconds": age,
+        "fresh_attention_limit_seconds": FRESH_30S_ATTENTION_SECONDS,
+        "authority": "PRESENTATION_ONLY",
+    }
+    return updated
+
+
+def install_fresh_attention_expiry() -> None:
+    """Bind five-minute 30s attention freshness at the historical GS525 position."""
+    from mide import gs310_unified_opportunity_state as unified
+    from mide import gs311_unified_voice as voice
+    from mide import gs314_state_consistency as consistency
+    from mide import gs363_operator_attention_hierarchy as hierarchy
+    from mide import gs462_preflip_ignition_watch as preflip
+
+    preflip.RECENT_30S_FLIP_SECONDS = FRESH_30S_ATTENTION_SECONDS
+
+    current = unified.opportunity_state
+    if getattr(current, _FRESH_ATTENTION_OWNER_ATTR, False):
+        calibrated = current
+    else:
+        @wraps(current)
+        def calibrated(record: dict) -> dict:
+            return tighten_late_attention_state(current, record)
+
+        _inherit_state_wrapper(calibrated, current)
+        calibrated._gs525_fresh_attention_expiry = True
+        calibrated._gs525_original = current
+        setattr(calibrated, _FRESH_ATTENTION_OWNER_ATTR, True)
+        unified.opportunity_state = calibrated
+
+    voice.opportunity_state = calibrated
+    consistency.opportunity_state = calibrated
+    hierarchy.opportunity_state = calibrated
+
+
+MAX_DEVELOPING_3M_ST_GAP_PCT = 5.0
+_STRETCH_OWNER_ATTR = "_walter_gs526_3m_stretch_semantics_owner"
+_STRETCH_PROVENANCE = "GS526_3M_STRETCH_SEMANTICS"
+
+
+def three_minute_st_retest_truth(record: dict) -> dict:
+    """Read the existing GS493 3m-ST truth without creating a second definition."""
+    from mide import gs493_3m_st_retest_truth as gs493
+
+    return gs493.three_minute_st_retest_truth(record)
+
+
+def materially_stretched_developing(record: dict, view: dict) -> tuple[bool, dict]:
+    """Return whether an ordinary DEVELOPING card is already too far above 3m ST."""
+    if str(view.get("state") or "") != DEVELOPING:
+        return False, {}
+
+    truth = three_minute_st_retest_truth(record)
+    if truth.get("state") != "NOT_AT_3M_ST_YET":
+        return False, truth
+    if not truth.get("three_minute_bullish"):
+        return False, truth
+
+    try:
+        gap = float(truth.get("signed_gap_pct"))
+    except (TypeError, ValueError):
+        return False, truth
+
+    if gap <= MAX_DEVELOPING_3M_ST_GAP_PCT:
+        return False, truth
+    if fresh_higher_maturation(record):
+        return False, truth
+    return True, truth
+
+
+def stretch_adjusted_state(original, record: dict) -> dict:
+    """Convert only stale/extended DEVELOPING semantics to CHASE / WAIT."""
+    view = original(record)
+    stretched, truth = materially_stretched_developing(record, view)
+    if not stretched:
+        return view
+
+    updated = deepcopy(view)
+    updated["state"] = CHASE_WAIT
+    updated["color"] = STATE_COLORS[CHASE_WAIT]
+
+    gap = float(truth["signed_gap_pct"])
+    price = truth.get("price")
+    st_value = truth.get("three_minute_supertrend")
+    updated["reason"] = (
+        f"Price is still near VWAP, but it is already {gap:.1f}% above the bullish "
+        "3m SuperTrend line. The move is no longer a fresh Developing setup."
+    )
+    updated["next_step"] = (
+        "CHASE / WAIT. Keep the runner visible, but require a constructive reset, "
+        "3m SuperTrend retest/reclaim, or a fresh higher-timeframe maturation event "
+        "before elevating urgency again."
+    )
+    provenance = list(updated.get("attention_provenance") or [])
+    if _STRETCH_PROVENANCE not in provenance:
+        provenance.append(_STRETCH_PROVENANCE)
+    updated["attention_provenance"] = provenance
+    updated["three_minute_stretch_semantics"] = {
+        "gap_pct": gap,
+        "price": price,
+        "three_minute_supertrend": st_value,
+        "max_developing_gap_pct": MAX_DEVELOPING_3M_ST_GAP_PCT,
+        "authority": "PRESENTATION_ONLY",
+    }
+    return updated
+
+
+def install_3m_stretch_semantics() -> None:
+    """Bind 3m-stretch anti-chase at the historical GS526 position."""
+    from mide import gs310_unified_opportunity_state as unified
+    from mide import gs311_unified_voice as voice
+    from mide import gs314_state_consistency as consistency
+    from mide import gs363_operator_attention_hierarchy as hierarchy
+
+    current = unified.opportunity_state
+    if getattr(current, _STRETCH_OWNER_ATTR, False):
+        calibrated = current
+    else:
+        @wraps(current)
+        def calibrated(record: dict) -> dict:
+            return stretch_adjusted_state(current, record)
+
+        _inherit_state_wrapper(calibrated, current)
+        calibrated._gs526_3m_stretch_semantics = True
+        calibrated._gs526_original = current
+        setattr(calibrated, _STRETCH_OWNER_ATTR, True)
+        unified.opportunity_state = calibrated
+
+    voice.opportunity_state = calibrated
+    consistency.opportunity_state = calibrated
+    hierarchy.opportunity_state = calibrated
+
+
 _LOOK_NOW_OWNER_ATTR = "_walter_gs467_look_now_semantics_owner"
 _LOOK_NOW_PROVENANCE = "GS467_LOOK_NOW_SEMANTICS"
 
@@ -486,6 +759,16 @@ __all__ = [
     "STATE_COLORS",
     "WATCH_FOR_ENTRY",
     "base_opportunity_state",
+    "stretch_adjusted_state",
+    "materially_stretched_developing",
+    "three_minute_st_retest_truth",
+    "tighten_late_attention_state",
+    "stale_legacy_developing",
+    "fresh_higher_maturation",
+    "thirty_second_flip_age",
+    "fresh_look_now_state",
+    "MAX_DEVELOPING_3M_ST_GAP_PCT",
+    "FRESH_30S_ATTENTION_SECONDS",
     "legacy_1m_ignition_look_now",
     "consolidated_look_now",
     "bottom_up_urgency",

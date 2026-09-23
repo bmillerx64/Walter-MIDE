@@ -147,3 +147,21 @@ untouched.
 `mide.gs467_look_now_semantic_consolidation` remains only as a compatibility shim at
 its historical installer position. No thresholds, qualification, Entry Authority,
 provider requests, indicators, alerts, execution, or orders change.
+
+
+## Phase 7: freshness and extension ownership
+
+Three related late-state wrappers are consolidated into
+`mide.authorities.thesis_state` as one coherent family:
+
+- GS474 compression-owned LOOK NOW freshness expiry;
+- GS525 five-minute 30s attention freshness / late-continuation context; and
+- GS526 3m-SuperTrend stretch adjudication.
+
+The historical GS modules remain compatibility shims at their original install
+positions, preserving wrapper order while removing their ownership of meaning.
+
+The existing thresholds are unchanged: five minutes for 30s attention freshness and
+5% maximum 3m-ST gap for an ordinary DEVELOPING setup absent a fresh higher-timeframe
+maturation event. No discovery, provider calls, indicator formulas, scoring, ranking,
+qualification, Entry Authority, alerts, execution, or orders change.
