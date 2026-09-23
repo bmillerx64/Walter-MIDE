@@ -315,11 +315,11 @@ def discipline_sequence(record: dict, event: dict) -> dict:
     }
 
 
-def retest_memory_state(original, record: dict) -> dict:
-    """Add remembered-retet sequencing to the established 3m truth guardrail."""
+def retest_memory_state(state_helper, original, record: dict) -> dict:
+    """Add remembered-retest sequencing to the established 3m truth guardrail."""
     from mide.authorities import market_evidence
 
-    view = original(record)
+    view = state_helper(original, record)
     truth = dict(view.get("three_minute_st_retest_truth") or {})
     if truth.get("state") != "PRIOR_ST_RETEST_HELD":
         return view
@@ -458,7 +458,7 @@ def install_retest_memory_state() -> None:
 
     @wraps(current)
     def bound_state(original, record: dict) -> dict:
-        return retest_memory_state(current, record)
+        return retest_memory_state(current, original, record)
 
     setattr(bound_state, _RETEST_MEMORY_STATE_OWNER, True)
     bound_state._gs514_original = current
