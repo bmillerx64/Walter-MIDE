@@ -1,3 +1,4 @@
+import ast
 from pathlib import Path
 
 from mide.gs498_mission_ranking_direction import mission_ranked_records
@@ -38,8 +39,16 @@ def test_historical_tiebreak_remains_higher_is_better():
 
 def test_live_stage8_uses_canonical_descending_helper():
     app = Path("app.py").read_text(encoding="utf-8")
+    tree = ast.parse(app)
+    thesis_import = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.ImportFrom)
+        and node.module == "mide.authorities.thesis_state"
+    )
+    imported_names = {alias.name for alias in thesis_import.names}
 
-    assert "from mide.gs498_mission_ranking_direction import mission_ranked_records" in app
+    assert "mission_ranked_records" in imported_names
     assert "ranked_records = mission_ranked_records(records)" in app
     assert "sorted(records, key=trader_priority_sort_key)" not in app
 

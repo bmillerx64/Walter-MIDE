@@ -25,7 +25,7 @@ def test_late_bootstrap_remains_after_parent_import_boundary():
     app_source = Path("app.py").read_text()
     entry = app_source.index('log_startup("entering app.py")')
     provider_import = app_source.index("from mide.config import Settings")
-    ui_import = app_source.index("from mide.ui import (")
+    ui_import = app_source.index("from mide.authorities.presentation_audio import (")
     assert entry < provider_import < ui_import
 
 
