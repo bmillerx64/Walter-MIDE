@@ -202,10 +202,10 @@ def fetch_native_radar(client: Any) -> dict[str, Any]:
             }
             for row in normalized:
                 symbol = row["symbol"]
-                entry = deduped.setdefault(symbol, {"symbol": symbol, "name": row.get("name"), "price": row.get("price"), "change_ratio": row.get("change_ratio"), "volume": row.get("volume"), "relative_volume_10d": row.get("relative_volume_10d"), "sources": [], "ranks": {}})
+                entry = deduped.setdefault(symbol, {"symbol": symbol, "name": row.get("name"), "price": row.get("price"), "change_ratio": row.get("change_ratio"), "volume": row.get("volume"), "relative_volume_10d": row.get("relative_volume_10d"), "market_value": row.get("market_value"), "sources": [], "ranks": {}})
                 if key not in entry["sources"]: entry["sources"].append(key)
                 entry["ranks"][key] = row["rank"]
-                for field in ("name", "price", "change_ratio", "volume", "relative_volume_10d"):
+                for field in ("name", "price", "change_ratio", "volume", "relative_volume_10d", "market_value"):
                     if entry.get(field) is None and row.get(field) is not None: entry[field] = row[field]
         except Exception as exc:
             feeds[key] = {"label": feed.label, "status": "FAIL", "error": f"{type(exc).__name__}: {exc}", "rows": []}
