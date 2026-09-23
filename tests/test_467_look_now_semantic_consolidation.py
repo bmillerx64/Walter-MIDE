@@ -49,7 +49,7 @@ def test_fresh_event_attention_contract_is_preserved(monkeypatch):
 
 def test_30s_1m_early_watch_stays_visible_but_does_not_keep_look_now(monkeypatch):
     monkeypatch.setattr(
-        gs467,
+        thesis_state,
         "bottom_up_urgency",
         lambda _record: _weak_urgency(early=True),
     )
@@ -66,7 +66,7 @@ def test_30s_1m_early_watch_stays_visible_but_does_not_keep_look_now(monkeypatch
 
 def test_3m_jet_fuel_may_retain_existing_look_now(monkeypatch):
     monkeypatch.setattr(
-        gs467,
+        thesis_state,
         "bottom_up_urgency",
         lambda _record: _weak_urgency(early=True, jet=True),
     )
@@ -80,7 +80,7 @@ def test_3m_jet_fuel_may_retain_existing_look_now(monkeypatch):
 
 def test_30s_1m_flip_compression_may_retain_existing_look_now(monkeypatch):
     monkeypatch.setattr(
-        gs467,
+        thesis_state,
         "bottom_up_urgency",
         lambda _record: _weak_urgency(compression=True),
     )
