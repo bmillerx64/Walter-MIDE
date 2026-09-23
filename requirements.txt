@@ -1,9 +1,9 @@
-# GS537 deployment marker: use Webull PRE_MARKET gainers during the premarket
-# session so Walter discovers the same early leaders shown in Desktop Top Gainers.
-# Downstream price, float, participation, expansion, ranking, readiness, and execution stay unchanged.
 # GS445 deployment marker: force one clean Streamlit Community Cloud runtime so
 # append-only Candidate History / Flight Recorder exports reuse incremental gzip state.
 # No dependency versions change in this deployment-only activation.
+# GS537 deployment marker: use Webull PRE_MARKET gainers during the premarket
+# session so Walter discovers the same early leaders shown in Desktop Top Gainers.
+# Downstream price, float, participation, expansion, ranking, readiness, and execution stay unchanged.
 # GS536 deployment marker: roll Candidate History and Flight Recorder by embedded
 # Eastern session date so routine backups stop accumulating prior-day multi-GB logs.
 # GS535 deployment marker: align bounded continuation re-ignition VWAP ceiling
