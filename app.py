@@ -181,25 +181,65 @@ from mide.completed_scan import (
     scan_context,
     store_completed_scan,
 )
-from mide.live_evidence_observation import render_live_evidence_diagnostics
-memory_checkpoint("providers import", object_name="mide.webull_live")
-from mide.news import index_news
-from mide.news_provider import (
+from mide.authorities.discovery_news import (
     MarketDataNewsProvider,
     NewsService,
     UnavailableNewsProvider,
-    symbol_news_evidence,
-    ticker_inspection,
-)
-from mide.resilience import record_provider_failure
-from mide.discovery import (
-    analyze_candidates,
     build_seed_symbols,
+    index_news,
     is_valid_us_symbol,
     prefilter_snapshots,
     snapshot_identity_records,
+    symbol_news_evidence,
+    ticker_inspection,
 )
-from mide.flight_recorder import prefilter_decision
+from mide.authorities.market_evidence import (
+    analyze_candidates,
+    apply_scanner_v2,
+    expansion_candidate_diagnostic,
+    participation_gate_rejection_diagnostics,
+    strengthening_diagnostics,
+)
+from mide.authorities.presentation_audio import (
+    actionable_candidate_records,
+    data_integrity_markup,
+    decision_funnel_markup,
+    inject_css,
+    market_session_quality_markup,
+    mission_control_header_markup,
+    opportunity_card,
+    play_alert,
+    radar_table,
+    rejected_candidates_table,
+    rejection_diagnostics,
+    render_calibration_dashboard,
+    render_early_setups,
+    render_escalation_engine,
+    render_live_evidence_diagnostics,
+    render_live_opportunity_feed,
+    render_sidebar_audio_health,
+    render_walter_mission_control,
+    scanner_v2_dashboard_counts,
+    scanner_v2_display_sections,
+)
+from mide.authorities.entry_authority import canonical_candidate_status
+from mide.authorities.replay_validation import (
+    FlightRecorder,
+    MissionOutcomeStore,
+    prefilter_decision,
+    scan_integrity_report,
+)
+from mide.authorities.thesis_state import (
+    behavioral_decision,
+    escalation_alert_phrase,
+    escalation_snapshot,
+    escalation_state_changes,
+    evaluate as evaluate_decision_funnel,
+    mission_ranked_records,
+    walter_mission_control,
+)
+memory_checkpoint("providers import", object_name="mide.webull_live")
+from mide.resilience import record_provider_failure
 from mide.gs415_qualified_pass_visibility import default_actionable_display_records
 from mide.pipeline_diagnostics import (
     diagnostics_table,
@@ -209,62 +249,21 @@ from mide.pipeline_diagnostics import (
 )
 from mide.universe_diagnostics import UniverseVerification
 memory_checkpoint("discovery import", object_name="mide.discovery")
-from mide.scanner_v2 import (
-    apply_scanner_v2,
-    participation_gate_rejection_diagnostics,
-    strengthening_diagnostics,
-)
 memory_checkpoint("scanner import", object_name="mide.scanner_v2")
 from mide.memory import MemoryStore
-from mide.flight_recorder import FlightRecorder
 from mide.gs496_static_session_backup import render_session_backup_controls
 from mide.gs510_compact_analysis_bundle import render_compact_analysis_bundle_controls
-from mide.gs516_visible_alert_audio_health import render_sidebar_audio_health
-from mide.gs498_mission_ranking_direction import mission_ranked_records
-from mide.gs528_canonical_entry_ready import canonical_candidate_status
-from mide.decision_engine import expansion_candidate_diagnostic
 memory_checkpoint("cache stores import", object_name="MemoryStore, FlightRecorder")
 from mide.memory_profile import compact_previous_record, profile as memory_profile, release_temporaries
 from mide.timeframe_alignment import alignment_voice
 memory_checkpoint("runtime evidence imports")
 from mide.demo import demo_records
-from mide.escalation import (
-    escalation_alert_phrase,
-    escalation_snapshot,
-    escalation_state_changes,
-)
-from mide.data_integrity import scan_integrity_report
-from mide.ui import (
-    inject_css,
-    radar_table,
-    opportunity_card,
-    play_alert,
-    scanner_v2_display_sections,
-    scanner_v2_dashboard_counts,
-    actionable_candidate_records,
-    rejected_candidates_table,
-    rejection_diagnostics,
-    render_walter_mission_control,
-    render_early_setups,
-    render_live_opportunity_feed,
-    render_escalation_engine,
-    mission_control_header_markup,
-    data_integrity_markup,
-    decision_funnel_markup,
-    market_session_quality_markup,
-    walter_mission_control,
-    render_calibration_dashboard,
-)
 memory_checkpoint("UI import", object_name="mide.ui")
 from mide.live_opportunity_feed import update_opportunity_feed
 from mide.trader_priority import trader_priority_sort_key
 from mide.early_setup import newly_entered_symbols
 from mide.time_service import format_eastern_time, market_clock, market_phase_at
 from mide.watchdog import ScanAlreadyRunning
-from mide.decision_engine import (
-    evaluate as evaluate_decision_funnel,
-    behavioral_decision,
-)
 from mide.architecture import (
     ArchitecturePolicy,
     Decision,
@@ -274,7 +273,6 @@ from mide.architecture import (
     scanner_implementation,
 )
 from mide.architecture_verification import candidate_trace
-from mide.mission_outcomes import MissionOutcomeStore
 memory_checkpoint("decision engine import", object_name="mide.decision_engine")
 from mide.free_float_inspector import inspect_free_float
 from mide.free_float import (
