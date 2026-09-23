@@ -29,8 +29,9 @@ def _fresh_radar():
     return importlib.reload(radar)
 
 
-def test_discovery_feeds_include_all_four_native_attention_lists():
+def test_discovery_feeds_include_all_four_native_attention_lists(monkeypatch):
     native_radar = _fresh_radar()
+    monkeypatch.setattr(native_radar.time_service, "market_phase_at", lambda: "Live Market")
     client = _Screener()
     report = native_radar.fetch_native_radar(client)
 
@@ -48,8 +49,9 @@ def test_discovery_feeds_include_all_four_native_attention_lists():
     assert client.calls[3][1]["rank_type"] == "RELATIVE_VOLUME_10D"
 
 
-def test_discovery_preserves_source_labels_and_includes_five_minute_movers():
+def test_discovery_preserves_source_labels_and_includes_five_minute_movers(monkeypatch):
     native_radar = _fresh_radar()
+    monkeypatch.setattr(native_radar.time_service, "market_phase_at", lambda: "Live Market")
     report = native_radar.fetch_native_radar(_Screener())
     by_symbol = {row["symbol"]: row for row in report["symbols"]}
 
