@@ -275,3 +275,29 @@ the authoritative sorter.
 No discovery, provider calls, market evidence, indicator formulas, scoring, Mission
 Ranking values, qualification, Entry Ready authority, anti-chase state, alert truth,
 execution, or orders change.
+
+
+## Phase 13: extreme-mover presentation ownership
+
+The late extraordinary-mover presentation chain is consolidated into
+**Presentation + Audio**.
+
+GS333 remains the base detector for an extraordinary current mover for now. The later
+presentation corrections no longer stack independent wrappers around it:
+
+- GS465 activates truthful extreme labels and the generic-WATCH continuity fallback;
+- GS466 delegates the awareness-only stale-source-bar visibility exception; and
+- GS495 activates the existing <=2% VWAP anti-chase qualifier.
+
+GS465 creates one authoritative extreme-event wrapper. GS495 adds its anti-chase stage
+to that same wrapper instead of nesting another callable. Historical install timing and
+compatibility markers remain intact.
+
+The existing contracts are unchanged: percentage move alone cannot manufacture LOOK
+NOW, >5% above VWAP keeps the established DO NOT CHASE behavior, structurally earned
+LOOK NOW between 2% and 5% is explicitly marked EXTENDED / WATCH RESET, halts retain
+resume-first semantics, and stale-bar continuity can restore awareness only—not trade
+authority.
+
+No discovery, market-data requests, indicators, ranking, qualification, Entry Ready,
+alerts, execution, or orders change.
