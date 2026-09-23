@@ -1,6 +1,8 @@
 # GS445 deployment marker: force one clean Streamlit Community Cloud runtime so
 # append-only Candidate History / Flight Recorder exports reuse incremental gzip state.
 # No dependency versions change in this deployment-only activation.
+# GS536 deployment marker: roll Candidate History and Flight Recorder by embedded
+# Eastern session date so routine backups stop accumulating prior-day multi-GB logs.
 # GS535 deployment marker: align bounded continuation re-ignition VWAP ceiling
 # with the canonical +2.0% Entry Ready guard; all other continuation safeguards remain.
 # GS534 deployment marker: show true Expansion Assessment survivors separately
