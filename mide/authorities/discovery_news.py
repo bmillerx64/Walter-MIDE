@@ -138,7 +138,7 @@ def _story_text(item: dict) -> str:
 
 def explicit_ticker_mentions(text: str) -> list[str]:
     """Return only explicitly labelled exchange/ticker references from story text."""
-    from .discovery import is_valid_us_symbol
+    from mide.discovery import is_valid_us_symbol
 
     value = str(text or "")
     found = []
@@ -283,7 +283,7 @@ def _safe_selected(item: dict, *, added: set[str] | None = None) -> dict:
 
 
 def _install_article_transport() -> None:
-    from .news_provider import FMPNewsProvider, NewsArticle, NewsService
+    from mide.news_provider import FMPNewsProvider, NewsArticle, NewsService
 
     current_normalize = FMPNewsProvider._normalize
     if not getattr(current_normalize, _NORMALIZE_OWNER, False):
@@ -348,8 +348,8 @@ def _install_article_transport() -> None:
 
 
 def _install_marketwide_selection() -> None:
-    from . import gs298_news_seeded_discovery as gs298
-    from .news import classify_headline, trusted_catalyst_source
+    from mide import gs298_news_seeded_discovery as gs298
+    from mide.news import classify_headline, trusted_catalyst_source
 
     current_select = gs298.select_material_news_seeds
     if not getattr(current_select, _SELECT_OWNER, False):
@@ -438,7 +438,7 @@ def _install_marketwide_selection() -> None:
 
 
 def _install_discovery_diagnostics() -> None:
-    from . import discovery
+    from mide import discovery
 
     current_build = discovery.build_seed_symbols
     if getattr(current_build, _BUILD_OWNER, False):
@@ -478,8 +478,8 @@ def _install_discovery_diagnostics() -> None:
 
 
 def _install_targeted_handoff() -> None:
-    from .news_provider import NewsService
-    from . import news as news_module
+    from mide.news_provider import NewsService
+    from mide import news as news_module
 
     current_fetch = NewsService.fetch
     if getattr(current_fetch, _SERVICE_FETCH_OWNER, False):
@@ -556,8 +556,8 @@ def _install_targeted_handoff() -> None:
 
 
 def _install_index_and_records() -> None:
-    from . import news as news_module
-    from . import discovery
+    from mide import news as news_module
+    from mide import discovery
 
     current_index = news_module.index_news
     if not getattr(current_index, _INDEX_OWNER, False):
