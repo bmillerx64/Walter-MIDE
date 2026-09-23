@@ -10,13 +10,33 @@ from typing import Any
 
 import pandas as pd
 
-from mide.discovery import analyze_candidates
-from mide.decision_engine import expansion_candidate_diagnostic
-from mide.scanner_v2 import (
-    apply_scanner_v2,
-    participation_gate_rejection_diagnostics,
-    strengthening_diagnostics,
-)
+def analyze_candidates(*args, **kwargs):
+    """Delegate to Walter's currently installed discovery analyzer."""
+    from mide import discovery
+    return discovery.analyze_candidates(*args, **kwargs)
+
+
+def expansion_candidate_diagnostic(*args, **kwargs):
+    """Delegate to Walter's currently installed expansion diagnostic."""
+    from mide import decision_engine
+    return decision_engine.expansion_candidate_diagnostic(*args, **kwargs)
+
+
+def apply_scanner_v2(*args, **kwargs):
+    """Delegate to Walter's currently installed Scanner V2 implementation."""
+    from mide import scanner_v2
+    return scanner_v2.apply_scanner_v2(*args, **kwargs)
+
+
+def participation_gate_rejection_diagnostics(*args, **kwargs):
+    from mide import scanner_v2
+    return scanner_v2.participation_gate_rejection_diagnostics(*args, **kwargs)
+
+
+def strengthening_diagnostics(*args, **kwargs):
+    from mide import scanner_v2
+    return scanner_v2.strengthening_diagnostics(*args, **kwargs)
+
 
 RETEST_TRUTH_AUTHORITY = "PRESENTATION_GUARDRAIL_ONLY"
 RETEST_MEMORY_AUTHORITY = "PRESENTATION_MEMORY_ONLY"
