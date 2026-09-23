@@ -41,7 +41,8 @@ def test_gs419_installs_after_gs414_and_does_not_touch_trading_authority():
     module = Path("mide/gs419_completed_scan_heartbeat.py").read_text(encoding="utf-8")
 
     assert "_install_gs419()" in chain
-    assert chain.index("ui.render_escalation_engine = render_with_final_enriched_order") < chain.rindex("_install_gs419()")
+    assert chain.index('bind_final_order("render_escalation_engine")') < chain.rindex("_install_gs419()")
+    assert chain.index('bind_final_order("render_walter_mission_control", show_legend=True)') < chain.rindex("_install_gs419()")
 
     forbidden = (
         "qualified_for_entry =",
