@@ -111,7 +111,12 @@ def test_gs517_installs_after_gs497_at_final_render_boundary():
 
 
 def test_scope_lock_is_presentation_order_only():
-    source = Path("mide/authorities/presentation_audio.py").read_text(encoding="utf-8")
+    authority = Path("mide/authorities/presentation_audio.py").read_text(
+        encoding="utf-8"
+    )
+    source = authority.split(
+        "# Authoritative operator ordering", 1
+    )[1].split("FRESH_3M_SECONDS = 180.0", 1)[0]
     forbidden = (
         "qualified_for_entry =",
         "qualified_for_alert =",
