@@ -1,4 +1,5 @@
 from mide import gs310_unified_opportunity_state as unified
+from mide import gs369_escalation_priority_order as gs369
 from mide import ui
 from mide.gs401_final_opportunity_order import final_visible_records, install
 
@@ -70,3 +71,53 @@ def test_gs401_install_is_idempotent(monkeypatch):
 
     assert ui.render_escalation_engine is first
     assert getattr(first, "_gs401_final_opportunity_order", False)
+
+
+def test_gs538_nested_renderer_uses_late_installed_canonical_sorter(monkeypatch):
+    """A stale GS401 closure must not undo WATCH FOR ENTRY after later order layers install."""
+    chase = _record("CHASE", unified.CHASE_WAIT)
+    ready = _record("READY", unified.WATCH_FOR_ENTRY)
+    enriched = [chase, ready]
+
+    monkeypatch.setattr(ui, "actionable_candidate_records", lambda _records: list(enriched))
+
+    rendered = []
+    def nested_renderer(records):
+        nested = ui.actionable_candidate_records(records)[:5]
+        rendered.extend(record["symbol"] for record in nested)
+
+    # Install GS401 while an intentionally stale sorter still puts CHASE first.
+    monkeypatch.setattr(gs369, "ordered_escalation_records", lambda rows: list(rows))
+    monkeypatch.setattr(ui, "render_escalation_engine", nested_renderer)
+    install()
+
+    # Model GS497/GS517 becoming authoritative later in the startup chain.
+    monkeypatch.setattr(
+        gs369,
+        "ordered_escalation_records",
+        lambda rows: sorted(
+            list(rows),
+            key=lambda record: record["forced_state"] == unified.WATCH_FOR_ENTRY,
+            reverse=True,
+        ),
+    )
+
+    ui.render_escalation_engine(enriched)
+    assert rendered == ["READY", "CHASE"]
+
+
+def test_gs538_scope_lock_is_presentation_only():
+    from pathlib import Path
+
+    source = Path("mide/gs401_final_opportunity_order.py").read_text(encoding="utf-8")
+    assert "GS538" in source
+    assert "gs369.ordered_escalation_records" in source
+    forbidden = (
+        "qualified_for_entry =",
+        "participation_score =",
+        "expansion_score =",
+        "place_order(",
+        "submit_order(",
+        "play_alert(",
+    )
+    assert not any(token in source for token in forbidden)
