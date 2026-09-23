@@ -15,16 +15,32 @@ from __future__ import annotations
 from copy import deepcopy
 from functools import wraps
 
-from mide.gs532_retest_entry_shadow import retest_entry_shadow
-from mide.scanner_v2 import (
-    qualified_for_alert,
-    qualified_for_entry,
-    qualified_for_watch,
-    trigger_diagnostics,
-)
-
-
 _OWNER = "_walter_gs528_canonical_entry_ready_owner"
+
+
+def qualified_for_alert(*args, **kwargs):
+    from mide import scanner_v2
+    return scanner_v2.qualified_for_alert(*args, **kwargs)
+
+
+def qualified_for_entry(*args, **kwargs):
+    from mide import scanner_v2
+    return scanner_v2.qualified_for_entry(*args, **kwargs)
+
+
+def qualified_for_watch(*args, **kwargs):
+    from mide import scanner_v2
+    return scanner_v2.qualified_for_watch(*args, **kwargs)
+
+
+def trigger_diagnostics(*args, **kwargs):
+    from mide import scanner_v2
+    return scanner_v2.trigger_diagnostics(*args, **kwargs)
+
+
+def retest_entry_shadow(*args, **kwargs):
+    from mide import gs532_retest_entry_shadow
+    return gs532_retest_entry_shadow.retest_entry_shadow(*args, **kwargs)
 
 
 def _trigger(record: dict) -> dict:
