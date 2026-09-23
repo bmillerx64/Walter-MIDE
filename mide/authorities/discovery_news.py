@@ -11,8 +11,12 @@ from __future__ import annotations
 from copy import deepcopy
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
+from email.utils import parsedate_to_datetime
 from functools import wraps
+from html import unescape
+import os
 import re
+from time import perf_counter
 from typing import Any, Iterable
 
 from mide.news_provider import (
@@ -645,6 +649,479 @@ def install_catalyst_story_news() -> None:
     _install_targeted_handoff()
 
 
+# ---------------------------------------------------------------------------
+# GS502 direct Benzinga breaking-news discovery
+# ---------------------------------------------------------------------------
+
+BENZINGA_AUTHORITY = "DISCOVERY_IDENTITY_AND_NEWS_CONTEXT_ONLY"
+BENZINGA_ENDPOINT = "https://api.benzinga.com/api/v2/news"
+BENZINGA_INITIAL_LOOKBACK = timedelta(minutes=10)
+BENZINGA_POLL_OVERLAP = timedelta(minutes=2)
+BENZINGA_CACHE_FRESHNESS = timedelta(minutes=90)
+BENZINGA_MAX_CACHE_ARTICLES = 300
+BENZINGA_PAGE_SIZE = 100
+BENZINGA_HTTP_TIMEOUT_SECONDS = 3.0
+
+_BENZINGA_DISCOVERY_OWNER = "_walter_gs502_benzinga_breaking_discovery_owner"
+_BENZINGA_ARTICLE_CACHE: dict[str, Any] = {}
+
+
+def benzinga_utc_now(now=None) -> datetime:
+    value = now() if callable(now) else now
+    value = value or datetime.now(UTC)
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=UTC)
+    return value.astimezone(UTC)
+
+
+def benzinga_configured_token() -> str:
+    """Resolve Benzinga API credentials without logging or exposing the value."""
+    for name in ("BENZINGA_API_KEY", "BENZINGA_TOKEN"):
+        value = str(os.getenv(name, "") or "").strip()
+        if value:
+            return value
+    try:
+        import streamlit as st
+        for name in ("BENZINGA_API_KEY", "BENZINGA_TOKEN"):
+            try:
+                value = str(st.secrets.get(name, "") or "").strip()
+            except Exception:
+                value = ""
+            if value:
+                return value
+    except Exception:
+        pass
+    return ""
+
+
+def benzinga_timestamp(value: Any) -> datetime | None:
+    if isinstance(value, datetime):
+        stamp = value
+    else:
+        raw = str(value or "").strip()
+        if not raw:
+            return None
+        try:
+            stamp = parsedate_to_datetime(raw)
+        except (TypeError, ValueError, OverflowError):
+            try:
+                stamp = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+            except (TypeError, ValueError):
+                return None
+    if stamp.tzinfo is None:
+        stamp = stamp.replace(tzinfo=UTC)
+    return stamp.astimezone(UTC)
+
+
+def benzinga_plain_text(value: Any, *, limit: int = 2400) -> str:
+    text = str(value or "")
+    text = re.sub(r"<script\b[^>]*>.*?</script>", " ", text, flags=re.I | re.S)
+    text = re.sub(r"<style\b[^>]*>.*?</style>", " ", text, flags=re.I | re.S)
+    text = re.sub(r"<[^>]+>", " ", text)
+    return " ".join(unescape(text).split())[:limit]
+
+
+def benzinga_stock_symbols(item: dict) -> list[str]:
+    from mide import discovery
+
+    values: list[str] = []
+    for stock in item.get("stocks") or []:
+        if isinstance(stock, dict):
+            raw = stock.get("name") or stock.get("symbol") or stock.get("ticker")
+        else:
+            raw = stock
+        symbol = str(raw or "").strip().upper()
+        if symbol and discovery.is_valid_us_symbol(symbol) and symbol not in values:
+            values.append(symbol)
+
+    raw_tickers = item.get("tickers") or item.get("symbols") or []
+    if isinstance(raw_tickers, str):
+        raw_tickers = re.split(r"[,\s]+", raw_tickers)
+    for raw in raw_tickers if isinstance(raw_tickers, (list, tuple, set)) else []:
+        symbol = str(raw or "").strip().upper()
+        if symbol and discovery.is_valid_us_symbol(symbol) and symbol not in values:
+            values.append(symbol)
+    return values[:20]
+
+
+def normalize_benzinga_article(item: dict):
+    """Normalize one Benzinga Newsfeed row into Walter's provider-neutral contract."""
+    from mide.news_provider import NewsArticle
+
+    if not isinstance(item, dict):
+        return None
+    headline = str(item.get("title") or item.get("headline") or "").strip()
+    created = benzinga_timestamp(item.get("created") or item.get("created_at"))
+    if not headline or created is None:
+        return None
+
+    body = benzinga_plain_text(item.get("body") or item.get("teaser") or "")
+    symbols = benzinga_stock_symbols(item)
+    explicit = explicit_ticker_mentions(" ".join((headline, body)))
+    symbols = list(dict.fromkeys([*symbols, *explicit]))
+    if not symbols:
+        return None
+
+    updated = benzinga_timestamp(item.get("updated") or item.get("updated_at"))
+    article_id = str(item.get("id") or f"{created.isoformat()}:{headline.casefold()[:160]}")
+    article = NewsArticle(
+        id=f"benzinga:{article_id}",
+        headline=headline,
+        created_at=created,
+        updated_at=updated,
+        symbols=sorted(symbols),
+        source="Benzinga",
+        url=str(item.get("url") or "") or None,
+        provider="Benzinga Newsfeed",
+    )
+    object.__setattr__(article, "_walter_story_text", body[:STORY_TEXT_LIMIT])
+    object.__setattr__(article, "_walter_explicit_symbols", explicit)
+    object.__setattr__(
+        article,
+        "_walter_story_context",
+        story_intelligence(headline, body),
+    )
+    return article
+
+
+def fetch_benzinga_delta(
+    token: str,
+    *,
+    since: datetime,
+    now=None,
+    session=None,
+    timeout: float = BENZINGA_HTTP_TIMEOUT_SECONDS,
+    page_size: int = BENZINGA_PAGE_SIZE,
+) -> list:
+    """Fetch one bounded market-wide Benzinga Newsfeed delta."""
+    import requests
+
+    key = str(token or "").strip()
+    if not key:
+        return []
+    current = benzinga_utc_now(now)
+    since = since.astimezone(UTC)
+    client = session or requests.Session()
+    params = {
+        "updatedSince": int(since.timestamp()),
+        "page": 0,
+        "pageSize": max(1, min(int(page_size), BENZINGA_PAGE_SIZE)),
+        "displayOutput": "full",
+    }
+    headers = {
+        "accept": "application/json",
+        "Authorization": f"token {key}",
+    }
+    response = client.get(
+        BENZINGA_ENDPOINT,
+        params=params,
+        headers=headers,
+        timeout=timeout,
+    )
+    response.raise_for_status()
+    payload = response.json()
+    rows = payload if isinstance(payload, list) else (
+        payload.get("articles", payload.get("data", []))
+        if isinstance(payload, dict)
+        else []
+    )
+
+    articles = []
+    for item in rows or []:
+        article = normalize_benzinga_article(item)
+        if article is None:
+            continue
+        updated = article.updated_at or article.created_at
+        if (
+            updated >= since - timedelta(seconds=2)
+            and article.created_at <= current + timedelta(minutes=5)
+        ):
+            articles.append(article)
+    return articles
+
+
+def cache_benzinga_articles(
+    articles: list,
+    *,
+    now: datetime,
+    article_cache: dict[str, Any] | None = None,
+) -> list:
+    cache = _BENZINGA_ARTICLE_CACHE if article_cache is None else article_cache
+    cutoff = now - BENZINGA_CACHE_FRESHNESS
+    for article in articles or []:
+        if article.created_at < cutoff:
+            continue
+        prior = cache.get(article.id)
+        prior_stamp = (prior.updated_at or prior.created_at) if prior else None
+        stamp = article.updated_at or article.created_at
+        if prior is None or prior_stamp is None or stamp >= prior_stamp:
+            cache[article.id] = article
+
+    stale = [
+        key for key, article in cache.items()
+        if article.created_at < cutoff
+    ]
+    for key in stale:
+        cache.pop(key, None)
+
+    ordered = sorted(
+        cache.values(),
+        key=lambda article: article.updated_at or article.created_at,
+        reverse=True,
+    )
+    for article in ordered[BENZINGA_MAX_CACHE_ARTICLES:]:
+        cache.pop(article.id, None)
+    return ordered[:BENZINGA_MAX_CACHE_ARTICLES]
+
+
+def benzinga_safe_status(exc: Exception) -> int | None:
+    response = getattr(exc, "response", None)
+    try:
+        return int(getattr(response, "status_code"))
+    except (TypeError, ValueError):
+        return None
+
+
+def poll_benzinga_breaking_news(
+    *,
+    token: str,
+    now=None,
+    session=None,
+    last_successful_poll: datetime | None = None,
+    article_cache: dict[str, Any] | None = None,
+    fetcher=None,
+) -> tuple[list, dict, datetime | None]:
+    """Fetch one delta while leaving historical scalar state to the GS502 facade."""
+    current = benzinga_utc_now(now)
+    since = (
+        max(
+            current - BENZINGA_INITIAL_LOOKBACK,
+            last_successful_poll - BENZINGA_POLL_OVERLAP,
+        )
+        if last_successful_poll is not None
+        else current - BENZINGA_INITIAL_LOOKBACK
+    )
+    fetch = fetcher or fetch_benzinga_delta
+    started = perf_counter()
+    try:
+        fresh = fetch(
+            token,
+            since=since,
+            now=current,
+            session=session,
+        )
+    except Exception as exc:
+        cached = cache_benzinga_articles(
+            [],
+            now=current,
+            article_cache=article_cache,
+        )
+        return cached, {
+            "authority": BENZINGA_AUTHORITY,
+            "configured": bool(token),
+            "request_made": True,
+            "endpoint": "/api/v2/news",
+            "updated_since": int(since.timestamp()),
+            "request_latency_ms": round((perf_counter() - started) * 1000, 1),
+            "transport_disposition": "PROVIDER_FAILURE",
+            "exception_type": type(exc).__name__,
+            "http_status": benzinga_safe_status(exc),
+            "articles_received": 0,
+            "cached_articles": len(cached),
+            "credential_persisted": False,
+            "raw_exception_persisted": False,
+            "trading_authority_changed": False,
+        }, last_successful_poll
+
+    cached = cache_benzinga_articles(
+        fresh,
+        now=current,
+        article_cache=article_cache,
+    )
+    return cached, {
+        "authority": BENZINGA_AUTHORITY,
+        "configured": True,
+        "request_made": True,
+        "endpoint": "/api/v2/news",
+        "updated_since": int(since.timestamp()),
+        "request_latency_ms": round((perf_counter() - started) * 1000, 1),
+        "transport_disposition": (
+            "SUCCESS_WITH_ARTICLES" if fresh else "SUCCESS_EMPTY"
+        ),
+        "articles_received": len(fresh),
+        "cached_articles": len(cached),
+        "credential_persisted": False,
+        "raw_exception_persisted": False,
+        "trading_authority_changed": False,
+    }, current
+
+
+def merge_benzinga_breaking_news_discovery(
+    client,
+    seeds: list[str],
+    reasons: dict[str, list[str]],
+    *,
+    now=None,
+    token_resolver=None,
+    poller=None,
+    article_cache: dict[str, Any] | None = None,
+) -> tuple[list[str], dict[str, list[str]], dict]:
+    """Return discovery identity/reasons plus the bounded GS502 trace."""
+    provider = str(
+        getattr(client, "provider_name", "") or client.__class__.__name__
+    )
+    is_webull = (
+        "WEBULL" in provider.upper()
+        or "WEBULL" in client.__class__.__name__.upper()
+    )
+    resolve_token = token_resolver or benzinga_configured_token
+    token = resolve_token()
+    cache = _BENZINGA_ARTICLE_CACHE if article_cache is None else article_cache
+    if not is_webull or not token:
+        trace = {
+            "authority": BENZINGA_AUTHORITY,
+            "configured": bool(token),
+            "request_made": False,
+            "reason": (
+                "non-Webull provider"
+                if not is_webull
+                else "Benzinga credential unavailable"
+            ),
+            "articles_received": 0,
+            "cached_articles": len(cache),
+            "selected_symbols": [],
+            "symbols_added": [],
+            "trading_authority_changed": False,
+        }
+        diagnostics = getattr(client, "diagnostics", None)
+        if isinstance(diagnostics, dict):
+            diagnostics["benzinga_breaking_news"] = deepcopy(trace)
+        return list(seeds), reasons, trace
+
+    current = benzinga_utc_now(now)
+    active_poller = poller
+    if active_poller is None:
+        articles, transport, _next_poll = poll_benzinga_breaking_news(
+            token=token,
+            now=current,
+            article_cache=cache,
+        )
+    else:
+        result = active_poller(token=token, now=current)
+        articles, transport = result[0], result[1]
+
+    from mide import gs298_news_seeded_discovery as gs298
+    selected = gs298.select_material_news_seeds(
+        articles,
+        now=current,
+        limit=gs298.NEWS_SEED_LIMIT,
+    )
+    output = list(seeds)
+    updated_reasons = {
+        str(symbol): list(values)
+        for symbol, values in (reasons or {}).items()
+    }
+    existing = {str(symbol or "").strip().upper() for symbol in output}
+    added = []
+    for item in selected:
+        symbol = str(item.get("symbol") or "").strip().upper()
+        if not symbol or symbol in existing:
+            continue
+        seed_type = str(item.get("seed_type") or "")
+        if seed_type == "morning_mover_attention":
+            label = "Benzinga breaking mover attention seed"
+        elif seed_type == "story_material_attention":
+            label = "Benzinga story material attention seed"
+        else:
+            label = "Benzinga breaking material news seed"
+        output.append(symbol)
+        existing.add(symbol)
+        updated_reasons.setdefault(symbol, []).append(
+            f"{label}: {str(item.get('source') or 'Benzinga').strip()}"
+        )
+        added.append(dict(item))
+
+    selected_symbols = [
+        str(item.get("symbol") or "").strip().upper()
+        for item in selected
+        if str(item.get("symbol") or "").strip()
+    ]
+    added_symbols = [
+        str(item.get("symbol") or "").strip().upper()
+        for item in added
+        if str(item.get("symbol") or "").strip()
+    ]
+    trace = {
+        **transport,
+        "selected_symbol_count": len(selected_symbols),
+        "selected_symbols": selected_symbols[:40],
+        "symbols_added_count": len(added_symbols),
+        "symbols_added": added_symbols[:40],
+        "material_selected": sum(
+            item.get("seed_type") == "material_catalyst"
+            for item in selected
+        ),
+        "attention_selected": sum(
+            item.get("seed_type") == "morning_mover_attention"
+            for item in selected
+        ),
+        "headlines": [
+            {
+                "symbol": str(item.get("symbol") or "").upper(),
+                "headline": str(item.get("headline") or "")[:300],
+                "created_at": (
+                    item.get("created_at").isoformat()
+                    if isinstance(item.get("created_at"), datetime)
+                    else item.get("created_at")
+                ),
+                "seed_type": item.get("seed_type"),
+                "story_derived": bool(item.get("story_derived")),
+            }
+            for item in selected[:20]
+        ],
+        "trading_authority_changed": False,
+    }
+    diagnostics = getattr(client, "diagnostics", None)
+    if isinstance(diagnostics, dict):
+        diagnostics["benzinga_breaking_news"] = deepcopy(trace)
+    return output, updated_reasons, trace
+
+
+def install_benzinga_breaking_news_discovery() -> None:
+    """Install GS502's Discovery + News wrapper at its historical position."""
+    from mide import discovery
+
+    current = discovery.build_seed_symbols
+    if getattr(current, _BENZINGA_DISCOVERY_OWNER, False):
+        return
+
+    @wraps(current)
+    def build_seed_symbols(
+        client,
+        settings,
+        news_items,
+        *,
+        universe_verification=None,
+    ):
+        if universe_verification is None:
+            seeds, reasons = current(client, settings, news_items)
+        else:
+            seeds, reasons = current(
+                client,
+                settings,
+                news_items,
+                universe_verification=universe_verification,
+            )
+        from mide import gs502_benzinga_breaking_news as gs502
+        return gs502.merge_breaking_news_discovery(client, seeds, reasons)
+
+    _inherit(build_seed_symbols, current)
+    setattr(build_seed_symbols, _BENZINGA_DISCOVERY_OWNER, True)
+    build_seed_symbols._gs502_benzinga_breaking_news = True
+    build_seed_symbols._gs502_original = current
+    discovery.build_seed_symbols = build_seed_symbols
+
+
 def build_seed_symbols(*args, **kwargs):
     from mide import discovery
     return discovery.build_seed_symbols(*args, **kwargs)
@@ -681,6 +1158,15 @@ def ticker_inspection(*args, **kwargs):
 
 
 __all__ = [
+    "install_benzinga_breaking_news_discovery",
+    "merge_benzinga_breaking_news_discovery",
+    "poll_benzinga_breaking_news",
+    "fetch_benzinga_delta",
+    "normalize_benzinga_article",
+    "benzinga_configured_token",
+    "BENZINGA_AUTHORITY",
+    "BENZINGA_ENDPOINT",
+    "BENZINGA_HTTP_TIMEOUT_SECONDS",
     "MarketDataNewsProvider",
     "install_catalyst_story_news",
     "story_intelligence",
