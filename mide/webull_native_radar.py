@@ -2,8 +2,9 @@
 
 Universe seeding uses four complementary feeds:
 
-* DAY_GAINERS  – top-20 by % change today; captures names that are already
-  running and draws in breakout continuations.
+* DAY_GAINERS  – top-20 by current-session % change. During premarket Walter
+  requests Webull's PRE_MARKET ranking (the same session shown by Webull Desktop);
+  during all other phases it preserves the established DAY_1 ranking.
 * 5-MINUTE MOVERS – top-20 by recent five-minute % change; captures abrupt
   opening-bell and intraday breakouts before they rank highly enough on the
   slower day-gainer or absolute-volume lists.
@@ -26,6 +27,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Any, Callable
+
+from .time_service import market_phase_at
 
 
 @dataclass(frozen=True)
@@ -57,6 +60,31 @@ DISCOVERY_CONTRACT = "WEBULL_TOP20_DAY_GAINERS_PLUS_TOP20_FIVE_MINUTE_MOVERS_PLU
 # treated as a directional candidate.  Prevents flat-tape names with unusual
 # volume from being promoted unnecessarily.
 RVOL_DISCOVERY_MIN_GAIN_PCT: float = 2.0
+
+DAY_GAINERS_REGULAR_RANK_TYPE = "DAY_1"
+DAY_GAINERS_PREMARKET_RANK_TYPE = "PRE_MARKET"
+
+
+def _day_gainers_rank_type() -> str:
+    """Match Walter's day-gainer seed to the active Webull trading session.
+
+    Webull exposes PRE_MARKET as a distinct gainers/losers rank. Using DAY_1
+    before 09:30 ET can omit the exact leaders visible in Desktop's Pre-market
+    Top Gainers list. Keep the established day_gainers provenance key so every
+    downstream gate and current-attention contract remains unchanged.
+    """
+    return (
+        DAY_GAINERS_PREMARKET_RANK_TYPE
+        if market_phase_at() == "Pre-Market"
+        else DAY_GAINERS_REGULAR_RANK_TYPE
+    )
+
+
+def _feed_arguments(feed: RadarFeed) -> dict[str, Any]:
+    arguments = dict(feed.arguments)
+    if feed.key == "day_gainers":
+        arguments["rank_type"] = _day_gainers_rank_type()
+    return arguments
 
 
 def _plain(value: Any) -> Any:
@@ -138,7 +166,8 @@ def fetch_native_radar(client: Any) -> dict[str, Any]:
             feeds[key] = {"label": feed.label, "status": "FAIL", "error": f"SDK screener lacks {feed.operation}", "rows": []}
             continue
         try:
-            raw = method(**feed.arguments)
+            arguments = _feed_arguments(feed)
+            raw = method(**arguments)
             status_code = getattr(raw, "status_code", None)
             if status_code is not None and int(status_code) >= 400: raise RuntimeError(f"Webull screener HTTP {status_code}")
             normalized = [_normalize_row(row, rank=i, source=feed) for i, row in enumerate(_rows(raw), start=1)]
@@ -164,7 +193,13 @@ def fetch_native_radar(client: Any) -> dict[str, Any]:
                             ),
                         })
                 normalized = admitted
-            feeds[key] = {"label": feed.label, "status": "PASS", "error": "", "rows": normalized}
+            feeds[key] = {
+                "label": feed.label,
+                "status": "PASS",
+                "error": "",
+                "rows": normalized,
+                "rank_type": arguments.get("rank_type"),
+            }
             for row in normalized:
                 symbol = row["symbol"]
                 entry = deduped.setdefault(symbol, {"symbol": symbol, "name": row.get("name"), "price": row.get("price"), "change_ratio": row.get("change_ratio"), "volume": row.get("volume"), "relative_volume_10d": row.get("relative_volume_10d"), "sources": [], "ranks": {}})
@@ -182,6 +217,7 @@ def fetch_native_radar(client: Any) -> dict[str, Any]:
             "rejected_symbols": rejected,
             "all_feeds_available": all(feeds[k]["status"] == "PASS" for k in DISCOVERY_FEED_KEYS),
             "discovery_contract": DISCOVERY_CONTRACT, "discovery_feed_keys": list(DISCOVERY_FEED_KEYS),
+            "day_gainers_rank_type": (feeds.get("day_gainers") or {}).get("rank_type"),
             "maximum_pre_dedupe_symbols": 80, "pages_requested_per_feed": 1,
             "rvol_discovery_min_gain_pct": RVOL_DISCOVERY_MIN_GAIN_PCT}
 
@@ -194,5 +230,6 @@ def radar_probe_rows(report: dict[str, Any]) -> list[dict[str, Any]]:
         output.append({"Test": f"Native radar — {feed.label}", "Status": result.get("status", "FAIL"), "Provider": "Webull OpenAPI SDK",
                        "Endpoint / SDK operation": f"screener.{feed.operation}", "Request count": 1 if feed.key in DISCOVERY_FEED_KEYS else 0,
                        "Returned symbol count": len(rows), "First 10 returned symbols": ", ".join(row.get("symbol", "") for row in rows[:10]),
+                       "Rank type": result.get("rank_type"),
                        "Latency ms": None, "Actual exception / API error": result.get("error", "")})
     return output
