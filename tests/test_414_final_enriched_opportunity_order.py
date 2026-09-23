@@ -94,7 +94,43 @@ def test_gs414_scope_is_presentation_only():
     source = Path("mide/gs414_final_enriched_opportunity_order.py").read_text(
         encoding="utf-8"
     )
-    assert "ui.render_escalation_engine = render_with_final_enriched_order" in source
+    assert 'bind_final_order("render_escalation_engine")' in source
+    assert 'bind_final_order("render_walter_mission_control", show_legend=True)' in source
     assert "ui.actionable_candidate_records = frozen_actionable" in source
     assert "finally:" in source
     assert "ui.actionable_candidate_records = public_actionable" in source
+
+
+
+def test_gs539_binds_actual_gs332_live_opportunity_path(monkeypatch):
+    from mide import gs539_pe_strength_order as gs539
+
+    enriched = [
+        {
+            "symbol": "AVAT",
+            "participation_surge_score": 32,
+            "expansion_quality": 63,
+        },
+        {
+            "symbol": "EDVA",
+            "participation_surge_score": 85,
+            "expansion_quality": 62,
+        },
+    ]
+    monkeypatch.setattr(ui, "actionable_candidate_records", lambda _records: list(enriched))
+    monkeypatch.setattr(
+        "mide.gs369_escalation_priority_order.ordered_escalation_records",
+        lambda rows: gs539.ordered_pe_strength_records(rows),
+    )
+
+    rendered = []
+    def live_gs332_path(records):
+        nested = ui.actionable_candidate_records(records)[:5]
+        rendered.extend(row["symbol"] for row in nested)
+
+    monkeypatch.setattr(ui, "render_escalation_engine", lambda _records: None)
+    monkeypatch.setattr(ui, "render_walter_mission_control", live_gs332_path)
+    install()
+
+    ui.render_walter_mission_control(enriched)
+    assert rendered == ["EDVA", "AVAT"]
