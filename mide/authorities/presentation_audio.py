@@ -920,6 +920,125 @@ def reset_extreme_banner_decay_state() -> None:
 
 
 # ---------------------------------------------------------------------------
+# Native market-event presentation
+# ---------------------------------------------------------------------------
+
+_LATEST_ACTIONABLE_SYMBOLS: set[str] = set()
+_MARKET_EVENT_MISSION_OWNER = "_walter_gs334_market_event_symbols"
+_MARKET_EVENT_HEADER_OWNER = "_walter_gs334_market_event_lane"
+
+
+def visible_market_events(
+    events: Iterable[dict] | None,
+    actionable_symbols: Iterable[str] | None,
+) -> list[dict]:
+    """Suppress market-awareness rows already represented by current trade records."""
+    active = {
+        str(symbol or "").strip().upper()
+        for symbol in actionable_symbols or []
+    }
+    return [
+        dict(event)
+        for event in events or []
+        if str(event.get("symbol") or "").strip().upper() not in active
+    ]
+
+
+def market_event_markup(
+    events: Iterable[dict] | None,
+    actionable_symbols: Iterable[str] | None = None,
+) -> str:
+    """Render the established attention-only native market-events strip."""
+    visible = visible_market_events(events, actionable_symbols)
+    if not visible:
+        return ""
+
+    chips = "".join(
+        (
+            "<span style='display:inline-block;margin:3px 8px 3px 0;padding:5px 9px;"
+            "border:1px solid #f59e0b;border-radius:8px;background:#111827;'>"
+            f"<b>{html.escape(str(event['symbol']))}</b> "
+            f"<span style='color:#fbbf24'>+{float(event['pct_change']):.1f}%</span> "
+            f"<span style='color:#94a3b8'>#{int(event['rank'])} Webull</span></span>"
+        )
+        for event in visible
+    )
+    return (
+        "<div style='margin:10px 0 14px 0;padding:10px 14px;border:1px solid #92400e;"
+        "border-left:4px solid #f59e0b;border-radius:10px;background:#0b111b;'>"
+        "<div style='font-weight:800;letter-spacing:.06em;color:#fbbf24'>"
+        "⚡ LIVE MARKET EVENTS · ATTENTION ONLY</div>"
+        f"<div style='margin-top:5px'>{chips}</div>"
+        "<div style='margin-top:4px;color:#94a3b8;font-size:.86rem'>"
+        "Extraordinary current movers outside Walter's trade-qualified results. "
+        "Open the chart if useful; normal entry gates still apply.</div></div>"
+    )
+
+
+def _streamlit_completed_scan_market_events() -> list[dict]:
+    try:
+        import streamlit as st
+        from mide.authorities import market_evidence
+
+        return market_evidence.completed_scan_market_events(st.session_state)
+    except Exception:
+        return []
+
+
+def install_market_event_presentation() -> None:
+    """Bind GS334's current-symbol tracking and header strip at its historical point."""
+    from mide import ui
+    from mide.authorities import market_evidence
+
+    current_mission = ui.walter_mission_control
+    if not getattr(current_mission, _MARKET_EVENT_MISSION_OWNER, False):
+        @wraps(current_mission)
+        def mission_with_current_symbols(records: list[dict]) -> dict:
+            _LATEST_ACTIONABLE_SYMBOLS.clear()
+            _LATEST_ACTIONABLE_SYMBOLS.update(
+                str(record.get("symbol") or "").strip().upper()
+                for record in records or []
+                if str(record.get("symbol") or "").strip()
+            )
+            return current_mission(records)
+
+        _inherit_audio_wrapper(mission_with_current_symbols, current_mission)
+        mission_with_current_symbols._gs334_market_event_symbols = True
+        mission_with_current_symbols._gs334_original = current_mission
+        setattr(
+            mission_with_current_symbols,
+            _MARKET_EVENT_MISSION_OWNER,
+            True,
+        )
+        ui.walter_mission_control = mission_with_current_symbols
+
+    current_header = ui.mission_control_header_markup
+    if not getattr(current_header, _MARKET_EVENT_HEADER_OWNER, False):
+        @wraps(current_header)
+        def header_with_market_events(*args, **kwargs):
+            markup = current_header(*args, **kwargs)
+            if not _in_streamlit_run():
+                return markup
+            persisted = _streamlit_completed_scan_market_events()
+            events = (
+                persisted
+                if persisted
+                else market_evidence._LATEST_MARKET_EVENTS
+            )
+            return markup + market_event_markup(
+                events,
+                _LATEST_ACTIONABLE_SYMBOLS,
+            )
+
+        _inherit_audio_wrapper(header_with_market_events, current_header)
+        header_with_market_events._gs334_market_event_lane = True
+        header_with_market_events._gs335_persistent_market_events = True
+        header_with_market_events._gs334_original = current_header
+        setattr(header_with_market_events, _MARKET_EVENT_HEADER_OWNER, True)
+        ui.mission_control_header_markup = header_with_market_events
+
+
+# ---------------------------------------------------------------------------
 # Market-leader continuity presentation
 # ---------------------------------------------------------------------------
 
@@ -1747,6 +1866,10 @@ def install_leader_reset_audio() -> None:
 
 __all__ = [
     "actionable_candidate_records",
+    "install_market_event_presentation",
+    "market_event_markup",
+    "visible_market_events",
+    "_LATEST_ACTIONABLE_SYMBOLS",
     "install_market_leader_continuity",
     "market_leader_markup",
     "market_leader_candidate",

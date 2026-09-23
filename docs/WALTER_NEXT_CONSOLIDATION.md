@@ -367,3 +367,30 @@ installer at the same point.
 
 GS334/GS340 remain untouched in this phase because their completed-scan/native-mover
 evidence capture crosses a different authority boundary that will be split separately.
+
+
+## Phase 17: native market-awareness evidence split
+
+The GS334/GS340/GS377 family is now split by responsibility instead of sharing a
+numbered-module cache.
+
+**Market Evidence** owns:
+- GS334 extraordinary Webull Day Gainer evidence (+75%, existing limit/order);
+- GS340 high-liquidity trend evidence (+30%, 50M shares, <=$5, top-10);
+- GS377 strategy-leader evidence (+15%, top-10, <=$5 current or implied prior close);
+- the shared current market-awareness snapshot;
+- completed-scan market-event retrieval; and
+- the existing Webull assets observation wrappers.
+
+**Presentation + Audio** owns:
+- duplicate suppression against current actionable symbols;
+- actionable-symbol tracking; and
+- the LIVE MARKET EVENTS / ATTENTION ONLY header strip.
+
+The historical startup sequence remains GS334 -> GS340 -> GS377. GS340 now activates
+its rule inside the authoritative Market Evidence row function instead of wrapping
+GS334's callable, while GS377 still observes the same already-fetched native Webull
+rows after the GS334 capture wrapper completes.
+
+No additional provider request is added. Discovery membership, gates, scores, ranking,
+qualification, Entry Ready, alerts, execution, and orders remain unchanged.
