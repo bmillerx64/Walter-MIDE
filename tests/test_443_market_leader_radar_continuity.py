@@ -122,9 +122,14 @@ def test_gs443_is_activated_from_gs442_in_cold_and_warm_paths():
 
 
 def test_gs443_scope_lock_does_not_change_trading_authority():
-    source = Path("mide/gs443_market_leader_radar_continuity.py").read_text(
+    authority = Path("mide/authorities/presentation_audio.py").read_text(
         encoding="utf-8"
     )
+    source = authority.split(
+        "# Market-leader continuity presentation", 1
+    )[1].split(
+        "# Authoritative extreme-mover presentation semantics", 1
+    )[0]
     forbidden = (
         "qualified_for_entry =",
         "qualified_for_alert =",
