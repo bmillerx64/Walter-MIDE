@@ -197,6 +197,103 @@ def base_opportunity_state(record: dict) -> dict:
     }
 
 
+_LOOK_NOW_OWNER_ATTR = "_walter_gs467_look_now_semantics_owner"
+_LOOK_NOW_PROVENANCE = "GS467_LOOK_NOW_SEMANTICS"
+
+
+def legacy_1m_ignition_look_now(view: dict) -> bool:
+    """Return True only for the legacy standalone 1m ignition reason."""
+    reason = str(view.get("reason") or "").strip().lower()
+    return reason.startswith("1m ignition:")
+
+
+def bottom_up_urgency(record: dict) -> dict:
+    """Return stronger current structure that may legitimately retain LOOK NOW."""
+    from mide import gs460_st_flip_compression_ignition as gs460
+    from mide import gs462_preflip_ignition_watch as gs462
+
+    compression = gs460.st_flip_compression(record)
+    preflip = gs462.preflip_ignition_watch(record)
+    return {
+        "compression": compression,
+        "preflip": preflip,
+        "strong": bool(compression.get("active") or preflip.get("jet_fuel")),
+    }
+
+
+def consolidated_look_now(original, record: dict) -> dict:
+    """Demote only standalone 1m LOOK NOW when stronger structure is absent."""
+    base = original(record)
+    if str(base.get("state") or "") != LOOK_NOW:
+        return base
+    if not legacy_1m_ignition_look_now(base):
+        return base
+
+    urgency = bottom_up_urgency(record)
+    if urgency.get("strong"):
+        return base
+
+    view = deepcopy(base)
+    view["state"] = DEVELOPING
+    view["color"] = STATE_COLORS[DEVELOPING]
+
+    provenance = list(view.get("attention_provenance") or [])
+    if _LOOK_NOW_PROVENANCE not in provenance:
+        provenance.append(_LOOK_NOW_PROVENANCE)
+    view["attention_provenance"] = provenance
+
+    preflip = urgency.get("preflip") or {}
+    if preflip.get("active"):
+        view["reason"] = (
+            "EARLY WATCH: bottom-up 30s/1m attention is present, but the current "
+            "structure has not yet earned LOOK NOW."
+        )
+    else:
+        view["reason"] = (
+            "Current 1m VWAP/SuperTrend ignition is worth monitoring, but it has not "
+            "yet earned LOOK NOW."
+        )
+    view["next_step"] = (
+        "Keep it visible and wait for stronger current structure: compressed 30s->1m "
+        "ignition with flow, 3m JET FUEL, a constructive reset/retest, consolidation "
+        "re-arm, or fresh ST/VWAP maturation."
+    )
+    view["look_now_semantics"] = {
+        "legacy_1m_ignition_demoted": True,
+        "bottom_up_compression": bool((urgency.get("compression") or {}).get("active")),
+        "early_watch": bool(preflip.get("active")),
+        "jet_fuel": bool(preflip.get("jet_fuel")),
+        "authority": "PRESENTATION_ONLY",
+    }
+    return view
+
+
+def install_look_now_semantics() -> None:
+    """Bind LOOK NOW adjudication at the historical GS467 compatibility position."""
+    from mide import gs310_unified_opportunity_state as unified
+    from mide import gs311_unified_voice as voice
+    from mide import gs314_state_consistency as consistency
+    from mide import gs363_operator_attention_hierarchy as hierarchy
+
+    current = unified.opportunity_state
+    if getattr(current, _LOOK_NOW_OWNER_ATTR, False):
+        calibrated = current
+    else:
+        @wraps(current)
+        def calibrated(record: dict) -> dict:
+            return consolidated_look_now(current, record)
+
+        _inherit_state_wrapper(calibrated, current)
+        calibrated._gs467_look_now_semantic_consolidation = True
+        calibrated._gs467_original = current
+        setattr(calibrated, _LOOK_NOW_OWNER_ATTR, True)
+        unified.opportunity_state = calibrated
+
+    voice.opportunity_state = calibrated
+    consistency.opportunity_state = calibrated
+    hierarchy.opportunity_state = calibrated
+
+
 _VWAP_TRUTH_OWNER_ATTR = "_walter_gs468_vwap_truth_veto_owner"
 _VWAP_TRUTH_PROVENANCE = "GS468_NUMERIC_VWAP_VETO"
 
@@ -389,6 +486,9 @@ __all__ = [
     "STATE_COLORS",
     "WATCH_FOR_ENTRY",
     "base_opportunity_state",
+    "legacy_1m_ignition_look_now",
+    "consolidated_look_now",
+    "bottom_up_urgency",
     "current_vwap_truth",
     "behavioral_decision",
     "escalation_alert_phrase",

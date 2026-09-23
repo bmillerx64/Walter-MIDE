@@ -131,3 +131,19 @@ price is actually below VWAP.
 installer position.  The rule still uses already-computed snapshot and 1m evidence,
 performs zero additional market-data requests, and changes no scoring, qualification,
 Entry Authority, indicator formula, threshold, alert, execution, or order behavior.
+
+
+## Phase 6: LOOK NOW semantic ownership
+
+The GS467 standalone-1m ignition adjudicator now lives in
+`mide.authorities.thesis_state`.
+
+The preserved rule is narrow: a legacy 1m VWAP/SuperTrend ignition cannot own LOOK NOW
+by itself. It remains DEVELOPING/EARLY WATCH unless stronger bottom-up structure is
+already present through the established GS460 compression evidence or GS462 JET-FUEL
+path. Fresh event/news attention and specific structural LOOK NOW paths remain
+untouched.
+
+`mide.gs467_look_now_semantic_consolidation` remains only as a compatibility shim at
+its historical installer position. No thresholds, qualification, Entry Authority,
+provider requests, indicators, alerts, execution, or orders change.
