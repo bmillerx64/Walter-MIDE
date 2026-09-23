@@ -56,5 +56,5 @@ def test_scope_lock_is_presentation_semantics_only():
         "place_order(",
         "submit_order(",
     )
-    block = source[source.index("def look_now_context"):source.index("def opportunity_state")]
+    block = source[source.index("def look_now_context"):source.index("def _confidence_cue")]
     assert not any(token in block for token in forbidden)
