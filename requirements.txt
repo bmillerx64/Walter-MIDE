@@ -1,6 +1,9 @@
 # GS445 deployment marker: force one clean Streamlit Community Cloud runtime so
 # append-only Candidate History / Flight Recorder exports reuse incremental gzip state.
 # No dependency versions change in this deployment-only activation.
+# GS539 deployment marker: Opportunity State cards sort by visible P/E Strength
+# descending and both GS332 live render paths are hard-bound to the same frozen order.
+# Presentation only; Entry Ready and all trading authority remain unchanged.
 # GS538 deployment marker: keep the final Opportunity State card renderer bound
 # to the current canonical operator sorter so WATCH FOR ENTRY cannot be displaced by
 # stale nested CHASE / WAIT ordering. Presentation only; trading authority unchanged.
