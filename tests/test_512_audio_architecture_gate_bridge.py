@@ -95,7 +95,7 @@ def test_rejected_architecture_stage_does_not_manufacture_audio():
 def test_scope_lock_is_audio_compatibility_only():
     from pathlib import Path
 
-    source = Path("mide/gs512_audio_architecture_gate_bridge.py").read_text(
+    source = Path("mide/authorities/presentation_audio.py").read_text(
         encoding="utf-8"
     )
     forbidden = (

@@ -226,3 +226,21 @@ continued calling an older captured copy.
 
 No strategy semantics, thresholds, provider requests, indicator formulas, scoring,
 ranking, qualification, Entry Ready meaning, alerts, execution, or orders change.
+
+
+## Phase 11: maturation audio ownership
+
+The GS492/GS512 audio cluster now belongs to **Presentation + Audio**.
+
+Presentation + Audio owns the existing RUNNER BUILDING / RUNNER DETECTED transition
+truth, phrase construction, audio-priority wrapper, and the Architecture-v1 gate
+fallback used by attention audio. GS492 and GS512 remain compatibility facades at
+their historical install positions.
+
+The GS512 activation order is preserved deliberately: maturation audio begins with the
+historical direct gate dictionaries, and only the GS512 install point switches audio
+to the Architecture-v1 audit fallback. This preserves startup/order parity rather than
+silently enabling the bridge earlier.
+
+The established 180-second fresh-3m window, >5% VWAP anti-chase wording, gate
+requirements, chime priority, and no-entry-authority contract are unchanged.

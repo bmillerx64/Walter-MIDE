@@ -127,7 +127,7 @@ def test_gs492_installs_after_gs477_at_final_late_boundary():
 
 
 def test_scope_lock_is_presentation_audio_only():
-    source = Path("mide/gs492_maturation_transition_audio.py").read_text(
+    source = Path("mide/authorities/presentation_audio.py").read_text(
         encoding="utf-8"
     )
     forbidden = (
