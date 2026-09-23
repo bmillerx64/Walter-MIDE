@@ -17,7 +17,7 @@ from html import unescape
 import os
 import re
 from time import perf_counter
-from typing import Any, Iterable
+from typing import Any, Callable, Iterable
 
 from mide.news_provider import (
     MarketDataNewsProvider,
@@ -1122,6 +1122,268 @@ def install_benzinga_breaking_news_discovery() -> None:
     discovery.build_seed_symbols = build_seed_symbols
 
 
+# ---------------------------------------------------------------------------
+# GS540 news-corroborated shadow RVOL discovery
+# ---------------------------------------------------------------------------
+
+SHADOW_RVOL_AUTHORITY = "DISCOVERY_IDENTITY_ONLY_NEWS_CORROBORATED_SHADOW_RVOL"
+SHADOW_RVOL_LIMIT = 20
+SHADOW_RVOL_MIN = 2.0
+SHADOW_RVOL_NEWS_LOOKBACK = timedelta(hours=6)
+_SHADOW_RVOL_OWNER = "_walter_gs540_news_corroborated_shadow_rvol_owner"
+
+
+def _shadow_rvol_number(value):
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def shadow_rvol_now_utc(now=None) -> datetime:
+    value = now() if callable(now) else now
+    value = value or datetime.now(UTC)
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=UTC)
+    return value.astimezone(UTC)
+
+
+def shadow_rvol_rows(client) -> list[dict]:
+    """Read the already-fetched GS523 page-2 RVOL evidence without a provider call."""
+    diagnostics = getattr(client, "diagnostics", None)
+    if not isinstance(diagnostics, dict):
+        return []
+    native = diagnostics.get("webull_native_discovery") or {}
+    shadow = native.get("shadow_discovery") or {}
+    page = shadow.get("relative_volume_page2") or {}
+    rows = page.get("rows") or []
+    return [
+        dict(row)
+        for row in rows
+        if isinstance(row, dict)
+    ][:SHADOW_RVOL_LIMIT]
+
+
+def eligible_shadow_rvol_rows(rows: Iterable[dict]) -> list[dict]:
+    """Keep positive/neutral page-2 RVOL anomalies with meaningful relative volume."""
+    output = []
+    seen = set()
+    for raw in rows or []:
+        row = dict(raw)
+        symbol = str(row.get("symbol") or "").strip().upper()
+        if not symbol or symbol in seen:
+            continue
+        rvol = _shadow_rvol_number(row.get("relative_volume_10d"))
+        change = _shadow_rvol_number(row.get("change_ratio"))
+        price = _shadow_rvol_number(row.get("price"))
+        if rvol is None or rvol < SHADOW_RVOL_MIN:
+            continue
+        if change is not None and change < 0:
+            continue
+        if price is not None and price <= 0:
+            continue
+        seen.add(symbol)
+        row["symbol"] = symbol
+        output.append(row)
+    return output[:SHADOW_RVOL_LIMIT]
+
+
+def fetch_shadow_rvol_targeted_articles(
+    symbols: list[str],
+    *,
+    now: datetime,
+) -> list:
+    """Make one bounded entitlement-safe FMP stock-news fetch for shadow symbols."""
+    from mide import news_provider
+
+    key = news_provider._configured_fmp_api_key()
+    if not key or not symbols:
+        return []
+    provider = news_provider.FMPNewsProvider(
+        key,
+        timeout=4,
+        now=lambda: now,
+    )
+    return provider.fetch(
+        since=now - SHADOW_RVOL_NEWS_LOOKBACK,
+        symbols=symbols,
+    )
+
+
+def merge_news_corroborated_shadow_rvol(
+    client,
+    seeds: list[str],
+    reasons: dict[str, list[str]],
+    *,
+    now=None,
+    fetcher: Callable[[list[str], datetime], list] | None = None,
+) -> tuple[list[str], dict[str, list[str]], dict]:
+    """Join GS523 shadow RVOL with material news without bypassing downstream gates."""
+    current = shadow_rvol_now_utc(now)
+    all_shadow_rows = shadow_rvol_rows(client)
+    rows = eligible_shadow_rvol_rows(all_shadow_rows)
+    shadow_by_symbol = {row["symbol"]: row for row in rows}
+    symbols = list(shadow_by_symbol)
+
+    output = list(seeds or [])
+    updated_reasons = {
+        str(symbol): list(values)
+        for symbol, values in (reasons or {}).items()
+    }
+    existing = {
+        str(symbol or "").strip().upper()
+        for symbol in output
+    }
+
+    trace = {
+        "authority": SHADOW_RVOL_AUTHORITY,
+        "shadow_rows_seen": len(all_shadow_rows),
+        "eligible_shadow_symbols": symbols,
+        "request_made": False,
+        "articles_received": 0,
+        "material_corroborations": [],
+        "symbols_added": [],
+        "trading_authority_changed": False,
+    }
+    if not symbols:
+        return output, updated_reasons, trace
+
+    try:
+        if fetcher is None:
+            from mide import news_provider
+
+            configured = bool(news_provider._configured_fmp_api_key())
+            trace["configured"] = configured
+            if not configured:
+                trace["reason"] = "FMP credential unavailable"
+                return output, updated_reasons, trace
+            trace["request_made"] = True
+            articles = fetch_shadow_rvol_targeted_articles(
+                symbols,
+                now=current,
+            )
+        else:
+            trace["configured"] = True
+            trace["request_made"] = True
+            articles = list(fetcher(symbols, current) or [])
+    except Exception as exc:
+        trace.update(
+            transport_disposition="PROVIDER_FAILURE",
+            exception_type=type(exc).__name__,
+            raw_exception_persisted=False,
+        )
+        return output, updated_reasons, trace
+
+    trace["articles_received"] = len(articles)
+    from mide import gs298_news_seeded_discovery as gs298
+
+    selected = gs298.select_material_news_seeds(
+        articles,
+        now=current,
+        limit=SHADOW_RVOL_LIMIT,
+    )
+    selected = [
+        item
+        for item in selected
+        if str(item.get("symbol") or "").strip().upper() in shadow_by_symbol
+        and item.get("seed_type") == "material_catalyst"
+    ]
+
+    corroborations = []
+    added = []
+    for item in selected:
+        symbol = str(item.get("symbol") or "").strip().upper()
+        row = shadow_by_symbol[symbol]
+        published = item.get("created_at")
+        published_text = (
+            published.astimezone(UTC).isoformat()
+            if isinstance(published, datetime)
+            else str(published or "")
+        )
+        evidence = {
+            "symbol": symbol,
+            "shadow_rvol_rank": row.get("rank"),
+            "shadow_rvol_10d": row.get("relative_volume_10d"),
+            "shadow_change_ratio": row.get("change_ratio"),
+            "shadow_price": row.get("price"),
+            "news_source": str(item.get("source") or ""),
+            "news_provider": str(item.get("provider") or ""),
+            "news_published_at": published_text,
+            "headline": str(item.get("headline") or "")[:400],
+            "catalyst_score": item.get("catalyst_score"),
+            "trusted_source": bool(item.get("trusted_source")),
+        }
+        corroborations.append(evidence)
+        reason = (
+            "material news + Webull shadow RVOL corroboration: "
+            + (
+                evidence["news_source"]
+                or evidence["news_provider"]
+                or "news provider"
+            )
+        )
+        if reason not in updated_reasons.setdefault(symbol, []):
+            updated_reasons[symbol].append(reason)
+        if symbol not in existing:
+            output.append(symbol)
+            existing.add(symbol)
+            added.append(symbol)
+
+    trace.update(
+        transport_disposition="SUCCESS",
+        material_corroborations=corroborations,
+        symbols_added=added,
+        symbols_added_count=len(added),
+    )
+    return output, updated_reasons, trace
+
+
+def install_news_corroborated_shadow_rvol() -> None:
+    """Bind GS540 discovery identity at its historical final-news seam."""
+    from mide import discovery
+
+    current = discovery.build_seed_symbols
+    if getattr(current, _SHADOW_RVOL_OWNER, False):
+        return
+
+    @wraps(current)
+    def build_seed_symbols(
+        client,
+        settings,
+        news_items,
+        *,
+        universe_verification=None,
+    ):
+        if universe_verification is None:
+            seeds, reasons = current(client, settings, news_items)
+        else:
+            seeds, reasons = current(
+                client,
+                settings,
+                news_items,
+                universe_verification=universe_verification,
+            )
+
+        from mide import gs540_news_corroborated_shadow_rvol as gs540
+
+        seeds, reasons, trace = gs540.merge_news_corroborated_shadow_rvol(
+            client,
+            seeds,
+            reasons,
+        )
+        diagnostics = getattr(client, "diagnostics", None)
+        if isinstance(diagnostics, dict):
+            diagnostics["news_corroborated_shadow_rvol"] = deepcopy(trace)
+            diagnostics["final_seed_count"] = len(seeds)
+        return seeds, reasons
+
+    _inherit(build_seed_symbols, current)
+    build_seed_symbols._gs540_news_corroborated_shadow_rvol = True
+    build_seed_symbols._gs540_original = current
+    setattr(build_seed_symbols, _SHADOW_RVOL_OWNER, True)
+    discovery.build_seed_symbols = build_seed_symbols
+
+
 def build_seed_symbols(*args, **kwargs):
     from mide import discovery
     return discovery.build_seed_symbols(*args, **kwargs)
@@ -1158,6 +1420,14 @@ def ticker_inspection(*args, **kwargs):
 
 
 __all__ = [
+    "install_news_corroborated_shadow_rvol",
+    "merge_news_corroborated_shadow_rvol",
+    "eligible_shadow_rvol_rows",
+    "shadow_rvol_rows",
+    "fetch_shadow_rvol_targeted_articles",
+    "SHADOW_RVOL_AUTHORITY",
+    "SHADOW_RVOL_LIMIT",
+    "SHADOW_RVOL_MIN",
     "install_benzinga_breaking_news_discovery",
     "merge_benzinga_breaking_news_discovery",
     "poll_benzinga_breaking_news",
