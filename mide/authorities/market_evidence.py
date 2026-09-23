@@ -41,6 +41,148 @@ def strengthening_diagnostics(*args, **kwargs):
     return scanner_v2.strengthening_diagnostics(*args, **kwargs)
 
 
+IGNITION_MAX_VWAP_DISTANCE_PCT = 2.0
+IGNITION_FLIP_RECENT_SECONDS = 150.0
+IGNITION_RECLAIM_RECENT_BARS = 2
+
+
+def _ignition_number(
+    record: dict,
+    *keys: str,
+    default: float | None = None,
+) -> float | None:
+    for key in keys:
+        value = record.get(key)
+        if value is None or value == "":
+            continue
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            continue
+    return default
+
+
+def _ignition_attention(record: dict) -> tuple[str, ...]:
+    try:
+        from mide.gs309_current_attention_mission import current_attention_provenance
+
+        return tuple(current_attention_provenance(record))
+    except Exception:
+        return ()
+
+
+def _ignition_fresh_catalyst(record: dict) -> bool:
+    if any(
+        bool(record.get(key))
+        for key in (
+            "fresh_news",
+            "news_catalyst",
+            "has_catalyst",
+            "catalyst_confirmed",
+        )
+    ):
+        return True
+    if str(record.get("headline") or "").strip():
+        return True
+    return "FRESH_NEWS_SEED" in set(_ignition_attention(record))
+
+
+def _ignition_timeframe_state(record: dict, label: str) -> dict:
+    states = record.get("timeframes") or {}
+    value = states.get(label) if isinstance(states, dict) else None
+    return dict(value) if isinstance(value, dict) else {}
+
+
+def _ignition_supporting_flow(record: dict) -> tuple[bool, list[str]]:
+    evidence: list[str] = []
+    volume_accel = _ignition_number(record, "volume_acceleration", default=0.0) or 0.0
+    dollar_flow = _ignition_number(
+        record,
+        "dollar_flow_acceleration",
+        default=0.0,
+    ) or 0.0
+    participation = _ignition_number(
+        record,
+        "participation_score",
+        "participation_surge_score",
+        default=0.0,
+    ) or 0.0
+    expansion = _ignition_number(
+        record,
+        "expansion_score",
+        "expansion_quality",
+        default=0.0,
+    ) or 0.0
+
+    if volume_accel >= 1.0:
+        evidence.append(f"volume acceleration {volume_accel:.2f}x")
+    if dollar_flow >= 1.25:
+        evidence.append(f"dollar-flow acceleration {dollar_flow:.2f}x")
+    if participation >= 20.0:
+        evidence.append(f"participation {participation:.0f}")
+    if expansion >= 40.0:
+        evidence.append(f"expansion {expansion:.0f}")
+    if _ignition_fresh_catalyst(record):
+        evidence.append("fresh catalyst")
+    if _ignition_attention(record):
+        evidence.append("current market attention")
+    return bool(evidence), evidence
+
+
+def ignition_evidence(record: dict) -> dict:
+    """Return GS393 primary 1m ignition truth from already-computed market evidence."""
+    relation = str(record.get("vwap_relation") or "").strip().lower()
+    distance = _ignition_number(record, "vwap_distance_pct")
+    one = _ignition_timeframe_state(record, "1m")
+    three = _ignition_timeframe_state(record, "3m")
+
+    above = relation == "above" and distance is not None and distance >= 0.0
+    inside_chase_guard = bool(
+        above and distance is not None and distance <= IGNITION_MAX_VWAP_DISTANCE_PCT
+    )
+    one_bullish = bool(one.get("supertrend"))
+    one_above_vwap = bool(one.get("above_vwap"))
+
+    reclaim_age = (
+        _ignition_number(record, "vwap_reclaim_age_bars", default=999.0) or 999.0
+    )
+    reclaim_recent = bool(
+        record.get("vwap_reclaimed_last_10m")
+        and reclaim_age <= IGNITION_RECLAIM_RECENT_BARS
+    )
+    flip_age = _ignition_number(record, "supertrend_flip_age_seconds")
+    flip_recent = bool(
+        flip_age is not None and 0.0 <= flip_age <= IGNITION_FLIP_RECENT_SECONDS
+    )
+
+    supported, support = _ignition_supporting_flow(record)
+    trigger = None
+    if inside_chase_guard and one_bullish and one_above_vwap and supported:
+        if reclaim_recent:
+            trigger = "VWAP_RECLAIM_WITH_BULLISH_1M_ST"
+        elif flip_recent:
+            trigger = "BULLISH_1M_ST_FLIP_ABOVE_VWAP"
+
+    return {
+        "recent": trigger is not None,
+        "trigger": trigger,
+        "vwap_relation": relation,
+        "vwap_distance_pct": distance,
+        "inside_chase_guard": inside_chase_guard,
+        "one_minute_supertrend_bullish": one_bullish,
+        "one_minute_above_vwap": one_above_vwap,
+        "vwap_reclaim_recent": reclaim_recent,
+        "vwap_reclaim_age_bars": reclaim_age,
+        "one_minute_bullish_flip_recent": flip_recent,
+        "one_minute_bullish_flip_age_seconds": flip_age,
+        "three_minute_confirmation": bool(
+            three.get("supertrend") and three.get("above_vwap")
+        ),
+        "supporting_flow": support,
+        "literal_st_line_vwap_cross_is_secondary": True,
+    }
+
+
 RETEST_TRUTH_AUTHORITY = "PRESENTATION_GUARDRAIL_ONLY"
 RETEST_MEMORY_AUTHORITY = "PRESENTATION_MEMORY_ONLY"
 _RETEST_MEMORY_BUILD_OWNER = "_walter_gs514_retest_event_memory_build"
@@ -643,6 +785,10 @@ def reset_leader_memory() -> None:
 
 __all__ = [
     "analyze_candidates",
+    "ignition_evidence",
+    "IGNITION_RECLAIM_RECENT_BARS",
+    "IGNITION_FLIP_RECENT_SECONDS",
+    "IGNITION_MAX_VWAP_DISTANCE_PCT",
     "reset_leader_memory",
     "apply_leader_reset_marks",
     "leader_reset_evidence",
