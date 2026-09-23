@@ -1926,7 +1926,53 @@ def install_catalyst_story_presentation() -> None:
     ui._why_sections = why_sections
 
 
+# ---------------------------------------------------------------------------
+# GS503 catalyst/company-scale operator presentation
+# ---------------------------------------------------------------------------
+
+_CATALYST_SCALE_WHY_OWNER = "_walter_gs503_scale_why_owner"
+
+
+def catalyst_company_scale_display_summary(record: dict) -> str:
+    """Return the bounded factual company-scale summary for operator display."""
+    detail = record.get("catalyst_company_scale") or {}
+    return str(detail.get("summary") or "").strip()
+
+
+def install_catalyst_company_scale_presentation() -> None:
+    """Append GS503 relative-scale facts to the Catalyst presentation section."""
+    from mide import ui
+
+    current = ui._why_sections
+    if getattr(current, _CATALYST_SCALE_WHY_OWNER, False):
+        return
+
+    @wraps(current)
+    def why_sections_with_company_scale(record):
+        sections = dict(current(record))
+        summary = catalyst_company_scale_display_summary(record)
+        if summary:
+            existing = str(sections.get("Catalyst") or "").strip()
+            if summary not in existing:
+                sections["Catalyst"] = (
+                    f"{existing} · {summary}" if existing else summary
+                )
+        return sections
+
+    _inherit_audio_wrapper(why_sections_with_company_scale, current)
+    setattr(
+        why_sections_with_company_scale,
+        _CATALYST_SCALE_WHY_OWNER,
+        True,
+    )
+    why_sections_with_company_scale._gs503_catalyst_company_scale = True
+    why_sections_with_company_scale._gs503_original = current
+    ui._why_sections = why_sections_with_company_scale
+
+
 __all__ = [
+    "install_catalyst_company_scale_presentation",
+    "catalyst_company_scale_display_summary",
     "install_catalyst_story_presentation",
     "catalyst_story_display_facts",
     "actionable_candidate_records",
