@@ -183,3 +183,26 @@ GS493, GS514, and GS515 remain compatibility facades at their historical install
 positions so runtime ordering stays stable while ownership moves out of numbered
 patches. No new market-data request, threshold, indicator formula, qualification,
 ranking, readiness, alert, execution, or order behavior is introduced.
+
+
+## Phase 9: proven-leader reset / re-ignition authority split
+
+GS477 previously mixed four responsibilities in one numbered module. Walter Next now
+separates them:
+
+- **Market Evidence** owns the existing 90-minute proven-leader memory and computes
+  RESET WATCH / REIGNITION / 3M CONFIRMATION evidence from current VWAP, fast
+  SuperTrend, participation, flow, mover membership, and source freshness.
+- **Thesis / State** owns what that evidence means to the Opportunity State, including
+  the below-VWAP no-promotion rule and LOOK NOW re-ignition explanation.
+- **Presentation + Audio** owns awareness-only visible-row enrichment and the existing
+  attention-only reset/re-ignition voice phrases.
+- **Entry Authority** remains unchanged; leader-reset evidence cannot grant Entry Ready.
+
+The numeric contracts are unchanged: >5% prior VWAP extension, +/-2% reset window,
+90-minute memory, Participation >=20, volume acceleration >=1.0 or dollar-flow
+acceleration >=1.25, and <=5% reclaimed VWAP distance for re-ignition.
+
+Because GS477's audio installer causes Presentation + Audio to load during startup,
+that authority's legacy UI delegates are now dynamic rather than frozen imports. This
+prevents consolidation from bypassing later validated UI wrappers.
