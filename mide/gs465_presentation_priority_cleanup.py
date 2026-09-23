@@ -78,41 +78,7 @@ def _specific_look_now(view: dict) -> bool:
 
 
 def cleaned_extreme_event(original, record: dict) -> dict | None:
-    """Keep extreme-mover awareness without manufacturing LOOK NOW semantics."""
-    from . import gs310_unified_opportunity_state as unified
-
-    event = original(record)
-    if not event:
-        return event
-    if event.get("halted") or "DO NOT CHASE" in str(event.get("label") or "").upper():
-        return event
-
-    try:
-        view = unified.opportunity_state(record)
-    except Exception:
-        view = {}
-    state = str(view.get("state") or "")
-
-    cleaned = dict(event)
-    if state == unified.WATCH_FOR_ENTRY:
-        cleaned["label"] = "EXTREME MOVER · WATCH FOR ENTRY"
-        cleaned["guidance"] = (
-            "The normal opportunity state has earned WATCH FOR ENTRY. Use the same "
-            "entry evidence and risk discipline as any other setup."
-        )
-    elif _specific_look_now(view):
-        cleaned["label"] = "EXTREME MOVER · LOOK NOW"
-        cleaned["guidance"] = (
-            "Current structure independently earned LOOK NOW; the large percentage "
-            "move is context, not the reason for urgency."
-        )
-    else:
-        cleaned["label"] = "EXTREME MOVER · WATCH"
-        cleaned["guidance"] = (
-            "Major mover worth monitoring, but the current structure has not earned "
-            "LOOK NOW. Let normal VWAP/ST/ignition evidence promote it."
-        )
-    return cleaned
+    return _presentation.cleaned_extreme_event(original, record)
 
 
 def _non_extreme_actionable_symbols(rows: list[dict], extreme_symbols: set[str]) -> set[str]:
@@ -139,59 +105,11 @@ def _non_extreme_actionable_symbols(rows: list[dict], extreme_symbols: set[str])
 
 
 def prioritized_extreme_with_watch_continuity(original, records, *, now=None):
-    """Preserve GS443 single-banner ownership for generic extreme WATCH names.
-
-    The established selector keeps authority for HALTED, structural LOOK NOW and
-    DO-NOT-CHASE decay semantics. This fallback runs only when that selector returns
-    no event, and only for plain ``EXTREME MOVER · WATCH`` records. It therefore
-    restores multi-extreme de-duplication without reviving the old fake LOOK NOW.
-    """
-    from . import gs333_extreme_mover_operator_priority as extreme
-
-    rows = list(records or [])
-    if now is None:
-        selected = original(rows)
-    else:
-        try:
-            selected = original(rows, now=now)
-        except TypeError:
-            selected = original(rows)
-    if selected and selected[0] is not None:
-        return selected
-
-    events: list[tuple[dict, dict]] = []
-    extreme_symbols: set[str] = set()
-    for record in rows:
-        event = extreme.extreme_market_event(record)
-        if not event:
-            continue
-        symbol = str(event.get("symbol") or record.get("symbol") or "").strip().upper()
-        if symbol:
-            extreme_symbols.add(symbol)
-        events.append((record, event))
-
-    # A real non-extreme WATCH/LOOK/DEVELOPING setup owns the action-first sightline.
-    if _non_extreme_actionable_symbols(rows, extreme_symbols):
-        return None, None
-
-    choices: list[tuple[tuple[float, float], dict, dict]] = []
-    for record, event in events:
-        if str(event.get("label") or "").upper() != "EXTREME MOVER · WATCH":
-            continue
-        try:
-            pct_change = float(event.get("pct_change") or 0.0)
-        except (TypeError, ValueError):
-            pct_change = 0.0
-        try:
-            dollar_volume = float(record.get("dollar_volume") or 0.0)
-        except (TypeError, ValueError):
-            dollar_volume = 0.0
-        choices.append(((pct_change, dollar_volume), record, event))
-
-    if not choices:
-        return None, None
-    _, record, event = max(choices, key=lambda item: item[0])
-    return record, event
+    return _presentation.prioritized_extreme_with_watch_continuity(
+        original,
+        records,
+        now=now,
+    )
 
 
 def _inherit(wrapper, wrapped) -> None:
@@ -205,39 +123,11 @@ def _install_order() -> None:
 
 
 def _install_extreme_semantics() -> None:
-    from . import gs333_extreme_mover_operator_priority as extreme
-
-    current = extreme.extreme_market_event
-    if getattr(current, _EXTREME_OWNER_ATTR, False):
-        return
-
-    @wraps(current)
-    def extreme_market_event(record: dict) -> dict | None:
-        return cleaned_extreme_event(current, record)
-
-    _inherit(extreme_market_event, current)
-    extreme_market_event._gs465_presentation_priority_cleanup = True
-    extreme_market_event._gs465_original = current
-    setattr(extreme_market_event, _EXTREME_OWNER_ATTR, True)
-    extreme.extreme_market_event = extreme_market_event
+    _presentation.activate_extreme_event_stage("cleanup")
 
 
 def _install_extreme_selection_continuity() -> None:
-    from . import gs333_extreme_mover_operator_priority as extreme
-
-    current = extreme.prioritized_extreme_event
-    if getattr(current, _EXTREME_SELECTION_OWNER_ATTR, False):
-        return
-
-    @wraps(current)
-    def prioritized_extreme_event(records, *, now=None):
-        return prioritized_extreme_with_watch_continuity(current, records, now=now)
-
-    _inherit(prioritized_extreme_event, current)
-    prioritized_extreme_event._gs465_presentation_priority_cleanup = True
-    prioritized_extreme_event._gs465_original = current
-    setattr(prioritized_extreme_event, _EXTREME_SELECTION_OWNER_ATTR, True)
-    extreme.prioritized_extreme_event = prioritized_extreme_event
+    _presentation.install_extreme_selection_continuity()
 
 
 def install() -> None:
