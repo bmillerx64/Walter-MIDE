@@ -153,3 +153,13 @@ def test_scope_lock_is_identity_discovery_only():
     )
     assert not any(token in source for token in forbidden)
     assert "DISCOVERY_IDENTITY_ONLY_NEWS_CORROBORATED_SHADOW_RVOL" in source
+
+
+
+def test_startup_installs_gs540_after_existing_news_intelligence():
+    source = Path("mide/startup.py").read_text(encoding="utf-8")
+    body = source.split("def ensure_late_runtime_installers() -> None:", 1)[1]
+
+    assert "gs540_news_corroborated_shadow_rvol" in body
+    assert body.index("install_gs502()") < body.index("install_gs503()") < body.index("install_gs540()")
+    assert body.index("install_gs540()") < body.index("install_gs511()")
