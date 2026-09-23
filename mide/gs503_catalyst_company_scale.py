@@ -64,9 +64,15 @@ def _ratio_text(value: float | None) -> str | None:
     return f"{value * 100:.0f}%"
 
 
-def _scale_band(ratio: float | None) -> str:
+def _scale_band(
+    ratio: float | None, *, market_cap_available: bool, event_amount_available: bool
+) -> str:
     if ratio is None:
-        return "NOT_EVALUATED_NO_MARKET_CAP"
+        if not market_cap_available:
+            return "NOT_EVALUATED_NO_MARKET_CAP"
+        if not event_amount_available:
+            return "NOT_EVALUATED_NO_EVENT_AMOUNT"
+        return "NOT_EVALUATED_NO_COMPARABLE_RATIO"
     if ratio >= 1.0:
         return "COMPANY_SCALE_OR_LARGER"
     if ratio >= 0.25:
@@ -122,6 +128,7 @@ def company_scale_context(record: dict, candidate: dict | None = None) -> dict:
     risk_categories = list(story.get("risk_categories") or [])
     positive_categories = list(story.get("positive_attention_categories") or [])
     risk_event = bool(risk_categories)
+    merger_or_acquisition = "M_AND_A_INVESTMENT" in positive_categories
 
     amount = None
     amount_role = None
@@ -131,7 +138,10 @@ def company_scale_context(record: dict, candidate: dict | None = None) -> dict:
         amount, amount_role = max(deal_values), "DEAL_OR_BACKLOG"
     elif investment_values:
         amount, amount_role = max(investment_values), "INVESTMENT_OR_FUNDING"
-    elif revenue_values:
+    elif revenue_values and not merger_or_acquisition:
+        # GS540: projected revenue in an acquisition story is not transaction
+        # consideration. HCTI's source story disclosed forward projections but
+        # did not expose the acquisition price in Walter's selected article.
         amount, amount_role = max(revenue_values), "REVENUE"
     elif headline_amount is not None and (
         bool(magnitude.get("contractual_language")) or positive_categories
@@ -159,7 +169,11 @@ def company_scale_context(record: dict, candidate: dict | None = None) -> dict:
             annualized_ratio = annualized_amount / market_cap
 
     comparison_ratio = annualized_ratio if annualized_ratio is not None else total_ratio
-    band = _scale_band(comparison_ratio)
+    band = _scale_band(
+        comparison_ratio,
+        market_cap_available=market_cap is not None,
+        event_amount_available=amount is not None,
+    )
 
     if risk_event or amount_role == "DILUTION_OR_FINANCING":
         event_direction = "RISK_CONTEXT"
@@ -169,6 +183,11 @@ def company_scale_context(record: dict, candidate: dict | None = None) -> dict:
         event_direction = "UNCLASSIFIED_CONTEXT"
 
     summary_parts = []
+    if market_cap is not None and amount is None and merger_or_acquisition:
+        summary_parts.append(
+            f"Company scale: current market cap {_money(market_cap)} · "
+            "transaction consideration not stated in Walter's selected source"
+        )
     if amount is not None and market_cap is not None:
         prefix = "Risk scale" if event_direction == "RISK_CONTEXT" else "Company scale"
         total_text = _ratio_text(total_ratio)

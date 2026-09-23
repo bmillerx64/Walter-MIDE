@@ -50,6 +50,7 @@ def ensure_late_runtime_installers() -> None:
     from .gs480_catalyst_story_intelligence import install as install_gs480
     from .gs502_benzinga_breaking_news import install as install_gs502
     from .gs503_catalyst_company_scale import install as install_gs503
+    from .gs540_news_corroborated_shadow_rvol import install as install_gs540
     from .gs511_entry_window_vwap_truth import install as install_gs511
     from .gs481_live_evidence_hard_bind import install as install_gs481
     from .gs484_fmp_transport_truth import install as install_gs484
@@ -138,6 +139,10 @@ def ensure_late_runtime_installers() -> None:
     # stated contract value / current market cap and straight-line annualized scale
     # for disclosed multi-year contracts; it has no score/rank/readiness authority.
     install_gs503()
+    # GS540 joins only the already-sampled Webull RVOL page-2 shadow lane with one
+    # bounded targeted FMP stock-news lookup. Material-news corroboration may add
+    # symbol identity to discovery, but every normal market/trading gate still applies.
+    install_gs540()
     # GS511 closes a presentation/audio contradiction exposed by live NCPL evidence:
     # Entry Window Open must obey the same established <=2% above-VWAP working zone
     # as Walter's unified Opportunity State and readiness checklist.

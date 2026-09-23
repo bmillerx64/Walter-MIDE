@@ -212,3 +212,68 @@ def test_scope_lock_adds_context_only():
     assert not any(token in source for token in forbidden)
     assert "additional_provider_requests" in source
     assert "valuation_impact_inferred" in source
+
+
+def test_hcti_m_and_a_keeps_projection_revenue_out_of_transaction_scale():
+    """Projected target revenue is not the acquisition consideration."""
+    record = {
+        "symbol": "HCTI",
+        "headline": (
+            "Healthcare Triangle Signs Letter of Intent to Pursue the "
+            "Proposed Acquisition of Roboticom"
+        ),
+        "catalyst_magnitude": {
+            "largest_stated_dollar_amount": None,
+            "stated_duration_years": None,
+            "contractual_language": False,
+        },
+        "catalyst_story": {
+            "positive_attention_categories": ["M_AND_A_INVESTMENT", "IP_LICENSE"],
+            "risk_categories": [],
+            "quantities": [
+                {"normalized_value": 153_500_000, "role": "REVENUE"},
+                {"normalized_value": 64_000_000, "role": "REVENUE"},
+            ],
+        },
+        "market_cap_reference": 39_380_000,
+        "market_cap_source": "Webull native radar market_value",
+    }
+
+    detail = gs503.company_scale_context(record)
+
+    assert detail["market_cap_available"] is True
+    assert detail["market_cap_reference"] == 39_380_000
+    assert detail["event_amount"] is None
+    assert detail["event_amount_role"] is None
+    assert detail["comparison_ratio_used"] is None
+    assert detail["relative_scale_band"] == "NOT_EVALUATED_NO_EVENT_AMOUNT"
+    assert "transaction consideration not stated" in detail["summary"]
+    assert "$153.5M" not in detail["summary"]
+
+
+def test_snapshot_market_value_from_native_radar_enables_company_scale_reference():
+    record = {
+        "symbol": "ABC",
+        "headline": "Company signs $10 million contract",
+        "catalyst_magnitude": {
+            "largest_stated_dollar_amount": 10_000_000,
+            "stated_duration_years": None,
+            "contractual_language": True,
+        },
+        "catalyst_story": {
+            "positive_attention_categories": ["CONTRACT_ORDER"],
+            "risk_categories": [],
+            "quantities": [
+                {"normalized_value": 10_000_000, "role": "DEAL_OR_BACKLOG"},
+            ],
+        },
+    }
+
+    detail = gs503.company_scale_context(
+        record,
+        {"market_value": 20_000_000, "market_value_source": "Webull native radar"},
+    )
+
+    assert detail["market_cap_available"] is True
+    assert detail["total_value_to_market_cap_ratio"] == 0.5
+    assert detail["relative_scale_band"] == "MAJOR_RELATIVE_SCALE"

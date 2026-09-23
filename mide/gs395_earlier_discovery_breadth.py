@@ -43,6 +43,7 @@ def _entry_from_row(row: dict[str, Any], key: str) -> dict[str, Any]:
         "change_ratio": row.get("change_ratio"),
         "volume": row.get("volume"),
         "relative_volume_10d": row.get("relative_volume_10d"),
+        "market_value": row.get("market_value"),
         "sources": [key],
         "ranks": {key: row.get("rank")},
     }
@@ -57,7 +58,7 @@ def _merge_existing(entry: dict[str, Any], row: dict[str, Any], key: str) -> Non
     if rank is not None:
         prior_rank = ranks.get(key)
         ranks[key] = min(prior_rank, rank) if prior_rank is not None else rank
-    for field in ("name", "price", "change_ratio", "volume", "relative_volume_10d"):
+    for field in ("name", "price", "change_ratio", "volume", "relative_volume_10d", "market_value"):
         if entry.get(field) is None and row.get(field) is not None:
             entry[field] = row[field]
 
