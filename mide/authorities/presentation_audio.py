@@ -1970,7 +1970,87 @@ def install_catalyst_company_scale_presentation() -> None:
     ui._why_sections = why_sections_with_company_scale
 
 
+# ---------------------------------------------------------------------------
+# GS511 Entry Window VWAP presentation truth
+# ---------------------------------------------------------------------------
+
+ENTRY_WINDOW_NEAR_VWAP_MAX_PCT = 2.0
+_ENTRY_WINDOW_VWAP_OWNER = "_walter_gs511_entry_window_vwap_truth"
+
+
+def _entry_window_number(record: dict, key: str) -> float | None:
+    value = record.get(key)
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def entry_window_near_vwap(record: dict) -> bool:
+    """Return the established presentation-safe near-VWAP condition."""
+    relation = str(record.get("vwap_relation") or "").strip().lower()
+    distance = _entry_window_number(record, "vwap_distance_pct")
+    return relation == "above" and (
+        distance is None or distance <= ENTRY_WINDOW_NEAR_VWAP_MAX_PCT
+    )
+
+
+def install_entry_window_vwap_truth() -> None:
+    """Keep Entry Window display/feed truth inside Walter's established VWAP zone."""
+    from mide import escalation
+    from mide import live_opportunity_feed
+
+    current_state = escalation.escalation_state
+    if getattr(current_state, _ENTRY_WINDOW_VWAP_OWNER, False):
+        # Warm Streamlit reruns can retain the feed module's imported snapshot
+        # binding even when escalation already owns this presentation correction.
+        live_opportunity_feed.escalation_snapshot = escalation.escalation_snapshot
+        return
+
+    current_snapshot = escalation.escalation_snapshot
+
+    @wraps(current_state)
+    def escalation_state(record: dict) -> str:
+        existing = current_state(record)
+        if existing != escalation.ENTRY_WINDOW_OPEN:
+            return existing
+        if entry_window_near_vwap(record):
+            return existing
+
+        distance = _entry_window_number(record, "vwap_distance_pct")
+        if distance is not None and distance > 5.0:
+            return escalation.TOO_EXTENDED
+
+        relation = str(record.get("vwap_relation") or "").strip().lower()
+        trend = bool(
+            record.get("supertrend_bullish") or record.get("supertrend_flip")
+        )
+        if relation == "above" and trend:
+            return escalation.WATCH_CLOSELY
+        return escalation.MONITOR
+
+    @wraps(current_snapshot)
+    def escalation_snapshot(record: dict) -> dict:
+        snapshot = dict(current_snapshot(record))
+        snapshot["state"] = escalation_state(record)
+        return snapshot
+
+    setattr(escalation_state, _ENTRY_WINDOW_VWAP_OWNER, True)
+    setattr(escalation_snapshot, _ENTRY_WINDOW_VWAP_OWNER, True)
+    escalation_state._gs511_original = current_state
+    escalation_snapshot._gs511_original = current_snapshot
+
+    escalation.escalation_state = escalation_state
+    escalation.escalation_snapshot = escalation_snapshot
+    live_opportunity_feed.escalation_snapshot = escalation_snapshot
+
+
 __all__ = [
+    "install_entry_window_vwap_truth",
+    "entry_window_near_vwap",
+    "ENTRY_WINDOW_NEAR_VWAP_MAX_PCT",
     "install_catalyst_company_scale_presentation",
     "catalyst_company_scale_display_summary",
     "install_catalyst_story_presentation",
