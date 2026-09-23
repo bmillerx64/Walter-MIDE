@@ -197,6 +197,105 @@ def base_opportunity_state(record: dict) -> dict:
     }
 
 
+_LEADER_RESET_PROVENANCE = "PROVEN_LEADER_RESET_REIGNITION"
+_LEADER_RESET_STATE_OWNER = "_walter_gs477_leader_reset_state_owner"
+
+
+def leader_reset_opportunity_state(original, record: dict) -> dict:
+    """Turn confirmed leader-reset evidence into state meaning without entry authority."""
+    from mide.authorities import market_evidence
+
+    base = original(record)
+    evidence = record.get("leader_reset_reignition") or {}
+    stage = str(evidence.get("stage") or "NONE")
+    if stage == "NONE" or base.get("state") in {HALTED, WATCH_FOR_ENTRY}:
+        return base
+
+    view = deepcopy(base)
+    provenance = list(view.get("attention_provenance") or [])
+    if _LEADER_RESET_PROVENANCE not in provenance:
+        provenance.append(_LEADER_RESET_PROVENANCE)
+    view["attention_provenance"] = provenance
+    view["leader_reset_reignition"] = evidence
+
+    try:
+        distance = float(evidence.get("current_vwap_distance_pct"))
+    except (TypeError, ValueError):
+        distance = None
+
+    if stage == market_evidence.RESET_WATCH:
+        prior = float(evidence.get("prior_max_vwap_distance_pct") or 0.0)
+        current = abs(float(distance or 0.0))
+        view["reason"] = (
+            f"LEADER RESET WATCH: this mover was previously {prior:.1f}%+ above VWAP and "
+            f"has reset to within {current:.1f}% of VWAP. 30s and 1m SuperTrend are bullish "
+            "with participation/flow active."
+        )
+        view["next_step"] = (
+            "Keep the chart open. Wait for primary VWAP reclaim; 3m SuperTrend confirmation "
+            "adds ignition strength. This is attention only, not entry authority."
+        )
+        return view
+
+    if (
+        distance is None
+        or distance < 0.0
+        or distance > market_evidence.MAX_REIGNITION_VWAP_DISTANCE_PCT
+    ):
+        return view
+    if base.get("state") == CHASE_WAIT:
+        return view
+
+    view["state"] = LOOK_NOW
+    view["color"] = STATE_COLORS[LOOK_NOW]
+    if stage == market_evidence.THREE_MINUTE_CONFIRMATION:
+        view["reason"] = (
+            "LEADER RE-IGNITION: primary VWAP is reclaimed after a constructive reset; "
+            "30s, 1m and 3m SuperTrend are now bullish with participation/flow active."
+        )
+        view["next_step"] = (
+            "Open the chart now. The 3m ignition rung has joined, but normal readiness, "
+            "anti-chase and execution rules remain authoritative."
+        )
+    else:
+        view["reason"] = (
+            "LEADER RE-IGNITION: primary VWAP is reclaimed after a constructive reset; "
+            "30s and 1m SuperTrend are bullish with participation/flow active. 3m is not "
+            "yet confirmed by Walter's current evidence."
+        )
+        view["next_step"] = (
+            "Open the chart now and watch the 3m SuperTrend rung. This is chart-review "
+            "authority only; normal readiness, anti-chase and execution rules remain."
+        )
+    return view
+
+
+def install_leader_reset_state() -> None:
+    """Bind proven-leader reset meaning at the historical GS477 state position."""
+    from mide import gs310_unified_opportunity_state as unified
+    from mide import gs311_unified_voice as voice
+    from mide import gs314_state_consistency as consistency
+    from mide import gs363_operator_attention_hierarchy as hierarchy
+
+    current = unified.opportunity_state
+    if getattr(current, _LEADER_RESET_STATE_OWNER, False):
+        calibrated = current
+    else:
+        @wraps(current)
+        def calibrated(record: dict) -> dict:
+            return leader_reset_opportunity_state(current, record)
+
+        _inherit_state_wrapper(calibrated, current)
+        calibrated._gs477_leader_reset_reignition = True
+        calibrated._gs477_original = current
+        setattr(calibrated, _LEADER_RESET_STATE_OWNER, True)
+        unified.opportunity_state = calibrated
+
+    voice.opportunity_state = calibrated
+    consistency.opportunity_state = calibrated
+    hierarchy.opportunity_state = calibrated
+
+
 RETEST_DISCIPLINE_AUTHORITY = "PRESENTATION_DISCIPLINE_ONLY"
 _RETEST_STATE_BIND_OWNER = "_walter_gs493_3m_st_retest_truth"
 _RETEST_MEMORY_STATE_OWNER = "_walter_gs514_retest_event_memory_state"
@@ -1071,6 +1170,8 @@ __all__ = [
     "STATE_COLORS",
     "WATCH_FOR_ENTRY",
     "base_opportunity_state",
+    "install_leader_reset_state",
+    "leader_reset_opportunity_state",
     "install_3m_st_retest_truth",
     "install_retest_discipline",
     "install_retest_memory_state",
