@@ -84,3 +84,20 @@ These tests are migration locks, not new strategy specifications.  As legacy log
 absorbed into the authority modules, the same inputs must keep producing the same
 meaning unless a later, separately reviewed strategy change intentionally revises the
 contract.
+
+
+## Phase 3: canonical Entry Authority ownership
+
+The first meaning-bearing migration moves the GS528 Entry Ready vocabulary into
+`mide.authorities.entry_authority`.
+
+The behavior is unchanged:
+
+- ENTRY READY still means only `qualified_for_entry is True`;
+- near-ready records remain SETTING UP with exact blockers;
+- no qualification predicate or threshold moves in this phase; and
+- the existing Opportunity State binding marker/order remains compatible.
+
+`mide.gs528_canonical_entry_ready` is retained as a compatibility shim so historical
+imports and installer paths do not break, but it no longer owns entry meaning.  New
+Walter Next code must import canonical Entry Ready behavior from Entry Authority.
