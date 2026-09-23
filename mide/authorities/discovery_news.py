@@ -138,14 +138,14 @@ def _story_text(item: dict) -> str:
 
 def explicit_ticker_mentions(text: str) -> list[str]:
     """Return only explicitly labelled exchange/ticker references from story text."""
-    from mide.discovery import is_valid_us_symbol
+    from mide import discovery
 
     value = str(text or "")
     found = []
     for pattern in (_EXCHANGE_TICKER_RE, _TICKER_LABEL_RE, _CASHTAG_RE):
         for match in pattern.finditer(value):
             symbol = str(match.group("symbol") or "").strip().upper()
-            if is_valid_us_symbol(symbol) and symbol not in found:
+            if discovery.is_valid_us_symbol(symbol) and symbol not in found:
                 found.append(symbol)
     return found
 
