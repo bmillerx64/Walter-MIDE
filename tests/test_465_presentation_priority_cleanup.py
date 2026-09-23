@@ -272,7 +272,12 @@ def test_gs465_is_last_at_the_final_presentation_boundary():
 
 
 def test_gs465_scope_lock_is_presentation_only():
-    source = Path("mide/gs465_presentation_priority_cleanup.py").read_text(encoding="utf-8")
+    authority = Path("mide/authorities/presentation_audio.py").read_text(
+        encoding="utf-8"
+    )
+    source = authority.split(
+        "# Authoritative extreme-mover presentation semantics", 1
+    )[1].split("FRESH_3M_SECONDS = 180.0", 1)[0]
     forbidden = (
         "qualified_for_entry =",
         "qualified_for_alert =",
