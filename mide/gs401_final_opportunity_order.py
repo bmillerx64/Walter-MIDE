@@ -10,6 +10,13 @@ GS401 removes that wrapper-order dependency without replacing the established re
 stack. During the final Opportunity State render only, it makes the renderer's internal
 ``actionable_candidate_records`` call return the existing enriched collection in the
 canonical GS369 state order, then restores the original callable immediately afterward.
+
+GS538 closes a later wrapper-chain regression exposed live on 2026-09-23: GS401 had
+captured the ordering callable when it installed, before GS497/GS517 later became the
+final operator-priority authority. The nested renderer could therefore re-sort a
+correctly ordered outer snapshot with stale rules and place CHASE / WAIT above a
+green WATCH FOR ENTRY card. GS401 now resolves the canonical GS369 sorter dynamically
+at render time, so the final live card stack consumes the current ordering contract.
 The existing renderer still owns all markup and all inherited wrapper contracts.
 
 Presentation only. No discovery, market data, VWAP/ST evidence, scoring, qualification,
@@ -26,17 +33,17 @@ def _inherit(wrapper, wrapped) -> None:
 
 def final_visible_records(records: list[dict]) -> list[dict]:
     """Return the final five operator cards after all visibility enrichment is done."""
+    from . import gs369_escalation_priority_order as gs369
     from . import ui
-    from .gs369_escalation_priority_order import ordered_escalation_records
 
     actionable = ui.actionable_candidate_records(records)
-    return ordered_escalation_records(actionable)[:5]
+    return gs369.ordered_escalation_records(actionable)[:5]
 
 
 def install() -> None:
     """Pin post-filter ordering while preserving the complete existing renderer stack."""
+    from . import gs369_escalation_priority_order as gs369
     from . import ui
-    from .gs369_escalation_priority_order import ordered_escalation_records
 
     current = ui.render_escalation_engine
     if getattr(current, "_gs401_final_opportunity_order", False):
@@ -47,14 +54,15 @@ def install() -> None:
 
         def final_actionable_records(rows: list[dict]) -> list[dict]:
             enriched = original_actionable(rows)
-            return ordered_escalation_records(enriched)
+            # GS538: resolve the final sorter now, not when this wrapper installed.
+            return gs369.ordered_escalation_records(enriched)
 
         # GS310 performs its five-card slice after calling actionable_candidate_records.
         # Make that one internal call observe the canonical order, but keep every
         # existing renderer/wrapper intact and restore the public callable immediately.
         ui.actionable_candidate_records = final_actionable_records
         try:
-            return current(ordered_escalation_records(records))
+            return current(gs369.ordered_escalation_records(records))
         finally:
             ui.actionable_candidate_records = original_actionable
 
