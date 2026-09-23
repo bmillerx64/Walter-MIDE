@@ -244,3 +244,34 @@ silently enabling the bridge earlier.
 
 The established 180-second fresh-3m window, >5% VWAP anti-chase wording, gate
 requirements, chime priority, and no-entry-authority contract are unchanged.
+
+
+## Phase 12: one authoritative operator-ordering owner
+
+The historical final-card ordering stack no longer needs five nested wrappers.
+
+**Presentation + Audio** now owns one sorter with staged activation for the exact
+legacy sequence:
+
+1. GS463 state-first attention bands;
+2. GS465 state-contiguous cleanup and within-state attention tie-breaks;
+3. GS497 Mission Rank precedence below Entry Ready;
+4. GS517 fresh maturation-event priority; and
+5. GS539 visible Participation/Expansion strength as the final primary order.
+
+Each historical install point activates its stage at the same position in startup, but
+`gs369.ordered_escalation_records` is wrapped only once. Later stages update the
+authoritative wrapper's active-stage set rather than nesting another callable.
+
+The final behavioral contract is unchanged: executable Entry Ready stays first, HALTED
+stays last, P/E Strength is the final visible primary order for every other card, and
+the preceding stages remain the stable tie/fallback history used when later evidence
+does not distinguish records.
+
+GS463, GS497, GS517, and GS539 are compatibility facades. GS465 still owns its separate
+extreme-mover label/continuity semantics for now, but its ordering portion delegates to
+the authoritative sorter.
+
+No discovery, provider calls, market evidence, indicator formulas, scoring, Mission
+Ranking values, qualification, Entry Ready authority, anti-chase state, alert truth,
+execution, or orders change.
