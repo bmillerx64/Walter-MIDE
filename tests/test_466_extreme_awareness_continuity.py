@@ -94,7 +94,12 @@ def test_gs466_is_reasserted_after_gs465_at_final_presentation_boundary():
 
 
 def test_gs466_scope_lock_changes_visibility_only():
-    source = Path("mide/gs466_extreme_awareness_continuity.py").read_text(encoding="utf-8")
+    authority = Path("mide/authorities/presentation_audio.py").read_text(
+        encoding="utf-8"
+    )
+    source = authority.split(
+        "# Authoritative extreme-mover presentation semantics", 1
+    )[1].split("FRESH_3M_SECONDS = 180.0", 1)[0]
     forbidden = (
         "qualified_for_entry =",
         "qualified_for_alert =",
