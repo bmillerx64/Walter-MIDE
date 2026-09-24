@@ -10,6 +10,8 @@ from copy import deepcopy
 from dataclasses import dataclass
 from datetime import datetime, time, timedelta, timezone
 from functools import wraps
+import hashlib
+import importlib
 import math
 from statistics import median
 from time import monotonic, time as epoch_time
@@ -5289,6 +5291,12 @@ def production_30s_health(provider) -> dict:
         "gs471_subscription_retired_for_rebind": bool(
             activation.get("subscription_retired_for_rebind")
         ),
+        "gs545_stable_session_takeover": bool(
+            (
+                stream.get("gs545_stream_session_takeover")
+                or {}
+            ).get("stable_session_identity")
+        ),
         "runtime_hard_bind": True,
         "genuine_webull_tick_only": True,
         "synthetic_30s_bars": False,
@@ -5605,6 +5613,125 @@ def install_snapshot_session_truth() -> None:
         stock_snapshot_with_session_truth
     )
 
+
+
+# ---------------------------------------------------------------------------
+# GS545 Webull cross-deployment stream-session takeover
+# ---------------------------------------------------------------------------
+
+WEBULL_STREAM_SESSION_TAKEOVER_AUTHORITY = (
+    "WEBULL_CROSS_DEPLOYMENT_STREAM_SESSION_TAKEOVER"
+)
+WEBULL_STREAM_SESSION_ID = hashlib.sha256(
+    b"Walter-MIDE primary Webull TICK stream v1"
+).hexdigest()[:32]
+
+
+def webull_stream_takeover_session_id() -> str:
+    """Return Walter Next's stable MQTT session identity.
+
+    Webull permits at most five concurrent connections per App Key and explicitly
+    replaces an older connection when a new connection reuses the same session_id.
+    A stable identity therefore turns deployment overlap into a takeover instead of
+    consuming another account-level slot.
+    """
+    return WEBULL_STREAM_SESSION_ID
+
+
+def stable_webull_stream_factory(
+    data_client,
+    app_key: str,
+    app_secret: str,
+    streaming_module,
+):
+    """Build the official SDK factory with Walter's stable takeover session."""
+    legacy_factory = getattr(
+        data_client,
+        "_walter_streaming_client_factory",
+        None,
+    )
+    api_client = None
+    closure = getattr(
+        legacy_factory,
+        "__closure__",
+        None,
+    )
+    if closure:
+        try:
+            api_client = closure[0].cell_contents
+        except (IndexError, ValueError):
+            api_client = None
+
+    session_id = webull_stream_takeover_session_id()
+
+    def factory():
+        # Preserve the existing official ApiClient provenance closure while SDK
+        # 2.0.16 continues to require credential/region/session constructor args.
+        _ = api_client
+        return streaming_module.DataStreamingClient(
+            app_key,
+            app_secret,
+            "us",
+            session_id,
+        )
+
+    return factory
+
+
+def install_webull_stream_session_takeover(
+    provider,
+    app_key: str,
+    app_secret: str,
+) -> bool:
+    """Rebind the exact retained Live Webull provider before its next connect.
+
+    This function performs no network operation. It only replaces the stream-client
+    factory used if/when ensure_stream next opens a TICK connection.
+    """
+    if provider is None:
+        return False
+    snapshot_client = getattr(
+        provider,
+        "_snapshot_client",
+        None,
+    )
+    sdk = getattr(
+        snapshot_client,
+        "sdk",
+        None,
+    )
+    data_client = getattr(
+        sdk,
+        "sdk_client",
+        None,
+    )
+    if data_client is None:
+        return False
+
+    streaming_module = importlib.import_module(
+        "webull.data.data_streaming_client"
+    )
+    data_client._walter_streaming_client_factory = (
+        stable_webull_stream_factory(
+            data_client,
+            app_key,
+            app_secret,
+            streaming_module,
+        )
+    )
+
+    stream = connection_limit_stream(provider)
+    stream["gs545_stream_session_takeover"] = {
+        "authority": WEBULL_STREAM_SESSION_TAKEOVER_AUTHORITY,
+        "stable_session_identity": True,
+        "session_id_logged": False,
+        "cross_deployment_takeover": True,
+        "network_connection_opened_here": False,
+        "rest_snapshot_history_unchanged": True,
+        "genuine_webull_tick_only": True,
+        "trading_authority_changed": False,
+    }
+    return True
 
 
 # ---------------------------------------------------------------------------
@@ -6917,6 +7044,11 @@ def install_partial_snapshot_recovery_for_provider(
 
 
 __all__ = [
+    "WEBULL_STREAM_SESSION_TAKEOVER_AUTHORITY",
+    "WEBULL_STREAM_SESSION_ID",
+    "webull_stream_takeover_session_id",
+    "stable_webull_stream_factory",
+    "install_webull_stream_session_takeover",
     "reset_retest_number",
     "reset_retest_one_minute",
     "reset_retest_current_webull_radar_attention",
