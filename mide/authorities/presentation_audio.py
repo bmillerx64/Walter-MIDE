@@ -3023,6 +3023,32 @@ def spoken_progression_rung(label: str) -> str:
     }.get(label, label)
 
 
+def progression_audio_priority(signal: dict) -> tuple[int, int]:
+    """Prioritize timely maturation meaning, not simply the highest timeframe.
+
+    3m confirmation is the strongest operator transition. Fresh 30s/1m ignition
+    follows because it is the earliest actionable-attention window. 5m+ persistence
+    remains useful context, but must not silence a newly igniting runner.
+    """
+    stage = str(signal.get("stage") or "").strip().upper()
+    rung = str(signal.get("new_rung") or "").strip().lower()
+
+    stage_priority = {
+        "CONFIRMATION": 3,
+        "IGNITION": 2,
+        "PERSISTENCE": 1,
+    }.get(stage, 0)
+    rung_priority = {
+        "3m": 3,
+        "1m": 2,
+        "30s": 1,
+        "5m": 3,
+        "10m": 2,
+        "15m": 1,
+    }.get(rung, 0)
+    return stage_priority, rung_priority
+
+
 def progression_audio_phrase(
     records: list[dict],
 ) -> str:
@@ -3034,16 +3060,14 @@ def progression_audio_phrase(
         signal = gs455.progression_signal(
             record
         )
-        if signal.get("active"):
-            try:
-                rank = gs455.CROSSOVER_LADDER.index(
-                    signal["new_rung"]
-                )
-            except (ValueError, KeyError):
-                continue
-            choices.append(
-                (rank, record, signal)
-            )
+        if not signal.get("active"):
+            continue
+        priority = progression_audio_priority(signal)
+        if priority[0] <= 0:
+            continue
+        choices.append(
+            (priority, record, signal)
+        )
     if not choices:
         return ""
 
