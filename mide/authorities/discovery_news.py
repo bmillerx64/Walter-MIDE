@@ -663,6 +663,7 @@ ALPACA_NEWS_SHADOW_AUTHORITY = "NEWS_COVERAGE_OBSERVATION_ONLY"
 ALPACA_NEWS_SHADOW_LOOKBACK = timedelta(hours=6)
 ALPACA_NEWS_SHADOW_REFRESH = timedelta(minutes=5)
 ALPACA_NEWS_SHADOW_MAX_SYMBOLS = 50
+ALPACA_NEWS_SHADOW_MAX_ARTICLES = 100
 ALPACA_NEWS_SHADOW_DIAGNOSTIC_KEY = "gs544_alpaca_news_shadow"
 
 
@@ -757,13 +758,22 @@ def observe_alpaca_news_shadow(
         if not callable(getattr(alpaca, "news", None)):
             trace["reason"] = "retained Alpaca news client unavailable"
         else:
-            provider = MarketDataNewsProvider(alpaca, page_budget=1)
+            provider = MarketDataNewsProvider(alpaca, page_budget=2)
             started = perf_counter()
+            trace["request_made"] = True
+            trace["polled_at"] = current.isoformat()
             try:
-                articles = provider.fetch(
-                    since=current - ALPACA_NEWS_SHADOW_LOOKBACK,
+                raw_items = alpaca.news(
+                    current - ALPACA_NEWS_SHADOW_LOOKBACK,
+                    limit=ALPACA_NEWS_SHADOW_MAX_ARTICLES,
                     symbols=query_targets,
+                    sort="desc",
                 )
+                articles = [
+                    article
+                    for item in raw_items or []
+                    if (article := provider._normalize(item)) is not None
+                ]
             except Exception as exc:
                 trace["reason"] = (
                     f"Alpaca shadow news unavailable: {type(exc).__name__}: {exc}"
@@ -808,9 +818,7 @@ def observe_alpaca_news_shadow(
                         "flags": list(selected.get("flags") or []),
                     }
                 trace.update(
-                    request_made=True,
                     cache_reused=False,
-                    polled_at=current.isoformat(),
                     articles_received=len(rows),
                     elapsed_ms=round(
                         (perf_counter() - started) * 1000,
