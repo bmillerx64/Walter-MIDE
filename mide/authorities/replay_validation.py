@@ -1336,7 +1336,127 @@ def install_session_aware_vwap_parity_labels() -> None:
     gs391._build_scan_parity = build_scan_parity
 
 
+
+# ---------------------------------------------------------------------------
+# GS470/GS471 live 30-second health replay persistence
+# ---------------------------------------------------------------------------
+
+def active_30s_recorder_globals() -> dict[str, Any]:
+    try:
+        from mide import gs427_flight_recorder_latency_hard_bind as gs427
+
+        result = gs427._active_recorder_globals()
+        if isinstance(result, dict):
+            return result
+    except Exception:
+        pass
+    from mide import flight_recorder
+
+    return flight_recorder.__dict__
+
+
+def install_30s_recorder_health() -> None:
+    from mide import flight_recorder
+    from mide import gs470_30s_activation_truth as gs470
+
+    current = flight_recorder.persist_replayable_scan
+    if getattr(current, gs470._RECORDER_OWNER, False):
+        return
+
+    @wraps(current)
+    def persist_replayable_scan(
+        recorder,
+        scan: dict,
+        records,
+        *args,
+        **kwargs,
+    ):
+        enriched = dict(scan or {})
+        enriched["stream_30s_health"] = gs470.stream_30s_health(
+            gs470._active_or_last_provider()
+        )
+        return current(
+            recorder,
+            enriched,
+            records,
+            *args,
+            **kwargs,
+        )
+
+    persist_replayable_scan._gs470_30s_activation_truth = True
+    persist_replayable_scan._gs470_original = current
+    setattr(
+        persist_replayable_scan,
+        gs470._RECORDER_OWNER,
+        True,
+    )
+    flight_recorder.persist_replayable_scan = (
+        persist_replayable_scan
+    )
+
+
+def install_30s_hard_recorder_health() -> None:
+    from mide import flight_recorder
+    from mide import gs470_30s_activation_truth as gs470
+
+    globals_dict = gs470._active_recorder_globals()
+    current = globals_dict.get("persist_replayable_scan")
+    if (
+        not callable(current)
+        or getattr(
+            current,
+            gs470._HARD_RECORDER_OWNER,
+            False,
+        )
+    ):
+        return
+
+    @wraps(current)
+    def persist_with_hard_bound_30s_health(
+        recorder,
+        scan: dict,
+        records,
+        *args,
+        **kwargs,
+    ):
+        enriched = dict(scan or {})
+        enriched["stream_30s_health"] = gs470.stream_30s_health(
+            gs470._active_or_last_provider()
+        )
+        return current(
+            recorder,
+            enriched,
+            records,
+            *args,
+            **kwargs,
+        )
+
+    persist_with_hard_bound_30s_health._gs471_30s_health_hard_bind = True
+    persist_with_hard_bound_30s_health._gs471_original = current
+    setattr(
+        persist_with_hard_bound_30s_health,
+        gs470._HARD_RECORDER_OWNER,
+        True,
+    )
+    globals_dict["persist_replayable_scan"] = (
+        persist_with_hard_bound_30s_health
+    )
+    if globals_dict is flight_recorder.__dict__:
+        flight_recorder.persist_replayable_scan = (
+            persist_with_hard_bound_30s_health
+        )
+
+
+def install_production_30s_replay_validation() -> None:
+    install_30s_recorder_health()
+    install_30s_hard_recorder_health()
+
+
 __all__ = [
+    "install_production_30s_replay_validation",
+    "install_30s_recorder_health",
+    "install_30s_hard_recorder_health",
+    "active_30s_recorder_globals",
     "install_session_aware_vwap_parity_labels",
     "install_latency_truth_recorder",
     "build_latency_truth",
