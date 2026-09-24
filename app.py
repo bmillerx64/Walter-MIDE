@@ -290,6 +290,20 @@ from mide.free_float import (
 from mide.version import BUILD
 memory_checkpoint("remaining providers and application imports")
 
+# GS553: unique hot-deploy boundary for source-age-adjusted primary ignition.
+# Market Evidence contains the permanent implementation; this installer repairs a
+# retained pre-GS553 module generation before any completed record is rendered or
+# any new scan evaluates LOOK NOW/audio semantics.
+try:
+    importlib.import_module(
+        "mide.gs553_source_aged_primary_ignition"
+    ).install()
+except Exception as exc:
+    logging.getLogger(__name__).warning(
+        "GS553 primary-ignition freshness bind unavailable error_type=%s",
+        type(exc).__name__,
+    )
+
 
 WEBULL_STOCK_CACHE_PATH = Path(__file__).resolve().parent / "cache" / "webull_stock_data.json"
 WEBULL_CACHE_WARNING_TEXT = "Displaying Cached Data due to API Timeout"
