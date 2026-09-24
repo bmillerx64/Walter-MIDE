@@ -50,7 +50,7 @@ def test_gs465_facade_delegates_non_extreme_actionable_helper(monkeypatch):
 
 
 def test_gs465_install_tolerates_stale_authority_generation(monkeypatch):
-    monkeypatch.setattr(gs465, "_presentation", lambda: SimpleNamespace())
+    monkeypatch.setattr(gs465, "_presentation_module", lambda: SimpleNamespace())
 
     assert gs465.install() is None
 
@@ -85,7 +85,7 @@ def test_phase36_facades_are_lazy_and_do_not_duplicate_presentation_logic():
         ROOT / "mide/gs466_extreme_awareness_continuity.py"
     ).read_text(encoding="utf-8")
 
-    assert "def _presentation(" in gs465_source
+    assert "def _presentation_module(" in gs465_source
     assert "def _presentation(" in gs466_source
     assert "from .authorities import presentation_audio as _presentation" not in gs465_source
     assert "from .authorities import presentation_audio as _presentation" not in gs466_source
