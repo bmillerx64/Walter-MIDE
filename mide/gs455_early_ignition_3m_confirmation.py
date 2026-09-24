@@ -297,64 +297,37 @@ def _timestamp(value: Any) -> datetime | None:
 
 
 def _thirty_second_rung(record: dict) -> dict:
-    tripwire = record.get("thirty_second_tripwire") or {}
-    stamp = (
-        record.get("supertrend_30s_last_flip_timestamp")
-        or tripwire.get("last_flip_timestamp")
+    current = getattr(
+        _market_evidence(),
+        "thirty_second_progression_rung",
+        None,
     )
-    age = _number(
-        record,
-        "supertrend_30s_last_flip_age_seconds",
-        "supertrend_30s_flip_age_seconds",
+    if not callable(current):
+        return {
+            "timeframe": "30s",
+            "crossed": False,
+            "recent": False,
+            "new": False,
+            "timestamp": None,
+            "age_seconds": None,
+            "current_confirmed": False,
+            "kind": "unavailable",
+        }
+    return current(record)
+
+
+def _rung_event(
+    record: dict,
+    label: str,
+) -> dict:
+    current = getattr(
+        _market_evidence(),
+        "progression_rung_event",
+        None,
     )
-    if age is None:
-        age = _number(tripwire, "last_flip_age_seconds")
-    bullish = bool(
-        record.get("supertrend_30s_bullish")
-        or tripwire.get("supertrend_bullish")
-    )
-    active = bool(stamp and bullish)
-    return {
-        "timeframe": "30s",
-        "crossed": active,
-        "recent": bool(active and age is not None and age <= _RECENT_WINDOWS_SECONDS["30s"]),
-        "new": bool(active and age is not None and age <= _NEW_WINDOWS_SECONDS["30s"]),
-        "timestamp": stamp,
-        "age_seconds": age,
-        "current_confirmed": bullish,
-        "kind": "canonical_30s_tripwire_flip",
-    }
-
-
-def _rung_event(record: dict, label: str) -> dict:
-    if label == "30s":
-        return _thirty_second_rung(record)
-
-    if label in {"1m", "3m"}:
-        canonical = dict((record.get("st_vwap_cross_events") or {}).get(label) or {})
-        detail = dict((record.get("timeframes") or {}).get(label) or {})
-        enriched = dict(detail.get("st_vwap_line_cross") or {})
-        event = canonical or enriched
-        if canonical and enriched:
-            event = dict(canonical)
-            event["current_confirmed"] = enriched.get(
-                "current_confirmed",
-                bool(detail.get("above_vwap") and detail.get("supertrend")),
-            )
-        elif event:
-            event.setdefault(
-                "current_confirmed",
-                bool(detail.get("above_vwap") and detail.get("supertrend")),
-            )
-        return event
-
-    if label in {"5m", "10m"}:
-        detail = dict((record.get("timeframes") or {}).get(label) or {})
-        return dict(detail.get("st_vwap_line_cross") or {})
-
-    maturation = record.get("multitimeframe_maturation") or {}
-    detail = dict((maturation.get("timeframes") or {}).get("15m") or {})
-    return dict(detail.get("st_vwap_line_cross") or {})
+    if not callable(current):
+        return {}
+    return current(record, label)
 
 
 def _market_evidence():

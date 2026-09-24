@@ -334,11 +334,14 @@ def test_gs455_reuses_gs423_and_gs421_supertrend_passes_instead_of_requesting_hi
 
 
 def test_gs455_keeps_gs378_canonical_for_1m_3m_cross_truth():
-    source = Path("mide/gs455_early_ignition_3m_confirmation.py").read_text(
+    source = Path("mide/authorities/market_evidence.py").read_text(
         encoding="utf-8"
     )
-    assert 'if label in {"1m", "3m"}' in source
-    assert 'record.get("st_vwap_cross_events")' in source
+    start = source.index("# GS455 ordered ST/VWAP maturation progression evidence")
+    end = source.index("# GS455 literal ST/VWAP line-cross enrichment", start)
+    block = source[start:end]
+    assert 'if label in {"1m", "3m"}' in block
+    assert 'record.get("st_vwap_cross_events")' in block
 
 
 def test_gs455_chains_after_gs454_on_cold_and_warm_runtime_paths():
