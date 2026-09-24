@@ -5291,6 +5291,12 @@ def production_30s_health(provider) -> dict:
         "gs471_subscription_retired_for_rebind": bool(
             activation.get("subscription_retired_for_rebind")
         ),
+        "gs545_stable_session_takeover": bool(
+            (
+                stream.get("gs545_stream_session_takeover")
+                or {}
+            ).get("stable_session_identity")
+        ),
         "runtime_hard_bind": True,
         "genuine_webull_tick_only": True,
         "synthetic_30s_bars": False,
