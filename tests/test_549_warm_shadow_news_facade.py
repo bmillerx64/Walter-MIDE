@@ -79,7 +79,8 @@ def test_gs549_app_uses_facade_only_inside_gs544_shadow_observer_block():
 
     assert "mide.gs549_warm_shadow_news_facade" in block
     assert "observer_client(" in block
-    assert "observe_shadow(" in block
+    assert "observe_shadow," in block
+    assert "shadow_trace = observe_shadow(" not in block
     assert "shadow_client" in block
     assert "client._universe_client =" not in block
     assert "news_items.extend" not in block
