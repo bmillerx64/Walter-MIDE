@@ -14,6 +14,7 @@ from __future__ import annotations
 
 from copy import deepcopy
 from functools import wraps
+import re
 
 _OWNER = "_walter_gs528_canonical_entry_ready_owner"
 
@@ -41,6 +42,72 @@ def trigger_diagnostics(*args, **kwargs):
 def retest_entry_shadow(*args, **kwargs):
     from mide import gs532_retest_entry_shadow
     return gs532_retest_entry_shadow.retest_entry_shadow(*args, **kwargs)
+
+
+# ---------------------------------------------------------------------------
+# GS416 Validity Gate security-shape correction
+# ---------------------------------------------------------------------------
+
+_VALIDITY_SUFFIX_OWNER = "_gs416_validity_symbol_suffix"
+_EXPLICIT_DERIVATIVE_SUFFIX = re.compile(r"(?:\.|-)[WRU]$")
+
+
+def supported_security(record: dict, *, include_etfs: bool) -> bool:
+    """Return Validity security truth without bare W/R/U ticker false positives."""
+    asset_type = str(record.get("asset_type") or record.get("type") or "").lower()
+    symbol = str(record.get("symbol") or "").strip().upper()
+    return not (
+        asset_type in {"warrant", "right", "unit"}
+        or (asset_type in {"etf", "fund"} and not include_etfs)
+        or bool(_EXPLICIT_DERIVATIVE_SUFFIX.search(symbol))
+        or str(record.get("exchange") or "").upper() == "OTC"
+        or str(record.get("asset_status") or "active").lower() != "active"
+    )
+
+
+def install_validity_symbol_suffix() -> None:
+    """Bind the established GS416 correction at WalterArchitectureV1 Validity."""
+    from mide.architecture import Decision, WalterArchitectureV1
+
+    current = WalterArchitectureV1._validity
+    if getattr(current, _VALIDITY_SUFFIX_OWNER, False):
+        return
+
+    def validity_without_bare_suffix_false_positive(self, candidates: list[dict]):
+        result = {}
+        for item in candidates:
+            symbol = self._symbol(item)
+            valid_data = bool(item.get("data_usable", True))
+            legal = bool(
+                item.get("legally_tradable", item.get("tradable", True))
+            )
+            operational = bool(item.get("operationally_tradable", True))
+            security_ok = supported_security(
+                item,
+                include_etfs=bool(self.policy.include_etfs),
+            )
+            passed = valid_data and legal and operational and security_ok
+            failures = [
+                name
+                for ok, name in (
+                    (valid_data, "unusable data"),
+                    (legal, "legally non-tradable"),
+                    (operational, "operationally non-tradable"),
+                    (security_ok, "unsupported security type or status"),
+                )
+                if not ok
+            ]
+            result[symbol] = Decision(
+                passed,
+                "Validity",
+                "Valid security" if passed else "; ".join(failures),
+            )
+        return result
+
+    validity_without_bare_suffix_false_positive._gs416_validity_symbol_suffix = True
+    validity_without_bare_suffix_false_positive._gs416_original = current
+    setattr(validity_without_bare_suffix_false_positive, _VALIDITY_SUFFIX_OWNER, True)
+    WalterArchitectureV1._validity = validity_without_bare_suffix_false_positive
 
 
 def _trigger(record: dict) -> dict:
@@ -181,6 +248,8 @@ def install() -> None:
 
 
 __all__ = [
+    "install_validity_symbol_suffix",
+    "supported_security",
     "canonical_candidate_status",
     "entry_contract",
     "install",
