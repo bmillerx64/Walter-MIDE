@@ -1820,6 +1820,497 @@ def progression_signal(record: dict) -> dict:
 
 
 # ---------------------------------------------------------------------------
+# GS455 literal ST/VWAP line-cross enrichment
+# ---------------------------------------------------------------------------
+#
+# These helpers enrich already-paid GS378/GS421 SuperTrend passes with literal
+# ST-line/VWAP-line cross metadata. They perform no provider/history request.
+# Historical gs455 remains the calibration seam for freshness windows and wrapper
+# identity so warm runtimes and regression monkeypatches keep the same behavior.
+
+
+def maturation_finite(value: Any) -> float | None:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    return number if pd.notna(number) and number not in (float("inf"), float("-inf")) else None
+
+
+def maturation_line_cross_event(
+    frame,
+    vwap,
+    st_line,
+    trend,
+    label: str,
+    *,
+    latest_source_time,
+) -> dict:
+    """Retain a literal ST-line/VWAP-line cross from an already-paid ST pass."""
+    from mide import gs455_early_ignition_3m_confirmation as gs455
+
+    if frame is None or getattr(frame, "empty", True) or len(frame) < 2:
+        return {
+            "timeframe": label,
+            "crossed": False,
+            "recent": False,
+            "new": False,
+            "timestamp": None,
+            "age_seconds": None,
+            "current_confirmed": False,
+        }
+
+    close = frame["close"].astype(float)
+    valid = st_line.notna() & vwap.notna()
+    bullish = trend.fillna(False).astype(bool)
+    line_delta = st_line - vwap
+    mask = (
+        valid
+        & (line_delta.shift(1) < 0)
+        & (line_delta >= 0)
+        & bullish
+        & (close >= vwap)
+    )
+    hits = list(mask[mask.fillna(False)].index)
+    cross_time = hits[-1] if hits else None
+    age = (
+        max(0.0, (latest_source_time - cross_time).total_seconds())
+        if cross_time is not None and latest_source_time is not None
+        else None
+    )
+
+    latest_st = gs455._finite(st_line.iloc[-1]) if len(st_line) else None
+    latest_vwap = gs455._finite(vwap.iloc[-1]) if len(vwap) else None
+    latest_close = gs455._finite(close.iloc[-1]) if len(close) else None
+    current_confirmed = bool(
+        latest_st is not None
+        and latest_vwap is not None
+        and latest_close is not None
+        and bool(bullish.iloc[-1])
+        and latest_close >= latest_vwap
+        and latest_st >= latest_vwap
+    )
+
+    event = {
+        "timeframe": label,
+        "crossed": cross_time is not None,
+        "recent": bool(
+            age is not None
+            and age <= gs455._RECENT_WINDOWS_SECONDS[label]
+        ),
+        "new": bool(
+            age is not None
+            and age <= gs455._NEW_WINDOWS_SECONDS[label]
+        ),
+        "timestamp": (
+            cross_time.isoformat()
+            if cross_time is not None
+            else None
+        ),
+        "age_seconds": (
+            round(age, 1)
+            if age is not None
+            else None
+        ),
+        "current_confirmed": current_confirmed,
+        "latest_supertrend_value": (
+            round(latest_st, 6)
+            if latest_st is not None
+            else None
+        ),
+        "latest_vwap_value": (
+            round(latest_vwap, 6)
+            if latest_vwap is not None
+            else None
+        ),
+    }
+    if cross_time is not None:
+        event.update(
+            {
+                "supertrend_value": round(
+                    float(st_line.loc[cross_time]),
+                    6,
+                ),
+                "vwap_value": round(
+                    float(vwap.loc[cross_time]),
+                    6,
+                ),
+                "price": round(
+                    float(close.loc[cross_time]),
+                    6,
+                ),
+                "volume": round(
+                    float(frame.loc[cross_time, "volume"]),
+                    2,
+                ),
+            }
+        )
+    return event
+
+
+def maturation_confirmation_details_with_line_cross(
+    day,
+    primary_series,
+) -> tuple[int, dict]:
+    """GS423 confirmation pass plus literal cross metadata, with no extra ST call."""
+    from mide import gs378_live_vwap_st_crossover as gs378
+    from mide import gs455_early_ignition_3m_confirmation as gs455
+
+    confirmations = 0
+    details: dict[str, dict] = {}
+    latest_source_time = (
+        day.index[-1]
+        if day is not None and not day.empty
+        else None
+    )
+
+    for label in ("1m", "3m", "5m", "10m"):
+        tf = gs378._timeframe_frame(day, label)
+        if len(tf) < 20:
+            continue
+        vwap = gs378._timeframe_vwap(
+            primary_series,
+            label,
+        ).reindex(tf.index)
+        st_line, trend = gs378.supertrend(
+            tf,
+            10,
+            3,
+        )
+        close = tf["close"].astype(float)
+        latest_vwap = (
+            gs378._finite_number(vwap.iloc[-1])
+            if len(vwap)
+            else None
+        )
+        latest_close = (
+            gs378._finite_number(close.iloc[-1])
+            if len(close)
+            else None
+        )
+        bullish = bool(
+            len(trend) and trend.iloc[-1]
+        )
+        above_vwap = bool(
+            latest_vwap is not None
+            and latest_close is not None
+            and latest_close >= latest_vwap
+        )
+        if bullish and above_vwap:
+            confirmations += 1
+
+        valid = st_line.notna() & vwap.notna()
+        bullish_series = (
+            trend.fillna(False).astype(bool)
+        )
+        prior_bullish = (
+            bullish_series.shift(1)
+            .fillna(False)
+            .astype(bool)
+        )
+        flip_mask = (
+            valid
+            & bullish_series
+            & (~prior_bullish)
+            & (close >= vwap)
+        )
+        flip_time = gs378._latest_event(
+            flip_mask
+        )
+        flip_age = (
+            max(
+                0.0,
+                (
+                    latest_source_time
+                    - flip_time
+                ).total_seconds(),
+            )
+            if (
+                flip_time is not None
+                and latest_source_time is not None
+            )
+            else None
+        )
+
+        detail = {
+            "above_vwap": above_vwap,
+            "supertrend": bullish,
+            "timeframe": label,
+            "data_available": bool(valid.any()),
+            "current_supertrend_bullish": bullish,
+            "current_above_vwap": above_vwap,
+            "current_confirmed": bool(
+                bullish and above_vwap
+            ),
+            "current_close": latest_close,
+            "current_vwap": latest_vwap,
+            "bullish_flip_timestamp": (
+                flip_time.isoformat()
+                if flip_time is not None
+                else None
+            ),
+            "bullish_flip_age_seconds": (
+                round(flip_age, 1)
+                if flip_age is not None
+                else None
+            ),
+            "st_vwap_line_cross": (
+                gs455._line_cross_event(
+                    tf,
+                    vwap,
+                    st_line,
+                    trend,
+                    label,
+                    latest_source_time=latest_source_time,
+                )
+            ),
+        }
+        if flip_time is not None:
+            flip_price = gs455._finite(
+                close.loc[flip_time]
+            )
+            flip_vwap = gs455._finite(
+                vwap.loc[flip_time]
+            )
+            detail.update(
+                {
+                    "price_at_flip": flip_price,
+                    "vwap_at_flip": flip_vwap,
+                    "vwap_distance_at_flip_pct": (
+                        round(
+                            (
+                                flip_price
+                                - flip_vwap
+                            )
+                            / flip_vwap
+                            * 100.0,
+                            4,
+                        )
+                        if (
+                            flip_price is not None
+                            and flip_vwap
+                            not in (None, 0)
+                        )
+                        else None
+                    ),
+                    "supertrend_at_flip": (
+                        gs455._finite(
+                            st_line.loc[flip_time]
+                        )
+                    ),
+                    "volume_at_flip": (
+                        gs455._finite(
+                            tf.loc[
+                                flip_time,
+                                "volume",
+                            ]
+                        )
+                    ),
+                }
+            )
+        details[label] = detail
+
+    return confirmations, details
+
+
+def maturation_timeframe_event_with_line_cross(
+    day,
+    primary_1m,
+    label: str,
+) -> dict:
+    """GS421 timeframe event plus literal cross metadata from the same ST pass."""
+    from mide import gs421_multitimeframe_convergence_recorder as gs421
+    from mide import gs455_early_ignition_3m_confirmation as gs455
+    from mide.indicators import supertrend
+
+    tf = gs421._timeframe_frame(day, label)
+    vwap = gs421._timeframe_vwap(
+        primary_1m,
+        label,
+    ).reindex(tf.index)
+    if len(tf) < 2 or vwap.empty:
+        return {
+            "timeframe": label,
+            "data_available": False,
+            "current_supertrend_bullish": False,
+            "current_above_vwap": False,
+            "current_confirmed": False,
+            "bullish_flip_timestamp": None,
+            "bullish_flip_age_seconds": None,
+            "st_vwap_line_cross": {
+                "timeframe": label,
+                "crossed": False,
+                "recent": False,
+                "new": False,
+                "timestamp": None,
+                "age_seconds": None,
+                "current_confirmed": False,
+            },
+        }
+
+    st_line, trend = supertrend(tf, 10, 3)
+    bullish = trend.fillna(False).astype(bool)
+    prior_bullish = (
+        bullish.shift(1)
+        .fillna(False)
+        .astype(bool)
+    )
+    close = tf["close"].astype(float)
+    valid = st_line.notna() & vwap.notna()
+    flip_mask = (
+        valid
+        & bullish
+        & (~prior_bullish)
+        & (close >= vwap)
+    )
+    hits = list(flip_mask[flip_mask].index)
+    flip_time = hits[-1] if hits else None
+
+    latest_vwap = (
+        gs455._finite(vwap.iloc[-1])
+        if len(vwap)
+        else None
+    )
+    latest_close = gs455._finite(
+        close.iloc[-1]
+    )
+    current_bullish = bool(
+        len(bullish) and bullish.iloc[-1]
+    )
+    current_above_vwap = bool(
+        latest_close is not None
+        and latest_vwap is not None
+        and latest_close >= latest_vwap
+    )
+
+    event = {
+        "timeframe": label,
+        "data_available": bool(valid.any()),
+        "current_supertrend_bullish": current_bullish,
+        "current_above_vwap": current_above_vwap,
+        "current_confirmed": bool(
+            current_bullish
+            and current_above_vwap
+        ),
+        "current_close": latest_close,
+        "current_vwap": latest_vwap,
+        "bullish_flip_timestamp": (
+            flip_time.isoformat()
+            if flip_time is not None
+            else None
+        ),
+        "bullish_flip_age_seconds": None,
+        "st_vwap_line_cross": (
+            gs455._line_cross_event(
+                tf,
+                vwap,
+                st_line,
+                trend,
+                label,
+                latest_source_time=day.index[-1],
+            )
+        ),
+    }
+    if flip_time is not None:
+        age = max(
+            0.0,
+            (
+                day.index[-1]
+                - flip_time
+            ).total_seconds(),
+        )
+        flip_price = gs455._finite(
+            close.loc[flip_time]
+        )
+        flip_vwap = gs455._finite(
+            vwap.loc[flip_time]
+        )
+        event.update(
+            {
+                "bullish_flip_age_seconds": round(
+                    age,
+                    1,
+                ),
+                "price_at_flip": flip_price,
+                "vwap_at_flip": flip_vwap,
+                "vwap_distance_at_flip_pct": (
+                    round(
+                        (
+                            flip_price
+                            - flip_vwap
+                        )
+                        / flip_vwap
+                        * 100.0,
+                        4,
+                    )
+                    if (
+                        flip_price is not None
+                        and flip_vwap
+                        not in (None, 0)
+                    )
+                    else None
+                ),
+                "supertrend_at_flip": (
+                    gs455._finite(
+                        st_line.loc[flip_time]
+                    )
+                ),
+                "volume_at_flip": (
+                    gs455._finite(
+                        tf.loc[
+                            flip_time,
+                            "volume",
+                        ]
+                    )
+                ),
+            }
+        )
+    return event
+
+
+def install_maturation_line_cross_enrichment() -> None:
+    """Converge GS423 first, then enrich its already-paid ST passes."""
+    from mide import gs378_live_vwap_st_crossover as gs378
+    from mide import gs421_multitimeframe_convergence_recorder as gs421
+    from mide import gs423_convergence_handoff_efficiency as gs423
+    from mide import gs455_early_ignition_3m_confirmation as gs455
+
+    gs423.install()
+
+    current_confirmation = (
+        gs455._confirmation_details_with_line_cross
+    )
+    if not getattr(
+        gs378._confirmation_details,
+        "_gs455_line_cross",
+        False,
+    ):
+        current_confirmation._gs455_line_cross = True
+        current_confirmation._gs455_original = (
+            gs378._confirmation_details
+        )
+        gs378._confirmation_details = (
+            current_confirmation
+        )
+
+    current_timeframe = (
+        gs455._timeframe_event_with_line_cross
+    )
+    if not getattr(
+        gs421._timeframe_event,
+        "_gs455_line_cross",
+        False,
+    ):
+        current_timeframe._gs455_line_cross = True
+        current_timeframe._gs455_original = (
+            gs421._timeframe_event
+        )
+        gs421._timeframe_event = (
+            current_timeframe
+        )
+
+
+# ---------------------------------------------------------------------------
 # GS460/GS461 ST compression + cascade runway market evidence
 # ---------------------------------------------------------------------------
 
@@ -5499,6 +5990,11 @@ def install_partial_snapshot_recovery_for_provider(
 
 
 __all__ = [
+    "maturation_finite",
+    "maturation_line_cross_event",
+    "maturation_confirmation_details_with_line_cross",
+    "maturation_timeframe_event_with_line_cross",
+    "install_maturation_line_cross_enrichment",
     "crossover_progression",
     "progression_signal",
     "install_partial_snapshot_recovery_for_provider",
