@@ -147,6 +147,10 @@ def maturation_attention(record: dict) -> dict:
         "supporting_flow": supporting_flow,
     }
 
+
+maturation_attention._walter_next_presentation_facade = True
+
+
 def _effective_progression_priority(attention: dict) -> tuple[int, float]:
     """Use crossover tie-breaks only for the two GS457 maturation bands.
 
