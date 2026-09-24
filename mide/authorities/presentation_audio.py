@@ -2043,6 +2043,414 @@ def install_price_trajectory_presentation() -> None:
 
 
 # ---------------------------------------------------------------------------
+# GS460/GS461 ST compression + cascade runway presentation/audio
+# ---------------------------------------------------------------------------
+
+ST_FLIP_ANTI_CHASE_DISTANCE_PCT = 5.0
+_ST_FLIP_PROVENANCE = "ST_FLIP_PRICE_COMPRESSION"
+_CASCADE_RUNWAY_PROVENANCE = "ST_CASCADE_RUNWAY"
+
+
+def _st_flip_presentation_number(value: Any) -> float | None:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def state_with_st_flip_compression(original, record: dict) -> dict:
+    """Apply GS460 LOOK NOW / anti-chase presentation semantics."""
+    from mide import gs310_unified_opportunity_state as unified
+    from mide import gs460_st_flip_compression_ignition as gs460
+
+    base = original(record)
+    signal = gs460.st_flip_compression(record)
+    if not signal.get("active"):
+        return base
+    if base.get("state") in {unified.HALTED, unified.WATCH_FOR_ENTRY}:
+        return base
+
+    view = deepcopy(base)
+    provenance = list(view.get("attention_provenance") or [])
+    if _ST_FLIP_PROVENANCE not in provenance:
+        provenance.append(_ST_FLIP_PROVENANCE)
+    view["attention_provenance"] = provenance
+    view["st_flip_compression"] = signal
+
+    span = signal.get("cluster_span_pct")
+    sequence = signal.get("sequence") or "30s -> 1m"
+    stage = str(signal.get("stage") or "IGNITION").upper()
+    next_frame = signal.get("next_frame") or {}
+    next_text = ""
+    if next_frame.get("already_bullish"):
+        next_text = f" {next_frame.get('timeframe')} is already bullish."
+    elif next_frame.get("distance_to_supertrend_pct") is not None:
+        next_text = (
+            f" {next_frame.get('timeframe')} SuperTrend is about "
+            f"{next_frame['distance_to_supertrend_pct']:.1f}% away."
+        )
+
+    distance = _st_flip_presentation_number(
+        record.get("vwap_distance_pct")
+    )
+    if (
+        distance is not None
+        and distance > ST_FLIP_ANTI_CHASE_DISTANCE_PCT
+    ):
+        view["state"] = unified.CHASE_WAIT
+        view["color"] = unified.STATE_COLORS[unified.CHASE_WAIT]
+        view["reason"] = (
+            f"{stage}: {sequence} ST flip prices are compressed within "
+            f"{span:.1f}% with supporting flow.{next_text} "
+            f"Price is already {distance:.1f}% above VWAP."
+        )
+        view["next_step"] = (
+            "Open the chart now for ignition context, but DO NOT CHASE. "
+            "Flip compression is attention evidence only; wait for the "
+            "existing VWAP/readiness rules."
+        )
+        return view
+
+    view["state"] = unified.LOOK_NOW
+    view["color"] = unified.STATE_COLORS[unified.LOOK_NOW]
+    view["reason"] = (
+        f"{stage}: {sequence} ST flip prices are compressed within "
+        f"{span:.1f}% with supporting flow.{next_text}"
+    )
+    view["next_step"] = (
+        "Open the chart now. This bottom-up compression can precede a "
+        "timeframe cascade, but it does not grant entry authority; normal "
+        "readiness and anti-chase rules remain."
+    )
+    return view
+
+
+def st_flip_compression_change(record: dict) -> dict | None:
+    from mide import gs460_st_flip_compression_ignition as gs460
+
+    signal = gs460.st_flip_compression(record)
+    if not signal.get("fresh_join"):
+        return None
+    symbol = str(record.get("symbol") or "").strip().upper()
+    if not symbol:
+        return None
+    highest = str(signal.get("highest_rung") or "").upper()
+    prices = signal.get("flip_prices") or {}
+    fingerprint = ",".join(
+        f"{label}:{prices.get(label)}"
+        for label in gs460.EARLY_LADDER
+        if label in prices
+    )
+    return {
+        "symbol": symbol,
+        "from": f"ST FLIP CLUSTER {fingerprint}",
+        "to": f"IGNITION COMPRESSION {highest}",
+    }
+
+
+def st_flip_spoken(label: str) -> str:
+    return {
+        "30s": "30 second",
+        "1m": "1 minute",
+        "3m": "3 minute",
+        "5m": "5 minute",
+    }.get(label, label)
+
+
+def st_flip_compression_phrase(records: list[dict]) -> str:
+    from mide import gs460_st_flip_compression_ignition as gs460
+
+    choices = []
+    for record in records or []:
+        signal = gs460.st_flip_compression(record)
+        if signal.get("fresh_join"):
+            choices.append(
+                (int(signal.get("depth") or 0), record, signal)
+            )
+    if not choices:
+        return ""
+    _depth, record, signal = max(
+        choices,
+        key=lambda item: item[0],
+    )
+    symbol = (
+        str(record.get("symbol") or "Symbol").strip().upper()
+        or "SYMBOL"
+    )
+    highest = st_flip_spoken(
+        str(signal.get("highest_rung") or "")
+    )
+    span = float(signal.get("cluster_span_pct") or 0.0)
+    phrase = (
+        f"{symbol}. LOOK NOW. Ignition compression. SuperTrend flips "
+        f"through {highest} are clustered within {span:.1f} percent "
+        "with supporting flow."
+    )
+    distance = _st_flip_presentation_number(
+        record.get("vwap_distance_pct")
+    )
+    if (
+        distance is not None
+        and distance > ST_FLIP_ANTI_CHASE_DISTANCE_PCT
+    ):
+        phrase += " Extended. Do not chase."
+    return phrase
+
+
+def install_st_flip_compression_state() -> None:
+    """Install GS460 operator-state semantics at the historical boundary."""
+    from mide import gs310_unified_opportunity_state as unified
+    from mide import gs311_unified_voice as voice
+    from mide import gs314_state_consistency as consistency
+    from mide import gs363_operator_attention_hierarchy as hierarchy
+
+    current = unified.opportunity_state
+    if getattr(current, "_gs460_st_flip_compression", False):
+        calibrated = current
+    else:
+        original = current
+
+        @wraps(original)
+        def calibrated(record: dict) -> dict:
+            return state_with_st_flip_compression(original, record)
+
+        _inherit_audio_wrapper(calibrated, current)
+        calibrated._gs460_st_flip_compression = True
+        calibrated._gs460_original = original
+        unified.opportunity_state = calibrated
+
+    voice.opportunity_state = calibrated
+    consistency.opportunity_state = calibrated
+    hierarchy.opportunity_state = calibrated
+
+
+def install_st_flip_compression_alerts() -> None:
+    """Install GS460 state-change and tier-2 audio semantics."""
+    from mide import escalation
+    from mide.gs365_chime_semantic_classifier import semantic_chime_count
+
+    current_changes = escalation.escalation_state_changes
+    if not getattr(
+        current_changes,
+        "_gs460_st_flip_compression",
+        False,
+    ):
+        @wraps(current_changes)
+        def state_changes(records: list[dict]) -> list[dict]:
+            rows = list(records or [])
+            existing = list(current_changes(rows))
+            additions = [
+                change
+                for row in rows
+                if (change := st_flip_compression_change(row))
+            ]
+            keys = {
+                (
+                    str(item.get("symbol") or "").upper(),
+                    str(item.get("from") or ""),
+                    str(item.get("to") or ""),
+                )
+                for item in existing
+            }
+            for change in additions:
+                key = (
+                    change["symbol"],
+                    change["from"],
+                    change["to"],
+                )
+                if key not in keys:
+                    existing.append(change)
+                    keys.add(key)
+            return existing
+
+        _inherit_audio_wrapper(state_changes, current_changes)
+        state_changes._gs460_st_flip_compression = True
+        state_changes._gs460_original = current_changes
+        escalation.escalation_state_changes = state_changes
+
+    current_phrase = escalation.escalation_alert_phrase
+    if getattr(
+        current_phrase,
+        "_gs460_st_flip_compression",
+        False,
+    ):
+        return
+
+    @wraps(current_phrase)
+    def alert_phrase(records: list[dict]) -> str:
+        rows = list(records or [])
+        existing = str(current_phrase(rows) or "")
+        compression = st_flip_compression_phrase(rows)
+        if not compression:
+            return existing
+        if existing and semantic_chime_count(existing) >= 3:
+            return existing
+        return compression
+
+    _inherit_audio_wrapper(alert_phrase, current_phrase)
+    alert_phrase._gs460_st_flip_compression = True
+    alert_phrase._gs460_original = current_phrase
+    escalation.escalation_alert_phrase = alert_phrase
+
+
+def install_st_flip_compression_presentation() -> None:
+    install_st_flip_compression_state()
+    install_st_flip_compression_alerts()
+
+
+def cascade_runway_text(runway: dict) -> str:
+    if not runway.get("active"):
+        return ""
+    parts: list[str] = []
+    contiguous = list(
+        runway.get("contiguous_slower_bullish") or []
+    )
+    if contiguous:
+        parts.append(" / ".join(contiguous) + " already bullish")
+    barrier = dict(runway.get("next_barrier") or {})
+    if barrier:
+        label = barrier.get("timeframe")
+        gap = _st_flip_presentation_number(
+            barrier.get("barrier_gap_pct")
+        )
+        if gap is not None:
+            parts.append(
+                f"next {label} SuperTrend line {gap:.1f}% away"
+            )
+        else:
+            parts.append(f"next {label} SuperTrend barrier present")
+    unavailable = runway.get("blocked_by_unavailable")
+    if unavailable:
+        parts.append(f"{unavailable} runway not yet measurable")
+    future = list(runway.get("future_bullish_support") or [])
+    if future:
+        parts.append(
+            "later " + " / ".join(future) + " already bullish"
+        )
+    return "; ".join(parts)
+
+
+def state_with_cascade_runway(original, record: dict) -> dict:
+    base = original(record)
+    runway = dict(record.get("st_cascade_runway") or {})
+    if not runway.get("active"):
+        return base
+    provenance = list(base.get("attention_provenance") or [])
+    if _ST_FLIP_PROVENANCE not in provenance:
+        return base
+
+    text = cascade_runway_text(runway)
+    if not text:
+        return base
+    view = deepcopy(base)
+    if _CASCADE_RUNWAY_PROVENANCE not in provenance:
+        provenance.append(_CASCADE_RUNWAY_PROVENANCE)
+    view["attention_provenance"] = provenance
+    view["st_cascade_runway"] = runway
+    reason = str(view.get("reason") or "").rstrip()
+    if "Cascade runway:" not in reason:
+        view["reason"] = (
+            f"{reason} Cascade runway: {text}."
+        ).strip()
+    next_step = str(view.get("next_step") or "").rstrip()
+    if "current SuperTrend line" not in next_step:
+        view["next_step"] = (
+            f"{next_step} Treat the slower-frame gap as proximity to "
+            "the current SuperTrend line, not a guaranteed future "
+            "flip price."
+        ).strip()
+    return view
+
+
+def install_cascade_runway_state() -> None:
+    """Install GS461 explanation enrichment without changing state."""
+    from mide import gs310_unified_opportunity_state as unified
+    from mide import gs311_unified_voice as voice
+    from mide import gs314_state_consistency as consistency
+    from mide import gs363_operator_attention_hierarchy as hierarchy
+
+    current = unified.opportunity_state
+    if getattr(current, "_gs461_cascade_runway", False):
+        calibrated = current
+    else:
+        @wraps(current)
+        def calibrated(record: dict) -> dict:
+            return state_with_cascade_runway(current, record)
+
+        _inherit_audio_wrapper(calibrated, current)
+        calibrated._gs461_cascade_runway = True
+        calibrated._gs461_original = current
+        unified.opportunity_state = calibrated
+
+    voice.opportunity_state = calibrated
+    consistency.opportunity_state = calibrated
+    hierarchy.opportunity_state = calibrated
+
+
+def cascade_runway_alert(records: list[dict]) -> str:
+    from mide import gs460_st_flip_compression_ignition as gs460
+
+    choices = []
+    for record in records or []:
+        compression = gs460.st_flip_compression(record)
+        runway = dict(record.get("st_cascade_runway") or {})
+        if (
+            not compression.get("fresh_join")
+            or not runway.get("active")
+        ):
+            continue
+        barrier = dict(runway.get("next_barrier") or {})
+        gap = _st_flip_presentation_number(
+            barrier.get("barrier_gap_pct")
+        )
+        choices.append(
+            (
+                int(compression.get("depth") or 0),
+                -(gap if gap is not None else 999.0),
+                record,
+                runway,
+            )
+        )
+    if not choices:
+        return ""
+    _depth, _gap_rank, _record, runway = max(
+        choices,
+        key=lambda item: (item[0], item[1]),
+    )
+    text = cascade_runway_text(runway)
+    return f" Cascade runway. {text}." if text else ""
+
+
+def install_cascade_runway_alerts() -> None:
+    from mide import escalation
+
+    current = escalation.escalation_alert_phrase
+    if getattr(current, "_gs461_cascade_runway", False):
+        return
+
+    @wraps(current)
+    def alert_phrase(records: list[dict]) -> str:
+        rows = list(records or [])
+        phrase = str(current(rows) or "")
+        if "IGNITION COMPRESSION" not in phrase.upper():
+            return phrase
+        runway = cascade_runway_alert(rows)
+        if runway and "CASCADE RUNWAY" not in phrase.upper():
+            return phrase.rstrip() + runway
+        return phrase
+
+    _inherit_audio_wrapper(alert_phrase, current)
+    alert_phrase._gs461_cascade_runway = True
+    alert_phrase._gs461_original = current
+    escalation.escalation_alert_phrase = alert_phrase
+
+
+def install_cascade_runway_presentation() -> None:
+    install_cascade_runway_state()
+    install_cascade_runway_alerts()
+
+
+# ---------------------------------------------------------------------------
 # GS453 bounded constructive-extension presentation semantics
 # ---------------------------------------------------------------------------
 
@@ -2509,6 +2917,20 @@ def bind_final_enriched_opportunity_order(
 
 
 __all__ = [
+    "install_cascade_runway_presentation",
+    "install_cascade_runway_alerts",
+    "install_cascade_runway_state",
+    "cascade_runway_alert",
+    "state_with_cascade_runway",
+    "cascade_runway_text",
+    "install_st_flip_compression_presentation",
+    "install_st_flip_compression_alerts",
+    "install_st_flip_compression_state",
+    "st_flip_compression_phrase",
+    "st_flip_spoken",
+    "st_flip_compression_change",
+    "state_with_st_flip_compression",
+    "ST_FLIP_ANTI_CHASE_DISTANCE_PCT",
     "install_price_trajectory_presentation",
     "ordered_trajectory_records",
     "effective_trajectory_attention_band",

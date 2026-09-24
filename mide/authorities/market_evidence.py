@@ -10,6 +10,7 @@ from copy import deepcopy
 from dataclasses import dataclass
 from datetime import timedelta
 from functools import wraps
+from statistics import median
 from time import monotonic
 from typing import Any
 
@@ -1674,6 +1675,531 @@ def install_price_trajectory_metrics() -> None:
 
 
 # ---------------------------------------------------------------------------
+# GS460/GS461 ST compression + cascade runway market evidence
+# ---------------------------------------------------------------------------
+
+ST_FLIP_EARLY_LADDER = ("30s", "1m", "3m", "5m")
+_ST_FLIP_LATER_CONTEXT = ("10m", "15m")
+_ST_FLIP_RECENT_SECONDS = {
+    "30s": 12 * 60.0,
+    "1m": 18 * 60.0,
+    "3m": 28 * 60.0,
+    "5m": 40 * 60.0,
+}
+_ST_FLIP_NEW_SECONDS = {
+    "30s": 90.0,
+    "1m": 120.0,
+    "3m": 240.0,
+    "5m": 360.0,
+}
+_ST_FLIP_MAX_CLUSTER_SPAN_PCT = {2: 5.0, 3: 7.0, 4: 9.0}
+
+CASCADE_RUNWAY_ORDER = ("10m", "15m", "30m", "1h")
+_CASCADE_RUNWAY_RULES = {
+    "10m": "10min",
+    "15m": "15min",
+    "30m": "30min",
+    "1h": "60min",
+}
+CASCADE_RUNWAY_AUTHORITY = "OPERATOR_ATTENTION_ONLY"
+CASCADE_RUNWAY_SOURCE = (
+    "existing GS460/GS423 evidence + local resample of already-fetched "
+    "current-session 1m bars"
+)
+
+
+def st_flip_number(value: Any) -> float | None:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def st_flip_timeframe_detail(record: dict, label: str) -> dict:
+    if label == "30s":
+        tripwire = dict(record.get("thirty_second_tripwire") or {})
+        return {
+            "timeframe": "30s",
+            "price_at_flip": (
+                st_flip_number(record.get("supertrend_30s_last_flip_price"))
+                or st_flip_number(tripwire.get("last_flip_price"))
+            ),
+            "age_seconds": (
+                st_flip_number(record.get("supertrend_30s_last_flip_age_seconds"))
+                if record.get("supertrend_30s_last_flip_age_seconds") is not None
+                else st_flip_number(tripwire.get("last_flip_age_seconds"))
+            ),
+            "current_bullish": bool(
+                record.get("supertrend_30s_bullish")
+                or tripwire.get("bullish")
+                or tripwire.get("supertrend_bullish")
+            ),
+            "timestamp": (
+                record.get("supertrend_30s_last_flip_timestamp")
+                or tripwire.get("last_flip_timestamp")
+            ),
+        }
+
+    timeframes = record.get("timeframes") or {}
+    detail = dict(timeframes.get(label) or {})
+    if label == "15m" and not detail:
+        maturation = record.get("multitimeframe_maturation") or {}
+        detail = dict((maturation.get("timeframes") or {}).get(label) or {})
+    return {
+        "timeframe": label,
+        "price_at_flip": st_flip_number(detail.get("price_at_flip")),
+        "age_seconds": st_flip_number(detail.get("bullish_flip_age_seconds")),
+        "current_bullish": bool(
+            detail.get("current_supertrend_bullish")
+            or detail.get("supertrend")
+        ),
+        "timestamp": detail.get("bullish_flip_timestamp"),
+        "current_close": st_flip_number(detail.get("current_close")),
+        "line_cross": dict(detail.get("st_vwap_line_cross") or {}),
+    }
+
+
+def st_flip_consecutive_recent_rungs(record: dict) -> list[dict]:
+    """Return the consecutive bullish 30s->5m flip sequence that is still recent."""
+    rungs: list[dict] = []
+    for label in ST_FLIP_EARLY_LADDER:
+        detail = st_flip_timeframe_detail(record, label)
+        price = detail.get("price_at_flip")
+        age = detail.get("age_seconds")
+        if (
+            price is None
+            or price <= 0
+            or age is None
+            or age < 0
+            or age > _ST_FLIP_RECENT_SECONDS[label]
+            or not detail.get("current_bullish")
+        ):
+            break
+        rungs.append(detail)
+    return rungs
+
+
+def st_flip_cluster_span_pct(prices: list[float]) -> float | None:
+    if len(prices) < 2:
+        return None
+    center = median(prices)
+    if center <= 0:
+        return None
+    return (max(prices) - min(prices)) / center * 100.0
+
+
+def st_flip_supporting_flow(record: dict) -> bool:
+    from mide import gs455_early_ignition_3m_confirmation as gs455
+
+    return bool(gs455._supporting_flow(record))
+
+
+def st_flip_next_frame_context(record: dict, depth: int) -> dict:
+    """Describe the next slower chart without making it part of signal authority."""
+    if depth < 2:
+        return {}
+    next_label = {2: "3m", 3: "5m", 4: "10m"}.get(depth)
+    if not next_label:
+        return {}
+    detail = st_flip_timeframe_detail(record, next_label)
+    line_cross = detail.get("line_cross") or {}
+    current_close = detail.get("current_close")
+    st_value = st_flip_number(line_cross.get("latest_supertrend_value"))
+    gap = None
+    if current_close not in (None, 0) and st_value is not None:
+        gap = abs(st_value - current_close) / current_close * 100.0
+    return {
+        "timeframe": next_label,
+        "already_bullish": bool(detail.get("current_bullish")),
+        "distance_to_supertrend_pct": round(gap, 3) if gap is not None else None,
+    }
+
+
+def st_flip_compression(record: dict) -> dict:
+    """Return bottom-up flip-price compression evidence for operator attention."""
+    rungs = st_flip_consecutive_recent_rungs(record)
+    depth = len(rungs)
+    prices = [float(item["price_at_flip"]) for item in rungs]
+    span = st_flip_cluster_span_pct(prices)
+    limit = _ST_FLIP_MAX_CLUSTER_SPAN_PCT.get(depth)
+    compressed = bool(
+        depth >= 2
+        and span is not None
+        and limit is not None
+        and span <= limit
+    )
+    flow = st_flip_supporting_flow(record)
+    active = bool(compressed and flow)
+
+    highest = rungs[-1] if rungs else {}
+    highest_label = str(highest.get("timeframe") or "")
+    highest_age = st_flip_number(highest.get("age_seconds"))
+    fresh_join = bool(
+        active
+        and highest_label in _ST_FLIP_NEW_SECONDS
+        and highest_age is not None
+        and highest_age <= _ST_FLIP_NEW_SECONDS[highest_label]
+    )
+
+    stage = {
+        0: "NONE",
+        1: "SEED",
+        2: "EARLY IGNITION",
+        3: "IGNITION BUILDING",
+        4: "IGNITION CASCADE",
+    }.get(depth, "NONE")
+    later_bullish = [
+        label
+        for label in _ST_FLIP_LATER_CONTEXT
+        if st_flip_timeframe_detail(record, label).get("current_bullish")
+    ]
+
+    return {
+        "active": active,
+        "fresh_join": fresh_join,
+        "stage": stage,
+        "depth": depth,
+        "sequence": " -> ".join(item["timeframe"] for item in rungs),
+        "flip_prices": {
+            item["timeframe"]: round(float(item["price_at_flip"]), 6)
+            for item in rungs
+        },
+        "cluster_span_pct": round(span, 3) if span is not None else None,
+        "cluster_limit_pct": limit,
+        "supporting_flow": flow,
+        "highest_rung": highest_label or None,
+        "highest_rung_age_seconds": highest_age,
+        "next_frame": st_flip_next_frame_context(record, depth),
+        "later_bullish_context": later_bullish,
+        "authority": "OPERATOR_ATTENTION_ONLY",
+        "entry_authority_changed": False,
+    }
+
+
+def cascade_runway_number(value: Any) -> float | None:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    return number if pd.notna(number) else None
+
+
+def cascade_runway_status_payload(
+    label: str,
+    *,
+    available: bool,
+    bullish: bool = False,
+    close: float | None = None,
+    supertrend_value: float | None = None,
+    source: str,
+) -> dict:
+    close = cascade_runway_number(close)
+    st_value = cascade_runway_number(supertrend_value)
+    gap = None
+    if available and close not in (None, 0) and st_value is not None:
+        gap = abs(st_value - close) / close * 100.0
+    return {
+        "timeframe": label,
+        "available": bool(available),
+        "bullish": bool(bullish) if available else False,
+        "current_close": close,
+        "current_supertrend": st_value,
+        "line_gap_pct": round(gap, 3) if gap is not None else None,
+        "barrier_gap_pct": (
+            0.0
+            if available and bullish
+            else round(gap, 3) if gap is not None else None
+        ),
+        "relation": (
+            "support"
+            if available and bullish
+            else "overhead_barrier" if available else "unavailable"
+        ),
+        "source": source,
+    }
+
+
+def cascade_runway_existing_status(record: dict, label: str) -> dict | None:
+    """Reuse current 10m/15m line truth when GS455/423 already retained it."""
+    from mide import gs460_st_flip_compression_ignition as gs460
+
+    if label not in {"10m", "15m"}:
+        return None
+    detail = gs460._tf_detail(record, label)
+    if not detail:
+        return None
+    line_cross = dict(detail.get("line_cross") or {})
+    close = cascade_runway_number(detail.get("current_close"))
+    st_value = cascade_runway_number(
+        line_cross.get("latest_supertrend_value")
+    )
+    bullish = bool(detail.get("current_bullish"))
+    if bullish and close is not None:
+        return cascade_runway_status_payload(
+            label,
+            available=True,
+            bullish=True,
+            close=close,
+            supertrend_value=st_value,
+            source="retained GS455/423 timeframe evidence",
+        )
+    if close is not None and st_value is not None:
+        return cascade_runway_status_payload(
+            label,
+            available=True,
+            bullish=False,
+            close=close,
+            supertrend_value=st_value,
+            source="retained GS455/423 timeframe evidence",
+        )
+    return None
+
+
+def cascade_runway_local_status(
+    day: pd.DataFrame,
+    label: str,
+    *,
+    resample_fn=None,
+    supertrend_fn=None,
+) -> dict:
+    """Build one slower-frame status locally from already-owned 1m history."""
+    if resample_fn is None or supertrend_fn is None:
+        from mide.indicators import resample_ohlcv, supertrend
+
+        resample_fn = resample_fn or resample_ohlcv
+        supertrend_fn = supertrend_fn or supertrend
+
+    if day is None or day.empty:
+        return cascade_runway_status_payload(
+            label,
+            available=False,
+            source="no current-session history",
+        )
+    rule = _CASCADE_RUNWAY_RULES[label]
+    try:
+        frame = resample_fn(day, rule)
+    except Exception:
+        return cascade_runway_status_payload(
+            label,
+            available=False,
+            source=f"local {rule} resample failed",
+        )
+    if frame is None or frame.empty or len(frame) < 2:
+        return cascade_runway_status_payload(
+            label,
+            available=False,
+            source=f"local {rule} resample not ready",
+        )
+
+    try:
+        st_line, trend = supertrend_fn(frame, 10, 3)
+    except Exception:
+        return cascade_runway_status_payload(
+            label,
+            available=False,
+            source=f"local {rule} SuperTrend not ready",
+        )
+
+    close = cascade_runway_number(frame["close"].astype(float).iloc[-1])
+    st_value = (
+        cascade_runway_number(st_line.iloc[-1])
+        if len(st_line)
+        else None
+    )
+    if close is None or st_value is None or not len(trend):
+        return cascade_runway_status_payload(
+            label,
+            available=False,
+            source=f"local {rule} SuperTrend not ready",
+        )
+    return cascade_runway_status_payload(
+        label,
+        available=True,
+        bullish=bool(trend.fillna(False).astype(bool).iloc[-1]),
+        close=close,
+        supertrend_value=st_value,
+        source=(
+            f"local {rule} resample from Stage-6 "
+            "current-session 1m history"
+        ),
+    )
+
+
+def summarize_cascade_runway(
+    compression: dict,
+    statuses: dict[str, dict],
+) -> dict:
+    """Summarize the factual slower-frame path without a probability model."""
+    ordered = [
+        dict(statuses.get(label) or {})
+        for label in CASCADE_RUNWAY_ORDER
+    ]
+    available = [
+        item["timeframe"]
+        for item in ordered
+        if item.get("available")
+    ]
+    bullish = [
+        item["timeframe"]
+        for item in ordered
+        if item.get("available") and item.get("bullish")
+    ]
+
+    contiguous: list[str] = []
+    first_unresolved: dict | None = None
+    first_index: int | None = None
+    for index, item in enumerate(ordered):
+        if item.get("available") and item.get("bullish"):
+            if first_unresolved is None:
+                contiguous.append(item["timeframe"])
+            continue
+        first_unresolved = item
+        first_index = index
+        break
+
+    future_support: list[str] = []
+    if first_index is not None:
+        future_support = [
+            item["timeframe"]
+            for item in ordered[first_index + 1 :]
+            if item.get("available") and item.get("bullish")
+        ]
+
+    next_barrier = None
+    blocked_by_unavailable = None
+    if first_unresolved:
+        if (
+            first_unresolved.get("available")
+            and not first_unresolved.get("bullish")
+        ):
+            next_barrier = {
+                "timeframe": first_unresolved.get("timeframe"),
+                "barrier_gap_pct": first_unresolved.get(
+                    "barrier_gap_pct"
+                ),
+                "current_close": first_unresolved.get("current_close"),
+                "current_supertrend": first_unresolved.get(
+                    "current_supertrend"
+                ),
+            }
+        elif not first_unresolved.get("available"):
+            blocked_by_unavailable = first_unresolved.get("timeframe")
+
+    active = bool(compression.get("active") and available)
+    return {
+        "active": active,
+        "lower_stage": compression.get("stage"),
+        "lower_depth": int(compression.get("depth") or 0),
+        "lower_sequence": compression.get("sequence") or "",
+        "frames": {
+            item.get("timeframe"): item
+            for item in ordered
+            if item.get("timeframe")
+        },
+        "available_frames": available,
+        "bullish_frames": bullish,
+        "contiguous_slower_bullish": contiguous,
+        "next_barrier": next_barrier,
+        "blocked_by_unavailable": blocked_by_unavailable,
+        "future_bullish_support": future_support,
+        "authority": CASCADE_RUNWAY_AUTHORITY,
+        "source": CASCADE_RUNWAY_SOURCE,
+        "additional_history_requests": 0,
+        "entry_authority_changed": False,
+    }
+
+
+def build_cascade_runway(record: dict, raw_rows, client) -> dict:
+    """Build slower-frame runway only after GS460 compression is active."""
+    from mide import gs378_live_vwap_st_crossover as gs378
+    from mide import gs460_st_flip_compression_ignition as gs460
+    from mide import gs461_cascade_runway as gs461
+
+    compression = gs460.st_flip_compression(record)
+    if not compression.get("active"):
+        return {
+            "active": False,
+            "reason": "no_active_gs460_compression",
+            "authority": CASCADE_RUNWAY_AUTHORITY,
+            "source": CASCADE_RUNWAY_SOURCE,
+            "additional_history_requests": 0,
+            "entry_authority_changed": False,
+        }
+
+    try:
+        frame = client.bars_frame(raw_rows or [])
+        day = gs378._eastern_day(frame)
+    except Exception:
+        day = pd.DataFrame()
+
+    statuses: dict[str, dict] = {}
+    for label in CASCADE_RUNWAY_ORDER:
+        existing = cascade_runway_existing_status(record, label)
+        statuses[label] = (
+            existing
+            if existing is not None
+            else gs461._local_status(day, label)
+        )
+    return summarize_cascade_runway(compression, statuses)
+
+
+def install_cascade_runway_evidence() -> None:
+    """Attach GS461 runway evidence without adding provider work."""
+    from mide import gs378_live_vwap_st_crossover as gs378
+
+    current = gs378.apply_live_vwap_truth
+    if getattr(current, "_gs461_cascade_runway", False):
+        return
+
+    @wraps(current)
+    def apply_with_runway(
+        records,
+        current_session_raw,
+        current_session_30s_raw,
+        client,
+    ):
+        from mide import gs461_cascade_runway as gs461
+
+        updated = current(
+            records,
+            current_session_raw,
+            current_session_30s_raw,
+            client,
+        )
+        measured = 0
+        for record in updated or []:
+            symbol = str(record.get("symbol") or "").strip().upper()
+            if not symbol:
+                continue
+            evidence = gs461.build_cascade_runway(
+                record,
+                (current_session_raw or {}).get(symbol) or [],
+                client,
+            )
+            if evidence.get("active"):
+                record["st_cascade_runway"] = evidence
+                measured += 1
+
+        diagnostics = getattr(client, "diagnostics", None)
+        if isinstance(diagnostics, dict):
+            diagnostics["gs461_cascade_runway"] = {
+                "authority": CASCADE_RUNWAY_AUTHORITY,
+                "records_measured": measured,
+                "timeframes": list(CASCADE_RUNWAY_ORDER),
+                "additional_history_requests": 0,
+                "entry_authority_changed": False,
+                "qualification_changed": False,
+                "readiness_changed": False,
+                "execution_changed": False,
+            }
+        return updated
+
+    apply_with_runway._gs461_cascade_runway = True
+    apply_with_runway._gs461_original = current
+    gs378.apply_live_vwap_truth = apply_with_runway
+
+
+# ---------------------------------------------------------------------------
 # GS478 sparse current-session history sufficiency bridge
 # ---------------------------------------------------------------------------
 
@@ -2204,6 +2730,24 @@ def install_convergence_handoff_evidence() -> None:
 
 
 __all__ = [
+    "install_cascade_runway_evidence",
+    "build_cascade_runway",
+    "summarize_cascade_runway",
+    "cascade_runway_local_status",
+    "cascade_runway_existing_status",
+    "cascade_runway_status_payload",
+    "cascade_runway_number",
+    "CASCADE_RUNWAY_ORDER",
+    "CASCADE_RUNWAY_AUTHORITY",
+    "CASCADE_RUNWAY_SOURCE",
+    "st_flip_compression",
+    "st_flip_next_frame_context",
+    "st_flip_supporting_flow",
+    "st_flip_cluster_span_pct",
+    "st_flip_consecutive_recent_rungs",
+    "st_flip_timeframe_detail",
+    "st_flip_number",
+    "ST_FLIP_EARLY_LADDER",
     "install_price_trajectory_metrics",
     "price_trajectory_metrics",
     "PRICE_TRAJECTORY_DISCOVERY_OWNER",
