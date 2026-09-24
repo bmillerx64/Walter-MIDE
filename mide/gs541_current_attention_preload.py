@@ -11,10 +11,12 @@ GS309 resident before scan/render work starts, so later imports are cache lookup
 
 from __future__ import annotations
 
+import importlib
+
 
 def install() -> None:
-    """Preload GS309 without invoking discovery, scanning, or provider work."""
-    from . import gs309_current_attention_mission as _gs309  # noqa: F401
+    """Preload GS309 into Python's module cache without invoking provider work."""
+    importlib.import_module("mide.gs309_current_attention_mission")
 
 
 __all__ = ["install"]
