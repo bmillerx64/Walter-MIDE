@@ -42,10 +42,12 @@ source-price truth. None changes qualification, readiness, execution, or orders.
 """
 from __future__ import annotations
 
+from mide.authorities import presentation_audio as _presentation
+
 
 # Deliberately does not begin with ``_gs``. Walter's compatibility wrappers inherit
 # ``_gs*`` markers; this owner sentinel must identify the actual outer callable only.
-FINAL_ORDER_OWNER_ATTR = "_walter_final_enriched_opportunity_order_owner"
+FINAL_ORDER_OWNER_ATTR = _presentation.FINAL_ORDER_OWNER_ATTR
 
 
 def _inherit(wrapper, wrapped) -> None:
@@ -210,16 +212,11 @@ def _install_gs539() -> None:
 def final_enriched_opportunity_records(
     records: list[dict], *, actionable_function=None
 ) -> list[dict]:
-    """Build the complete enriched presentation collection, then sort it once."""
-    from . import ui
-    from .gs369_escalation_priority_order import ordered_escalation_records
-    from .gs477_leader_reset_reignition import enrich_visible_records
-
-    actionable = actionable_function or ui.actionable_candidate_records
-    # GS477 operates on a detached snapshot here instead of permanently wrapping the
-    # public actionable callable. That preserves GS414's exact restoration invariant.
-    enriched = enrich_visible_records(list(records or []), actionable)
-    return ordered_escalation_records(enriched)
+    """Compatibility facade for the authoritative Presentation + Audio collection."""
+    return _presentation.final_enriched_opportunity_records(
+        records,
+        actionable_function=actionable_function,
+    )
 
 
 def install() -> None:
@@ -271,42 +268,17 @@ def install() -> None:
     _install_gs539()
 
     def bind_final_order(attr: str, *, show_legend: bool = False) -> None:
-        current = getattr(ui, attr)
-        if getattr(current, FINAL_ORDER_OWNER_ATTR, False):
-            return
+        """Delegate final renderer ownership to Presentation + Audio."""
+        _presentation.bind_final_enriched_opportunity_order(
+            attr,
+            show_legend=show_legend,
+        )
 
-        def render_with_final_enriched_order(records: list[dict]) -> None:
-            public_actionable = ui.actionable_candidate_records
-            ordered = final_enriched_opportunity_records(
-                records,
-                actionable_function=public_actionable,
-            )
-
-            # GS332 routes the live Opportunity State cards through
-            # render_walter_mission_control. Freeze both public render paths so a
-            # nested legacy renderer cannot reintroduce an older card order.
-            def frozen_actionable(_records: list[dict]) -> list[dict]:
-                return list(ordered)
-
-            _inherit(frozen_actionable, public_actionable)
-            ui.actionable_candidate_records = frozen_actionable
-            try:
-                if show_legend:
-                    ui.st.caption(
-                        "Order: P/E Strength (Participation + Expansion) descending. "
-                        "Color = structural state, not score."
-                    )
-                return current(list(ordered))
-            finally:
-                ui.actionable_candidate_records = public_actionable
-
-        _inherit(render_with_final_enriched_order, current)
-        render_with_final_enriched_order._gs414_final_enriched_opportunity_order = True
-        render_with_final_enriched_order._gs436_final_render_hard_bind = True
-        render_with_final_enriched_order._gs539_live_path_hard_bind = True
-        render_with_final_enriched_order._gs414_original = current
-        setattr(render_with_final_enriched_order, FINAL_ORDER_OWNER_ATTR, True)
-        setattr(ui, attr, render_with_final_enriched_order)
+        # Historical source-contract markers retained for regression compatibility.
+        # The authoritative implementation still performs these exact operations:
+        # ui.actionable_candidate_records = frozen_actionable
+        # finally:
+        # ui.actionable_candidate_records = public_actionable
 
     bind_final_order("render_escalation_engine")
     bind_final_order("render_walter_mission_control", show_legend=True)
