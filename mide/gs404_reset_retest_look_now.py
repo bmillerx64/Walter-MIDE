@@ -52,6 +52,12 @@ def _thesis_state():
     return thesis_state
 
 
+def _presentation_audio():
+    from mide.authorities import presentation_audio
+
+    return presentation_audio
+
+
 def _number(record: dict, *keys: str, default: float | None = None) -> float | None:
     current = getattr(
         _market_evidence(),
@@ -202,13 +208,34 @@ def reset_retest_eligible(record: dict) -> bool:
 
 
 def _tag_awareness_copy(record: dict) -> dict:
+    current = getattr(
+        _presentation_audio(),
+        "reset_retest_awareness_copy",
+        None,
+    )
+    if callable(current):
+        return current(record)
+
+    # Retained-runtime fallback for an older Presentation + Audio generation.
     row = awareness_record(record)
     row[RESET_RETEST_KEY] = True
     return row
 
 
 def augment_reset_retest_records(records: list[dict], visible: list[dict]) -> list[dict]:
-    """Ensure an eligible retest is in the trader-visible collection exactly once."""
+    """Warm-deploy-safe facade for reset/retest visible-record awareness."""
+    current = getattr(
+        _presentation_audio(),
+        "augment_reset_retest_visible_records",
+        None,
+    )
+    if callable(current):
+        return current(
+            records,
+            visible,
+        )
+
+    # Retained-runtime fallback for an older Presentation + Audio generation.
     output: list[dict] = []
     present: set[str] = set()
 
@@ -224,8 +251,6 @@ def augment_reset_retest_records(records: list[dict], visible: list[dict]) -> li
             output.append(record)
         present.add(symbol)
 
-    # If the scanner did not admit the row to its actionable set, this is a strictly
-    # presentation-only awareness copy. Entry/alert qualification remains denied.
     for record in records or []:
         symbol = str(record.get("symbol") or "").strip().upper()
         if not symbol or symbol in present or not reset_retest_eligible(record):

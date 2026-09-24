@@ -4812,6 +4812,68 @@ def render_sidebar_audio_health(st_module) -> None:
 
 
 # ---------------------------------------------------------------------------
+# GS404 reset/retest visible-record awareness
+# ---------------------------------------------------------------------------
+#
+# Presentation + Audio owns the operator-visible collection transform for confirmed
+# reset/retest attention. Market Evidence decides eligibility; Thesis / State decides
+# LOOK NOW meaning. This layer only ensures the symbol is visible exactly once and
+# uses an awareness-only copy when the actionable scanner did not admit it.
+
+
+def reset_retest_awareness_copy(record: dict) -> dict:
+    from mide import gs404_reset_retest_look_now as gs404
+    from mide.gs375_operator_awareness import awareness_record
+
+    row = awareness_record(record)
+    row[gs404.RESET_RETEST_KEY] = True
+    return row
+
+
+def augment_reset_retest_visible_records(
+    records: list[dict],
+    visible: list[dict],
+) -> list[dict]:
+    """Keep eligible reset/retest attention visible exactly once."""
+    from mide import gs404_reset_retest_look_now as gs404
+
+    output: list[dict] = []
+    present: set[str] = set()
+
+    for record in visible or []:
+        symbol = str(
+            record.get("symbol") or ""
+        ).strip().upper()
+        if not symbol or symbol in present:
+            continue
+        if gs404.reset_retest_eligible(record):
+            tagged = deepcopy(record)
+            tagged[gs404.RESET_RETEST_KEY] = True
+            output.append(tagged)
+        else:
+            output.append(record)
+        present.add(symbol)
+
+    for record in records or []:
+        symbol = str(
+            record.get("symbol") or ""
+        ).strip().upper()
+        if (
+            not symbol
+            or symbol in present
+            or not gs404.reset_retest_eligible(record)
+        ):
+            continue
+        output.append(
+            reset_retest_awareness_copy(
+                record
+            )
+        )
+        present.add(symbol)
+    return output
+
+
+# ---------------------------------------------------------------------------
 # GS401 final Opportunity render ordering
 # ---------------------------------------------------------------------------
 #
@@ -4970,6 +5032,8 @@ def bind_final_enriched_opportunity_order(
 
 
 __all__ = [
+    "reset_retest_awareness_copy",
+    "augment_reset_retest_visible_records",
     "critical_only_audio_markup",
     "install_critical_only_audio",
     "final_visible_opportunity_records",
