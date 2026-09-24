@@ -144,30 +144,13 @@ def _install_gs397_canonicalization() -> None:
 
 
 def _install_gs455_first_rung() -> None:
-    from . import gs455_early_ignition_3m_confirmation as gs455
-
-    current = gs455._thirty_second_rung
-    if getattr(current, "_gs456_literal_30s_cross", False):
-        return
-
-    @wraps(current)
-    def thirty_second_rung(record: dict) -> dict:
-        event = dict(record.get("st_vwap_30s_line_cross") or {})
-        if not event:
-            alignment = record.get("timeframe_alignment") or {}
-            event = dict(
-                (alignment.get("30s") or {}).get("st_vwap_line_cross") or {}
-            )
-        if event.get("crossed") and event.get("current_confirmed"):
-            event["kind"] = "literal_30s_st_vwap_line_cross"
-            return event
-        fallback = dict(current(record))
-        fallback.setdefault("kind", "canonical_30s_tripwire_flip_fallback")
-        return fallback
-
-    thirty_second_rung._gs456_literal_30s_cross = True
-    thirty_second_rung._gs456_original = current
-    gs455._thirty_second_rung = thirty_second_rung
+    current = getattr(
+        _market_evidence(),
+        "install_canonical_30s_progression_rung",
+        None,
+    )
+    if callable(current):
+        current()
 
 
 def install() -> None:
