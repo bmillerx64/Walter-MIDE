@@ -410,49 +410,27 @@ def progression_signal(record: dict) -> dict:
         }
     return current(record)
 
-def _state_with_progression(original, record: dict) -> dict:
-    from . import gs310_unified_opportunity_state as unified
+def _thesis_state():
+    from mide.authorities import thesis_state
 
-    base = original(record)
-    signal = progression_signal(record)
-    if not signal["active"]:
-        return base
-    if base.get("state") in {unified.HALTED, unified.WATCH_FOR_ENTRY}:
-        return base
+    return thesis_state
 
-    view = deepcopy(base)
-    provenance = list(view.get("attention_provenance") or [])
-    if _PROGRESSION_PROVENANCE not in provenance:
-        provenance.append(_PROGRESSION_PROVENANCE)
-    view["attention_provenance"] = provenance
-    view["st_vwap_progression"] = crossover_progression(record)
 
-    rung = str(signal.get("new_rung") or "").upper()
-    sequence = signal.get("sequence") or rung
-    distance = signal.get("vwap_distance_pct")
-    if distance is not None and distance > LOOK_NOW_MAX_VWAP_DISTANCE_PCT:
-        view["state"] = unified.CHASE_WAIT
-        view["color"] = unified.STATE_COLORS[unified.CHASE_WAIT]
-        view["reason"] = (
-            f"ST/VWAP maturation reached {rung}; {sequence}. "
-            f"Price is already {distance:.1f}% above VWAP."
-        )
-        view["next_step"] = (
-            "LOOK NOW for continuation context, but DO NOT CHASE. The VWAP anti-chase "
-            "guard remains authoritative; wait for a constructive reset."
-        )
-        return view
-
-    view["state"] = unified.LOOK_NOW
-    view["color"] = unified.STATE_COLORS[unified.LOOK_NOW]
-    view["reason"] = f"ST/VWAP maturation reached {rung}; {sequence}."
-    view["next_step"] = (
-        "Open the chart now. The maturation ladder is operator-attention evidence, not "
-        "entry authority; normal participation, expansion, readiness, and VWAP guards "
-        "still decide the trade."
+def _state_with_progression(
+    original,
+    record: dict,
+) -> dict:
+    current = getattr(
+        _thesis_state(),
+        "progression_opportunity_state",
+        None,
     )
-    return view
-
+    if not callable(current):
+        return original(record)
+    return current(
+        original,
+        record,
+    )
 
 def _progression_change(record: dict) -> dict | None:
     signal = progression_signal(record)
@@ -521,30 +499,13 @@ def _install_prefilter() -> None:
         current()
 
 def _install_state() -> None:
-    from . import gs310_unified_opportunity_state as unified
-    from . import gs311_unified_voice as voice
-    from . import gs314_state_consistency as consistency
-    from . import gs363_operator_attention_hierarchy as hierarchy
-
-    current = unified.opportunity_state
-    if getattr(current, "_gs455_crossover_progression", False):
-        calibrated = current
-    else:
-        original = current
-
-        @wraps(original)
-        def calibrated(record: dict) -> dict:
-            return _state_with_progression(original, record)
-
-        _inherit(calibrated, current)
-        calibrated._gs455_crossover_progression = True
-        calibrated._gs455_original = original
-        unified.opportunity_state = calibrated
-
-    voice.opportunity_state = calibrated
-    consistency.opportunity_state = calibrated
-    hierarchy.opportunity_state = calibrated
-
+    current = getattr(
+        _thesis_state(),
+        "install_progression_state",
+        None,
+    )
+    if callable(current):
+        current()
 
 def _install_alert_priority() -> None:
     from . import escalation
