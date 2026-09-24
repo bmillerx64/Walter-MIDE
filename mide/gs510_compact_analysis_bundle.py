@@ -410,8 +410,29 @@ def render_compact_analysis_bundle_controls(
         _render(candidate_path, flight_path)
         return
 
-    @fragment(run_every=JOB_POLL_SECONDS)
+    job_id = str(st.session_state.get(JOB_SESSION_KEY) or "")
+    job = analysis_bundle_job_status(job_id) if job_id else None
+    polling = bool(job and job.get("status") == "running")
+
     def analysis_bundle_fragment() -> None:
         _render(candidate_path, flight_path)
 
-    analysis_bundle_fragment()
+        # GS542: the analysis bundle needs a 2-second poll only while its worker
+        # is active. Rebuild the app fragment once when job state crosses that
+        # boundary, then remain quiescent while idle/completed.
+        current_job_id = str(st.session_state.get(JOB_SESSION_KEY) or "")
+        current_job = (
+            analysis_bundle_job_status(current_job_id)
+            if current_job_id
+            else None
+        )
+        now_running = bool(
+            current_job and current_job.get("status") == "running"
+        )
+        if now_running != polling:
+            st.rerun(scope="app")
+
+    if polling:
+        fragment(run_every=JOB_POLL_SECONDS)(analysis_bundle_fragment)()
+    else:
+        fragment(analysis_bundle_fragment)()
