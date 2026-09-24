@@ -4631,7 +4631,338 @@ def install_connection_limit_market_evidence() -> None:
     install_connection_limit_recorder_bind()
 
 
+
+# ---------------------------------------------------------------------------
+# GS489 graduated Webull rc105 backoff
+# ---------------------------------------------------------------------------
+
+GRADUATED_BACKOFF_AUTHORITY = (
+    "WEBULL_CONNECTION_LIMIT_GRADUATED_BACKOFF"
+)
+GRADUATED_BACKOFF_SECONDS = (
+    300.0,
+    600.0,
+    900.0,
+)
+
+
+def graduated_backoff_state(provider) -> dict:
+    from mide import gs489_webull_graduated_backoff as gs489
+
+    stream = connection_limit_stream(provider)
+    state = stream.get(gs489._STATE_KEY)
+    if not isinstance(state, dict):
+        state = {
+            "authority": WEBULL_CONNECTION_LIMIT_AUTHORITY,
+            "active": False,
+            "cooldown_seconds": gs489.BACKOFF_SECONDS[0],
+            "next_retry_epoch": None,
+            "consecutive_limit_failures": 0,
+            "suppressed_attempts": 0,
+            "last_limit_failure": None,
+            "rest_snapshot_history_unchanged": True,
+            "genuine_webull_tick_only": True,
+            "trading_authority_changed": False,
+        }
+        stream[gs489._STATE_KEY] = state
+    state["backoff_schedule_seconds"] = list(
+        gs489.BACKOFF_SECONDS
+    )
+    state["gs489_graduated_backoff"] = True
+    state["gs489_authority"] = gs489.AUTHORITY
+    return state
+
+
+def graduated_connection_limit_rejection(
+    value: Any,
+) -> bool:
+    return connection_limit_rejection(value)
+
+
+def graduated_backoff_cooldown(
+    value: Any,
+) -> float:
+    from mide import gs489_webull_graduated_backoff as gs489
+
+    try:
+        failures = max(1, int(value))
+    except (TypeError, ValueError):
+        failures = 1
+    return gs489.BACKOFF_SECONDS[
+        min(
+            failures - 1,
+            len(gs489.BACKOFF_SECONDS) - 1,
+        )
+    ]
+
+
+def refresh_graduated_backoff_deadline(
+    provider,
+    *,
+    now: float,
+) -> dict:
+    from mide import gs489_webull_graduated_backoff as gs489
+
+    state = gs489._state(provider)
+    if (
+        not state.get("active")
+        or getattr(provider, "_subscription", None) is not None
+    ):
+        return state
+    try:
+        failures = int(
+            state.get(
+                "consecutive_limit_failures",
+                0,
+            )
+            or 0
+        )
+    except (TypeError, ValueError):
+        failures = 0
+    if failures <= 0:
+        return state
+    cooldown = gs489._cooldown_for_failures(
+        failures
+    )
+    try:
+        last_failure = float(
+            state.get("last_limit_failure_epoch")
+        )
+    except (TypeError, ValueError):
+        last_failure = now
+    desired_deadline = last_failure + cooldown
+    try:
+        current_deadline = float(
+            state.get("next_retry_epoch")
+        )
+    except (TypeError, ValueError):
+        current_deadline = 0.0
+    state["cooldown_seconds"] = cooldown
+    if desired_deadline > current_deadline:
+        state["next_retry_epoch"] = (
+            desired_deadline
+        )
+        state[
+            "gs489_retained_deadline_extended"
+        ] = True
+    return state
+
+
+def ensure_stream_with_graduated_backoff(
+    original: Callable,
+    provider,
+    symbols,
+    *,
+    now: float | None = None,
+):
+    from mide import gs489_webull_graduated_backoff as gs489
+
+    current = float(
+        gs489.time.time()
+        if now is None
+        else now
+    )
+    state = gs489._refresh_active_deadline(
+        provider,
+        now=current,
+    )
+
+    if getattr(provider, "_subscription", None) is not None:
+        result = original(symbols)
+        if result:
+            state["active"] = False
+            state["next_retry_epoch"] = None
+            state[
+                "consecutive_limit_failures"
+            ] = 0
+            state["cooldown_seconds"] = (
+                gs489.BACKOFF_SECONDS[0]
+            )
+            state[
+                "last_recovery_epoch"
+            ] = current
+        return result
+
+    try:
+        deadline = float(
+            state.get("next_retry_epoch")
+        )
+    except (TypeError, ValueError):
+        deadline = 0.0
+    if state.get("active") and deadline > current:
+        state["suppressed_attempts"] = int(
+            state.get(
+                "suppressed_attempts",
+                0,
+            )
+            or 0
+        ) + 1
+        state[
+            "last_suppressed_epoch"
+        ] = current
+        return False
+
+    stream = gs489._stream(provider)
+    before = len(
+        list(
+            stream.get(
+                "subscription_failures"
+            )
+            or []
+        )
+    )
+    result = original(symbols)
+    failures = list(
+        stream.get("subscription_failures")
+        or []
+    )
+    newest = (
+        failures[-1]
+        if len(failures) > before
+        else None
+    )
+
+    if result:
+        state["active"] = False
+        state["next_retry_epoch"] = None
+        state[
+            "consecutive_limit_failures"
+        ] = 0
+        state["cooldown_seconds"] = (
+            gs489.BACKOFF_SECONDS[0]
+        )
+        state[
+            "last_recovery_epoch"
+        ] = current
+        return result
+
+    if gs489._is_connection_limit(newest):
+        count = int(
+            state.get(
+                "consecutive_limit_failures",
+                0,
+            )
+            or 0
+        ) + 1
+        cooldown = gs489._cooldown_for_failures(
+            count
+        )
+        state["active"] = True
+        state["cooldown_seconds"] = cooldown
+        state[
+            "next_retry_epoch"
+        ] = current + cooldown
+        state[
+            "consecutive_limit_failures"
+        ] = count
+        state[
+            "last_limit_failure"
+        ] = "WEBULL_RC105_CONNECTION_LIMIT"
+        state[
+            "last_limit_failure_epoch"
+        ] = current
+    else:
+        state["active"] = False
+        state["next_retry_epoch"] = None
+    return result
+
+
+def install_graduated_backoff_for_provider(
+    provider,
+) -> bool:
+    from mide import gs489_webull_graduated_backoff as gs489
+
+    if provider is None:
+        return False
+    current = getattr(
+        provider,
+        "ensure_stream",
+        None,
+    )
+    if not callable(current):
+        return False
+    function = getattr(
+        current,
+        "__func__",
+        current,
+    )
+
+    if (
+        getattr(
+            function,
+            gs489._GS489_OWNER,
+            None,
+        )
+        == gs489.REVISION
+    ):
+        gs489._refresh_active_deadline(
+            provider,
+            now=gs489.time.time(),
+        )
+        return False
+
+    if getattr(
+        function,
+        gs489._GS488_OWNER,
+        False,
+    ):
+        globals_dict = getattr(
+            function,
+            "__globals__",
+            None,
+        )
+        if (
+            not isinstance(globals_dict, dict)
+            or "ensure_stream_with_backoff"
+            not in globals_dict
+        ):
+            return False
+        globals_dict[
+            "ensure_stream_with_backoff"
+        ] = ensure_stream_with_graduated_backoff
+        setattr(
+            function,
+            gs489._GS489_OWNER,
+            gs489.REVISION,
+        )
+        gs489._refresh_active_deadline(
+            provider,
+            now=gs489.time.time(),
+        )
+        return True
+
+    @wraps(current)
+    def guarded(symbols):
+        return ensure_stream_with_graduated_backoff(
+            current,
+            provider,
+            symbols,
+        )
+
+    setattr(
+        guarded,
+        gs489._GS489_OWNER,
+        gs489.REVISION,
+    )
+    guarded._gs489_original = current
+    try:
+        provider.ensure_stream = guarded
+    except (AttributeError, TypeError):
+        return False
+    gs489._refresh_active_deadline(
+        provider,
+        now=gs489.time.time(),
+    )
+    return True
+
+
 __all__ = [
+    "install_graduated_backoff_for_provider",
+    "ensure_stream_with_graduated_backoff",
+    "refresh_graduated_backoff_deadline",
+    "graduated_backoff_cooldown",
+    "graduated_connection_limit_rejection",
+    "graduated_backoff_state",
     "install_connection_limit_market_evidence",
     "install_connection_limit_clean_class",
     "install_connection_limit_activation_bind",
