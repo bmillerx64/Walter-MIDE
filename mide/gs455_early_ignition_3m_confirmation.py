@@ -432,56 +432,45 @@ def _state_with_progression(
         record,
     )
 
-def _progression_change(record: dict) -> dict | None:
-    signal = progression_signal(record)
-    if not signal.get("active"):
-        return None
-    symbol = str(record.get("symbol") or "").strip().upper()
-    if not symbol:
-        return None
-    rung = str(signal.get("new_rung") or "").upper()
-    stamp = str(signal.get("timestamp") or "unknown")
-    return {
-        "symbol": symbol,
-        "from": f"{rung} CROSS@{stamp}",
-        "to": f"ST/VWAP MATURATION {rung}",
-    }
+def _presentation_audio():
+    from mide.authorities import presentation_audio
 
+    return presentation_audio
+
+
+def _progression_change(
+    record: dict,
+) -> dict | None:
+    current = getattr(
+        _presentation_audio(),
+        "progression_change",
+        None,
+    )
+    if not callable(current):
+        return None
+    return current(record)
 
 def _spoken_rung(label: str) -> str:
-    return {
-        "30s": "30 second",
-        "1m": "1 minute",
-        "3m": "3 minute",
-        "5m": "5 minute",
-        "10m": "10 minute",
-        "15m": "15 minute",
-    }.get(label, label)
-
-
-def _progression_phrase(records: list[dict]) -> str:
-    choices = []
-    for record in records or []:
-        signal = progression_signal(record)
-        if signal.get("active"):
-            rank = CROSSOVER_LADDER.index(signal["new_rung"])
-            choices.append((rank, record, signal))
-    if not choices:
-        return ""
-
-    _, record, signal = max(choices, key=lambda item: item[0])
-    symbol = str(record.get("symbol") or "Symbol").strip().upper() or "SYMBOL"
-    rung = _spoken_rung(str(signal.get("new_rung") or ""))
-    stage = str(signal.get("stage") or "").lower()
-    phrase = (
-        f"{symbol}. LOOK NOW. SuperTrend VWAP maturation reached {rung}. "
-        f"{stage.capitalize()} advancing."
+    current = getattr(
+        _presentation_audio(),
+        "spoken_progression_rung",
+        None,
     )
-    distance = signal.get("vwap_distance_pct")
-    if distance is not None and distance > LOOK_NOW_MAX_VWAP_DISTANCE_PCT:
-        phrase += " Extended. Do not chase."
-    return phrase
+    if not callable(current):
+        return label
+    return current(label)
 
+def _progression_phrase(
+    records: list[dict],
+) -> str:
+    current = getattr(
+        _presentation_audio(),
+        "progression_audio_phrase",
+        None,
+    )
+    if not callable(current):
+        return ""
+    return current(records)
 
 def _inherit(wrapper, wrapped) -> None:
     for name, value in getattr(wrapped, "__dict__", {}).items():
@@ -508,58 +497,13 @@ def _install_state() -> None:
         current()
 
 def _install_alert_priority() -> None:
-    from . import escalation
-    from .gs365_chime_semantic_classifier import semantic_chime_count
-
-    current_changes = escalation.escalation_state_changes
-    if not getattr(current_changes, "_gs455_crossover_progression", False):
-        @wraps(current_changes)
-        def state_changes(records: list[dict]) -> list[dict]:
-            rows = list(records or [])
-            existing = list(current_changes(rows))
-            additions = [
-                change for row in rows if (change := _progression_change(row))
-            ]
-            if not additions:
-                return existing
-            keys = {
-                (
-                    str(item.get("symbol") or "").upper(),
-                    str(item.get("from") or ""),
-                    str(item.get("to") or ""),
-                )
-                for item in existing
-            }
-            for change in additions:
-                key = (change["symbol"], change["from"], change["to"])
-                if key not in keys:
-                    existing.append(change)
-                    keys.add(key)
-            return existing
-
-        _inherit(state_changes, current_changes)
-        state_changes._gs455_crossover_progression = True
-        state_changes._gs455_original = current_changes
-        escalation.escalation_state_changes = state_changes
-
-    current_phrase = escalation.escalation_alert_phrase
-    if not getattr(current_phrase, "_gs455_crossover_progression", False):
-        @wraps(current_phrase)
-        def alert_phrase(records: list[dict]) -> str:
-            rows = list(records or [])
-            existing = str(current_phrase(rows) or "")
-            progression = _progression_phrase(rows)
-            if not progression:
-                return existing
-            if existing and semantic_chime_count(existing) >= 3:
-                return existing
-            return progression
-
-        _inherit(alert_phrase, current_phrase)
-        alert_phrase._gs455_crossover_progression = True
-        alert_phrase._gs455_original = current_phrase
-        escalation.escalation_alert_phrase = alert_phrase
-
+    current = getattr(
+        _presentation_audio(),
+        "install_progression_alert_priority",
+        None,
+    )
+    if callable(current):
+        current()
 
 def install() -> None:
     """Install bounded early admission plus existing-stack maturation priority."""
