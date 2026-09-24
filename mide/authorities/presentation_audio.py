@@ -103,6 +103,72 @@ def render_live_evidence_diagnostics(*args, **kwargs):
 
 
 # ---------------------------------------------------------------------------
+# GS402 critical-only browser audio
+# ---------------------------------------------------------------------------
+#
+# Presentation + Audio owns the final browser-markup suppression for routine tier-1
+# cues. Semantic tier assignment is untouched; later GS418/GS441 audio layers remain
+# free to restore/refine the operator-requested live signature.
+
+
+def critical_only_audio_markup(markup: str) -> str:
+    """Consume routine broker events silently after final tier selection."""
+    text = str(markup or "")
+    needle = (
+        "    broker.tier = 0;\n\n"
+        "    const AudioContextCtor ="
+    )
+    replacement = (
+        "    broker.tier = 0;\n\n"
+        "    // GS402: routine tier remains semantically valid but is acoustically silent.\n"
+        "    // LOOK NOW (tier 2) and entry urgency (tier 3) are the only browser tones.\n"
+        "    if (tier === 1) return;\n\n"
+        "    const AudioContextCtor ="
+    )
+    if needle in text:
+        return text.replace(
+            needle,
+            replacement,
+            1,
+        )
+    return text
+
+
+def install_critical_only_audio() -> None:
+    """Wrap the browser broker once without changing alert classification."""
+    from mide import gs367_browser_audio_broker as broker
+
+    current = broker.browser_broker_markup
+    if getattr(
+        current,
+        "_gs402_critical_only_audio",
+        False,
+    ):
+        return
+
+    def browser_broker_markup(
+        scan_token: str,
+        tier: int,
+    ) -> str:
+        return critical_only_audio_markup(
+            current(
+                scan_token,
+                tier,
+            )
+        )
+
+    _inherit_audio_wrapper(
+        browser_broker_markup,
+        current,
+    )
+    browser_broker_markup._gs402_critical_only_audio = True
+    browser_broker_markup._gs402_original = current
+    broker.browser_broker_markup = (
+        browser_broker_markup
+    )
+
+
+# ---------------------------------------------------------------------------
 # GS457 maturation-leader presentation semantics
 # ---------------------------------------------------------------------------
 #
@@ -4904,6 +4970,8 @@ def bind_final_enriched_opportunity_order(
 
 
 __all__ = [
+    "critical_only_audio_markup",
+    "install_critical_only_audio",
     "final_visible_opportunity_records",
     "install_final_opportunity_order",
     "progression_change",
