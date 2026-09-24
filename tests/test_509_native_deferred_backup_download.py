@@ -34,10 +34,11 @@ def test_download_callable_materializes_bytes_only_after_click():
     assert ".read_bytes()" not in before_callable
 
 
-def test_native_download_remains_inside_self_refreshing_fragment():
+def test_native_download_remains_inside_conditionally_refreshing_fragment():
     source = Path("mide/gs496_static_session_backup.py").read_text(encoding="utf-8")
 
-    assert "@fragment(run_every=JOB_POLL_SECONDS)" in source
+    assert "fragment(run_every=JOB_POLL_SECONDS)(backup_fragment)()" in source
+    assert "fragment(backup_fragment)()" in source
     assert "materialize_prepared_archive" in source
 
 
