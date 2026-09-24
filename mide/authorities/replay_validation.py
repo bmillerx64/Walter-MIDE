@@ -1901,7 +1901,76 @@ def install_cached_recorder_instance_bind(
     return True
 
 
+
+# ---------------------------------------------------------------------------
+# GS488 connection-limit replay trace
+# ---------------------------------------------------------------------------
+
+def backoff_snapshot(
+    provider,
+    *,
+    now: float | None = None,
+) -> dict:
+    from mide import gs488_webull_connection_limit_backoff as gs488
+
+    return gs488.backoff_snapshot(
+        provider,
+        now=now,
+    )
+
+
+def install_connection_limit_stream_trace() -> None:
+    from mide import gs481_live_evidence_hard_bind as gs481
+    from mide import gs488_webull_connection_limit_backoff as gs488
+
+    current = gs481._stream_failure_truth
+    marker = getattr(
+        current,
+        gs488._TRACE_OWNER,
+        None,
+    )
+    if marker == gs488.REVISION:
+        return
+    if marker:
+        if gs488._upgrade_wrapper_global(
+            current,
+            "backoff_snapshot",
+            backoff_snapshot,
+        ):
+            setattr(
+                current,
+                gs488._TRACE_OWNER,
+                gs488.REVISION,
+            )
+        return
+
+    @wraps(current)
+    def stream_failure_truth(provider):
+        truth = dict(
+            current(provider) or {}
+        )
+        truth[
+            "connection_limit_backoff"
+        ] = backoff_snapshot(provider)
+        truth[
+            "gs488_connection_limit_containment"
+        ] = True
+        return truth
+
+    setattr(
+        stream_failure_truth,
+        gs488._TRACE_OWNER,
+        gs488.REVISION,
+    )
+    stream_failure_truth._gs488_original = current
+    gs481._stream_failure_truth = (
+        stream_failure_truth
+    )
+
+
 __all__ = [
+    "install_connection_limit_stream_trace",
+    "backoff_snapshot",
     "install_cached_recorder_instance_bind",
     "exact_cached_recorder_globals",
     "cached_recorder_news_transport",
