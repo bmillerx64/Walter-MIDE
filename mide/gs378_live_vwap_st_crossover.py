@@ -469,6 +469,21 @@ def apply_live_vwap_truth(
         relation = "above" if distance >= 0 else ("testing" if distance >= -1.0 else "below")
         reclaimed, reclaim_age = _reclaim_metrics(day, primary_series)
         confirmations, confirmation_details = _confirmation_details(day, primary_series)
+        cross_evidence = st_vwap_crossover_evidence(day)
+
+        # GS548: raw bar reconstruction remains deterministic, while operator
+        # freshness must also account for how old this symbol's newest source bar
+        # already is at the current scan.
+        from mide.authorities import market_evidence as market_authority
+
+        confirmation_details = market_authority.operator_fresh_timeframe_details(
+            record,
+            confirmation_details,
+        )
+        cross_evidence = market_authority.operator_fresh_st_vwap_evidence(
+            record,
+            cross_evidence,
+        )
 
         record.update(
             {
@@ -493,7 +508,7 @@ def apply_live_vwap_truth(
                 "vwap_reclaim_age_bars": reclaim_age,
                 "timeframe_confirmations": confirmations,
                 "timeframes": confirmation_details,
-                **st_vwap_crossover_evidence(day),
+                **cross_evidence,
                 **_alignment_summary(
                     day,
                     primary_series,
