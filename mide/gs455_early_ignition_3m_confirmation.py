@@ -62,16 +62,22 @@ _PROGRESSION_PROVENANCE = "ST_VWAP_CROSSOVER_PROGRESSION"
 
 
 def _number(record: dict, *keys: str, default: float | None = None) -> float | None:
+    current = getattr(
+        _market_evidence(),
+        "progression_number",
+        None,
+    )
+    if callable(current):
+        return current(
+            record,
+            *keys,
+            default=default,
+        )
+    # Warm-deploy fallback for a retained runtime with an older authority module.
     for key in keys:
-        value = record.get(key)
-        if value is None or value == "":
-            continue
-        try:
-            number = float(value)
-        except (TypeError, ValueError):
-            continue
-        if math.isfinite(number):
-            return number
+        value = _finite(record.get(key))
+        if value is not None:
+            return value
     return default
 
 
@@ -266,10 +272,20 @@ def _supporting_flow(record: dict) -> bool:
 
 
 def _timestamp(value: Any) -> datetime | None:
+    current = getattr(
+        _market_evidence(),
+        "progression_timestamp",
+        None,
+    )
+    if callable(current):
+        return current(value)
+    # Warm-deploy fallback for a retained runtime with an older authority module.
     if value in (None, ""):
         return None
     try:
-        return datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+        return datetime.fromisoformat(
+            str(value).replace("Z", "+00:00")
+        )
     except (TypeError, ValueError):
         return None
 
