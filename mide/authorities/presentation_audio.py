@@ -2046,7 +2046,7 @@ def install_price_trajectory_presentation() -> None:
 # GS460/GS461 ST compression + cascade runway presentation/audio
 # ---------------------------------------------------------------------------
 
-ST_FLIP_LOOK_NOW_MAX_VWAP_DISTANCE_PCT = 5.0
+ST_FLIP_ANTI_CHASE_DISTANCE_PCT = 5.0
 _ST_FLIP_PROVENANCE = "ST_FLIP_PRICE_COMPRESSION"
 _CASCADE_RUNWAY_PROVENANCE = "ST_CASCADE_RUNWAY"
 
@@ -2095,7 +2095,7 @@ def state_with_st_flip_compression(original, record: dict) -> dict:
     )
     if (
         distance is not None
-        and distance > ST_FLIP_LOOK_NOW_MAX_VWAP_DISTANCE_PCT
+        and distance > ST_FLIP_ANTI_CHASE_DISTANCE_PCT
     ):
         view["state"] = unified.CHASE_WAIT
         view["color"] = unified.STATE_COLORS[unified.CHASE_WAIT]
@@ -2191,7 +2191,7 @@ def st_flip_compression_phrase(records: list[dict]) -> str:
     )
     if (
         distance is not None
-        and distance > ST_FLIP_LOOK_NOW_MAX_VWAP_DISTANCE_PCT
+        and distance > ST_FLIP_ANTI_CHASE_DISTANCE_PCT
     ):
         phrase += " Extended. Do not chase."
     return phrase
@@ -2930,7 +2930,7 @@ __all__ = [
     "st_flip_spoken",
     "st_flip_compression_change",
     "state_with_st_flip_compression",
-    "ST_FLIP_LOOK_NOW_MAX_VWAP_DISTANCE_PCT",
+    "ST_FLIP_ANTI_CHASE_DISTANCE_PCT",
     "install_price_trajectory_presentation",
     "ordered_trajectory_records",
     "effective_trajectory_attention_band",
