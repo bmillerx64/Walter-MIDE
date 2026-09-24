@@ -4,6 +4,12 @@ from mide.startup import instrument_startup, log_startup, startup_step
 
 log_startup("entering app.py")
 
+# GS541: hard app-entry preload. Warm Streamlit sessions can retain GS376 while
+# GS309 is not yet resident; a render-time import then risks a module-lock inversion
+# through webull_live -> mide.startup. Load GS309 here before scan/render threads.
+from mide.gs541_current_attention_preload import install as _install_gs541_attention_preload
+_install_gs541_attention_preload()
+
 # GS482: Streamlit re-executes app.py even when imported MIDE modules survive a
 # warm deploy. Reassert GS481 from this hard boundary so its news/stream-failure
 # evidence reaches the retained Flight Recorder graph. Observability only.
