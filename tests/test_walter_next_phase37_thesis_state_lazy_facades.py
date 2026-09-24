@@ -11,53 +11,45 @@ from mide.authorities import thesis_state
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def test_gs467_facade_delegates_look_now_semantics(monkeypatch):
-    expected = {"state": "DEVELOPING", "phase37": True}
+def test_gs467_lazy_export_preserves_authority_identity(monkeypatch):
+    delegated = lambda original, record: {
+        "state": "DEVELOPING",
+        "symbol": record["symbol"],
+    }
     monkeypatch.setattr(
         thesis_state,
         "consolidated_look_now",
-        lambda original, record: {
-            **expected,
-            "symbol": record["symbol"],
-        },
+        delegated,
     )
 
-    result = gs467.consolidated_look_now(
-        lambda _record: {"state": "LOOK NOW"},
-        {"symbol": "FNGR"},
-    )
-    assert result == {**expected, "symbol": "FNGR"}
+    assert gs467.consolidated_look_now is delegated
 
 
-def test_gs468_facade_preserves_numeric_below_private_helper(monkeypatch):
+def test_gs468_lazy_export_preserves_private_helper_identity(monkeypatch):
+    delegated = lambda record, truth: {
+        **record,
+        "vwap_relation": "below",
+        "truth": truth["numeric_below"],
+    }
     monkeypatch.setattr(
         thesis_state,
         "_numeric_below_record",
-        lambda record, truth: {
-            **record,
-            "vwap_relation": "below",
-            "truth": truth["numeric_below"],
-        },
+        delegated,
     )
 
-    result = gs468._numeric_below_record(
-        {"symbol": "JZXN", "vwap_relation": "above"},
-        {"numeric_below": True},
-    )
-    assert result["vwap_relation"] == "below"
-    assert result["truth"] is True
+    assert gs468._numeric_below_record is delegated
 
 
 def test_gs467_install_tolerates_stale_thesis_generation(monkeypatch):
     monkeypatch.setattr(gs467, "_thesis", lambda: SimpleNamespace())
 
-    assert gs467.install() is None
+    assert gs467.__getattr__("install")() is None
 
 
 def test_gs468_install_tolerates_stale_thesis_generation(monkeypatch):
     monkeypatch.setattr(gs468, "_thesis", lambda: SimpleNamespace())
 
-    assert gs468.install() is None
+    assert gs468.__getattr__("install")() is None
 
 
 def test_phase37_shims_are_lazy_not_eager_authority_imports():
@@ -72,6 +64,8 @@ def test_phase37_shims_are_lazy_not_eager_authority_imports():
     assert "Compatibility shim" in gs468_source
     assert "def _thesis(" in gs467_source
     assert "def _thesis(" in gs468_source
+    assert "def consolidated_look_now(" not in gs467_source
+    assert "def current_vwap_truth(" not in gs468_source
     assert "from .authorities.thesis_state import (" not in gs467_source
     assert "from .authorities.thesis_state import (" not in gs468_source
 
