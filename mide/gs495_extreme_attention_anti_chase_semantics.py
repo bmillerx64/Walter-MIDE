@@ -1,4 +1,4 @@
-"""Warm-deploy-safe facade for Walter Next extreme-mover anti-chase semantics.
+"""Compatibility facade for Walter Next extreme-mover anti-chase semantics.\n\nWarm-deploy-safe GS495 facade.
 
 Presentation + Audio owns GS495's <=2% VWAP working-zone qualifier. This historical
 module remains at the validated install/import position but resolves the authority
