@@ -152,15 +152,16 @@ maturation_attention._walter_next_presentation_facade = True
 
 
 def _effective_progression_priority(attention: dict) -> tuple[int, float]:
-    """Use crossover tie-breaks only for the two GS457 maturation bands.
-
-    Ordinary WATCH FOR ENTRY / LOOK NOW / DEVELOPING / CHASE / HALTED rows must keep
-    GS369's established tie behavior exactly. A record can carry crossover metadata
-    without qualifying for a GS457 priority lift, so raw rung depth must not silently
-    reorder those ordinary peers.
-    """
+    current = getattr(
+        _presentation_audio(),
+        "effective_maturation_priority",
+        None,
+    )
+    if callable(current):
+        return current(attention)
     promoted = bool(
-        attention.get("fresh_maturation") or attention.get("sustained_confirmation")
+        attention.get("fresh_maturation")
+        or attention.get("sustained_confirmation")
     )
     if not promoted:
         return 0, float("-inf")
@@ -170,7 +171,13 @@ def _effective_progression_priority(attention: dict) -> tuple[int, float]:
 
 
 def maturation_priority_sort_key(record: dict) -> tuple:
-    """Return GS457's major keys while preserving established ordinary tie-breaks."""
+    current = getattr(
+        _presentation_audio(),
+        "maturation_priority_sort_key",
+        None,
+    )
+    if callable(current):
+        return current(record)
     from . import ui
     from .gs363_operator_attention_hierarchy import operator_attention_score
 
@@ -190,13 +197,13 @@ def maturation_priority_sort_key(record: dict) -> tuple:
 
 
 def ordered_maturation_records(records: list[dict]) -> list[dict]:
-    """Order operator cards without changing candidate membership or state.
-
-    Reproduce GS369's stable sort contract for ordinary rows: symbol ascending is the
-    deterministic floor, then trader-priority and attention sort descending. GS457's
-    crossover freshness/rung keys are inserted above those legacy tie-breakers and
-    below the new presentation band. This changes only the intended maturation cases.
-    """
+    current = getattr(
+        _presentation_audio(),
+        "ordered_maturation_records",
+        None,
+    )
+    if callable(current):
+        return current(records)
     from . import ui
     from .gs363_operator_attention_hierarchy import operator_attention_score
 
@@ -218,21 +225,30 @@ def ordered_maturation_records(records: list[dict]) -> list[dict]:
 
 
 def install() -> None:
-    """Hard-bind GS457 at Walter's final late-runtime ordering boundary."""
+    current = getattr(
+        _presentation_audio(),
+        "install_maturation_leader_priority",
+        None,
+    )
+    if callable(current):
+        current()
+        return
+
+    # Retained-runtime fallback for an older Presentation + Audio generation.
     from . import gs369_escalation_priority_order as gs369
 
-    current = gs369.ordered_escalation_records
-    if getattr(current, _OWNER_ATTR, False):
+    baseline = gs369.ordered_escalation_records
+    if getattr(baseline, _OWNER_ATTR, False):
         return
 
     def ordered_escalation_records(records: list[dict]) -> list[dict]:
         return ordered_maturation_records(records)
 
-    for name, value in getattr(current, "__dict__", {}).items():
+    for name, value in getattr(baseline, "__dict__", {}).items():
         if name.startswith("_gs") and not hasattr(ordered_escalation_records, name):
             setattr(ordered_escalation_records, name, value)
 
     ordered_escalation_records._gs457_maturation_leader_priority = True
-    ordered_escalation_records._gs457_original = current
+    ordered_escalation_records._gs457_original = baseline
     setattr(ordered_escalation_records, _OWNER_ATTR, True)
     gs369.ordered_escalation_records = ordered_escalation_records
