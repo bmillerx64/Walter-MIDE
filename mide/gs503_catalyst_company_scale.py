@@ -1,64 +1,149 @@
-"""GS503: historical compatibility facade for catalyst/company scale context.
+"""Compatibility facade for catalyst/company-scale context.
 
-Phase 20 assigns GS503's validated responsibilities to Walter Next authorities:
+Market Evidence owns native Webull market-value carry-through, prefilter carry-through,
+factual catalyst/company relative-scale context and analyzed-record diagnostics.
+Presentation + Audio owns the Catalyst-section display of those scale facts.
 
-* Market Evidence owns native Webull market-value carry-through, prefilter carry-through,
-  factual catalyst/company relative-scale context, and analyzed-record diagnostics.
-* Presentation + Audio owns the Catalyst-section display of those scale facts.
+The two authorities are resolved lazily at call/install time for warm Streamlit safety.
+Historical private installer seams remain callable because GS503 regression coverage
+patches the live snapshot, prefilter, analyze and operator-presentation boundaries.
 
-GS503 remains at its historical startup/import point so existing tests, warm-runtime
-wrapper ownership markers, and downstream record contracts continue to behave exactly
-as before. No provider request, score, rank, qualification, readiness, alert,
-execution, or order authority is added here. Historical scope-lock vocabulary remains
-visible for compatibility: additional_provider_requests stays zero in Market Evidence,
-and valuation_impact_inferred remains false in the company-scale context contract.
+Historical scope-lock markers retained:
+additional_provider_requests
+valuation_impact_inferred
+
+No provider request, score, rank, qualification, readiness, alert, execution or order
+authority is added here.
 """
 from __future__ import annotations
 
-from mide.authorities import market_evidence as _market
-from mide.authorities import presentation_audio as _presentation
+
+def _market():
+    from mide.authorities import market_evidence
+
+    return market_evidence
 
 
-AUTHORITY = _market.CATALYST_SCALE_AUTHORITY
-_SNAPSHOT_OWNER = _market._CATALYST_SCALE_SNAPSHOT_OWNER
-_PREFILTER_OWNER = _market._CATALYST_SCALE_PREFILTER_OWNER
-_ANALYZE_OWNER = _market._CATALYST_SCALE_ANALYZE_OWNER
-_WHY_OWNER = "_walter_gs503_scale_why_owner"
+def _presentation():
+    from mide.authorities import presentation_audio
 
-_number = _market._scale_number
-_money = _market._scale_money
-_ratio_text = _market._scale_ratio_text
-_scale_band = _market._relative_scale_band
-_quantity_values = _market._scale_quantity_values
-_market_cap_reference = _market.market_cap_reference
-company_scale_context = _market.company_scale_context
+    return presentation_audio
 
-_install_snapshot_reference = _market.install_catalyst_scale_snapshot_reference
-_install_prefilter_reference = _market.install_catalyst_scale_prefilter_reference
-_install_analyzed_context = _market.install_catalyst_scale_analyzed_context
-_install_operator_presentation = (
-    _presentation.install_catalyst_company_scale_presentation
-)
+
+def _number(value):
+    current = getattr(_market(), "_scale_number", None)
+    return current(value) if callable(current) else None
+
+
+def _money(value) -> str:
+    current = getattr(_market(), "_scale_money", None)
+    return str(current(value)) if callable(current) else ""
+
+
+def _ratio_text(value) -> str:
+    current = getattr(_market(), "_scale_ratio_text", None)
+    return str(current(value)) if callable(current) else ""
+
+
+def _scale_band(*args, **kwargs):
+    current = getattr(_market(), "_relative_scale_band", None)
+    return (
+        current(*args, **kwargs)
+        if callable(current)
+        else "NOT_EVALUATED_NO_COMPARABLE_RATIO"
+    )
+
+
+def _quantity_values(*args, **kwargs):
+    current = getattr(_market(), "_scale_quantity_values", None)
+    return list(current(*args, **kwargs) or []) if callable(current) else []
+
+
+def _market_cap_reference(*args, **kwargs):
+    current = getattr(_market(), "market_cap_reference", None)
+    return current(*args, **kwargs) if callable(current) else (None, None)
+
+
+def company_scale_context(
+    record: dict,
+    candidate: dict | None = None,
+) -> dict:
+    current = getattr(_market(), "company_scale_context", None)
+    if callable(current):
+        return current(record, candidate)
+    return {
+        "authority": "CATALYST_COMPANY_SCALE_CONTEXT_ONLY",
+        "market_cap_available": False,
+        "relative_scale_band": "NOT_EVALUATED_NO_MARKET_CAP",
+        "summary": "",
+        "valuation_impact_inferred": False,
+        "trading_authority_changed": False,
+    }
+
+
+def _install_snapshot_reference() -> None:
+    current = getattr(
+        _market(),
+        "install_catalyst_scale_snapshot_reference",
+        None,
+    )
+    if callable(current):
+        current()
+
+
+def _install_prefilter_reference() -> None:
+    current = getattr(
+        _market(),
+        "install_catalyst_scale_prefilter_reference",
+        None,
+    )
+    if callable(current):
+        current()
+
+
+def _install_analyzed_context() -> None:
+    current = getattr(
+        _market(),
+        "install_catalyst_scale_analyzed_context",
+        None,
+    )
+    if callable(current):
+        current()
+
+
+def _install_operator_presentation() -> None:
+    current = getattr(
+        _presentation(),
+        "install_catalyst_company_scale_presentation",
+        None,
+    )
+    if callable(current):
+        current()
 
 
 def install() -> None:
-    """Install GS503 through Market Evidence and Presentation + Audio ownership."""
-    _market.install_catalyst_company_scale_evidence()
-    _presentation.install_catalyst_company_scale_presentation()
+    """Install GS503 through lazy Market Evidence and Presentation + Audio."""
+    current = getattr(
+        _market(),
+        "install_catalyst_company_scale_evidence",
+        None,
+    )
+    if callable(current):
+        current()
+    _install_operator_presentation()
 
 
 def __getattr__(name: str):
     try:
-        return getattr(_market, name)
+        return getattr(_market(), name)
     except AttributeError:
         try:
-            return getattr(_presentation, name)
+            return getattr(_presentation(), name)
         except AttributeError:
             raise AttributeError(name) from None
 
 
 __all__ = [
-    "AUTHORITY",
     "company_scale_context",
     "install",
 ]
