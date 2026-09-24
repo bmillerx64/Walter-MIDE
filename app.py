@@ -1415,6 +1415,25 @@ def _run_live_pipeline(
             client = LiveWebullProvider(
                 app_key, app_secret, universe_client=universe_client)
             context.provider_instance = client
+        # GS545: every Walter Next deployment uses one stable Webull MQTT
+        # session identity. Webull replaces the prior connection when the same
+        # session_id reconnects, preventing hot deployments from consuming another
+        # one of the App Key's five concurrent streaming slots.
+        try:
+            gs545 = importlib.import_module(
+                "mide.gs545_webull_stream_session_takeover"
+            )
+            gs545.install_for_provider(
+                client,
+                app_key,
+                app_secret,
+            )
+        except Exception as exc:
+            logging.getLogger(__name__).warning(
+                "GS545 Webull stream takeover bind unavailable error_type=%s",
+                type(exc).__name__,
+            )
+
         # GS489 uses a unique module boundary so a warm Streamlit session cannot
         # satisfy the graduated rc105 policy from a retained pre-GS489 module.
         try:
