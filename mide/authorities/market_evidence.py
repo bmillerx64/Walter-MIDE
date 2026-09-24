@@ -1676,6 +1676,225 @@ def install_price_trajectory_metrics() -> None:
 
 
 # ---------------------------------------------------------------------------
+# GS456 canonical 30s VWAP / SuperTrend alignment evidence
+# ---------------------------------------------------------------------------
+#
+# Market Evidence owns retention of the already-paid 30s VWAP/SuperTrend alignment
+# facts. The historical GS456 module remains the startup/compatibility seam. This
+# layer reuses GS378's installed primary-VWAP policy and SuperTrend pass; it adds no
+# provider request and no entry/qualification authority.
+
+
+def canonical_30s_empty_alignment() -> dict:
+    from mide import gs456_canonical_30s_vwap_cross as gs456
+
+    return {
+        "above_vwap": False,
+        "supertrend_bullish": False,
+        "above_ema65": False,
+        "higher_highs_higher_lows": None,
+        "aligned": False,
+        "vwap_value": None,
+        "vwap_anchor_mode": "UNAVAILABLE",
+        "vwap_anchor_time_et": None,
+        "supertrend_value": None,
+        "st_vwap_line_cross": {
+            "timeframe": "30s",
+            "crossed": False,
+            "recent": False,
+            "new": False,
+            "timestamp": None,
+            "age_seconds": None,
+            "current_confirmed": False,
+        },
+        "vwap_truth_authority": gs456.AUTHORITY,
+        "source": gs456.SOURCE,
+    }
+
+
+def canonical_30s_alignment_truth(frame_30s: pd.DataFrame | None) -> dict:
+    """Retain canonical 30s VWAP/ST truth from GS378's already-paid calculation."""
+    from mide import gs378_live_vwap_st_crossover as gs378
+    from mide import gs456_canonical_30s_vwap_cross as gs456
+
+    day = gs378._eastern_day(frame_30s)
+    if day.empty:
+        return canonical_30s_empty_alignment()
+
+    context = gs378.primary_vwap_context(day)
+    day = context.get("day")
+    primary = context.get("series")
+    if day is None or day.empty or primary is None or primary.empty:
+        return canonical_30s_empty_alignment()
+
+    vwap = primary.reindex(day.index)
+    close = day["close"].astype(float)
+    latest_close = (
+        maturation_finite(close.iloc[-1])
+        if len(close)
+        else None
+    )
+    latest_vwap = (
+        maturation_finite(vwap.iloc[-1])
+        if len(vwap)
+        else None
+    )
+
+    ema65 = (
+        gs378.ema(close, 65).iloc[-1]
+        if len(day) >= 65
+        else float("nan")
+    )
+    st_line, direction = gs378.supertrend(
+        day,
+        10,
+        3,
+    )
+    latest_st = (
+        maturation_finite(st_line.iloc[-1])
+        if len(st_line)
+        else None
+    )
+    hh = gs378._higher_highs(day)
+    hl = (
+        gs378.higher_lows(day)
+        if len(day) >= 4
+        else None
+    )
+    structure = (
+        None
+        if hh is None or hl is None
+        else bool(hh and hl)
+    )
+
+    above_vwap = bool(
+        latest_close is not None
+        and latest_vwap is not None
+        and latest_close >= latest_vwap
+    )
+    bullish = bool(
+        len(direction)
+        and direction.iloc[-1]
+    )
+    above_ema = bool(
+        pd.notna(ema65)
+        and latest_close is not None
+        and latest_close >= float(ema65)
+    )
+    aligned = bool(
+        above_vwap
+        and bullish
+        and above_ema
+        and structure is not False
+    )
+
+    cross = maturation_line_cross_event(
+        day,
+        vwap,
+        st_line,
+        direction,
+        "30s",
+        latest_source_time=day.index[-1],
+    )
+
+    anchor_time = context.get("anchor_time")
+    return {
+        "above_vwap": above_vwap,
+        "supertrend_bullish": bullish,
+        "above_ema65": above_ema,
+        "higher_highs_higher_lows": structure,
+        "aligned": aligned,
+        "vwap_value": (
+            round(latest_vwap, 6)
+            if latest_vwap is not None
+            else None
+        ),
+        "vwap_anchor_mode": context.get("anchor_mode"),
+        "vwap_anchor_time_et": (
+            anchor_time.isoformat()
+            if anchor_time is not None
+            else None
+        ),
+        "supertrend_value": (
+            round(latest_st, 6)
+            if latest_st is not None
+            else None
+        ),
+        "st_vwap_line_cross": cross,
+        "vwap_truth_authority": gs456.AUTHORITY,
+        "source": gs456.SOURCE,
+    }
+
+
+def canonical_alignment_summary_with_30s_truth(
+    day_1m: pd.DataFrame,
+    primary_1m: pd.Series,
+    frame_30s: pd.DataFrame | None = None,
+) -> dict:
+    """Preserve GS378's 1m/3m contract while retaining canonical 30s values."""
+    from mide import gs378_live_vwap_st_crossover as gs378
+
+    details: dict[str, dict] = {
+        "30s": canonical_30s_alignment_truth(
+            frame_30s
+        ),
+        "1m": gs378._alignment_evaluation(
+            day_1m,
+            primary_1m,
+            "1m",
+        ),
+    }
+    frame_3m = gs378._timeframe_frame(
+        day_1m,
+        "3m",
+    )
+    details["3m"] = (
+        gs378._alignment_evaluation(
+            frame_3m,
+            primary_1m,
+            "3m",
+        )
+    )
+    score = sum(
+        bool(
+            details[label].get("aligned")
+        )
+        for label in (
+            "30s",
+            "1m",
+            "3m",
+        )
+    )
+    return {
+        "timeframe_alignment": details,
+        "alignment_score": score,
+        "alignment_total": 3,
+        "alignment_label": (
+            gs378._ALIGNMENT_LABELS[score]
+        ),
+    }
+
+
+def install_canonical_30s_alignment_truth() -> None:
+    """Bind GS456 alignment evidence at the historical GS378 install point."""
+    from mide import gs378_live_vwap_st_crossover as gs378
+
+    current = gs378._alignment_summary
+    if getattr(
+        current,
+        "_gs456_canonical_30s_vwap",
+        False,
+    ):
+        return
+
+    canonical_alignment_summary_with_30s_truth._gs456_canonical_30s_vwap = True
+    canonical_alignment_summary_with_30s_truth._gs456_original = current
+    gs378._alignment_summary = (
+        canonical_alignment_summary_with_30s_truth
+    )
+
+
+# ---------------------------------------------------------------------------
 # GS455 ordered ST/VWAP maturation progression evidence
 # ---------------------------------------------------------------------------
 #
@@ -6248,6 +6467,10 @@ def install_partial_snapshot_recovery_for_provider(
 
 
 __all__ = [
+    "canonical_30s_empty_alignment",
+    "canonical_30s_alignment_truth",
+    "canonical_alignment_summary_with_30s_truth",
+    "install_canonical_30s_alignment_truth",
     "maturation_finite",
     "maturation_line_cross_event",
     "maturation_confirmation_details_with_line_cross",

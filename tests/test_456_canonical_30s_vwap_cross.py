@@ -198,9 +198,21 @@ def test_gs456_chains_after_gs455_on_cold_and_warm_runtime_paths():
 
 
 def test_gs456_scope_lock_adds_no_provider_or_entry_authority():
-    source = Path("mide/gs456_canonical_30s_vwap_cross.py").read_text(
+    legacy = Path("mide/gs456_canonical_30s_vwap_cross.py").read_text(
         encoding="utf-8"
     )
+    authority = Path("mide/authorities/market_evidence.py").read_text(
+        encoding="utf-8"
+    )
+    start = authority.index(
+        "# GS456 canonical 30s VWAP / SuperTrend alignment evidence"
+    )
+    end = authority.index(
+        "# GS455 ordered ST/VWAP maturation progression evidence",
+        start,
+    )
+    block = authority[start:end]
+
     forbidden = (
         "stream_30s_bars(",
         ".bars(",
@@ -211,7 +223,9 @@ def test_gs456_scope_lock_adds_no_provider_or_entry_authority():
         "request_scan(",
     )
     for token in forbidden:
-        assert token not in source
-    assert "primary_vwap_context" in source
-    assert "st_vwap_line_cross" in source
-    assert "gs378.supertrend(day, 10, 3)" in source
+        assert token not in legacy
+        assert token not in block
+
+    assert "primary_vwap_context" in block
+    assert "st_vwap_line_cross" in block
+    assert "gs378.supertrend(" in block
