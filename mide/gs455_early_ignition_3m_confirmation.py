@@ -89,49 +89,62 @@ def _finite(value: Any) -> float | None:
         return None
     return number if math.isfinite(number) else None
 
-def _market_now():
-    from .time_service import eastern_time
+def _discovery_news():
+    from mide.authorities import discovery_news
 
+    return discovery_news
+
+
+def _market_now():
+    current = getattr(
+        _discovery_news(),
+        "early_open_market_now",
+        None,
+    )
+    if callable(current):
+        return current()
+    from .time_service import eastern_time
     return eastern_time()
 
-
 def _inside_early_open_window() -> bool:
-    now = _market_now()
-    current = now.time().replace(tzinfo=None)
-    return EARLY_OPEN_START <= current < EARLY_OPEN_END
-
-
-def _early_open_prefilter_decision(original, symbol: str, snapshot: dict, settings) -> dict:
-    """Apply one bounded early-open discovery exception to the existing decision."""
-    base = original(symbol, snapshot, settings)
-    if base.get("passed") or not _inside_early_open_window():
-        return base
-    if base.get("failed_rule") != _PREFILTER_FAILURE:
-        return base
-
-    measured = dict(base.get("measured_values") or {})
-    pct_change = _number(measured, "pct_change", default=0.0) or 0.0
-    volume = _number(measured, "volume", default=0.0) or 0.0
-    if pct_change < EARLY_OPEN_MIN_PCT_CHANGE or volume < EARLY_OPEN_MIN_VOLUME:
-        return base
-
-    decision = deepcopy(base)
-    decision["passed"] = True
-    decision["failed_rule"] = None
-    decision["failed_metrics"] = []
-    decision["reason"] = (
-        "passed prefilter via early-open ignition "
-        f"(>={EARLY_OPEN_MIN_PCT_CHANGE:g}% and >={EARLY_OPEN_MIN_VOLUME:,.0f} shares)"
+    current = getattr(
+        _discovery_news(),
+        "early_open_inside_window",
+        None,
     )
-    thresholds = dict(decision.get("thresholds") or {})
-    thresholds["early_open_exception"] = {
-        "window_et": "09:30-09:45",
-        "min_pct_change": EARLY_OPEN_MIN_PCT_CHANGE,
-        "min_volume": EARLY_OPEN_MIN_VOLUME,
-    }
-    decision["thresholds"] = thresholds
-    return decision
+    if callable(current):
+        return bool(current())
+    now = _market_now()
+    current_time = now.time().replace(tzinfo=None)
+    return (
+        EARLY_OPEN_START
+        <= current_time
+        < EARLY_OPEN_END
+    )
 
+def _early_open_prefilter_decision(
+    original,
+    symbol: str,
+    snapshot: dict,
+    settings,
+) -> dict:
+    current = getattr(
+        _discovery_news(),
+        "early_open_prefilter_decision",
+        None,
+    )
+    if not callable(current):
+        return original(
+            symbol,
+            snapshot,
+            settings,
+        )
+    return current(
+        original,
+        symbol,
+        snapshot,
+        settings,
+    )
 
 def _line_cross_event(
     frame,
@@ -499,23 +512,13 @@ def _inherit(wrapper, wrapped) -> None:
 
 
 def _install_prefilter() -> None:
-    from . import discovery, flight_recorder
-
-    current = flight_recorder.prefilter_decision
-    if getattr(current, "_gs455_early_open_ignition", False):
-        discovery.prefilter_decision = current
-        return
-
-    @wraps(current)
-    def prefilter_decision(symbol: str, snapshot: dict, settings) -> dict:
-        return _early_open_prefilter_decision(current, symbol, snapshot, settings)
-
-    _inherit(prefilter_decision, current)
-    prefilter_decision._gs455_early_open_ignition = True
-    prefilter_decision._gs455_original = current
-    flight_recorder.prefilter_decision = prefilter_decision
-    discovery.prefilter_decision = prefilter_decision
-
+    current = getattr(
+        _discovery_news(),
+        "install_early_open_ignition_admission",
+        None,
+    )
+    if callable(current):
+        current()
 
 def _install_state() -> None:
     from . import gs310_unified_opportunity_state as unified
