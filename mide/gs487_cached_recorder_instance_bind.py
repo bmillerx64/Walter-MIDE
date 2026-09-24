@@ -26,7 +26,7 @@ BINDING = (
     "cached_recorder.record_scan.__func__.__globals__."
     "persist_replayable_scan"
 )
-REVISION = 1
+REVISION = 2
 _OWNER = "_walter_gs487_cached_recorder_instance_bind_revision"
 
 
@@ -66,6 +66,48 @@ def _news_transport(
             "trading_authority_changed": False,
         }
     return current(provider, provider_source)
+
+
+def _shadow_news_trace(
+    provider,
+    provider_source: str,
+) -> dict[str, Any]:
+    current = getattr(
+        _replay(),
+        "cached_recorder_shadow_news_trace",
+        None,
+    )
+    if callable(current):
+        return current(
+            provider,
+            provider_source,
+        )
+
+    diagnostics = getattr(
+        provider,
+        "diagnostics",
+        None,
+    )
+    trace = dict(
+        diagnostics.get(
+            "gs544_alpaca_news_shadow"
+        )
+        or {}
+    ) if isinstance(diagnostics, dict) else {}
+    trace.setdefault(
+        "authority",
+        "NEWS_COVERAGE_OBSERVATION_ONLY",
+    )
+    trace.setdefault(
+        "provider_role",
+        "shadow_context_only",
+    )
+    trace["available"] = bool(trace)
+    trace["provider_source"] = provider_source
+    trace["cached_recorder_instance_bind"] = True
+    trace["extra_provider_calls"] = 0
+    trace["trading_authority_changed"] = False
+    return trace
 
 
 def _stream_transport(
