@@ -2389,6 +2389,179 @@ def progression_timestamp(value: Any) -> datetime | None:
         return None
 
 
+GS548_MATURATION_FRESHNESS_AUTHORITY = "SOURCE_AGE_ADJUSTED_MATURATION_FRESHNESS"
+
+
+def maturation_source_bar_age(record: dict) -> float | None:
+    """Return the scan-time age of the newest source bar feeding maturation evidence."""
+    age = progression_number(
+        record,
+        "source_bar_age_seconds",
+        "source_bar_age",
+        "bar_age_seconds",
+    )
+    return max(0.0, age) if age is not None else None
+
+
+def operator_fresh_maturation_event(
+    record: dict,
+    label: str,
+    event: dict | None,
+) -> dict:
+    """Convert bar-relative event age into operator-effective scan-time freshness.
+
+    GS378/GS455 reconstruct an event against the newest bar available for a symbol.
+    For an illiquid/stale symbol, that newest bar may itself be many minutes old.
+    Preserve the deterministic source-relative age, but add the record's source-bar
+    age before deciding whether a 1m+ event is recent/new for operator attention.
+    """
+    from mide import gs455_early_ignition_3m_confirmation as gs455
+
+    result = deepcopy(dict(event or {}))
+    normalized_label = str(label or result.get("timeframe") or "").strip().lower()
+    if normalized_label == "30s":
+        return result
+    if result.get("freshness_authority") == GS548_MATURATION_FRESHNESS_AUTHORITY:
+        return result
+
+    source_age = maturation_source_bar_age(record)
+    raw_age = progression_number(result, "age_seconds")
+    if source_age is None or raw_age is None:
+        return result
+
+    effective_age = max(0.0, raw_age) + source_age
+    result["source_relative_age_seconds"] = round(max(0.0, raw_age), 1)
+    result["source_bar_age_seconds"] = round(source_age, 1)
+    result["operator_effective_age_seconds"] = round(effective_age, 1)
+    result["age_seconds"] = round(effective_age, 1)
+    result["freshness_authority"] = GS548_MATURATION_FRESHNESS_AUTHORITY
+
+    if normalized_label in gs455._RECENT_WINDOWS_SECONDS:
+        result["recent"] = bool(
+            result.get("crossed")
+            and effective_age <= gs455._RECENT_WINDOWS_SECONDS[normalized_label]
+        )
+        result["new"] = bool(
+            result.get("crossed")
+            and effective_age <= gs455._NEW_WINDOWS_SECONDS[normalized_label]
+        )
+
+    flip_age = progression_number(result, "bullish_flip_age_seconds")
+    if flip_age is not None:
+        result["source_relative_bullish_flip_age_seconds"] = round(
+            max(0.0, flip_age),
+            1,
+        )
+        result["bullish_flip_age_seconds"] = round(
+            max(0.0, flip_age) + source_age,
+            1,
+        )
+    return result
+
+
+def operator_fresh_maturation_detail(
+    record: dict,
+    label: str,
+    detail: dict | None,
+) -> dict:
+    """Return one detached timeframe detail with scan-time freshness corrected."""
+    result = deepcopy(dict(detail or {}))
+    normalized_label = str(label or result.get("timeframe") or "").strip().lower()
+    if normalized_label == "30s":
+        return result
+
+    source_age = maturation_source_bar_age(record)
+    cross = result.get("st_vwap_line_cross")
+    if isinstance(cross, dict):
+        result["st_vwap_line_cross"] = operator_fresh_maturation_event(
+            record,
+            normalized_label,
+            cross,
+        )
+
+    raw_flip_age = progression_number(result, "bullish_flip_age_seconds")
+    if (
+        source_age is not None
+        and raw_flip_age is not None
+        and result.get("freshness_authority") != GS548_MATURATION_FRESHNESS_AUTHORITY
+    ):
+        result["source_relative_bullish_flip_age_seconds"] = round(
+            max(0.0, raw_flip_age),
+            1,
+        )
+        result["bullish_flip_age_seconds"] = round(
+            max(0.0, raw_flip_age) + source_age,
+            1,
+        )
+        result["operator_source_bar_age_seconds"] = round(source_age, 1)
+        result["freshness_authority"] = GS548_MATURATION_FRESHNESS_AUTHORITY
+    return result
+
+
+def operator_fresh_timeframe_details(
+    record: dict,
+    details: dict | None,
+) -> dict:
+    """Apply GS548 freshness to detached 1m+ timeframe details."""
+    output: dict[str, dict] = {}
+    for label, detail in dict(details or {}).items():
+        output[str(label)] = operator_fresh_maturation_detail(
+            record,
+            str(label),
+            detail if isinstance(detail, dict) else {},
+        )
+    return output
+
+
+def operator_fresh_st_vwap_evidence(
+    record: dict,
+    evidence: dict | None,
+) -> dict:
+    """Rebuild top-level 1m/3m freshness from source-age-adjusted event copies."""
+    result = deepcopy(dict(evidence or {}))
+    raw_events = result.get("st_vwap_cross_events")
+    if not isinstance(raw_events, dict):
+        return result
+
+    events = {
+        str(label): operator_fresh_maturation_event(
+            record,
+            str(label),
+            event if isinstance(event, dict) else {},
+        )
+        for label, event in raw_events.items()
+    }
+    result["st_vwap_cross_events"] = events
+
+    recent = [
+        label for label, event in events.items()
+        if event.get("recent")
+    ]
+    new = [
+        label for label, event in events.items()
+        if event.get("new")
+    ]
+    ages = [
+        float(event["age_seconds"])
+        for event in events.values()
+        if event.get("recent") and event.get("age_seconds") is not None
+    ]
+    signatures = [
+        f"{label}@{event['timestamp']}"
+        for label, event in events.items()
+        if event.get("recent") and event.get("timestamp")
+    ]
+    result["st_vwap_cross_recent"] = bool(recent)
+    result["st_vwap_cross_new"] = bool(new)
+    result["st_vwap_cross_timeframes"] = recent
+    result["st_vwap_cross_new_timeframes"] = new
+    result["st_vwap_cross_multi_timeframe"] = len(recent) >= 2
+    result["st_vwap_cross_age_seconds"] = round(min(ages), 1) if ages else None
+    result["st_vwap_cross_signature"] = "|".join(signatures) if signatures else None
+    result["maturation_freshness_authority"] = GS548_MATURATION_FRESHNESS_AUTHORITY
+    return result
+
+
 def thirty_second_progression_rung(record: dict) -> dict:
     """Return the historical GS455 30s fallback rung from retained market evidence."""
     from mide import gs455_early_ignition_3m_confirmation as gs455
@@ -2475,16 +2648,24 @@ def progression_rung_event(
                     and detail.get("supertrend")
                 ),
             )
-        return event
+        return operator_fresh_maturation_event(
+            record,
+            label,
+            event,
+        )
 
     if label in {"5m", "10m"}:
         detail = dict(
             (record.get("timeframes") or {}).get(label)
             or {}
         )
-        return dict(
-            detail.get("st_vwap_line_cross")
-            or {}
+        return operator_fresh_maturation_event(
+            record,
+            label,
+            dict(
+                detail.get("st_vwap_line_cross")
+                or {}
+            ),
         )
 
     maturation = (
@@ -2495,9 +2676,13 @@ def progression_rung_event(
         (maturation.get("timeframes") or {}).get("15m")
         or {}
     )
-    return dict(
-        detail.get("st_vwap_line_cross")
-        or {}
+    return operator_fresh_maturation_event(
+        record,
+        label,
+        dict(
+            detail.get("st_vwap_line_cross")
+            or {}
+        ),
     )
 
 
@@ -7195,6 +7380,12 @@ def install_partial_snapshot_recovery_for_provider(
 
 
 __all__ = [
+    "GS548_MATURATION_FRESHNESS_AUTHORITY",
+    "maturation_source_bar_age",
+    "operator_fresh_maturation_event",
+    "operator_fresh_maturation_detail",
+    "operator_fresh_timeframe_details",
+    "operator_fresh_st_vwap_evidence",
     "WEBULL_STREAM_RETRY_OWNER_AUTHORITY",
     "WEBULL_STREAM_SESSION_ID_V2",
     "webull_stream_retry_owner_session_id",
