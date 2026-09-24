@@ -8,7 +8,8 @@ the already-active GS453 wrapper alone; a clean process/restart binds the consol
 authority normally.
 
 Behavior is unchanged: only CHASE / WAIT display semantics may soften to DEVELOPING
-for a bounded constructive extension. Trading qualification, readiness, anti-chase
+for a bounded constructive extension. The historical safety marker remains explicit:
+entry_chase_guard_still_authoritative. Trading qualification, readiness, anti-chase
 locks, alerts, execution, and orders remain authoritative elsewhere.
 """
 from __future__ import annotations
