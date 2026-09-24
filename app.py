@@ -1738,6 +1738,37 @@ def _run_live_pipeline(
         )
         client.diagnostics["news_evidence"] = symbol_news_evidence(news_items)
         indexed = index_news(news_items)
+
+        # GS544: observe only whether the already-authenticated Alpaca news
+        # endpoint would fill symbols the active FMP catalyst path missed. The
+        # returned shadow articles are deliberately not merged into news_items or
+        # indexed, so this cannot change Catalyst Assessment or trading behavior.
+        if isinstance(client, LiveWebullProvider):
+            try:
+                news_authority = importlib.import_module(
+                    "mide.authorities.discovery_news"
+                )
+                observe_shadow = getattr(
+                    news_authority,
+                    "observe_alpaca_news_shadow",
+                    None,
+                )
+                if callable(observe_shadow):
+                    observe_shadow(
+                        client,
+                        symbols,
+                        news_items,
+                    )
+            except Exception as exc:
+                client.diagnostics["gs544_alpaca_news_shadow"] = {
+                    "authority": "NEWS_COVERAGE_OBSERVATION_ONLY",
+                    "request_made": False,
+                    "reason": (
+                        f"shadow observer unavailable: {type(exc).__name__}: {exc}"
+                    )[:500],
+                    "trading_authority_changed": False,
+                }
+
         decisions = {}
         for item in records:
             symbol = item["symbol"]
