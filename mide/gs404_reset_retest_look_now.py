@@ -119,69 +119,69 @@ def reset_retest_attention_evidence(record: dict) -> dict:
         return current(record)
 
     # Retained-runtime fallback for an older Market Evidence generation.
-        previous = record.get("opportunity_pulse_previous") or {}
-        continuity = bool(previous)
+    previous = record.get("opportunity_pulse_previous") or {}
+    continuity = bool(previous)
 
-        previous_distance = _number(previous, "vwap_distance_pct")
-        current_distance = _number(record, "vwap_distance_pct")
-        previous_extended = bool(
-            previous_distance is not None and previous_distance > PREVIOUS_EXTENSION_MIN_PCT
-        )
-        near_vwap_now = bool(
-            current_distance is not None and abs(current_distance) <= NEAR_VWAP_WINDOW_PCT
-        )
+    previous_distance = _number(previous, "vwap_distance_pct")
+    current_distance = _number(record, "vwap_distance_pct")
+    previous_extended = bool(
+        previous_distance is not None and previous_distance > PREVIOUS_EXTENSION_MIN_PCT
+    )
+    near_vwap_now = bool(
+        current_distance is not None and abs(current_distance) <= NEAR_VWAP_WINDOW_PCT
+    )
 
-        one = _one_minute(record)
-        one_minute_bullish = bool(one.get("supertrend"))
+    one = _one_minute(record)
+    one_minute_bullish = bool(one.get("supertrend"))
 
-        participation = _number(
-            record, "participation_score", "participation_surge_score", default=0.0
-        ) or 0.0
-        volume_acceleration = _number(record, "volume_acceleration", default=0.0) or 0.0
-        dollar_flow = _number(
-            record,
-            "dollar_flow_acceleration_1m",
-            "dollar_flow_acceleration",
-            default=0.0,
-        ) or 0.0
+    participation = _number(
+        record, "participation_score", "participation_surge_score", default=0.0
+    ) or 0.0
+    volume_acceleration = _number(record, "volume_acceleration", default=0.0) or 0.0
+    dollar_flow = _number(
+        record,
+        "dollar_flow_acceleration_1m",
+        "dollar_flow_acceleration",
+        default=0.0,
+    ) or 0.0
 
-        participation_present = participation >= MIN_PARTICIPATION
-        flow_present = bool(
-            volume_acceleration >= MIN_VOLUME_ACCELERATION
-            or dollar_flow >= MIN_DOLLAR_FLOW_ACCELERATION
-        )
-        current_radar_attention = _current_webull_radar_attention(record)
-        fresh_source = _fresh_source(record)
+    participation_present = participation >= MIN_PARTICIPATION
+    flow_present = bool(
+        volume_acceleration >= MIN_VOLUME_ACCELERATION
+        or dollar_flow >= MIN_DOLLAR_FLOW_ACCELERATION
+    )
+    current_radar_attention = _current_webull_radar_attention(record)
+    fresh_source = _fresh_source(record)
 
-        recent = bool(
-            continuity
-            and previous_extended
-            and near_vwap_now
-            and one_minute_bullish
-            and participation_present
-            and flow_present
-            and current_radar_attention
-            and fresh_source
-        )
-        return {
-            "recent": recent,
-            "trigger": "RESET_RETEST_NEAR_VWAP" if recent else None,
-            "chart_review_only": True,
-            "entry_authority_unchanged": True,
-            "continuity": continuity,
-            "previous_vwap_distance_pct": previous_distance,
-            "previous_extended": previous_extended,
-            "current_vwap_distance_pct": current_distance,
-            "near_vwap_now": near_vwap_now,
-            "one_minute_supertrend_bullish": one_minute_bullish,
-            "participation_score": round(float(participation), 1),
-            "participation_present": participation_present,
-            "volume_acceleration": round(float(volume_acceleration), 2),
-            "dollar_flow_acceleration": round(float(dollar_flow), 2),
-            "flow_present": flow_present,
-            "current_webull_radar_attention": current_radar_attention,
-            "fresh_source": fresh_source,
-        }
+    recent = bool(
+        continuity
+        and previous_extended
+        and near_vwap_now
+        and one_minute_bullish
+        and participation_present
+        and flow_present
+        and current_radar_attention
+        and fresh_source
+    )
+    return {
+        "recent": recent,
+        "trigger": "RESET_RETEST_NEAR_VWAP" if recent else None,
+        "chart_review_only": True,
+        "entry_authority_unchanged": True,
+        "continuity": continuity,
+        "previous_vwap_distance_pct": previous_distance,
+        "previous_extended": previous_extended,
+        "current_vwap_distance_pct": current_distance,
+        "near_vwap_now": near_vwap_now,
+        "one_minute_supertrend_bullish": one_minute_bullish,
+        "participation_score": round(float(participation), 1),
+        "participation_present": participation_present,
+        "volume_acceleration": round(float(volume_acceleration), 2),
+        "dollar_flow_acceleration": round(float(dollar_flow), 2),
+        "flow_present": flow_present,
+        "current_webull_radar_attention": current_radar_attention,
+        "fresh_source": fresh_source,
+    }
 
 
 def reset_retest_eligible(record: dict) -> bool:
