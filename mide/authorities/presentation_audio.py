@@ -1533,6 +1533,280 @@ def install_extreme_awareness_continuity() -> None:
         freshness.operator_visible = operator_visible
 
 
+# ---------------------------------------------------------------------------
+# GS473 fresh operator-attention audio
+# ---------------------------------------------------------------------------
+
+_OPERATOR_ATTENTION_AUDIO_OWNER = (
+    "_walter_gs473_operator_attention_audio_owner"
+)
+
+
+def operator_attention_number(value: Any) -> float | None:
+    try:
+        return float(value) if value is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
+def operator_attention_decision(record: dict) -> dict:
+    value = record.get("decision_time_evidence") or {}
+    return value if isinstance(value, dict) else {}
+
+
+def operator_attention_field(
+    record: dict,
+    key: str,
+    default=None,
+):
+    if key in record and record.get(key) is not None:
+        return record.get(key)
+    return operator_attention_decision(record).get(
+        key,
+        default,
+    )
+
+
+def operator_attention_normalized(value: Any) -> str:
+    return " ".join(
+        str(value or "").strip().upper().split()
+    )
+
+
+def operator_attention_label(record: dict) -> bool:
+    from mide import gs473_operator_attention_audio as gs473
+
+    return bool(
+        operator_attention_normalized(
+            operator_attention_field(record, "status")
+        )
+        == gs473.ATTENTION_STATUS
+        or operator_attention_normalized(
+            operator_attention_field(
+                record,
+                "candidate_status",
+            )
+        )
+        == gs473.ATTENTION_CANDIDATE
+    )
+
+
+def legacy_operator_attention_gate_passed(
+    record: dict,
+    name: str,
+) -> bool:
+    value = record.get(name)
+    if not isinstance(value, dict):
+        value = operator_attention_decision(record).get(
+            name
+        ) or {}
+    return (
+        isinstance(value, dict)
+        and value.get("passed") is True
+    )
+
+
+def operator_attention_timeframes(record: dict) -> dict:
+    value = record.get("timeframes")
+    if not isinstance(value, dict):
+        value = operator_attention_decision(record).get(
+            "timeframes"
+        ) or {}
+    return value if isinstance(value, dict) else {}
+
+
+def operator_attention_supportive(
+    record: dict,
+    label: str,
+) -> bool:
+    detail = (
+        operator_attention_timeframes(record).get(label)
+        or {}
+    )
+    if (
+        not isinstance(detail, dict)
+        or detail.get("data_available") is False
+    ):
+        return False
+    bullish = bool(
+        detail.get("current_supertrend_bullish")
+        if "current_supertrend_bullish" in detail
+        else detail.get("supertrend")
+    )
+    above = bool(
+        detail.get("current_above_vwap")
+        if "current_above_vwap" in detail
+        else detail.get("above_vwap")
+    )
+    return bool(bullish and above)
+
+
+def operator_attention_cascade(
+    record: dict,
+) -> tuple[str, ...]:
+    if all(
+        operator_attention_supportive(record, label)
+        for label in ("30s", "1m", "3m")
+    ):
+        return ("30s", "1m", "3m")
+    if all(
+        operator_attention_supportive(record, label)
+        for label in ("1m", "3m", "5m")
+    ):
+        return ("1m", "3m", "5m")
+    return ()
+
+
+def previous_operator_attention(record: dict) -> bool:
+    previous = record.get(
+        "opportunity_pulse_previous"
+    ) or {}
+    if not isinstance(previous, dict) or not previous:
+        return False
+    return operator_attention_label(previous)
+
+
+def operator_attention_candidate(record: dict) -> dict:
+    """Return presentation-only LOOK NOW truth from existing evidence."""
+    from mide import gs473_operator_attention_audio as gs473
+
+    cascade = operator_attention_cascade(record)
+    active = bool(
+        operator_attention_label(record)
+        and gs473._gate_passed(
+            record,
+            "participation_gate",
+        )
+        and gs473._gate_passed(
+            record,
+            "structure_gate",
+        )
+        and cascade
+    )
+    fresh = bool(
+        active and not previous_operator_attention(record)
+    )
+    distance = operator_attention_number(
+        operator_attention_field(
+            record,
+            "vwap_distance_pct",
+        )
+    )
+    return {
+        "active": active,
+        "fresh": fresh,
+        "symbol": str(
+            record.get("symbol")
+            or operator_attention_decision(record).get(
+                "symbol"
+            )
+            or ""
+        ).upper(),
+        "cascade": list(cascade),
+        "vwap_distance_pct": distance,
+        "qualified_for_entry": bool(
+            record.get("qualified_for_entry") is True
+        ),
+        "qualified_for_alert": bool(
+            record.get("qualified_for_alert") is True
+        ),
+        "authority": "OPERATOR_ATTENTION_AUDIO_ONLY",
+        "entry_authority_changed": False,
+        "alert_authority_changed": False,
+    }
+
+
+def operator_attention_cascade_phrase(
+    labels: list[str],
+) -> str:
+    if not labels:
+        return (
+            "multi-timeframe structure is bullish above VWAP"
+        )
+    if len(labels) == 1:
+        joined = labels[0]
+    elif len(labels) == 2:
+        joined = f"{labels[0]} and {labels[1]}"
+    else:
+        joined = (
+            ", ".join(labels[:-1])
+            + f", and {labels[-1]}"
+        )
+    return f"{joined} are bullish above VWAP"
+
+
+def operator_attention_audio_phrase(
+    records: list[dict],
+) -> str:
+    """Speak one fresh attention cue without implying entry authority."""
+    candidates = []
+    for record in records or []:
+        detail = operator_attention_candidate(record)
+        if detail.get("fresh") and detail.get("symbol"):
+            candidates.append((record, detail))
+    if not candidates:
+        return ""
+
+    _record, detail = candidates[0]
+    symbol = detail["symbol"]
+    phrase = (
+        f"{symbol}. LOOK NOW. "
+        f"{operator_attention_cascade_phrase(detail['cascade'])}."
+    )
+    distance = detail.get("vwap_distance_pct")
+    if distance is not None and distance > 5.0:
+        phrase += (
+            f" Extended {distance:.1f} percent above VWAP. "
+            "Do not chase; watch for a reset."
+        )
+    elif not detail.get("qualified_for_alert"):
+        phrase += (
+            " Attention only; entry is not authorized yet."
+        )
+    return phrase
+
+
+def install_operator_attention_audio() -> None:
+    """Bind GS473 outside existing escalation audio at its historical point."""
+    from mide import escalation
+
+    current = escalation.escalation_alert_phrase
+    if getattr(
+        current,
+        _OPERATOR_ATTENTION_AUDIO_OWNER,
+        False,
+    ):
+        return
+
+    @wraps(current)
+    def escalation_alert_phrase(
+        records: list[dict],
+    ) -> str:
+        from mide import gs473_operator_attention_audio as gs473
+
+        established = current(records)
+        if established:
+            return established
+        return gs473.operator_attention_audio_phrase(
+            records
+        )
+
+    _inherit_audio_wrapper(
+        escalation_alert_phrase,
+        current,
+    )
+    escalation_alert_phrase._gs473_operator_attention_audio = True
+    escalation_alert_phrase._gs473_original = current
+    setattr(
+        escalation_alert_phrase,
+        _OPERATOR_ATTENTION_AUDIO_OWNER,
+        True,
+    )
+    escalation.escalation_alert_phrase = (
+        escalation_alert_phrase
+    )
+
+
 FRESH_3M_SECONDS = 180.0
 _MATURATION_AUDIO_OWNER = "_walter_gs492_maturation_transition_audio"
 _AUDIO_GATE_BRIDGE_OWNER = "_walter_gs512_audio_architecture_gate_bridge"
@@ -3362,6 +3636,10 @@ def bind_final_enriched_opportunity_order(
 
 
 __all__ = [
+    "install_operator_attention_audio",
+    "operator_attention_audio_phrase",
+    "operator_attention_candidate",
+    "legacy_operator_attention_gate_passed",
     "install_preflip_presentation",
     "install_preflip_order",
     "install_preflip_state",
