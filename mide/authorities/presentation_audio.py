@@ -2047,7 +2047,75 @@ def install_entry_window_vwap_truth() -> None:
     live_opportunity_feed.escalation_snapshot = escalation_snapshot
 
 
+# ---------------------------------------------------------------------------
+# GS414/GS436 final enriched Opportunity render boundary
+# ---------------------------------------------------------------------------
+
+FINAL_ORDER_OWNER_ATTR = "_walter_final_enriched_opportunity_order_owner"
+
+
+def final_enriched_opportunity_records(
+    records: list[dict],
+    *,
+    actionable_function=None,
+) -> list[dict]:
+    """Build the complete enriched presentation collection, then sort it once."""
+    from mide import ui
+    from mide.gs369_escalation_priority_order import ordered_escalation_records
+    from mide.gs477_leader_reset_reignition import enrich_visible_records
+
+    actionable = actionable_function or ui.actionable_candidate_records
+    enriched = enrich_visible_records(list(records or []), actionable)
+    return ordered_escalation_records(enriched)
+
+
+def bind_final_enriched_opportunity_order(
+    attr: str,
+    *,
+    show_legend: bool = False,
+) -> None:
+    """Freeze final enrichment/order across one public Opportunity renderer."""
+    from mide import ui
+
+    current = getattr(ui, attr)
+    if getattr(current, FINAL_ORDER_OWNER_ATTR, False):
+        return
+
+    def render_with_final_enriched_order(records: list[dict]) -> None:
+        public_actionable = ui.actionable_candidate_records
+        ordered = final_enriched_opportunity_records(
+            records,
+            actionable_function=public_actionable,
+        )
+
+        def frozen_actionable(_records: list[dict]) -> list[dict]:
+            return list(ordered)
+
+        _inherit_audio_wrapper(frozen_actionable, public_actionable)
+        ui.actionable_candidate_records = frozen_actionable
+        try:
+            if show_legend:
+                ui.st.caption(
+                    "Order: P/E Strength (Participation + Expansion) descending. "
+                    "Color = structural state, not score."
+                )
+            return current(list(ordered))
+        finally:
+            ui.actionable_candidate_records = public_actionable
+
+    _inherit_audio_wrapper(render_with_final_enriched_order, current)
+    render_with_final_enriched_order._gs414_final_enriched_opportunity_order = True
+    render_with_final_enriched_order._gs436_final_render_hard_bind = True
+    render_with_final_enriched_order._gs539_live_path_hard_bind = True
+    render_with_final_enriched_order._gs414_original = current
+    setattr(render_with_final_enriched_order, FINAL_ORDER_OWNER_ATTR, True)
+    setattr(ui, attr, render_with_final_enriched_order)
+
+
 __all__ = [
+    "bind_final_enriched_opportunity_order",
+    "final_enriched_opportunity_records",
+    "FINAL_ORDER_OWNER_ATTR",
     "install_entry_window_vwap_truth",
     "entry_window_near_vwap",
     "ENTRY_WINDOW_NEAR_VWAP_MAX_PCT",
