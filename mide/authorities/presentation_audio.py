@@ -4847,7 +4847,7 @@ def augment_reset_retest_visible_records(
         if not symbol or symbol in present:
             continue
         if gs404.reset_retest_eligible(record):
-            tagged = dict(record)
+            tagged = deepcopy(record)
             tagged[gs404.RESET_RETEST_KEY] = True
             output.append(tagged)
         else:
