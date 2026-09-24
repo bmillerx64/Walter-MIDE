@@ -3733,6 +3733,194 @@ def install_distinct_attention_audio() -> None:
 
 
 # ---------------------------------------------------------------------------
+# GS516 visible browser alert-audio health
+# ---------------------------------------------------------------------------
+
+def alert_audio_health_markup() -> str:
+    return r"""
+    <style>
+      .walter-audio-health {
+        display:flex; align-items:center; justify-content:space-between; gap:8px;
+        border:1px solid #475569; border-radius:8px; padding:7px 8px;
+        font:12px -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+        background:#111827; color:#f8fafc;
+      }
+      .walter-audio-health.ready { border-color:#22c55e; background:#052e16; }
+      .walter-audio-health.warn { border-color:#f59e0b; background:#451a03; }
+      .walter-audio-health.bad { border-color:#ef4444; background:#450a0a; }
+      .walter-audio-health button {
+        border:1px solid #64748b; border-radius:6px; padding:5px 8px;
+        background:#172033; color:#f8fafc; cursor:pointer; font-weight:800;
+        white-space:nowrap;
+      }
+      #walter-audio-health-status { font-weight:900; line-height:1.25; }
+    </style>
+    <div id="walter-audio-health" class="walter-audio-health warn">
+      <span id="walter-audio-health-status">AUDIO STATUS CHECKING…</span>
+      <button id="walter-audio-health-button" type="button">Re-arm / test</button>
+    </div>
+    <script>
+    (() => {
+      const box = document.getElementById('walter-audio-health');
+      const status = document.getElementById('walter-audio-health-status');
+      const button = document.getElementById('walter-audio-health-button');
+      let root = window;
+      try { if (window.parent) root = window.parent; } catch (_) { root = window; }
+
+      const brokerKey = '__walterGS367ChimeBroker';
+      const ensureBroker = () => {
+        let broker = root[brokerKey];
+        if (!broker || typeof broker !== 'object') {
+          broker = root[brokerKey] = {
+            token: null, tier: 0, timer: null, emittedToken: null,
+            audioContext: null, pendingToken: null, pendingTier: 0,
+            pendingEmit: null, unlockBound: false,
+          };
+        }
+        return broker;
+      };
+      const readArmed = () => {
+        try {
+          return Boolean(root.__walterVoiceArmed) ||
+            (root.sessionStorage &&
+             root.sessionStorage.getItem('walterVoiceArmed') === '1');
+        } catch (_) { return false; }
+      };
+      const markArmed = () => {
+        try { root.__walterVoiceArmed = true; } catch (_) {}
+        try {
+          if (root.sessionStorage) root.sessionStorage.setItem('walterVoiceArmed', '1');
+        } catch (_) {}
+      };
+      const audioReady = () => {
+        try {
+          const broker = ensureBroker();
+          return Boolean(broker.audioContext && broker.audioContext.state === 'running');
+        } catch (_) { return false; }
+      };
+      const paint = (kind, text) => {
+        if (!box || !status) return;
+        box.className = 'walter-audio-health ' + kind;
+        status.textContent = text;
+      };
+      const refresh = () => {
+        if (audioReady()) {
+          paint('ready', 'AUDIO READY');
+        } else if (readArmed()) {
+          paint('bad', 'AUDIO DISARMED AFTER RELOAD · RE-ARM');
+        } else {
+          paint('warn', 'AUDIO NOT ARMED · RE-ARM');
+        }
+      };
+
+      const testVoice = () => {
+        try {
+          const synth = root.speechSynthesis || window.speechSynthesis;
+          const Utterance =
+            root.SpeechSynthesisUtterance || window.SpeechSynthesisUtterance;
+          if (!synth || !Utterance) return;
+          const utterance = new Utterance('Walter alerts ready.');
+          utterance.rate = 0.95;
+          utterance.pitch = 0.9;
+          utterance.volume = 1.0;
+          synth.speak(utterance);
+        } catch (_) {}
+      };
+
+      const rearm = () => {
+        try {
+          const AudioContextCtor =
+            root.AudioContext || root.webkitAudioContext ||
+            window.AudioContext || window.webkitAudioContext;
+          if (!AudioContextCtor) {
+            paint('bad', 'WEB AUDIO UNAVAILABLE');
+            return;
+          }
+          const broker = ensureBroker();
+          let ctx = broker.audioContext;
+          if (!ctx || ctx.state === 'closed') {
+            ctx = new AudioContextCtor();
+            broker.audioContext = ctx;
+          }
+          const play = () => {
+            if (!ctx || ctx.state !== 'running') {
+              paint('bad', 'AUDIO BLOCKED · CLICK AGAIN');
+              return;
+            }
+            // GS524: the health control must prove an *audible* path, not merely
+            // a running AudioContext. Use a short two-strike bell at a practical
+            // level, in the same parent-window context used by GS367/GS504.
+            const strike = (start, frequency) => {
+              const osc = ctx.createOscillator();
+              const overtone = ctx.createOscillator();
+              const gain = ctx.createGain();
+              const overtoneGain = ctx.createGain();
+              osc.type = 'sine';
+              overtone.type = 'sine';
+              osc.frequency.setValueAtTime(frequency, start);
+              overtone.frequency.setValueAtTime(frequency * 1.5, start);
+              gain.gain.setValueAtTime(0.0001, start);
+              overtoneGain.gain.setValueAtTime(0.0001, start);
+              gain.gain.exponentialRampToValueAtTime(0.30, start + 0.015);
+              overtoneGain.gain.exponentialRampToValueAtTime(0.12, start + 0.015);
+              gain.gain.exponentialRampToValueAtTime(0.0001, start + 0.45);
+              overtoneGain.gain.exponentialRampToValueAtTime(0.0001, start + 0.45);
+              osc.connect(gain); gain.connect(ctx.destination);
+              overtone.connect(overtoneGain); overtoneGain.connect(ctx.destination);
+              osc.start(start); overtone.start(start);
+              osc.stop(start + 0.48); overtone.stop(start + 0.48);
+            };
+            const base = ctx.currentTime + 0.03;
+            strike(base, 523.25);
+            strike(base + 0.42, 783.99);
+            markArmed();
+            testVoice();
+            paint('ready', 'AUDIO READY · TEST PLAYING');
+            window.setTimeout(() => {
+              if (audioReady()) paint('ready', 'AUDIO READY');
+            }, 1800);
+          };
+          if (ctx.state === 'running') {
+            play();
+          } else if (ctx.resume) {
+            const resumed = ctx.resume();
+            if (resumed && resumed.then) {
+              resumed.then(play).catch(() =>
+                paint('bad', 'AUDIO BLOCKED · CLICK AGAIN'));
+            } else {
+              play();
+            }
+          } else {
+            paint('bad', 'AUDIO BLOCKED · CLICK AGAIN');
+          }
+        } catch (_) {
+          paint('bad', 'AUDIO TEST FAILED');
+        }
+      };
+
+      if (button) button.addEventListener('click', rearm);
+      refresh();
+      const timer = window.setInterval(refresh, 1000);
+      window.addEventListener('beforeunload', () => window.clearInterval(timer));
+    })();
+    </script>
+    """
+
+
+def render_sidebar_audio_health(st_module) -> None:
+    """Render transport health at the sidebar control boundary, never in mission slots."""
+    try:
+        st_module.components.v1.html(
+            alert_audio_health_markup(),
+            height=58,
+            scrolling=False,
+        )
+    except Exception:
+        # Browser transport controls must never interfere with the Radar itself.
+        pass
+
+
+# ---------------------------------------------------------------------------
 # GS414/GS436 final enriched Opportunity render boundary
 # ---------------------------------------------------------------------------
 
@@ -3798,6 +3986,8 @@ def bind_final_enriched_opportunity_order(
 
 
 __all__ = [
+    "alert_audio_health_markup",
+    "render_sidebar_audio_health",
     "install_distinct_attention_audio",
     "distinct_attention_markup",
     "DISTINCT_ATTENTION_OWNER",
