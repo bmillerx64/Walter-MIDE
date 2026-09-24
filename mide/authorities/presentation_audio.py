@@ -2451,6 +2451,451 @@ def install_cascade_runway_presentation() -> None:
 
 
 # ---------------------------------------------------------------------------
+# GS462 pre-flip ignition presentation / operator attention
+# ---------------------------------------------------------------------------
+
+_PREFLIP_PROVENANCE = "PRE_FLIP_ST_IGNITION_WATCH"
+_PREFLIP_ORDER_OWNER = "_walter_gs462_preflip_ignition_watch_owner"
+
+
+def preflip_number(value: Any) -> float | None:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def preflip_gap_pct(
+    close: float | None,
+    st_value: float | None,
+) -> float | None:
+    close = preflip_number(close)
+    st_value = preflip_number(st_value)
+    if close in (None, 0) or st_value is None:
+        return None
+    return abs(st_value - close) / close * 100.0
+
+
+def preflip_timeframe_detail(record: dict, label: str) -> dict:
+    """Describe already-computed timeframe support for GS462 attention."""
+    from mide import gs462_preflip_ignition_watch as gs462
+
+    timeframes = record.get("timeframes") or {}
+    detail = dict(timeframes.get(label) or {})
+    line_cross = dict(detail.get("st_vwap_line_cross") or {})
+
+    if label == "30s":
+        alignment = dict(
+            (record.get("timeframe_alignment") or {}).get("30s")
+            or {}
+        )
+        tripwire = dict(record.get("thirty_second_tripwire") or {})
+        close = (
+            preflip_number(tripwire.get("latest_close"))
+            or preflip_number(detail.get("current_close"))
+            or preflip_number(record.get("price"))
+        )
+        st_value = (
+            preflip_number(alignment.get("supertrend_value"))
+            or preflip_number(detail.get("supertrend_value"))
+            or preflip_number(
+                line_cross.get("latest_supertrend_value")
+            )
+        )
+        vwap = (
+            preflip_number(alignment.get("vwap_value"))
+            or preflip_number(detail.get("vwap_value"))
+            or preflip_number(record.get("vwap_30s_value"))
+        )
+        above_vwap = bool(
+            alignment.get("above_vwap")
+            if "above_vwap" in alignment
+            else (
+                close is not None
+                and vwap is not None
+                and close >= vwap
+            )
+        )
+        bullish = bool(
+            record.get("supertrend_30s_bullish")
+            or alignment.get("supertrend_bullish")
+            or detail.get("current_supertrend_bullish")
+            or detail.get("supertrend")
+        )
+        age = (
+            preflip_number(
+                record.get(
+                    "supertrend_30s_last_flip_age_seconds"
+                )
+            )
+            if record.get(
+                "supertrend_30s_last_flip_age_seconds"
+            )
+            is not None
+            else preflip_number(
+                tripwire.get("last_flip_age_seconds")
+            )
+        )
+        gap = preflip_gap_pct(close, st_value)
+        return {
+            "timeframe": label,
+            "available": bool(
+                close is not None
+                and (st_value is not None or bullish)
+            ),
+            "bullish": bullish,
+            "above_vwap": above_vwap,
+            "current_close": close,
+            "current_supertrend": st_value,
+            "current_vwap": vwap,
+            "st_gap_pct": (
+                round(gap, 3) if gap is not None else None
+            ),
+            "flip_age_seconds": age,
+            "recent_flip": bool(
+                bullish
+                and age is not None
+                and 0
+                <= age
+                <= float(gs462.RECENT_30S_FLIP_SECONDS)
+            ),
+        }
+
+    close = (
+        preflip_number(detail.get("current_close"))
+        or preflip_number(record.get("price"))
+    )
+    st_value = preflip_number(
+        line_cross.get("latest_supertrend_value")
+    )
+    vwap = (
+        preflip_number(detail.get("current_vwap"))
+        or preflip_number(
+            line_cross.get("latest_vwap_value")
+        )
+    )
+    bullish = bool(
+        detail.get("current_supertrend_bullish")
+        or detail.get("supertrend")
+    )
+    above_vwap = bool(
+        detail.get("current_above_vwap")
+        if "current_above_vwap" in detail
+        else detail.get("above_vwap")
+    )
+    gap = preflip_gap_pct(close, st_value)
+    near = bool(
+        not bullish
+        and gap is not None
+        and gap <= float(gs462.NEAR_ST_LINE_PCT)
+    )
+    return {
+        "timeframe": label,
+        "available": bool(
+            close is not None
+            and (st_value is not None or bullish)
+        ),
+        "bullish": bullish,
+        "above_vwap": above_vwap,
+        "current_close": close,
+        "current_supertrend": st_value,
+        "current_vwap": vwap,
+        "st_gap_pct": (
+            round(gap, 3) if gap is not None else None
+        ),
+        "near_supertrend": near,
+        "supportive": bool(
+            above_vwap and (bullish or near)
+        ),
+    }
+
+
+def preflip_ignition_watch(record: dict) -> dict:
+    """Return GS462 early-watch / jet-fuel operator attention truth."""
+    from mide import gs459_price_trajectory_attention as gs459
+    from mide import gs462_preflip_ignition_watch as gs462
+
+    thirty = gs462._timeframe_detail(record, "30s")
+    one = gs462._timeframe_detail(record, "1m")
+    three = gs462._timeframe_detail(record, "3m")
+    five = gs462._timeframe_detail(record, "5m")
+    ten = gs462._timeframe_detail(record, "10m")
+
+    seed = bool(
+        thirty.get("recent_flip")
+        and thirty.get("above_vwap")
+        and one.get("supportive")
+    )
+    flow = bool(gs459._supporting_flow(record))
+    jet_fuel = bool(
+        seed and three.get("supportive") and flow
+    )
+    bonus = [
+        label
+        for label, detail in (
+            ("5m", five),
+            ("10m", ten),
+        )
+        if detail.get("bullish")
+        and detail.get("above_vwap")
+    ]
+
+    return {
+        "active": seed,
+        "stage": (
+            "JET FUEL"
+            if jet_fuel
+            else "EARLY WATCH" if seed else "NONE"
+        ),
+        "thirty_second": thirty,
+        "one_minute": one,
+        "three_minute": three,
+        "five_minute": five,
+        "ten_minute": ten,
+        "supporting_flow": flow,
+        "jet_fuel": jet_fuel,
+        "bonus_continuation": bonus,
+        "near_st_line_limit_pct": float(
+            gs462.NEAR_ST_LINE_PCT
+        ),
+        "authority": "OPERATOR_ATTENTION_ONLY",
+        "entry_authority_changed": False,
+        "three_minute_required_for_watch": False,
+        "five_ten_required": False,
+        "new_audio_added": False,
+    }
+
+
+def preflip_tf_phrase(label: str, detail: dict) -> str:
+    if detail.get("bullish"):
+        return f"{label} bullish above VWAP"
+    gap = preflip_number(detail.get("st_gap_pct"))
+    if (
+        detail.get("near_supertrend")
+        and gap is not None
+    ):
+        return (
+            f"{label} ST line {gap:.1f}% away above VWAP"
+        )
+    return f"{label} not supportive"
+
+
+def state_with_preflip(original, record: dict) -> dict:
+    """Enrich explanation only; do not rewrite Opportunity State."""
+    from mide import gs310_unified_opportunity_state as unified
+    from mide import gs462_preflip_ignition_watch as gs462
+
+    base = original(record)
+    signal = gs462.preflip_ignition_watch(record)
+    if (
+        not signal.get("active")
+        or base.get("state") == unified.HALTED
+    ):
+        return base
+
+    view = deepcopy(base)
+    provenance = list(
+        view.get("attention_provenance") or []
+    )
+    if _PREFLIP_PROVENANCE not in provenance:
+        provenance.append(_PREFLIP_PROVENANCE)
+    view["attention_provenance"] = provenance
+    view["preflip_ignition_watch"] = signal
+
+    one_text = gs462._tf_phrase(
+        "1m",
+        signal["one_minute"],
+    )
+    reason_add = (
+        "EARLY ST WATCH: recent 30s bullish flip above VWAP; "
+        f"{one_text}."
+    )
+    if signal.get("jet_fuel"):
+        reason_add += (
+            " JET FUEL: "
+            f"{gs462._tf_phrase('3m', signal['three_minute'])} "
+            "with supportive participation/flow."
+        )
+    elif signal["three_minute"].get("supportive"):
+        reason_add += (
+            " 3m is supportive, but participation/flow is not "
+            "yet strong enough for the jet-fuel label."
+        )
+    bonus = list(
+        signal.get("bonus_continuation") or []
+    )
+    if bonus:
+        reason_add += (
+            " Bonus continuation: "
+            + "/".join(bonus)
+            + " bullish above VWAP."
+        )
+
+    reason = str(view.get("reason") or "").rstrip()
+    if "EARLY ST WATCH:" not in reason:
+        view["reason"] = (
+            f"{reason} {reason_add}"
+        ).strip()
+    next_step = str(
+        view.get("next_step") or ""
+    ).rstrip()
+    if "30s/1m watch" not in next_step:
+        view["next_step"] = (
+            f"{next_step} Treat this as a 30s/1m watch only. "
+            "3m adds jet fuel; 5m/10m are bonuses, not gates. "
+            "Existing readiness, VWAP anti-chase and execution "
+            "rules remain authoritative."
+        ).strip()
+    return view
+
+
+def effective_preflip_attention_band(record: dict) -> int:
+    """Lift GS462 attention below LOOK NOW without changing state."""
+    from mide import gs459_price_trajectory_attention as gs459
+    from mide import gs462_preflip_ignition_watch as gs462
+
+    base = int(gs459.effective_attention_band(record))
+    if gs462.preflip_ignition_watch(record).get("active"):
+        return max(
+            base,
+            int(gs462.PRE_FLIP_ATTENTION_BAND),
+        )
+    return base
+
+
+def ordered_preflip_records(
+    records: list[dict],
+    baseline_order=None,
+) -> list[dict]:
+    """Preserve base order except for the bounded GS462 lift."""
+    from mide import gs459_price_trajectory_attention as gs459
+    from mide import gs462_preflip_ignition_watch as gs462
+
+    baseline = (
+        list(baseline_order(records))
+        if baseline_order is not None
+        else gs459.ordered_trajectory_records(records)
+    )
+
+    def tie_key(record: dict) -> tuple:
+        detail = gs462.preflip_ignition_watch(record)
+        if not detail.get("active"):
+            return (
+                0,
+                float("-inf"),
+                float("-inf"),
+            )
+        one_gap = preflip_number(
+            (detail.get("one_minute") or {}).get(
+                "st_gap_pct"
+            )
+        )
+        three_gap = preflip_number(
+            (detail.get("three_minute") or {}).get(
+                "st_gap_pct"
+            )
+        )
+        return (
+            1 if detail.get("jet_fuel") else 0,
+            -(
+                one_gap
+                if one_gap is not None
+                else 999.0
+            ),
+            -(
+                three_gap
+                if three_gap is not None
+                else 999.0
+            ),
+        )
+
+    baseline.sort(key=tie_key, reverse=True)
+    baseline.sort(
+        key=gs462.effective_attention_band,
+        reverse=True,
+    )
+    return baseline
+
+
+def install_preflip_state() -> None:
+    """Install GS462 explanation enrichment at the historical seam."""
+    from mide import gs310_unified_opportunity_state as unified
+    from mide import gs311_unified_voice as voice
+    from mide import gs314_state_consistency as consistency
+    from mide import gs363_operator_attention_hierarchy as hierarchy
+
+    current = unified.opportunity_state
+    if getattr(
+        current,
+        "_gs462_preflip_ignition_watch",
+        False,
+    ):
+        calibrated = current
+    else:
+        @wraps(current)
+        def calibrated(record: dict) -> dict:
+            from mide import (
+                gs462_preflip_ignition_watch as gs462,
+            )
+
+            return gs462._state_with_preflip(
+                current,
+                record,
+            )
+
+        _inherit_audio_wrapper(calibrated, current)
+        calibrated._gs462_preflip_ignition_watch = True
+        calibrated._gs462_original = current
+        unified.opportunity_state = calibrated
+
+    voice.opportunity_state = calibrated
+    consistency.opportunity_state = calibrated
+    hierarchy.opportunity_state = calibrated
+
+
+def install_preflip_order() -> None:
+    """Install GS462's bounded operator-order lift."""
+    from mide import gs369_escalation_priority_order as gs369
+
+    current = gs369.ordered_escalation_records
+    if getattr(current, _PREFLIP_ORDER_OWNER, False):
+        return
+
+    def ordered_escalation_records(
+        records: list[dict],
+    ) -> list[dict]:
+        from mide import (
+            gs462_preflip_ignition_watch as gs462,
+        )
+
+        return gs462.ordered_preflip_records(
+            records,
+            baseline_order=current,
+        )
+
+    _inherit_audio_wrapper(
+        ordered_escalation_records,
+        current,
+    )
+    ordered_escalation_records._gs462_preflip_ignition_watch = True
+    ordered_escalation_records._gs462_original = current
+    setattr(
+        ordered_escalation_records,
+        _PREFLIP_ORDER_OWNER,
+        True,
+    )
+    gs369.ordered_escalation_records = (
+        ordered_escalation_records
+    )
+
+
+def install_preflip_presentation() -> None:
+    """Install all GS462 Presentation + Audio responsibilities."""
+    install_preflip_state()
+    install_preflip_order()
+
+
+# ---------------------------------------------------------------------------
 # GS453 bounded constructive-extension presentation semantics
 # ---------------------------------------------------------------------------
 
@@ -2917,6 +3362,17 @@ def bind_final_enriched_opportunity_order(
 
 
 __all__ = [
+    "install_preflip_presentation",
+    "install_preflip_order",
+    "install_preflip_state",
+    "ordered_preflip_records",
+    "effective_preflip_attention_band",
+    "state_with_preflip",
+    "preflip_tf_phrase",
+    "preflip_ignition_watch",
+    "preflip_timeframe_detail",
+    "preflip_gap_pct",
+    "preflip_number",
     "install_cascade_runway_presentation",
     "install_cascade_runway_alerts",
     "install_cascade_runway_state",
