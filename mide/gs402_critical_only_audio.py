@@ -18,8 +18,23 @@ from functools import wraps
 ROUTINE_TIER = 1
 
 
+def _presentation_audio():
+    from mide.authorities import presentation_audio
+
+    return presentation_audio
+
+
 def _critical_only_markup(markup: str) -> str:
-    """Consume routine broker events silently after final tier selection."""
+    """Warm-deploy-safe facade for authoritative critical-only browser markup."""
+    current = getattr(
+        _presentation_audio(),
+        "critical_only_audio_markup",
+        None,
+    )
+    if callable(current):
+        return current(markup)
+
+    # Retained-runtime fallback for an older Presentation + Audio generation.
     text = str(markup or "")
     needle = "    broker.tier = 0;\n\n    const AudioContextCtor ="
     replacement = (
@@ -30,12 +45,26 @@ def _critical_only_markup(markup: str) -> str:
         "    const AudioContextCtor ="
     )
     if needle in text:
-        return text.replace(needle, replacement, 1)
+        return text.replace(
+            needle,
+            replacement,
+            1,
+        )
     return text
 
 
 def install() -> None:
-    """Wrap the final browser markup once without changing alert classification."""
+    """Warm-deploy-safe facade for GS402's browser-audio binding."""
+    authority = getattr(
+        _presentation_audio(),
+        "install_critical_only_audio",
+        None,
+    )
+    if callable(authority):
+        authority()
+        return
+
+    # Retained-runtime fallback for an older Presentation + Audio generation.
     from . import gs367_browser_audio_broker as broker
 
     current = broker.browser_broker_markup
