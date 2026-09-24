@@ -650,6 +650,202 @@ def install_catalyst_story_news() -> None:
 
 
 # ---------------------------------------------------------------------------
+# GS544 Alpaca/Benzinga shadow news coverage
+# ---------------------------------------------------------------------------
+#
+# FMP remains Walter's active catalyst provider and GS502 remains the direct
+# breaking-news lane when a Benzinga credential is configured. GS544 is strictly
+# observational: it reuses the already-authenticated Alpaca client retained by Live
+# Webull and checks only symbols for which the active catalyst result has no article.
+# The shadow result is diagnostics/forensics only and cannot alter scan records.
+
+ALPACA_NEWS_SHADOW_AUTHORITY = "NEWS_COVERAGE_OBSERVATION_ONLY"
+ALPACA_NEWS_SHADOW_LOOKBACK = timedelta(hours=6)
+ALPACA_NEWS_SHADOW_REFRESH = timedelta(minutes=5)
+ALPACA_NEWS_SHADOW_MAX_SYMBOLS = 50
+ALPACA_NEWS_SHADOW_MAX_ARTICLES = 100
+ALPACA_NEWS_SHADOW_DIAGNOSTIC_KEY = "gs544_alpaca_news_shadow"
+
+
+def _shadow_primary_covered_symbols(news_items: Iterable[dict]) -> set[str]:
+    covered: set[str] = set()
+    for item in news_items or []:
+        for raw in item.get("symbols") or []:
+            symbol = str(raw or "").strip().upper()
+            if symbol:
+                covered.add(symbol)
+    return covered
+
+
+def observe_alpaca_news_shadow(
+    client,
+    requested_symbols: Iterable[str],
+    primary_news_items: Iterable[dict],
+    *,
+    now: datetime | None = None,
+) -> dict:
+    """Observe whether Alpaca News fills active-provider coverage gaps.
+
+    This helper never returns articles to Catalyst Assessment. It stores only a
+    bounded diagnostic trace on the retained live client so Replay / Validation can
+    compare provider coverage before Walter grants the fallback any semantic role.
+    """
+    current = (now or datetime.now(UTC)).astimezone(UTC)
+    requested = sorted({
+        str(symbol or "").strip().upper()
+        for symbol in requested_symbols or []
+        if str(symbol or "").strip()
+    })
+    primary_covered = _shadow_primary_covered_symbols(primary_news_items)
+    missing = [symbol for symbol in requested if symbol not in primary_covered]
+
+    diagnostics = getattr(client, "diagnostics", None)
+    prior = (
+        dict(diagnostics.get(ALPACA_NEWS_SHADOW_DIAGNOSTIC_KEY) or {})
+        if isinstance(diagnostics, dict)
+        else {}
+    )
+    cached_by_symbol = dict(prior.get("articles_by_symbol") or {})
+    previous_requested = {
+        str(symbol or "").strip().upper()
+        for symbol in prior.get("requested_missing_symbols") or []
+        if str(symbol or "").strip()
+    }
+    last_polled = _utc(prior.get("polled_at"))
+    refresh_due = bool(
+        last_polled is None
+        or current - last_polled >= ALPACA_NEWS_SHADOW_REFRESH
+    )
+    newly_missing = [
+        symbol for symbol in missing
+        if symbol not in previous_requested
+    ]
+    query_targets = (
+        list(missing)
+        if refresh_due
+        else list(newly_missing)
+    )[:ALPACA_NEWS_SHADOW_MAX_SYMBOLS]
+
+    trace = {
+        "authority": ALPACA_NEWS_SHADOW_AUTHORITY,
+        "provider_role": "shadow_context_only",
+        "requested_symbols": requested,
+        "primary_covered_symbols": sorted(primary_covered.intersection(requested)),
+        "requested_missing_symbols": missing,
+        "query_targets": query_targets,
+        "request_made": False,
+        "cache_reused": bool(not query_targets and prior),
+        "polled_at": prior.get("polled_at"),
+        "articles_received": 0,
+        "found_symbols": [],
+        "missing_after_shadow": list(missing),
+        "articles_by_symbol": cached_by_symbol,
+        "trading_authority_changed": False,
+        "headline_changed": False,
+        "catalyst_score_changed": False,
+        "discovery_changed": False,
+        "ranking_changed": False,
+        "readiness_changed": False,
+        "execution_changed": False,
+    }
+
+    if not missing:
+        trace["reason"] = "active news provider covered every requested symbol"
+    elif not query_targets:
+        trace["reason"] = "bounded shadow cache reused"
+    else:
+        alpaca = getattr(client, "_universe_client", None)
+        if not callable(getattr(alpaca, "news", None)):
+            trace["reason"] = "retained Alpaca news client unavailable"
+        else:
+            provider = MarketDataNewsProvider(alpaca, page_budget=2)
+            started = perf_counter()
+            trace["request_made"] = True
+            trace["polled_at"] = current.isoformat()
+            try:
+                raw_items = alpaca.news(
+                    current - ALPACA_NEWS_SHADOW_LOOKBACK,
+                    limit=ALPACA_NEWS_SHADOW_MAX_ARTICLES,
+                    symbols=query_targets,
+                    sort="desc",
+                )
+                articles = [
+                    article
+                    for item in raw_items or []
+                    if (article := provider._normalize(item)) is not None
+                ]
+            except Exception as exc:
+                trace["reason"] = (
+                    f"Alpaca shadow news unavailable: {type(exc).__name__}: {exc}"
+                )[:500]
+                trace["elapsed_ms"] = round(
+                    (perf_counter() - started) * 1000,
+                    1,
+                )
+            else:
+                from mide import news as news_module
+
+                rows = [
+                    article.as_dict()
+                    for article in articles
+                    if (
+                        article.created_at >= current - ALPACA_NEWS_SHADOW_LOOKBACK
+                        and set(article.symbols).intersection(query_targets)
+                    )
+                ]
+                indexed = news_module.index_news(rows)
+                for symbol in query_targets:
+                    selected = indexed.get(symbol)
+                    if not selected:
+                        cached_by_symbol.pop(symbol, None)
+                        continue
+                    created = _utc(selected.get("created_at"))
+                    cached_by_symbol[symbol] = {
+                        "symbol": symbol,
+                        "headline": str(selected.get("headline") or "")[:500],
+                        "created_at": created.isoformat() if created else None,
+                        "age_minutes_at_poll": (
+                            round(
+                                max(0.0, (current - created).total_seconds()) / 60,
+                                1,
+                            )
+                            if created
+                            else None
+                        ),
+                        "source": str(selected.get("source") or "")[:120],
+                        "provider": str(selected.get("provider") or "")[:120],
+                        "catalyst_score": selected.get("catalyst_score"),
+                        "flags": list(selected.get("flags") or []),
+                    }
+                trace.update(
+                    cache_reused=False,
+                    articles_received=len(rows),
+                    elapsed_ms=round(
+                        (perf_counter() - started) * 1000,
+                        1,
+                    ),
+                    reason="shadow coverage observed",
+                )
+
+    current_cache = {
+        symbol: value
+        for symbol, value in cached_by_symbol.items()
+        if symbol in missing and isinstance(value, dict)
+    }
+    trace["articles_by_symbol"] = current_cache
+    trace["found_symbols"] = sorted(current_cache)
+    trace["missing_after_shadow"] = [
+        symbol for symbol in missing
+        if symbol not in current_cache
+    ]
+    trace["coverage_gain_count"] = len(trace["found_symbols"])
+
+    if isinstance(diagnostics, dict):
+        diagnostics[ALPACA_NEWS_SHADOW_DIAGNOSTIC_KEY] = deepcopy(trace)
+    return trace
+
+
+# ---------------------------------------------------------------------------
 # GS502 direct Benzinga breaking-news discovery
 # ---------------------------------------------------------------------------
 
@@ -1565,6 +1761,9 @@ def ticker_inspection(*args, **kwargs):
 
 
 __all__ = [
+    "observe_alpaca_news_shadow",
+    "ALPACA_NEWS_SHADOW_AUTHORITY",
+    "ALPACA_NEWS_SHADOW_DIAGNOSTIC_KEY",
     "early_open_market_now",
     "early_open_inside_window",
     "early_open_prefilter_decision",
