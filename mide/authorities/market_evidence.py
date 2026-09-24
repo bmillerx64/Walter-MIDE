@@ -5297,6 +5297,24 @@ def production_30s_health(provider) -> dict:
                 or {}
             ).get("stable_session_identity")
         ),
+        "gs546_stable_session_identity_v2": bool(
+            (
+                stream.get("gs546_stream_retry_owner")
+                or {}
+            ).get("stable_session_identity_v2")
+        ),
+        "gs546_sdk_internal_retry_disabled": bool(
+            (
+                stream.get("gs546_stream_retry_owner")
+                or {}
+            ).get("sdk_internal_retry_disabled")
+        ),
+        "gs546_walter_gs469_is_sole_retry_owner": bool(
+            (
+                stream.get("gs546_stream_retry_owner")
+                or {}
+            ).get("walter_gs469_is_sole_retry_owner")
+        ),
         "runtime_hard_bind": True,
         "genuine_webull_tick_only": True,
         "synthetic_30s_bars": False,
@@ -5726,6 +5744,139 @@ def install_webull_stream_session_takeover(
         "stable_session_identity": True,
         "session_id_logged": False,
         "cross_deployment_takeover": True,
+        "network_connection_opened_here": False,
+        "rest_snapshot_history_unchanged": True,
+        "genuine_webull_tick_only": True,
+        "trading_authority_changed": False,
+    }
+    return True
+
+
+# ---------------------------------------------------------------------------
+# GS546 single owner for Webull stream reconnect lifecycle
+# ---------------------------------------------------------------------------
+
+WEBULL_STREAM_RETRY_OWNER_AUTHORITY = (
+    "WALTER_WEBULL_STREAM_CONTINUITY_SOLE_RETRY_OWNER"
+)
+WEBULL_STREAM_SESSION_ID_V2 = hashlib.sha256(
+    b"Walter-MIDE primary Webull TICK stream v2 single-retry-owner"
+).hexdigest()[:32]
+
+
+def webull_stream_retry_owner_session_id() -> str:
+    """Return the v2 stable MQTT identity used by Walter's sole retry owner."""
+    return WEBULL_STREAM_SESSION_ID_V2
+
+
+def single_retry_owner_webull_stream_factory(
+    data_client,
+    app_key: str,
+    app_secret: str,
+    streaming_module,
+    retry_policy,
+):
+    """Build the official SDK client without its independent reconnect loop.
+
+    Webull's SDK retries generic stream failures indefinitely by default. That is
+    incompatible with a stable cross-deployment session_id because an obsolete
+    Streamlit process can reconnect after being replaced and steal the session back.
+    Walter already owns stale-stream detection/reconnect through GS469, so the SDK
+    transport must make one connection attempt and then yield lifecycle authority.
+    """
+    legacy_factory = getattr(
+        data_client,
+        "_walter_streaming_client_factory",
+        None,
+    )
+    api_client = None
+    closure = getattr(
+        legacy_factory,
+        "__closure__",
+        None,
+    )
+    if closure:
+        try:
+            api_client = closure[0].cell_contents
+        except (IndexError, ValueError):
+            api_client = None
+
+    session_id = webull_stream_retry_owner_session_id()
+
+    def factory():
+        _ = api_client
+        return streaming_module.DataStreamingClient(
+            app_key,
+            app_secret,
+            "us",
+            session_id,
+            retry_policy=retry_policy,
+        )
+
+    return factory
+
+
+def install_webull_stream_retry_owner(
+    provider,
+    app_key: str,
+    app_secret: str,
+) -> bool:
+    """Bind the retained provider to v2 stable-id + SDK no-retry semantics.
+
+    No connection is opened here. If the active stream later fails, the SDK worker
+    exits instead of self-reconnecting. GS469 remains Walter's single reconnect
+    authority and can create a fresh subscription on its established stale boundary.
+    """
+    if provider is None:
+        return False
+    snapshot_client = getattr(
+        provider,
+        "_snapshot_client",
+        None,
+    )
+    sdk = getattr(
+        snapshot_client,
+        "sdk",
+        None,
+    )
+    data_client = getattr(
+        sdk,
+        "sdk_client",
+        None,
+    )
+    if data_client is None:
+        return False
+
+    streaming_module = importlib.import_module(
+        "webull.data.data_streaming_client"
+    )
+    retry_module = importlib.import_module(
+        "webull.core.retry.retry_policy"
+    )
+    no_retry_policy = getattr(
+        retry_module,
+        "NO_RETRY_POLICY",
+        None,
+    )
+    if no_retry_policy is None:
+        return False
+
+    data_client._walter_streaming_client_factory = (
+        single_retry_owner_webull_stream_factory(
+            data_client,
+            app_key,
+            app_secret,
+            streaming_module,
+            no_retry_policy,
+        )
+    )
+
+    stream = connection_limit_stream(provider)
+    stream["gs546_stream_retry_owner"] = {
+        "authority": WEBULL_STREAM_RETRY_OWNER_AUTHORITY,
+        "stable_session_identity_v2": True,
+        "sdk_internal_retry_disabled": True,
+        "walter_gs469_is_sole_retry_owner": True,
         "network_connection_opened_here": False,
         "rest_snapshot_history_unchanged": True,
         "genuine_webull_tick_only": True,
@@ -7044,6 +7195,11 @@ def install_partial_snapshot_recovery_for_provider(
 
 
 __all__ = [
+    "WEBULL_STREAM_RETRY_OWNER_AUTHORITY",
+    "WEBULL_STREAM_SESSION_ID_V2",
+    "webull_stream_retry_owner_session_id",
+    "single_retry_owner_webull_stream_factory",
+    "install_webull_stream_retry_owner",
     "WEBULL_STREAM_SESSION_TAKEOVER_AUTHORITY",
     "WEBULL_STREAM_SESSION_ID",
     "webull_stream_takeover_session_id",
