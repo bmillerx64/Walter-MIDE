@@ -1865,6 +1865,184 @@ def install_leader_reset_audio() -> None:
 
 
 # ---------------------------------------------------------------------------
+# GS459 price-trajectory operator attention
+# ---------------------------------------------------------------------------
+
+PRICE_TRAJECTORY_BAND = 38
+PRICE_TRAJECTORY_MIN_3M_CHANGE_PCT = 1.0
+PRICE_TRAJECTORY_MIN_ACCELERATION_PCT_PER_MIN = 0.20
+PRICE_TRAJECTORY_MIN_POSITIVE_CLOSE_RATIO = 0.60
+PRICE_TRAJECTORY_MAX_GIVEBACK_FROM_5M_HIGH_PCT = 1.50
+PRICE_TRAJECTORY_MIN_FLOW_ACCELERATION = 1.20
+PRICE_TRAJECTORY_MIN_PARTICIPATION_SCORE = 40.0
+_PRICE_TRAJECTORY_ORDER_OWNER = "_walter_gs459_price_trajectory_attention_owner"
+
+
+def _trajectory_number(value: Any, default: float = 0.0) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return float(default)
+
+
+def _trajectory_supporting_flow(record: dict) -> bool:
+    participation = _trajectory_number(
+        record.get(
+            "participation_surge_score",
+            record.get("participation_score", 0.0),
+        )
+    )
+    accelerations = (
+        _trajectory_number(
+            record.get(
+                "volume_acceleration_3m",
+                record.get("volume_acceleration", 0.0),
+            )
+        ),
+        _trajectory_number(
+            record.get(
+                "volume_acceleration_5m",
+                record.get("acceleration_ratio", 0.0),
+            )
+        ),
+        _trajectory_number(record.get("dollar_flow_acceleration_3m", 0.0)),
+        _trajectory_number(
+            record.get(
+                "dollar_flow_acceleration_5m",
+                record.get("dollar_flow_acceleration", 0.0),
+            )
+        ),
+    )
+    return bool(
+        max(accelerations) >= PRICE_TRAJECTORY_MIN_FLOW_ACCELERATION
+        or participation >= PRICE_TRAJECTORY_MIN_PARTICIPATION_SCORE
+        or record.get("volume_above_preceding_15m_pace")
+        or record.get("broke_previous_15m_high_with_volume")
+    )
+
+
+def trajectory_attention(record: dict) -> dict:
+    """Return operator-only price-path ignition evidence."""
+    from mide import gs310_unified_opportunity_state as unified
+
+    state = str(unified.opportunity_state(record).get("state") or "")
+    available = bool(record.get("price_trajectory_available"))
+    change_3m = _trajectory_number(record.get("price_change_3m_pct"))
+    change_5m = _trajectory_number(record.get("price_change_5m_path_pct"))
+    acceleration = _trajectory_number(
+        record.get("price_path_acceleration_pct_per_min")
+    )
+    persistence = _trajectory_number(
+        record.get("positive_close_ratio_5m")
+    )
+    giveback = _trajectory_number(
+        record.get("giveback_from_5m_high_pct"),
+        default=999.0,
+    )
+    flow = _trajectory_supporting_flow(record)
+    structure = bool(record.get("higher_lows") or record.get("near_hod"))
+
+    signal = bool(
+        available
+        and state != unified.HALTED
+        and change_3m >= PRICE_TRAJECTORY_MIN_3M_CHANGE_PCT
+        and acceleration
+        >= PRICE_TRAJECTORY_MIN_ACCELERATION_PCT_PER_MIN
+        and persistence >= PRICE_TRAJECTORY_MIN_POSITIVE_CLOSE_RATIO
+        and giveback
+        <= PRICE_TRAJECTORY_MAX_GIVEBACK_FROM_5M_HIGH_PCT
+        and flow
+        and structure
+    )
+    return {
+        "active": signal,
+        "state": state,
+        "reason": (
+            "accelerating_price_path"
+            if signal
+            else "no_trajectory_ignition"
+        ),
+        "change_3m_pct": change_3m,
+        "change_5m_pct": change_5m,
+        "acceleration_pct_per_min": acceleration,
+        "positive_close_ratio_5m": persistence,
+        "giveback_from_5m_high_pct": giveback,
+        "supporting_flow": flow,
+        "structure_support": structure,
+    }
+
+
+def effective_trajectory_attention_band(record: dict) -> int:
+    """Insert trajectory ignition below LOOK NOW and above older/developing bands."""
+    from mide import gs457_maturation_leader_priority as gs457
+    from mide import gs459_price_trajectory_attention as gs459
+
+    base = int(gs457.maturation_attention(record).get("band") or 0)
+    if gs459.trajectory_attention(record).get("active"):
+        return max(base, PRICE_TRAJECTORY_BAND)
+    return base
+
+
+def ordered_trajectory_records(
+    records: list[dict],
+    baseline_order=None,
+) -> list[dict]:
+    """Preserve GS457 ordering except for the narrow trajectory priority lift."""
+    from mide import gs457_maturation_leader_priority as gs457
+    from mide import gs459_price_trajectory_attention as gs459
+
+    baseline = (
+        list(baseline_order(records))
+        if baseline_order is not None
+        else gs457.ordered_maturation_records(records)
+    )
+
+    def trajectory_tie(record: dict) -> tuple:
+        detail = gs459.trajectory_attention(record)
+        if not detail.get("active"):
+            return (float("-inf"), float("-inf"), float("-inf"))
+        return (
+            float(detail.get("acceleration_pct_per_min") or 0.0),
+            float(detail.get("change_3m_pct") or 0.0),
+            float(detail.get("positive_close_ratio_5m") or 0.0),
+        )
+
+    baseline.sort(key=trajectory_tie, reverse=True)
+    baseline.sort(
+        key=gs459.effective_attention_band,
+        reverse=True,
+    )
+    return baseline
+
+
+def install_price_trajectory_presentation() -> None:
+    """Install GS459's presentation-only operator-order lift."""
+    from mide import gs369_escalation_priority_order as gs369
+
+    current = gs369.ordered_escalation_records
+    if getattr(current, _PRICE_TRAJECTORY_ORDER_OWNER, False):
+        return
+
+    def ordered_escalation_records(records: list[dict]) -> list[dict]:
+        from mide import gs459_price_trajectory_attention as gs459
+
+        return gs459.ordered_trajectory_records(
+            records,
+            baseline_order=current,
+        )
+
+    _inherit_audio_wrapper(ordered_escalation_records, current)
+    ordered_escalation_records._gs459_price_trajectory_attention = True
+    ordered_escalation_records._gs459_original = current
+    setattr(
+        ordered_escalation_records,
+        _PRICE_TRAJECTORY_ORDER_OWNER,
+        True,
+    )
+    gs369.ordered_escalation_records = ordered_escalation_records
+
+
+# ---------------------------------------------------------------------------
 # GS453 bounded constructive-extension presentation semantics
 # ---------------------------------------------------------------------------
 
@@ -2331,6 +2509,11 @@ def bind_final_enriched_opportunity_order(
 
 
 __all__ = [
+    "install_price_trajectory_presentation",
+    "ordered_trajectory_records",
+    "effective_trajectory_attention_band",
+    "trajectory_attention",
+    "PRICE_TRAJECTORY_BAND",
     "install_constructive_extension_presentation",
     "state_with_constructive_extension",
     "constructive_extension_evidence",
