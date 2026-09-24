@@ -8,7 +8,7 @@ thresholds, formulas, ordering, or evidence semantics.
 from collections.abc import Iterable, Mapping
 from copy import deepcopy
 from dataclasses import dataclass
-from datetime import timedelta
+from datetime import datetime, time, timedelta, timezone
 from functools import wraps
 from statistics import median
 from time import monotonic
@@ -2964,7 +2964,891 @@ def install_session_aware_vwap_evidence() -> None:
     install_session_aware_vwap_record_diagnostics()
 
 
+
+# ---------------------------------------------------------------------------
+# GS469/GS470/GS471 genuine Webull 30-second market-data lifecycle
+# ---------------------------------------------------------------------------
+
+def live_30s_utc(value: datetime | None = None) -> datetime:
+    if value is None:
+        return datetime.now(timezone.utc)
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
+
+
+def live_30s_now_ms(value: datetime | None = None) -> int:
+    return int(live_30s_utc(value).timestamp() * 1000)
+
+
+def live_30s_market_expected(value: datetime | None = None) -> bool:
+    from mide import gs469_30s_stream_continuity as gs469
+    from mide.time_service import eastern_time
+
+    current = eastern_time(live_30s_utc(value))
+    clock = current.time().replace(tzinfo=None)
+    return (
+        current.weekday() < 5
+        and gs469.STREAM_START_ET <= clock < gs469.STREAM_END_ET
+    )
+
+
+def live_30s_stream_diagnostics(provider) -> dict:
+    diagnostics = getattr(provider, "diagnostics", None)
+    if not isinstance(diagnostics, dict):
+        diagnostics = {}
+        try:
+            provider.diagnostics = diagnostics
+        except Exception:
+            return {}
+    stream = diagnostics.get("webull_stream")
+    if not isinstance(stream, dict):
+        stream = {}
+        diagnostics["webull_stream"] = stream
+    return stream
+
+
+def live_30s_last_tick_ms(provider) -> int | None:
+    raw = live_30s_stream_diagnostics(provider).get(
+        "last_tick_timestamp_ms"
+    )
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        return None
+    return value if value > 0 else None
+
+
+def live_30s_tick_age_seconds(
+    provider,
+    value: datetime | None = None,
+) -> float | None:
+    last = live_30s_last_tick_ms(provider)
+    if last is None:
+        return None
+    return max(
+        0.0,
+        (live_30s_now_ms(value) - last) / 1000.0,
+    )
+
+
+def active_30s_registry_provider():
+    from mide import gs379_webull_stream_data_truth as gs379
+
+    reference = getattr(gs379, "_ACTIVE_PROVIDER_REF", None)
+    if reference is None:
+        return None
+    try:
+        return reference()
+    except TypeError:
+        return None
+
+
+def reassert_active_30s_provider(provider) -> bool:
+    if provider is None or not getattr(
+        provider,
+        "_enable_streaming",
+        False,
+    ):
+        return False
+    if active_30s_registry_provider() is provider:
+        return False
+
+    from mide import gs379_webull_stream_data_truth as gs379
+
+    gs379._register_active_provider(provider)
+    stream = live_30s_stream_diagnostics(provider)
+    stream["gs469_active_provider_rebinds"] = int(
+        stream.get("gs469_active_provider_rebinds", 0) or 0
+    ) + 1
+    return True
+
+
+def live_30s_subscription_started_ms(provider) -> int | None:
+    raw = getattr(provider, "_gs469_subscription_started_ms", None)
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        return None
+    return value if value > 0 else None
+
+
+def live_30s_restart_cooldown_active(
+    provider,
+    value: datetime | None = None,
+) -> bool:
+    from mide import gs469_30s_stream_continuity as gs469
+
+    raw = getattr(provider, "_gs469_last_restart_attempt_ms", None)
+    try:
+        last = int(raw)
+    except (TypeError, ValueError):
+        return False
+    return (
+        live_30s_now_ms(value) - last
+    ) / 1000.0 < gs469.RESTART_COOLDOWN_SECONDS
+
+
+def live_30s_restart_reason(
+    provider,
+    value: datetime | None = None,
+) -> str | None:
+    from mide import gs469_30s_stream_continuity as gs469
+
+    if not getattr(provider, "_enable_streaming", False):
+        return None
+    if not live_30s_market_expected(value):
+        return None
+    if getattr(provider, "_subscription", None) is None:
+        return None
+    if not set(getattr(provider, "_subscribed", set()) or set()):
+        return None
+    if live_30s_restart_cooldown_active(provider, value):
+        return None
+
+    age = live_30s_tick_age_seconds(provider, value)
+    if age is not None:
+        if age > gs469.STALE_TICK_SECONDS:
+            return f"last Webull TICK heartbeat is {age:.1f}s old"
+        return None
+
+    started = live_30s_subscription_started_ms(provider)
+    if started is not None:
+        elapsed = max(
+            0.0,
+            (live_30s_now_ms(value) - started) / 1000.0,
+        )
+        if elapsed <= gs469.STALE_TICK_SECONDS:
+            return None
+    return "subscribed Webull transport has no observed TICK heartbeat"
+
+
+def live_30s_latest_bar_ms(provider) -> int | None:
+    latest = None
+    current = getattr(provider, "_gs379_30s_current", None)
+    if isinstance(current, dict):
+        for row in current.values():
+            try:
+                stamp = int((row or {}).get("t"))
+            except (TypeError, ValueError):
+                continue
+            latest = stamp if latest is None else max(latest, stamp)
+    closed = getattr(provider, "_gs379_30s_closed", None)
+    if isinstance(closed, dict):
+        for rows in closed.values():
+            if not rows:
+                continue
+            try:
+                stamp = int((rows[-1] or {}).get("t"))
+            except (TypeError, ValueError, KeyError):
+                continue
+            latest = stamp if latest is None else max(latest, stamp)
+    return latest
+
+
+def clear_prior_session_30s(
+    provider,
+    value: datetime | None = None,
+) -> bool:
+    latest = live_30s_latest_bar_ms(provider)
+    if latest is None:
+        return False
+
+    from mide.time_service import eastern_time
+
+    latest_day = eastern_time(
+        datetime.fromtimestamp(
+            latest / 1000.0,
+            tz=timezone.utc,
+        )
+    ).date()
+    current_day = eastern_time(live_30s_utc(value)).date()
+    if latest_day >= current_day:
+        return False
+
+    lock = getattr(provider, "_lock", None)
+    if lock is None:
+        return False
+    with lock:
+        current = getattr(provider, "_gs379_30s_current", None)
+        closed = getattr(provider, "_gs379_30s_closed", None)
+        if isinstance(current, dict):
+            current.clear()
+        if isinstance(closed, dict):
+            closed.clear()
+    return True
+
+
+def ensure_live_30s_stream_continuity(
+    original,
+    provider,
+    symbols,
+    *,
+    now: datetime | None = None,
+):
+    from mide import gs469_30s_stream_continuity as gs469
+
+    if not getattr(provider, "_enable_streaming", False):
+        return original(provider, symbols)
+
+    now = live_30s_utc(now)
+    now_ms = live_30s_now_ms(now)
+    rebound = gs469.reassert_active_provider(provider)
+    reason = live_30s_restart_reason(provider, now)
+    restarted = False
+    cleared_prior_session = False
+
+    if reason:
+        from mide import gs379_webull_stream_data_truth as gs379
+
+        provider._gs469_last_restart_attempt_ms = now_ms
+        cleared_prior_session = clear_prior_session_30s(
+            provider,
+            now,
+        )
+        gs379._retire_provider_stream(provider)
+        restarted = True
+
+    result = original(provider, symbols)
+
+    if getattr(provider, "_subscription", None) is not None:
+        if (
+            restarted
+            or live_30s_subscription_started_ms(provider) is None
+        ):
+            provider._gs469_subscription_started_ms = now_ms
+
+    stream = live_30s_stream_diagnostics(provider)
+    if restarted:
+        stream["gs469_stale_stream_restarts"] = int(
+            stream.get("gs469_stale_stream_restarts", 0) or 0
+        ) + 1
+    stream["gs469_30s_stream_continuity"] = {
+        "authority": gs469.AUTHORITY,
+        "active_provider_reasserted": bool(rebound),
+        "stream_expected_now": live_30s_market_expected(now),
+        "subscription_present": (
+            getattr(provider, "_subscription", None) is not None
+        ),
+        "subscribed_symbols": len(
+            set(getattr(provider, "_subscribed", set()) or set())
+        ),
+        "last_tick_age_seconds": (
+            round(live_30s_tick_age_seconds(provider, now), 1)
+            if live_30s_tick_age_seconds(provider, now) is not None
+            else None
+        ),
+        "restart_performed": bool(restarted),
+        "restart_reason": reason,
+        "prior_session_30s_cleared": bool(cleared_prior_session),
+        "restart_cooldown_seconds": gs469.RESTART_COOLDOWN_SECONDS,
+        "stale_tick_seconds": gs469.STALE_TICK_SECONDS,
+        "genuine_webull_tick_only": True,
+        "synthetic_30s_bars": False,
+        "entry_authority_changed": False,
+    }
+    return result
+
+
+def install_live_30s_stream_continuity() -> None:
+    from mide import gs469_30s_stream_continuity as gs469
+    from mide import webull_live
+
+    current = webull_live.LiveWebullProvider.ensure_stream
+    if getattr(current, gs469._OWNER_ATTR, False):
+        return
+
+    @wraps(current)
+    def ensure_stream(self, symbols):
+        return gs469.ensure_stream_continuity(
+            current,
+            self,
+            symbols,
+        )
+
+    ensure_stream._gs469_30s_stream_continuity = True
+    ensure_stream._gs469_original = current
+    setattr(ensure_stream, gs469._OWNER_ATTR, True)
+    webull_live.LiveWebullProvider.ensure_stream = ensure_stream
+
+
+def production_30s_identity(value: Any) -> tuple[str, str]:
+    cls = type(value)
+    return (
+        str(getattr(cls, "__module__", "")),
+        str(getattr(cls, "__name__", "")),
+    )
+
+
+def production_30s_sdk_graph(provider) -> bool:
+    if provider is None:
+        return False
+    snapshot = getattr(provider, "_snapshot_client", None)
+    if production_30s_identity(snapshot) != (
+        "mide.webull_live",
+        "WebullOpenAPIClient",
+    ):
+        return False
+    sdk = getattr(snapshot, "sdk", None)
+    if production_30s_identity(sdk) != (
+        "mide.webull_sdk",
+        "WebullSDKClient",
+    ):
+        return False
+    return (
+        getattr(provider, "_stream_class", None) is None
+        and getattr(provider, "_bootstrap", None) is None
+    )
+
+
+def ensure_production_30s_state(provider) -> bool:
+    lock = getattr(provider, "_lock", None)
+    if lock is None:
+        return False
+    changed = False
+    with lock:
+        if not isinstance(
+            getattr(provider, "_gs379_30s_current", None),
+            dict,
+        ):
+            provider._gs379_30s_current = {}
+            changed = True
+        if not isinstance(
+            getattr(provider, "_gs379_30s_closed", None),
+            dict,
+        ):
+            provider._gs379_30s_closed = {}
+            changed = True
+    stream = live_30s_stream_diagnostics(provider)
+    defaults = {
+        "tick_messages_received": 0,
+        "tick_symbols_seen": 0,
+        "last_tick_timestamp_ms": None,
+        "thirty_second_bars_closed": 0,
+        "thirty_second_symbols_ready": 0,
+        "out_of_order_ticks": 0,
+        "unsubscribed_symbols": 0,
+        "unsubscribe_failures": 0,
+        "stream_replaced_count": 0,
+        "stream_cleanup_failures": 0,
+        "thirty_second_authority": "OBSERVATIONAL_ONLY",
+    }
+    for key, default in defaults.items():
+        if key not in stream:
+            stream[key] = default
+            changed = True
+    return changed
+
+
+def patch_retained_30s_provider_event(provider) -> bool:
+    from collections import deque
+
+    from mide import gs379_webull_stream_data_truth as gs379
+    from mide import gs470_30s_activation_truth as gs470
+    from mide.market_data import EventType, MarketEvent
+
+    owner = type(provider)
+    current = getattr(owner, "_on_event", None)
+    if not callable(current):
+        return False
+    if (
+        getattr(current, "_gs379_tick_aggregation", False)
+        or getattr(current, gs470._PROVIDER_EVENT_OWNER, False)
+    ):
+        if not callable(getattr(owner, "stream_30s_bars", None)):
+            owner.stream_30s_bars = gs379._stream_30s_bars
+        return False
+
+    @wraps(current)
+    def on_event(self, event: MarketEvent) -> None:
+        ensure_production_30s_state(self)
+        if event.type == EventType.TRADE:
+            if event.symbol not in self._gs379_30s_closed:
+                with self._lock:
+                    self._gs379_30s_closed.setdefault(
+                        event.symbol,
+                        deque(
+                            maxlen=gs470.THIRTY_SECOND_HISTORY
+                        ),
+                    )
+            if not gs379._record_tick(self, event):
+                return
+            payload = dict(event.payload)
+            payload["trade_size"] = payload.pop("volume", None)
+            event = MarketEvent(
+                event.provider,
+                event.type,
+                event.symbol,
+                event.source_timestamp_ms,
+                payload,
+                event.sequence,
+                event.wire_bytes,
+            )
+        current(self, event)
+
+    on_event._gs379_tick_aggregation = True
+    on_event._gs471_original = current
+    setattr(on_event, gs470._PROVIDER_EVENT_OWNER, True)
+    owner._on_event = on_event
+    owner.stream_30s_bars = gs379._stream_30s_bars
+    return True
+
+
+def patch_retained_30s_sdk_stream(provider) -> bool:
+    from mide import gs379_webull_stream_data_truth as gs379
+    from mide import gs470_30s_activation_truth as gs470
+
+    snapshot = getattr(provider, "_snapshot_client", None)
+    sdk = getattr(snapshot, "sdk", None)
+    data_client = getattr(sdk, "sdk_client", None)
+    factory = getattr(
+        data_client,
+        "_walter_streaming_client_factory",
+        None,
+    )
+    owner = type(sdk) if sdk is not None else None
+    current = getattr(owner, "stream", None) if owner is not None else None
+    if not callable(current) or not callable(factory):
+        return False
+    if (
+        getattr(current, "_gs379_tick_transport", False)
+        or getattr(current, gs470._SDK_STREAM_OWNER, False)
+    ):
+        return False
+
+    @wraps(current)
+    def stream(self, callback):
+        active_factory = getattr(
+            self.sdk_client,
+            "_walter_streaming_client_factory",
+            None,
+        )
+        if not callable(active_factory):
+            raise RuntimeError(
+                "Webull OpenAPI SDK lacks DataStreamingClient"
+            )
+        return gs379.OfficialWebullTickTransport(
+            active_factory(),
+            callback,
+        )
+
+    stream._gs379_tick_transport = True
+    stream._gs471_original = current
+    setattr(stream, gs470._SDK_STREAM_OWNER, True)
+    owner.stream = stream
+    return True
+
+
+def production_30s_tick_age_seconds(provider) -> float | None:
+    raw = live_30s_stream_diagnostics(provider).get(
+        "last_tick_timestamp_ms"
+    )
+    try:
+        stamp = int(raw)
+    except (TypeError, ValueError):
+        return None
+    if stamp <= 0:
+        return None
+    now_ms = int(
+        datetime.now(timezone.utc).timestamp() * 1000
+    )
+    return max(0.0, (now_ms - stamp) / 1000.0)
+
+
+def retire_obsolete_30s_subscription(
+    provider,
+    *,
+    force: bool = False,
+) -> tuple[bool, str | None]:
+    from mide import gs379_webull_stream_data_truth as gs379
+    from mide import gs470_30s_activation_truth as gs470
+
+    if getattr(provider, "_subscription", None) is None:
+        return False, None
+    age = production_30s_tick_age_seconds(provider)
+    if force:
+        reason = (
+            "runtime 30s hook/activation changed; "
+            "subscription callback must be rebound"
+        )
+    elif age is None:
+        reason = (
+            "subscribed Webull transport has no observed "
+            "TICK heartbeat"
+        )
+    elif age > gs470.STALE_TICK_SECONDS:
+        reason = f"last Webull TICK heartbeat is {age:.1f}s old"
+    else:
+        return False, None
+
+    gs379._retire_provider_stream(provider)
+    return True, reason
+
+
+def activate_production_30s_evidence(provider) -> dict:
+    from mide import gs379_webull_stream_data_truth as gs379
+    from mide import gs470_30s_activation_truth as gs470
+
+    production = production_30s_sdk_graph(provider)
+    stream = live_30s_stream_diagnostics(provider)
+    enabled_before = bool(
+        getattr(provider, "_enable_streaming", False)
+    ) if provider is not None else False
+    state_rehydrated = enabled_now = rebound = False
+    provider_event_patched = sdk_stream_patched = False
+    retired = False
+    retirement_reason = None
+
+    if production:
+        state_rehydrated = ensure_production_30s_state(provider)
+        provider_event_patched = patch_retained_30s_provider_event(
+            provider
+        )
+        sdk_stream_patched = patch_retained_30s_sdk_stream(provider)
+        if not getattr(provider, "_enable_streaming", False):
+            provider._enable_streaming = True
+            enabled_now = True
+            if getattr(provider, "_subscription", None) is None:
+                stream["stream_connection_status"] = "disconnected"
+                stream["stream_bypass_reason"] = None
+        active_ref = getattr(gs379, "_ACTIVE_PROVIDER_REF", None)
+        active = active_ref() if active_ref is not None else None
+        if active is not provider:
+            gs379._register_active_provider(provider)
+            rebound = True
+        retired, retirement_reason = (
+            retire_obsolete_30s_subscription(
+                provider,
+                force=bool(
+                    enabled_now
+                    or provider_event_patched
+                    or sdk_stream_patched
+                ),
+            )
+        )
+        gs470._remember_provider(provider)
+
+    truth = {
+        "authority": gs470.AUTHORITY,
+        "production_sdk_graph": production,
+        "streaming_enabled_before": enabled_before,
+        "streaming_enabled_now": bool(
+            getattr(provider, "_enable_streaming", False)
+        ) if provider is not None else False,
+        "activation_performed": enabled_now,
+        "gs379_state_rehydrated": state_rehydrated,
+        "active_provider_reasserted": rebound,
+        "retained_provider_event_hook_patched": provider_event_patched,
+        "retained_sdk_stream_hook_patched": sdk_stream_patched,
+        "subscription_retired_for_rebind": retired,
+        "subscription_retirement_reason": retirement_reason,
+        "runtime_hard_bind": True,
+        "genuine_webull_tick_only": True,
+        "synthetic_30s_bars": False,
+        "entry_authority_changed": False,
+    }
+    stream["gs470_30s_activation_truth"] = truth
+    return dict(truth)
+
+
+def safe_activate_production_30s(provider) -> dict:
+    from mide import gs470_30s_activation_truth as gs470
+
+    try:
+        return gs470.activate_production_30s(provider)
+    except Exception as exc:
+        live_30s_stream_diagnostics(provider)[
+            "gs471_runtime_hard_bind_error"
+        ] = type(exc).__name__
+        return {
+            "authority": gs470.AUTHORITY,
+            "production_sdk_graph": production_30s_sdk_graph(
+                provider
+            ),
+            "runtime_hard_bind": True,
+            "activation_error": type(exc).__name__,
+            "genuine_webull_tick_only": True,
+            "synthetic_30s_bars": False,
+            "entry_authority_changed": False,
+        }
+
+
+def production_30s_int(value: Any, default: int = 0) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def production_30s_last_tick_age(
+    last_tick_ms: Any,
+) -> float | None:
+    try:
+        stamp = int(last_tick_ms)
+    except (TypeError, ValueError):
+        return None
+    if stamp <= 0:
+        return None
+    now_ms = int(
+        datetime.now(timezone.utc).timestamp() * 1000
+    )
+    return round(
+        max(0.0, (now_ms - stamp) / 1000.0),
+        1,
+    )
+
+
+def production_30s_stream_factory_present(provider) -> bool:
+    snapshot = getattr(provider, "_snapshot_client", None)
+    sdk = getattr(snapshot, "sdk", None)
+    data_client = getattr(sdk, "sdk_client", None)
+    return callable(
+        getattr(
+            data_client,
+            "_walter_streaming_client_factory",
+            None,
+        )
+    )
+
+
+def production_30s_health(provider) -> dict:
+    from mide import gs470_30s_activation_truth as gs470
+
+    if provider is None:
+        return {
+            "authority": gs470.AUTHORITY,
+            "provider_present": False,
+            "production_sdk_graph": False,
+            "streaming_enabled": False,
+            "subscription_present": False,
+            "subscribed_symbol_count": 0,
+            "connection_status": "provider unavailable",
+            "tick_messages_received": 0,
+            "last_tick_timestamp_ms": None,
+            "last_tick_age_seconds": None,
+            "thirty_second_bars_closed": 0,
+            "thirty_second_symbols_ready": 0,
+            "stream_factory_present": False,
+            "runtime_hard_bind": True,
+            "genuine_webull_tick_only": True,
+            "synthetic_30s_bars": False,
+        }
+
+    stream = live_30s_stream_diagnostics(provider)
+    continuity = dict(
+        stream.get("gs469_30s_stream_continuity") or {}
+    )
+    activation = dict(
+        stream.get("gs470_30s_activation_truth") or {}
+    )
+    last_tick = stream.get("last_tick_timestamp_ms")
+    provider_event = getattr(type(provider), "_on_event", None)
+    snapshot = getattr(provider, "_snapshot_client", None)
+    sdk = getattr(snapshot, "sdk", None)
+    sdk_stream = (
+        getattr(type(sdk), "stream", None)
+        if sdk is not None
+        else None
+    )
+    return {
+        "authority": gs470.AUTHORITY,
+        "provider_present": True,
+        "production_sdk_graph": production_30s_sdk_graph(provider),
+        "streaming_enabled": bool(
+            getattr(provider, "_enable_streaming", False)
+        ),
+        "subscription_present": (
+            getattr(provider, "_subscription", None) is not None
+        ),
+        "subscribed_symbol_count": len(
+            set(getattr(provider, "_subscribed", set()) or set())
+        ),
+        "connection_status": str(
+            stream.get("stream_connection_status") or "unknown"
+        ),
+        "tick_messages_received": production_30s_int(
+            stream.get("tick_messages_received")
+        ),
+        "last_tick_timestamp_ms": (
+            production_30s_int(last_tick, default=0) or None
+        ),
+        "last_tick_age_seconds": production_30s_last_tick_age(
+            last_tick
+        ),
+        "thirty_second_bars_closed": production_30s_int(
+            stream.get("thirty_second_bars_closed")
+        ),
+        "thirty_second_symbols_ready": production_30s_int(
+            stream.get("thirty_second_symbols_ready")
+        ),
+        "stream_factory_present": (
+            production_30s_stream_factory_present(provider)
+        ),
+        "provider_event_hook_present": bool(
+            getattr(
+                provider_event,
+                "_gs379_tick_aggregation",
+                False,
+            )
+            or getattr(
+                provider_event,
+                gs470._PROVIDER_EVENT_OWNER,
+                False,
+            )
+        ),
+        "sdk_tick_transport_hook_present": bool(
+            getattr(
+                sdk_stream,
+                "_gs379_tick_transport",
+                False,
+            )
+            or getattr(
+                sdk_stream,
+                gs470._SDK_STREAM_OWNER,
+                False,
+            )
+        ),
+        "gs469_restart_count": production_30s_int(
+            stream.get("gs469_stale_stream_restarts")
+        ),
+        "gs469_restart_performed_last_check": bool(
+            continuity.get("restart_performed")
+        ),
+        "gs469_restart_reason_last_check": continuity.get(
+            "restart_reason"
+        ),
+        "gs470_activation_performed": bool(
+            activation.get("activation_performed")
+        ),
+        "gs470_state_rehydrated": bool(
+            activation.get("gs379_state_rehydrated")
+        ),
+        "gs471_subscription_retired_for_rebind": bool(
+            activation.get("subscription_retired_for_rebind")
+        ),
+        "runtime_hard_bind": True,
+        "genuine_webull_tick_only": True,
+        "synthetic_30s_bars": False,
+        "entry_authority_changed": False,
+    }
+
+
+def active_or_last_30s_provider():
+    from mide import gs379_webull_stream_data_truth as gs379
+    from mide import gs470_30s_activation_truth as gs470
+
+    reference = getattr(gs379, "_ACTIVE_PROVIDER_REF", None)
+    if reference is not None:
+        try:
+            provider = reference()
+        except TypeError:
+            provider = None
+        if provider is not None:
+            return provider
+    return gs470._last_provider()
+
+
+def install_production_30s_activation_boundary() -> None:
+    from mide import gs470_30s_activation_truth as gs470
+    from mide import webull_live
+
+    current = webull_live.LiveWebullProvider.initialize_quotes
+    if getattr(current, gs470._INIT_OWNER, False):
+        return
+
+    @wraps(current)
+    def initialize_quotes(self, symbols, *args, **kwargs):
+        gs470._safe_activate(self)
+        return current(self, symbols, *args, **kwargs)
+
+    initialize_quotes._gs470_30s_activation_truth = True
+    initialize_quotes._gs470_original = current
+    setattr(initialize_quotes, gs470._INIT_OWNER, True)
+    webull_live.LiveWebullProvider.initialize_quotes = (
+        initialize_quotes
+    )
+
+
+def bind_production_30s_context_class(context) -> bool:
+    from mide import gs470_30s_activation_truth as gs470
+
+    if context is None:
+        return False
+    owner = type(context)
+    current = getattr(owner, "__setattr__", None)
+    if (
+        not callable(current)
+        or getattr(
+            current,
+            gs470._CONTEXT_SETATTR_OWNER,
+            False,
+        )
+    ):
+        return False
+
+    @wraps(current)
+    def context_setattr(self, name, value):
+        current(self, name, value)
+        if name == "provider_instance" and value is not None:
+            gs470._safe_activate(value)
+
+    context_setattr._gs471_original = current
+    setattr(
+        context_setattr,
+        gs470._CONTEXT_SETATTR_OWNER,
+        True,
+    )
+    try:
+        owner.__setattr__ = context_setattr
+    except (AttributeError, TypeError):
+        return False
+    return True
+
+
+def install_production_30s_scan_context_hard_bind() -> None:
+    from mide import completed_scan
+    from mide import gs470_30s_activation_truth as gs470
+
+    current = completed_scan.scan_context
+    if getattr(current, gs470._SCAN_CONTEXT_OWNER, False):
+        return
+
+    @wraps(current)
+    def scan_context(state):
+        context = current(state)
+        gs470._bind_context_class(context)
+        provider = getattr(context, "provider_instance", None)
+        if provider is not None:
+            gs470._safe_activate(provider)
+        return context
+
+    scan_context._gs471_original = current
+    setattr(
+        scan_context,
+        gs470._SCAN_CONTEXT_OWNER,
+        True,
+    )
+    completed_scan.scan_context = scan_context
+
+
+def install_production_30s_market_evidence() -> None:
+    install_production_30s_activation_boundary()
+    install_production_30s_scan_context_hard_bind()
+
+
 __all__ = [
+    "install_live_30s_stream_continuity",
+    "ensure_live_30s_stream_continuity",
+    "reassert_active_30s_provider",
+    "active_30s_registry_provider",
+    "install_production_30s_market_evidence",
+    "install_production_30s_activation_boundary",
+    "install_production_30s_scan_context_hard_bind",
+    "bind_production_30s_context_class",
+    "active_or_last_30s_provider",
+    "production_30s_health",
+    "safe_activate_production_30s",
+    "activate_production_30s_evidence",
     "install_session_aware_vwap_evidence",
     "install_session_aware_vwap_record_diagnostics",
     "install_session_aware_primary_vwap",
