@@ -81,8 +81,10 @@ def test_gs502_source_is_now_compatibility_facade_not_duplicate_implementation()
         encoding="utf-8"
     )
 
-    assert "from mide.authorities import discovery_news as _news" in source
-    assert "from mide.authorities import replay_validation as _replay" in source
+    assert "def _news(" in source
+    assert "def _replay(" in source
+    assert "from mide.authorities import discovery_news as _news" not in source
+    assert "from mide.authorities import replay_validation as _replay" not in source
     assert "def normalize_benzinga_article(" not in source
     assert "def fetch_benzinga_delta(" not in source
     assert "def _recorder_wrapper(" not in source
