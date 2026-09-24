@@ -1,4 +1,4 @@
-"""Warm-deploy-safe facade for Mission-Rank-aware operator ordering.
+"""Compatibility facade for Mission-Rank-aware operator ordering.\n\nWarm-deploy-safe GS497 facade.
 
 Presentation + Audio owns GS497 ordering semantics. This historical module preserves
 the validated callable/install surface while resolving the authority lazily for warm
