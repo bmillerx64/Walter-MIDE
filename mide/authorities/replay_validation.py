@@ -2190,7 +2190,7 @@ CACHED_RECORDER_BINDING = (
     "cached_recorder.record_scan.__func__.__globals__."
     "persist_replayable_scan"
 )
-CACHED_RECORDER_BIND_REVISION = 1
+CACHED_RECORDER_BIND_REVISION = 2
 _CACHED_RECORDER_BIND_OWNER = (
     "_walter_gs487_cached_recorder_instance_bind_revision"
 )
