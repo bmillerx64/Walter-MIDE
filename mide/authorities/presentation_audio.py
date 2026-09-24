@@ -2562,6 +2562,16 @@ def _maturation_tf(record: dict, label: str) -> dict:
     detail = _maturation_timeframes(record).get(label) or {}
     if not isinstance(detail, dict):
         return {}
+
+    # GS548: Presentation consumes Market Evidence's source-age-adjusted detached
+    # copy so a stale bar cannot keep an old 1m/3m event acoustically "new".
+    from mide.authorities import market_evidence
+    detail = market_evidence.operator_fresh_maturation_detail(
+        record,
+        label,
+        detail,
+    )
+
     bullish = bool(
         detail.get("current_supertrend_bullish")
         if "current_supertrend_bullish" in detail
