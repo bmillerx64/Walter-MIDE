@@ -84,7 +84,7 @@ def test_phase68_legacy_helpers_are_lazy_market_evidence_facades():
     assert "status_reason" not in facade
 
 
-def test_phase68_adjacent_gs455_support_consumers_keep_historical_seam():
+def test_phase68_adjacent_support_consumers_keep_existing_authority_seams():
     gs457 = (
         ROOT / "mide/gs457_maturation_leader_priority.py"
     ).read_text(encoding="utf-8")
@@ -92,7 +92,8 @@ def test_phase68_adjacent_gs455_support_consumers_keep_historical_seam():
         ROOT / "mide/gs460_st_flip_compression_ignition.py"
     ).read_text(encoding="utf-8")
     assert "gs455._supporting_flow(record)" in gs457
-    assert "gs455._supporting_flow(record)" in gs460
+    assert '"st_flip_supporting_flow"' in gs460
+    assert "gs455._supporting_flow(record)" not in gs460
 
 
 def test_phase68_scope_is_market_evidence_only():
