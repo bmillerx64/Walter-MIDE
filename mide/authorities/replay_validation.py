@@ -301,6 +301,232 @@ def install_benzinga_breaking_news_trace() -> None:
 
 
 # ---------------------------------------------------------------------------
+# GS529/GS532 observational Entry Ready shadow validation
+# ---------------------------------------------------------------------------
+#
+# These counterfactuals are replay/calibration evidence only. They are persisted for
+# later analysis but are not consumed by live qualified_for_entry, readiness, alert,
+# execution, or order authority. Historical modules remain the mutable calibration
+# seams so existing monkeypatches and threshold tuning continue to work.
+
+ENTRY_SHADOW_AUTHORITY = "OBSERVATIONAL_ONLY"
+
+
+def entry_shadow_fresh_progression(record: dict) -> dict:
+    """Return the established fresh 1m/3m maturation shadow input."""
+    from mide import gs455_early_ignition_3m_confirmation as gs455
+    from mide import gs529_entry_ready_shadow_calibration as gs529
+
+    try:
+        signal = gs455.progression_signal(record)
+        active = bool(
+            signal.get("active")
+            and signal.get("new_rung") in gs529._SHADOW_RUNG_ALLOWLIST
+        )
+        return {
+            "active": active,
+            "new_rung": signal.get("new_rung"),
+            "highest_rung": signal.get("highest_rung"),
+            "fresh_rungs": list(signal.get("fresh_rungs") or []),
+            "source": "GS455 progression_signal",
+        }
+    except Exception as exc:
+        return {
+            "active": False,
+            "new_rung": None,
+            "highest_rung": None,
+            "fresh_rungs": [],
+            "source": "GS455 progression_signal",
+            "error": type(exc).__name__,
+        }
+
+
+def shadow_entry_calibration(
+    record: dict,
+    trigger: dict | None = None,
+    structure_gate: dict | None = None,
+) -> dict:
+    """Compare canonical Entry Ready with a progression-assisted ST shadow."""
+    from mide import gs529_entry_ready_shadow_calibration as gs529
+
+    trigger = deepcopy(
+        trigger
+        or record.get("trigger_diagnostics")
+        or {}
+    )
+    structure_gate = (
+        structure_gate
+        or record.get("structure_gate")
+        or {}
+    )
+    checks = [
+        deepcopy(check)
+        for check in trigger.get("checks") or []
+        if isinstance(check, dict)
+    ]
+    progression = gs529._fresh_progression(record)
+
+    canonical_trigger_passed = bool(trigger.get("passed"))
+    canonical_entry = bool(
+        structure_gate.get("passed")
+        and canonical_trigger_passed
+    )
+
+    st_shadow_used = False
+    for check in checks:
+        if check.get("condition") != "supertrend_flip":
+            continue
+        if (
+            not check.get("passed")
+            and progression.get("active")
+        ):
+            check["passed"] = True
+            check["shadow_passed_by"] = (
+                "fresh_ordered_maturation"
+            )
+            check["shadow_rung"] = progression.get(
+                "new_rung"
+            )
+            st_shadow_used = True
+
+    shadow_failed = [
+        str(check.get("condition") or "")
+        for check in checks
+        if not check.get("passed")
+    ]
+    shadow_trigger_passed = bool(checks) and not shadow_failed
+    shadow_entry = bool(
+        structure_gate.get("passed")
+        and shadow_trigger_passed
+    )
+
+    canonical_failed = [
+        str(check.get("condition") or "")
+        for check in trigger.get("checks") or []
+        if (
+            isinstance(check, dict)
+            and not check.get("passed")
+        )
+    ]
+
+    return {
+        "authority": ENTRY_SHADOW_AUTHORITY,
+        "canonical_entry_ready": canonical_entry,
+        "canonical_trigger_passed": (
+            canonical_trigger_passed
+        ),
+        "canonical_failed_conditions": canonical_failed,
+        "structure_passed": bool(
+            structure_gate.get("passed")
+        ),
+        "progression": progression,
+        "shadow_st_substitution_used": st_shadow_used,
+        "shadow_trigger_passed": shadow_trigger_passed,
+        "shadow_failed_conditions": shadow_failed,
+        "shadow_entry_ready": shadow_entry,
+        "recovered_by_progression": bool(
+            shadow_entry and not canonical_entry
+        ),
+        "trading_authority_changed": False,
+    }
+
+
+def retest_entry_shadow(record: dict) -> dict:
+    """Measure the held-3m-retest recovery lane without granting entry authority."""
+    from mide import gs514_retest_event_memory as gs514
+    from mide import gs532_retest_entry_shadow as gs532
+
+    maturation = (
+        record.get("multitimeframe_maturation")
+        or {}
+    )
+    event = (
+        maturation.get("three_minute_st_retest_event")
+        or {}
+    )
+    sequence = (
+        gs514.discipline_sequence(record, event)
+        if isinstance(event, dict)
+        else {}
+    )
+    distance = float(
+        record.get("vwap_distance_pct") or 0.0
+    )
+    participation = float(
+        (
+            record.get(
+                "participation_surge_diagnostics"
+            )
+            or {}
+        ).get(
+            "participation_score",
+            record.get(
+                "participation_surge_score"
+            )
+            or 0.0,
+        )
+        or 0.0
+    )
+    expansion = float(
+        record.get("expansion_quality") or 0.0
+    )
+
+    checks = {
+        "three_minute_retest_held": bool(
+            event.get("active_memory")
+        ),
+        "lower_timeframe_repair_complete": bool(
+            sequence.get(
+                "lower_timeframe_repair_complete"
+            )
+        ),
+        "vwap_entry_window": (
+            gs532.VWAP_MIN_PCT
+            <= distance
+            <= gs532.VWAP_MAX_PCT
+        ),
+        "participation": (
+            participation >= gs532.MIN_PARTICIPATION
+        ),
+        "expansion": (
+            expansion >= gs532.MIN_EXPANSION
+        ),
+    }
+    failed = [
+        name
+        for name, passed in checks.items()
+        if not passed
+    ]
+    return {
+        "authority": ENTRY_SHADOW_AUTHORITY,
+        "shadow_entry_ready": not failed,
+        "checks": checks,
+        "failed_conditions": failed,
+        "three_minute_retest_event": (
+            dict(event)
+            if isinstance(event, dict)
+            else {}
+        ),
+        "discipline_sequence": sequence,
+        "vwap_distance_pct": round(distance, 3),
+        "participation_score": round(
+            participation,
+            1,
+        ),
+        "expansion_quality": round(expansion, 1),
+        "thresholds": {
+            "vwap_min_pct": gs532.VWAP_MIN_PCT,
+            "vwap_max_pct": gs532.VWAP_MAX_PCT,
+            "participation_min": (
+                gs532.MIN_PARTICIPATION
+            ),
+            "expansion_min": gs532.MIN_EXPANSION,
+        },
+        "trading_authority_changed": False,
+    }
+
+
+# ---------------------------------------------------------------------------
 # GS425 live-scan latency truth recorder
 # ---------------------------------------------------------------------------
 
@@ -1969,6 +2195,10 @@ def install_connection_limit_stream_trace() -> None:
 
 
 __all__ = [
+    "ENTRY_SHADOW_AUTHORITY",
+    "entry_shadow_fresh_progression",
+    "shadow_entry_calibration",
+    "retest_entry_shadow",
     "install_connection_limit_stream_trace",
     "backoff_snapshot",
     "install_cached_recorder_instance_bind",
