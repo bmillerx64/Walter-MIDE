@@ -506,8 +506,23 @@ def _ignition_supporting_flow(record: dict) -> tuple[bool, list[str]]:
     return bool(evidence), evidence
 
 
+GS553_PRIMARY_IGNITION_FRESHNESS_AUTHORITY = (
+    "SOURCE_AGE_ADJUSTED_PRIMARY_IGNITION_FRESHNESS"
+)
+
+
 def ignition_evidence(record: dict) -> dict:
-    """Return GS393 primary 1m ignition truth from already-computed market evidence."""
+    """Return GS393 primary 1m ignition truth with scan-time source freshness.
+
+    GS548 corrected literal ST/VWAP maturation events for stale source bars. Live
+    validation later exposed the parallel GS393 primary-ignition path still using
+    bar-relative VWAP-reclaim age directly. Preserve the same primary-ignition
+    thresholds, but evaluate reclaim/flip recency at operator scan time.
+
+    This also preserves a legitimate same-bar reclaim age of zero; the historical
+    truthiness fallback incorrectly converted that strongest freshness case into
+    not recent.
+    """
     relation = str(record.get("vwap_relation") or "").strip().lower()
     distance = _ignition_number(record, "vwap_distance_pct")
     one = _ignition_timeframe_state(record, "1m")
@@ -520,14 +535,43 @@ def ignition_evidence(record: dict) -> dict:
     one_bullish = bool(one.get("supertrend"))
     one_above_vwap = bool(one.get("above_vwap"))
 
+    raw_reclaim_age = _ignition_number(
+        record,
+        "vwap_reclaim_age_bars",
+        default=999.0,
+    )
     reclaim_age = (
-        _ignition_number(record, "vwap_reclaim_age_bars", default=999.0) or 999.0
+        max(0.0, raw_reclaim_age)
+        if raw_reclaim_age is not None
+        else 999.0
+    )
+    source_bar_age = maturation_source_bar_age(record)
+    reclaim_source_relative_seconds = reclaim_age * 60.0
+    reclaim_effective_seconds = (
+        reclaim_source_relative_seconds + source_bar_age
+        if source_bar_age is not None
+        else reclaim_source_relative_seconds
     )
     reclaim_recent = bool(
         record.get("vwap_reclaimed_last_10m")
-        and reclaim_age <= IGNITION_RECLAIM_RECENT_BARS
+        and reclaim_effective_seconds
+        <= IGNITION_RECLAIM_RECENT_BARS * 60.0
     )
-    flip_age = _ignition_number(record, "supertrend_flip_age_seconds")
+
+    detail_flip_age = _ignition_number(one, "bullish_flip_age_seconds")
+    if (
+        detail_flip_age is not None
+        and one.get("freshness_authority")
+        == GS548_MATURATION_FRESHNESS_AUTHORITY
+    ):
+        flip_age = max(0.0, detail_flip_age)
+    else:
+        raw_flip_age = _ignition_number(record, "supertrend_flip_age_seconds")
+        flip_age = (
+            max(0.0, raw_flip_age) + source_bar_age
+            if raw_flip_age is not None and source_bar_age is not None
+            else raw_flip_age
+        )
     flip_recent = bool(
         flip_age is not None and 0.0 <= flip_age <= IGNITION_FLIP_RECENT_SECONDS
     )
@@ -550,14 +594,35 @@ def ignition_evidence(record: dict) -> dict:
         "one_minute_above_vwap": one_above_vwap,
         "vwap_reclaim_recent": reclaim_recent,
         "vwap_reclaim_age_bars": reclaim_age,
+        "vwap_reclaim_source_relative_age_seconds": round(
+            reclaim_source_relative_seconds,
+            1,
+        ),
+        "vwap_reclaim_effective_age_seconds": round(
+            reclaim_effective_seconds,
+            1,
+        ),
+        "source_bar_age_seconds": (
+            round(source_bar_age, 1)
+            if source_bar_age is not None
+            else None
+        ),
         "one_minute_bullish_flip_recent": flip_recent,
-        "one_minute_bullish_flip_age_seconds": flip_age,
+        "one_minute_bullish_flip_age_seconds": (
+            round(flip_age, 1)
+            if flip_age is not None
+            else None
+        ),
         "three_minute_confirmation": bool(
             three.get("supertrend") and three.get("above_vwap")
         ),
         "supporting_flow": support,
         "literal_st_line_vwap_cross_is_secondary": True,
+        "freshness_authority": GS553_PRIMARY_IGNITION_FRESHNESS_AUTHORITY,
     }
+
+
+ignition_evidence._gs553_source_aged_primary_ignition = True
 
 
 RETEST_TRUTH_AUTHORITY = "PRESENTATION_GUARDRAIL_ONLY"
