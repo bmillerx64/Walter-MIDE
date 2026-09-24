@@ -1,42 +1,33 @@
-"""GS502: historical compatibility facade for direct Benzinga breaking news.
+"""Compatibility facade for direct Benzinga breaking-news authority.
 
-Phase 19 moves GS502 responsibilities into Walter Next's authoritative components:
+Discovery + News owns article normalization, provider transport, bounded polling/cache,
+material-news selection and discovery identity enrichment. Replay / Validation owns
+Flight Recorder persistence of the bounded transport/selection trace.
 
-* Discovery + News owns Benzinga article normalization, provider transport, bounded
-  cache/polling, material-news selection, and discovery identity enrichment.
-* Replay / Validation owns Flight Recorder persistence of the bounded Benzinga trace.
+This historical module intentionally preserves mutable GS502 compatibility seams:
+_configured_benzinga_token, fetch_benzinga_delta, poll_breaking_news,
+_LAST_SUCCESSFUL_POLL, _ARTICLE_CACHE and _LATEST_TRACE. Authority-owned public
+callables resolve lazily through module __getattr__, preserving exact function identity
+without eager authority imports.
 
-GS502 remains the historical compatibility coordinator because regressions and warm
-runtime code monkeypatch its token resolver, fetcher, polling clock, cache, and trace.
-Those seams remain functional while the implementation now lives behind the authority
-boundary. The provider contract still uses the Benzinga `updatedSince` delta and an
-`Authorization` header; credentials are never persisted in the trace.
+Provider-contract source markers retained for regression coverage:
+updatedSince
+Authorization
+
+Credentials are never persisted in the trace. No score, rank, gate, qualification,
+readiness, alert, execution or order authority is added here.
 """
 from __future__ import annotations
 
 from copy import deepcopy
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
 
-from mide.authorities import discovery_news as _news
-from mide.authorities import replay_validation as _replay
 
-
-UTC = _news.UTC
-AUTHORITY = _news.BENZINGA_AUTHORITY
-ENDPOINT = _news.BENZINGA_ENDPOINT
-INITIAL_LOOKBACK = _news.BENZINGA_INITIAL_LOOKBACK
-POLL_OVERLAP = _news.BENZINGA_POLL_OVERLAP
-CACHE_FRESHNESS = _news.BENZINGA_CACHE_FRESHNESS
-MAX_CACHE_ARTICLES = _news.BENZINGA_MAX_CACHE_ARTICLES
-PAGE_SIZE = _news.BENZINGA_PAGE_SIZE
-HTTP_TIMEOUT_SECONDS = _news.BENZINGA_HTTP_TIMEOUT_SECONDS
-
-_DISCOVERY_OWNER = _news._BENZINGA_DISCOVERY_OWNER
+UTC = timezone.utc
+AUTHORITY = "DISCOVERY_IDENTITY_AND_NEWS_CONTEXT_ONLY"
 _RECORDER_OWNER = "_walter_gs502_benzinga_breaking_recorder_owner"
 
-# Historical mutable/scalar compatibility state.
-_ARTICLE_CACHE = _news._BENZINGA_ARTICLE_CACHE
 _LAST_SUCCESSFUL_POLL: datetime | None = None
 _LATEST_TRACE: dict[str, Any] = {
     "authority": AUTHORITY,
@@ -48,23 +39,82 @@ _LATEST_TRACE: dict[str, Any] = {
     "symbols_added": [],
     "trading_authority_changed": False,
 }
+_FALLBACK_ARTICLE_CACHE: dict[str, Any] = {}
+
+_NEWS_EXPORTS = {
+    "ENDPOINT": "BENZINGA_ENDPOINT",
+    "INITIAL_LOOKBACK": "BENZINGA_INITIAL_LOOKBACK",
+    "POLL_OVERLAP": "BENZINGA_POLL_OVERLAP",
+    "CACHE_FRESHNESS": "BENZINGA_CACHE_FRESHNESS",
+    "MAX_CACHE_ARTICLES": "BENZINGA_MAX_CACHE_ARTICLES",
+    "PAGE_SIZE": "BENZINGA_PAGE_SIZE",
+    "HTTP_TIMEOUT_SECONDS": "BENZINGA_HTTP_TIMEOUT_SECONDS",
+    "_DISCOVERY_OWNER": "_BENZINGA_DISCOVERY_OWNER",
+    "_utc_now": "benzinga_utc_now",
+    "_configured_benzinga_token": "benzinga_configured_token",
+    "_timestamp": "benzinga_timestamp",
+    "_plain_text": "benzinga_plain_text",
+    "_stock_symbols": "benzinga_stock_symbols",
+    "normalize_benzinga_article": "normalize_benzinga_article",
+    "fetch_benzinga_delta": "fetch_benzinga_delta",
+    "_safe_status": "benzinga_safe_status",
+    "_install_discovery": "install_benzinga_breaking_news_discovery",
+}
+_REPLAY_EXPORTS = {
+    "_recorder_wrapper": "benzinga_breaking_news_recorder_wrapper",
+    "_install_recorder_trace": "install_benzinga_breaking_news_trace",
+}
 
 
-_utc_now = _news.benzinga_utc_now
-_configured_benzinga_token = _news.benzinga_configured_token
-_timestamp = _news.benzinga_timestamp
-_plain_text = _news.benzinga_plain_text
-_stock_symbols = _news.benzinga_stock_symbols
-normalize_benzinga_article = _news.normalize_benzinga_article
-fetch_benzinga_delta = _news.fetch_benzinga_delta
-_safe_status = _news.benzinga_safe_status
+def _news():
+    from mide.authorities import discovery_news
+
+    return discovery_news
 
 
-def _cache_articles(articles: list, *, now: datetime) -> list:
-    return _news.cache_benzinga_articles(
+def _replay():
+    from mide.authorities import replay_validation
+
+    return replay_validation
+
+
+def _article_cache() -> dict[str, Any]:
+    overridden = globals().get("_ARTICLE_CACHE")
+    if isinstance(overridden, dict):
+        return overridden
+    return getattr(
+        _news(),
+        "_BENZINGA_ARTICLE_CACHE",
+        _FALLBACK_ARTICLE_CACHE,
+    )
+
+
+def _compat_callable(
+    local_name: str,
+    authority_name: str,
+):
+    overridden = globals().get(local_name)
+    if callable(overridden):
+        return overridden
+    return getattr(_news(), authority_name, None)
+
+
+def _cache_articles(
+    articles: list,
+    *,
+    now: datetime,
+) -> list:
+    current = getattr(
+        _news(),
+        "cache_benzinga_articles",
+        None,
+    )
+    if not callable(current):
+        return list(articles or [])
+    return current(
         articles,
         now=now,
-        article_cache=_ARTICLE_CACHE,
+        article_cache=_article_cache(),
     )
 
 
@@ -74,16 +124,37 @@ def poll_breaking_news(
     now=None,
     session=None,
 ) -> tuple[list, dict]:
-    """Preserve GS502 polling state while delegating the algorithm to Discovery + News."""
+    """Preserve GS502 polling state while delegating semantics lazily."""
     global _LAST_SUCCESSFUL_POLL
 
-    articles, trace, next_poll = _news.poll_benzinga_breaking_news(
+    current = getattr(
+        _news(),
+        "poll_benzinga_breaking_news",
+        None,
+    )
+    if not callable(current):
+        return [], {
+            "authority": AUTHORITY,
+            "configured": bool(str(token or "").strip()),
+            "request_made": False,
+            "articles_received": 0,
+            "cached_articles": len(_article_cache()),
+            "selected_symbols": [],
+            "symbols_added": [],
+            "trading_authority_changed": False,
+        }
+
+    fetcher = _compat_callable(
+        "fetch_benzinga_delta",
+        "fetch_benzinga_delta",
+    )
+    articles, trace, next_poll = current(
         token=token,
         now=now,
         session=session,
         last_successful_poll=_LAST_SUCCESSFUL_POLL,
-        article_cache=_ARTICLE_CACHE,
-        fetcher=fetch_benzinga_delta,
+        article_cache=_article_cache(),
+        fetcher=fetcher,
     )
     _LAST_SUCCESSFUL_POLL = next_poll
     return articles, trace
@@ -96,17 +167,32 @@ def merge_breaking_news_discovery(
     *,
     now=None,
 ) -> tuple[list[str], dict[str, list[str]]]:
-    """Preserve GS502 override seams while delegating discovery semantics."""
+    """Preserve GS502 token/poller override seams with lazy authority ownership."""
     global _LATEST_TRACE
 
-    output, updated_reasons, trace = _news.merge_benzinga_breaking_news_discovery(
+    current = getattr(
+        _news(),
+        "merge_benzinga_breaking_news_discovery",
+        None,
+    )
+    if not callable(current):
+        return list(seeds or []), {
+            str(symbol): list(values)
+            for symbol, values in (reasons or {}).items()
+        }
+
+    token_resolver = _compat_callable(
+        "_configured_benzinga_token",
+        "benzinga_configured_token",
+    )
+    output, updated_reasons, trace = current(
         client,
         seeds,
         reasons,
         now=now,
-        token_resolver=_configured_benzinga_token,
+        token_resolver=token_resolver,
         poller=poll_breaking_news,
-        article_cache=_ARTICLE_CACHE,
+        article_cache=_article_cache(),
     )
     if not isinstance(_LATEST_TRACE, dict):
         _LATEST_TRACE = {}
@@ -115,22 +201,50 @@ def merge_breaking_news_discovery(
     return output, updated_reasons
 
 
-_install_discovery = _news.install_benzinga_breaking_news_discovery
-_recorder_wrapper = _replay.benzinga_breaking_news_recorder_wrapper
-_install_recorder_trace = _replay.install_benzinga_breaking_news_trace
-
-
 def install() -> None:
-    """Install GS502 through authoritative Discovery + News and Replay / Validation."""
-    _news.install_benzinga_breaking_news_discovery()
-    _replay.install_benzinga_breaking_news_trace()
+    """Install GS502 through lazy Discovery + News and Replay / Validation."""
+    discovery_install = getattr(
+        _news(),
+        "install_benzinga_breaking_news_discovery",
+        None,
+    )
+    if callable(discovery_install):
+        discovery_install()
+
+    recorder_install = getattr(
+        _replay(),
+        "install_benzinga_breaking_news_trace",
+        None,
+    )
+    if callable(recorder_install):
+        recorder_install()
 
 
 def __getattr__(name: str):
+    if name == "_ARTICLE_CACHE":
+        return _article_cache()
+
+    target = _NEWS_EXPORTS.get(name)
+    if target is not None:
+        try:
+            return getattr(_news(), target)
+        except AttributeError:
+            raise AttributeError(name) from None
+
+    target = _REPLAY_EXPORTS.get(name)
+    if target is not None:
+        try:
+            return getattr(_replay(), target)
+        except AttributeError:
+            raise AttributeError(name) from None
+
     try:
-        return getattr(_news, name)
+        return getattr(_news(), name)
     except AttributeError:
-        raise AttributeError(name) from None
+        try:
+            return getattr(_replay(), name)
+        except AttributeError:
+            raise AttributeError(name) from None
 
 
 __all__ = [

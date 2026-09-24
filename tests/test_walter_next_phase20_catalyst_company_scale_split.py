@@ -86,8 +86,10 @@ def test_gs503_source_is_compatibility_facade_not_duplicate_implementation():
         encoding="utf-8"
     )
 
-    assert "from mide.authorities import market_evidence as _market" in source
-    assert "from mide.authorities import presentation_audio as _presentation" in source
+    assert "def _market(" in source
+    assert "def _presentation(" in source
+    assert "from mide.authorities import market_evidence as _market" not in source
+    assert "from mide.authorities import presentation_audio as _presentation" not in source
     assert "def company_scale_context(" not in source
     assert "def _install_snapshot_reference(" not in source
     assert "def _install_operator_presentation(" not in source
