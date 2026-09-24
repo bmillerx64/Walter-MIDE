@@ -79,12 +79,13 @@ def test_phase73_gs457_public_name_delegates_lazily(monkeypatch):
     assert gs457.maturation_attention({}) == sentinel
 
 
-def test_phase73_presentation_internal_consumers_use_authoritative_function():
+def test_phase73_presentation_internal_consumers_preserve_compatibility_seam():
     source = (
         ROOT / "mide/authorities/presentation_audio.py"
     ).read_text(encoding="utf-8")
-    assert "gs457.maturation_attention(record)" not in source
-    assert source.count("maturation_attention(record)") >= 4
+    assert "def _maturation_attention_compat(" in source
+    assert source.count("_maturation_attention_compat(record)") >= 3
+    assert "_walter_next_presentation_facade" in source
 
 
 def test_phase73_stale_presentation_generation_keeps_warm_fallback(monkeypatch):
