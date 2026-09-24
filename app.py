@@ -1434,6 +1434,26 @@ def _run_live_pipeline(
                 type(exc).__name__,
             )
 
+        # GS546: the official SDK's default stream worker retries generic
+        # disconnects indefinitely. With one stable cross-deployment session_id,
+        # an obsolete Streamlit process can otherwise reconnect and steal the
+        # session back. Disable SDK self-retry and leave reconnection solely to
+        # Walter's established GS469 continuity owner.
+        try:
+            gs546 = importlib.import_module(
+                "mide.gs546_webull_stream_retry_owner"
+            )
+            gs546.install_for_provider(
+                client,
+                app_key,
+                app_secret,
+            )
+        except Exception as exc:
+            logging.getLogger(__name__).warning(
+                "GS546 Webull retry-owner bind unavailable error_type=%s",
+                type(exc).__name__,
+            )
+
         # GS489 uses a unique module boundary so a warm Streamlit session cannot
         # satisfy the graduated rc105 policy from a retained pre-GS489 module.
         try:
