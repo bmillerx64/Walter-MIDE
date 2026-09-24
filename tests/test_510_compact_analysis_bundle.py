@@ -104,11 +104,14 @@ def test_live_app_renders_compact_analysis_controls():
     assert "render_compact_analysis_bundle_controls" in source
 
 
-def test_compact_download_is_deferred_bytes_not_eager_on_rerun():
+def test_gs552_compact_download_preloads_bytes_once_per_prepared_filename():
     source = Path("mide/gs510_compact_analysis_bundle.py").read_text(encoding="utf-8")
-    assert "data=materialize_compact_bundle" in source
-    assert "return archive_path.read_bytes()" in source
+    assert "PAYLOAD_SESSION_KEY" in source
+    assert '"bytes": archive_path.read_bytes()' in source
+    assert 'data=payload["bytes"]' in source
+    assert 'key=f"walter-gs552-download-{filename}"' in source
     assert 'on_click="ignore"' in source
+    assert "data=materialize_compact_bundle" not in source
 
 
 def test_scope_lock_is_forensics_only():
@@ -150,23 +153,10 @@ def test_gs551_compact_bundle_uses_streamlit_static_root_and_href(tmp_path):
     assert gs510.STATIC_DIR == Path("static")
 
 
-def test_gs551_direct_link_fallback_targets_prepared_archive():
-    info = {
-        "filename": "walter-analysis-bundle-test.zip",
-        "href": "/app/static/walter-analysis-bundle-test.zip",
-        "archive_bytes": 6 * 1024 * 1024,
-    }
-
-    markup = gs510.analysis_bundle_link_markup(info)
-
-    assert 'href="/app/static/walter-analysis-bundle-test.zip"' in markup
-    assert 'download="walter-analysis-bundle-test.zip"' in markup
-    assert "Direct compact-bundle download" in markup
-
-
-def test_gs551_render_keeps_native_download_and_adds_static_fallback():
+def test_gs552_invalid_static_link_fallback_is_removed():
     source = Path("mide/gs510_compact_analysis_bundle.py").read_text(encoding="utf-8")
-    assert "data=materialize_compact_bundle" in source
-    assert "analysis_bundle_link_markup(info)" in source
-    assert "unsafe_allow_html=True" in source
+    assert "analysis_bundle_link_markup" not in source
+    assert "Direct compact-bundle download" not in source
+    assert 'data=payload["bytes"]' in source
     assert 'STATIC_DIR = Path("static")' in source
+
