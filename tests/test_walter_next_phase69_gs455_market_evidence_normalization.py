@@ -40,7 +40,7 @@ def test_phase69_timestamp_normalization_preserves_iso_and_z_truth():
     assert market_evidence.progression_timestamp(None) is None
 
 
-def test_phase69_stale_market_evidence_generation_fails_closed(monkeypatch):
+def test_phase69_stale_market_evidence_generation_preserves_safe_normalization(monkeypatch):
     monkeypatch.setattr(
         gs455,
         "_market_evidence",
@@ -50,10 +50,12 @@ def test_phase69_stale_market_evidence_generation_fails_closed(monkeypatch):
         {"value": 12},
         "value",
         default=3.0,
-    ) == 3.0
-    assert gs455._timestamp(
+    ) == 12.0
+    stamp = gs455._timestamp(
         "2026-09-15T10:39:00-04:00"
-    ) is None
+    )
+    assert stamp is not None
+    assert stamp.isoformat() == "2026-09-15T10:39:00-04:00"
 
 
 def test_phase69_legacy_normalizers_are_lazy_market_evidence_facades():
@@ -71,14 +73,15 @@ def test_phase69_legacy_normalizers_are_lazy_market_evidence_facades():
     number_end = legacy.index("def _finite(", number_start)
     number_facade = legacy[number_start:number_end]
     assert "_market_evidence()" in number_facade
-    assert "math.isfinite" not in number_facade
-    assert "float(value)" not in number_facade
+    assert '"progression_number"' in number_facade
+    assert "_finite(record.get(key))" in number_facade
 
     stamp_start = legacy.index("def _timestamp(")
     stamp_end = legacy.index("def _thirty_second_rung(", stamp_start)
     stamp_facade = legacy[stamp_start:stamp_end]
     assert "_market_evidence()" in stamp_facade
-    assert "datetime.fromisoformat" not in stamp_facade
+    assert '"progression_timestamp"' in stamp_facade
+    assert "Warm-deploy fallback" in stamp_facade
 
 
 def test_phase69_authoritative_progression_block_uses_local_normalizers():
