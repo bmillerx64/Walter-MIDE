@@ -2729,7 +2729,248 @@ def install_convergence_handoff_evidence() -> None:
     gs378.apply_live_vwap_truth = apply_with_efficient_maturation
 
 
+
+# ---------------------------------------------------------------------------
+# GS464 session-aware primary VWAP market evidence
+# ---------------------------------------------------------------------------
+
+_SESSION_VWAP_OWNER = "_walter_gs464_session_aware_vwap_owner"
+_SESSION_VWAP_APPLY_OWNER = "_walter_gs464_session_aware_vwap_apply_owner"
+
+
+def session_vwap_finite(value: Any) -> float | None:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    return number if pd.notna(number) else None
+
+
+def session_vwap_last(frame: pd.DataFrame) -> float | None:
+    if frame is None or frame.empty:
+        return None
+    from mide.indicators import session_vwap
+
+    series = session_vwap(frame)
+    return (
+        session_vwap_finite(series.iloc[-1])
+        if len(series)
+        else None
+    )
+
+
+def session_aware_primary_vwap_context(
+    frame: pd.DataFrame | None,
+) -> dict:
+    """Use 04:00 ET premarket, then reset primary VWAP at 09:30 ET."""
+    from mide import gs378_live_vwap_st_crossover as gs378
+    from mide import gs464_session_aware_vwap_parity as gs464
+    from mide.indicators import session_vwap
+
+    day = gs378._eastern_day(frame)
+    if day.empty:
+        return {
+            "day": day,
+            "series": pd.Series(dtype=float),
+            "value": None,
+            "anchor_mode": "UNAVAILABLE",
+            "anchor_time": None,
+            "premarket_value": None,
+            "rth_value": None,
+            "extended_value": None,
+            "session_policy": gs464.SESSION_POLICY,
+        }
+
+    premarket_start, regular_start = (
+        gs378._session_boundaries(day)
+    )
+    latest = day.index[-1]
+
+    premarket = day[
+        (day.index >= premarket_start)
+        & (day.index < regular_start)
+    ].copy()
+    rth = day[day.index >= regular_start].copy()
+    extended = day[
+        day.index >= premarket_start
+    ].copy()
+
+    premarket_value = gs464._last_vwap(premarket)
+    rth_value = gs464._last_vwap(rth)
+    extended_value = gs464._last_vwap(extended)
+
+    if latest >= regular_start and not rth.empty:
+        anchored = rth
+        anchor = regular_start
+        mode = gs464.RTH_POLICY
+    else:
+        anchored = day[
+            day.index >= premarket_start
+        ].copy()
+        anchor = premarket_start
+        mode = gs464.PREMARKET_POLICY
+
+    if anchored.empty:
+        anchored = day.copy()
+        anchor = day.index[0]
+        mode = "FALLBACK_FIRST_AVAILABLE_BAR"
+
+    primary = session_vwap(anchored)
+    value = (
+        gs464._finite(primary.iloc[-1])
+        if len(primary)
+        else None
+    )
+    return {
+        "day": day,
+        "series": primary,
+        "value": value,
+        "anchor_mode": mode,
+        "anchor_time": anchor,
+        "premarket_value": premarket_value,
+        "rth_value": rth_value,
+        "extended_value": extended_value,
+        "session_policy": gs464.SESSION_POLICY,
+    }
+
+
+def _inherit_session_vwap_wrapper(wrapper, wrapped) -> None:
+    for name, value in getattr(
+        wrapped,
+        "__dict__",
+        {},
+    ).items():
+        if name.startswith("_gs") and not hasattr(
+            wrapper,
+            name,
+        ):
+            setattr(wrapper, name, value)
+
+
+def install_session_aware_primary_vwap() -> None:
+    """Bind GS464 as the final primary-VWAP market-evidence authority."""
+    from mide import gs378_live_vwap_st_crossover as gs378
+
+    current = gs378.primary_vwap_context
+    if getattr(current, _SESSION_VWAP_OWNER, False):
+        return
+
+    _inherit_session_vwap_wrapper(
+        session_aware_primary_vwap_context,
+        current,
+    )
+    session_aware_primary_vwap_context._gs464_session_aware_vwap_parity = True
+    session_aware_primary_vwap_context._gs464_original = current
+    setattr(
+        session_aware_primary_vwap_context,
+        _SESSION_VWAP_OWNER,
+        True,
+    )
+    gs378.primary_vwap_context = (
+        session_aware_primary_vwap_context
+    )
+
+
+def install_session_aware_vwap_record_diagnostics() -> None:
+    """Attach GS464 policy labels to existing analyzed records only."""
+    from mide import gs378_live_vwap_st_crossover as gs378
+    from mide import gs464_session_aware_vwap_parity as gs464
+
+    current = gs378.apply_live_vwap_truth
+    if getattr(
+        current,
+        _SESSION_VWAP_APPLY_OWNER,
+        False,
+    ):
+        return
+
+    @wraps(current)
+    def apply_session_aware_truth(
+        records,
+        current_session_raw,
+        current_session_30s_raw,
+        client,
+    ):
+        updated = current(
+            records,
+            current_session_raw,
+            current_session_30s_raw,
+            client,
+        )
+        observed = 0
+        for record in updated or []:
+            mode = str(
+                record.get("vwap_anchor_mode") or ""
+            )
+            if mode not in {
+                gs464.PREMARKET_POLICY,
+                gs464.RTH_POLICY,
+                "FALLBACK_FIRST_AVAILABLE_BAR",
+            }:
+                continue
+            observed += 1
+            record["vwap_primary_session_policy"] = (
+                gs464.SESSION_POLICY
+            )
+            record["vwap_bar_timeframe_source"] = (
+                f"{getattr(client, 'provider_name', 'market data provider')} "
+                "1Min bars; primary VWAP 04:00 ET premarket / "
+                "09:30 ET regular-session reset"
+            )
+            record["extended_vwap_role"] = (
+                "diagnostic_only_after_09:30"
+            )
+
+        diagnostics = getattr(
+            client,
+            "diagnostics",
+            None,
+        )
+        if isinstance(diagnostics, dict):
+            diagnostics[
+                "gs464_session_aware_vwap_parity"
+            ] = {
+                "primary_vwap_policy": gs464.SESSION_POLICY,
+                "premarket_anchor": gs464.PREMARKET_POLICY,
+                "rth_anchor": gs464.RTH_POLICY,
+                "records_observed": observed,
+                "extended_vwap_role": (
+                    "diagnostic_only_after_09:30"
+                ),
+                "additional_market_data_requests": 0,
+                "trading_thresholds_changed": False,
+            }
+        return updated
+
+    _inherit_session_vwap_wrapper(
+        apply_session_aware_truth,
+        current,
+    )
+    apply_session_aware_truth._gs464_session_aware_vwap_parity = True
+    apply_session_aware_truth._gs464_original = current
+    setattr(
+        apply_session_aware_truth,
+        _SESSION_VWAP_APPLY_OWNER,
+        True,
+    )
+    gs378.apply_live_vwap_truth = (
+        apply_session_aware_truth
+    )
+
+
+def install_session_aware_vwap_evidence() -> None:
+    """Install all GS464 Market Evidence responsibilities."""
+    install_session_aware_primary_vwap()
+    install_session_aware_vwap_record_diagnostics()
+
+
 __all__ = [
+    "install_session_aware_vwap_evidence",
+    "install_session_aware_vwap_record_diagnostics",
+    "install_session_aware_primary_vwap",
+    "session_aware_primary_vwap_context",
+    "session_vwap_last",
+    "session_vwap_finite",
     "install_cascade_runway_evidence",
     "build_cascade_runway",
     "summarize_cascade_runway",
