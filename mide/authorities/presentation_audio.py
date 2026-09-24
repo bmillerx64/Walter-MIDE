@@ -1865,6 +1865,224 @@ def install_leader_reset_audio() -> None:
 
 
 # ---------------------------------------------------------------------------
+# GS453 bounded constructive-extension presentation semantics
+# ---------------------------------------------------------------------------
+
+CONSTRUCTIVE_EXTENSION_MIN_VWAP_DISTANCE_PCT = 2.0
+CONSTRUCTIVE_EXTENSION_MAX_VWAP_DISTANCE_PCT = 5.0
+CONSTRUCTIVE_EXTENSION_MIN_ALIGNMENT_SCORE = 2
+CONSTRUCTIVE_EXTENSION_MAX_10M_PRICE_CHANGE_PCT = 6.0
+CONSTRUCTIVE_EXTENSION_PARTICIPATION_REARM_LEVEL = 40.0
+CONSTRUCTIVE_EXTENSION_MIN_VOLUME_ACCELERATION = 1.0
+CONSTRUCTIVE_EXTENSION_MIN_DOLLAR_FLOW_ACCELERATION = 1.25
+_CONSTRUCTIVE_EXTENSION_OWNER = "_gs453_constructive_extension"
+
+
+def _constructive_extension_number(
+    record: dict,
+    *keys: str,
+    default: float | None = None,
+) -> float | None:
+    for key in keys:
+        value = record.get(key)
+        if value is None or value == "":
+            continue
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            continue
+    return default
+
+
+def _constructive_extension_aligned(record: dict, timeframe: str) -> bool:
+    details = record.get("timeframe_alignment") or {}
+    item = details.get(timeframe) if isinstance(details, dict) else None
+    return bool(item.get("aligned")) if isinstance(item, dict) else False
+
+
+def constructive_extension_evidence(record: dict) -> dict:
+    """Return GS453 display-only evidence for bounded constructive extension."""
+    relation = str(record.get("vwap_relation") or "").strip().lower()
+    distance = _constructive_extension_number(record, "vwap_distance_pct")
+    bounded = bool(
+        relation == "above"
+        and distance is not None
+        and CONSTRUCTIVE_EXTENSION_MIN_VWAP_DISTANCE_PCT
+        < distance
+        <= CONSTRUCTIVE_EXTENSION_MAX_VWAP_DISTANCE_PCT
+    )
+
+    score = int(
+        _constructive_extension_number(
+            record,
+            "alignment_score",
+            default=0.0,
+        )
+        or 0.0
+    )
+    thirty_aligned = _constructive_extension_aligned(record, "30s")
+    one_aligned = _constructive_extension_aligned(record, "1m")
+    three_aligned = _constructive_extension_aligned(record, "3m")
+    ladder_constructive = bool(
+        score >= CONSTRUCTIVE_EXTENSION_MIN_ALIGNMENT_SCORE
+        and thirty_aligned
+        and one_aligned
+    )
+
+    change_10m = abs(
+        _constructive_extension_number(
+            record,
+            "price_change_10m_pct",
+            default=999.0,
+        )
+        or 999.0
+    )
+    nonvertical = (
+        change_10m <= CONSTRUCTIVE_EXTENSION_MAX_10M_PRICE_CHANGE_PCT
+    )
+
+    participation = (
+        _constructive_extension_number(
+            record,
+            "participation_surge_score",
+            "participation_score",
+            default=0.0,
+        )
+        or 0.0
+    )
+    volume_accel = (
+        _constructive_extension_number(
+            record,
+            "volume_acceleration",
+            default=0.0,
+        )
+        or 0.0
+    )
+    dollar_flow = (
+        _constructive_extension_number(
+            record,
+            "dollar_flow_acceleration",
+            "dollar_flow_acceleration_1m",
+            default=0.0,
+        )
+        or 0.0
+    )
+    fresh_flow = bool(
+        volume_accel >= CONSTRUCTIVE_EXTENSION_MIN_VOLUME_ACCELERATION
+        or dollar_flow
+        >= CONSTRUCTIVE_EXTENSION_MIN_DOLLAR_FLOW_ACCELERATION
+    )
+    participation_ready = (
+        participation >= CONSTRUCTIVE_EXTENSION_PARTICIPATION_REARM_LEVEL
+    )
+
+    halted = bool(
+        record.get("halted")
+        or record.get("is_halted")
+        or record.get("suspended")
+        or record.get("is_suspended")
+    )
+    qualifies = bool(
+        bounded and ladder_constructive and nonvertical and not halted
+    )
+    return {
+        "qualifies": qualifies,
+        "display_only": True,
+        "entry_chase_guard_still_authoritative": True,
+        "vwap_distance_pct": distance,
+        "bounded_extension": bounded,
+        "alignment_score": score,
+        "thirty_second_aligned": thirty_aligned,
+        "one_minute_aligned": one_aligned,
+        "three_minute_aligned": three_aligned,
+        "ladder_constructive": ladder_constructive,
+        "price_change_10m_pct": change_10m,
+        "nonvertical": nonvertical,
+        "participation_score": participation,
+        "participation_ready": participation_ready,
+        "volume_acceleration": volume_accel,
+        "dollar_flow_acceleration": dollar_flow,
+        "fresh_flow": fresh_flow,
+    }
+
+
+def state_with_constructive_extension(original, record: dict) -> dict:
+    """Apply the established GS453 DEVELOPING presentation correction."""
+    from mide import gs310_unified_opportunity_state as unified
+
+    base = original(record)
+    if base.get("state") != unified.CHASE_WAIT:
+        return base
+
+    evidence = constructive_extension_evidence(record)
+    if not evidence["qualifies"]:
+        return base
+
+    view = deepcopy(base)
+    view["state"] = unified.DEVELOPING
+    view["color"] = unified.STATE_COLORS[unified.DEVELOPING]
+
+    if not evidence["fresh_flow"] or not evidence["participation_ready"]:
+        reason = (
+            "Bounded VWAP extension with constructive 30s → 1m structure; "
+            "momentum has not re-armed yet."
+        )
+        next_step = (
+            "Wait for fresh participation/volume and 3m confirmation. Do not chase; "
+            "the underlying entry guard remains authoritative."
+        )
+    elif not evidence["three_minute_aligned"]:
+        reason = (
+            "Fresh flow is improving inside a bounded extension, but 3m confirmation "
+            "is still developing."
+        )
+        next_step = (
+            "Watch for 3m confirmation while 30s and 1m stay constructive. This is "
+            "still observation, not entry permission."
+        )
+    else:
+        reason = (
+            "Multi-timeframe structure remains constructive inside a bounded VWAP "
+            "extension."
+        )
+        next_step = (
+            "Continue monitoring for an existing re-arm/entry path; do not treat the "
+            "DEVELOPING label as permission to chase."
+        )
+
+    view["reason"] = reason
+    view["next_step"] = next_step
+    view["constructive_extension"] = evidence
+    return view
+
+
+def install_constructive_extension_presentation() -> None:
+    """Install GS453 display semantics after existing LOOK NOW/retest state semantics."""
+    from mide import gs310_unified_opportunity_state as unified
+    from mide import gs311_unified_voice as voice
+    from mide import gs314_state_consistency as consistency
+    from mide import gs363_operator_attention_hierarchy as hierarchy
+
+    current = unified.opportunity_state
+    if getattr(current, _CONSTRUCTIVE_EXTENSION_OWNER, False):
+        calibrated = current
+    else:
+        original = current
+
+        def calibrated(record: dict) -> dict:
+            return state_with_constructive_extension(original, record)
+
+        _inherit_audio_wrapper(calibrated, current)
+        calibrated._gs453_constructive_extension = True
+        calibrated._gs453_original = original
+        unified.opportunity_state = calibrated
+
+    voice.opportunity_state = calibrated
+    consistency.opportunity_state = calibrated
+    hierarchy.opportunity_state = calibrated
+
+
+# ---------------------------------------------------------------------------
 # GS480 catalyst-story presentation facts
 # ---------------------------------------------------------------------------
 
@@ -2113,6 +2331,11 @@ def bind_final_enriched_opportunity_order(
 
 
 __all__ = [
+    "install_constructive_extension_presentation",
+    "state_with_constructive_extension",
+    "constructive_extension_evidence",
+    "CONSTRUCTIVE_EXTENSION_MIN_VWAP_DISTANCE_PCT",
+    "CONSTRUCTIVE_EXTENSION_MAX_VWAP_DISTANCE_PCT",
     "bind_final_enriched_opportunity_order",
     "final_enriched_opportunity_records",
     "FINAL_ORDER_OWNER_ATTR",
