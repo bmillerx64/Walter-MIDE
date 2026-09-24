@@ -408,8 +408,29 @@ def render_session_backup_controls(
         _render_backup_controls(candidate_path, flight_path)
         return
 
-    @fragment(run_every=JOB_POLL_SECONDS)
+    job_id = str(st.session_state.get(JOB_SESSION_KEY) or "")
+    job = session_backup_job_status(job_id) if job_id else None
+    polling = bool(job and job.get("status") == "running")
+
     def backup_fragment() -> None:
         _render_backup_controls(candidate_path, flight_path)
 
-    backup_fragment()
+        # GS542: poll only while a background backup is genuinely running.
+        # Transitioning idle->running or running->finished rebuilds the fragment
+        # boundary once so completed/idle backup controls become quiescent.
+        current_job_id = str(st.session_state.get(JOB_SESSION_KEY) or "")
+        current_job = (
+            session_backup_job_status(current_job_id)
+            if current_job_id
+            else None
+        )
+        now_running = bool(
+            current_job and current_job.get("status") == "running"
+        )
+        if now_running != polling:
+            st.rerun(scope="app")
+
+    if polling:
+        fragment(run_every=JOB_POLL_SECONDS)(backup_fragment)()
+    else:
+        fragment(backup_fragment)()
