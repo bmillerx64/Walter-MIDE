@@ -1895,6 +1895,173 @@ def install_canonical_30s_alignment_truth() -> None:
 
 
 # ---------------------------------------------------------------------------
+# GS456 canonical 30s VWAP truth propagation into GS397
+# ---------------------------------------------------------------------------
+#
+# Market Evidence owns how canonical 30s VWAP/ST facts are carried through GS397's
+# retained record. The historical GS456 installer remains the compatibility seam.
+
+
+def canonical_30s_primary_above_vwap(
+    original,
+    record: dict,
+    alignment_30s: dict,
+    tripwire: dict,
+) -> bool | None:
+    """Prefer canonical 30s close/VWAP truth before GS397's older fallback."""
+    from mide import gs456_canonical_30s_vwap_cross as gs456
+
+    close = maturation_finite(
+        tripwire.get("latest_close")
+    )
+    vwap = maturation_finite(
+        alignment_30s.get("vwap_value")
+    )
+    if close is not None and vwap is not None:
+        return close >= vwap
+    if (
+        alignment_30s.get("above_vwap") is not None
+        and alignment_30s.get("vwap_truth_authority")
+        == gs456.AUTHORITY
+    ):
+        return bool(
+            alignment_30s.get("above_vwap")
+        )
+    return original(
+        record,
+        alignment_30s,
+        tripwire,
+    )
+
+
+def canonicalize_gs397_with_30s_vwap(
+    original,
+    record: dict,
+) -> dict:
+    """Carry canonical 30s VWAP/ST/cross facts without changing entry authority."""
+    from mide import gs456_canonical_30s_vwap_cross as gs456
+
+    updated = original(record)
+    alignment = deepcopy(
+        updated.get("timeframe_alignment")
+        or {}
+    )
+    thirty = dict(
+        alignment.get("30s")
+        or {}
+    )
+    if (
+        thirty.get("vwap_truth_authority")
+        != gs456.AUTHORITY
+    ):
+        return updated
+
+    cross = deepcopy(
+        thirty.get("st_vwap_line_cross")
+        or {}
+    )
+    updated["vwap_30s_value"] = (
+        thirty.get("vwap_value")
+    )
+    updated["vwap_30s_anchor_mode"] = (
+        thirty.get("vwap_anchor_mode")
+    )
+    updated["vwap_30s_anchor_time_et"] = (
+        thirty.get("vwap_anchor_time_et")
+    )
+    updated["st_vwap_30s_line_cross"] = cross
+
+    timeframes = deepcopy(
+        updated.get("timeframes")
+        or {}
+    )
+    tf30 = dict(
+        timeframes.get("30s")
+        or {}
+    )
+    tf30.update(
+        {
+            "vwap_value": thirty.get(
+                "vwap_value"
+            ),
+            "vwap_anchor_mode": thirty.get(
+                "vwap_anchor_mode"
+            ),
+            "vwap_anchor_time_et": thirty.get(
+                "vwap_anchor_time_et"
+            ),
+            "supertrend_value": thirty.get(
+                "supertrend_value"
+            ),
+            "st_vwap_line_cross": cross,
+            "vwap_truth_authority": (
+                gs456.AUTHORITY
+            ),
+        }
+    )
+    timeframes["30s"] = tf30
+    updated["timeframes"] = timeframes
+    return updated
+
+
+def install_canonical_30s_gs397_propagation() -> None:
+    """Bind GS456 canonical 30s propagation at GS397's historical seams."""
+    from mide import gs397_canonical_30s_tripwire_truth as gs397
+
+    current_above = gs397._primary_above_vwap
+    if not getattr(
+        current_above,
+        "_gs456_canonical_30s_vwap",
+        False,
+    ):
+        @wraps(current_above)
+        def primary_above_vwap(
+            record: dict,
+            alignment_30s: dict,
+            tripwire: dict,
+        ):
+            return canonical_30s_primary_above_vwap(
+                current_above,
+                record,
+                alignment_30s,
+                tripwire,
+            )
+
+        primary_above_vwap._gs456_canonical_30s_vwap = True
+        primary_above_vwap._gs456_original = (
+            current_above
+        )
+        gs397._primary_above_vwap = (
+            primary_above_vwap
+        )
+
+    current_canonicalize = (
+        gs397.canonicalize_record
+    )
+    if getattr(
+        current_canonicalize,
+        "_gs456_canonical_30s_vwap",
+        False,
+    ):
+        return
+
+    @wraps(current_canonicalize)
+    def canonicalize_record(
+        record: dict,
+    ) -> dict:
+        return canonicalize_gs397_with_30s_vwap(
+            current_canonicalize,
+            record,
+        )
+
+    canonicalize_record._gs456_canonical_30s_vwap = True
+    canonicalize_record._gs456_original = (
+        current_canonicalize
+    )
+    gs397.canonicalize_record = canonicalize_record
+
+
+# ---------------------------------------------------------------------------
 # GS455 ordered ST/VWAP maturation progression evidence
 # ---------------------------------------------------------------------------
 #
@@ -6467,6 +6634,9 @@ def install_partial_snapshot_recovery_for_provider(
 
 
 __all__ = [
+    "canonical_30s_primary_above_vwap",
+    "canonicalize_gs397_with_30s_vwap",
+    "install_canonical_30s_gs397_propagation",
     "canonical_30s_empty_alignment",
     "canonical_30s_alignment_truth",
     "canonical_alignment_summary_with_30s_truth",
