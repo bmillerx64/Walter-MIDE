@@ -1676,6 +1676,212 @@ def install_price_trajectory_metrics() -> None:
 
 
 # ---------------------------------------------------------------------------
+# GS404 reset/retest attention evidence
+# ---------------------------------------------------------------------------
+#
+# Market Evidence owns the provider-free facts that identify a fresh near-VWAP reset
+# after prior extension. LOOK NOW state meaning and visible awareness injection remain
+# outside this component.
+
+
+def reset_retest_number(
+    record: dict,
+    *keys: str,
+    default: float | None = None,
+) -> float | None:
+    for key in keys:
+        value = record.get(key)
+        if value is None or value == "":
+            continue
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            continue
+    return default
+
+
+def reset_retest_one_minute(record: dict) -> dict:
+    states = record.get("timeframes") or {}
+    value = (
+        states.get("1m")
+        if isinstance(states, dict)
+        else None
+    )
+    return (
+        dict(value)
+        if isinstance(value, dict)
+        else {}
+    )
+
+
+def reset_retest_current_webull_radar_attention(
+    record: dict,
+) -> bool:
+    from mide import gs404_reset_retest_look_now as gs404
+
+    reasons = " | ".join(
+        str(value or "")
+        for value in (
+            record.get("discovery_reasons")
+            or []
+        )
+    )
+    return bool(
+        gs404.WEBULL_DAY_GAINER_REASON in reasons
+        or gs404.WEBULL_FIVE_MINUTE_REASON in reasons
+    )
+
+
+def reset_retest_fresh_source(record: dict) -> bool:
+    from mide.gs373_operator_visibility_freshness import (
+        MAX_OPERATOR_BAR_AGE_SECONDS,
+    )
+
+    age = reset_retest_number(
+        record,
+        "source_bar_age_seconds",
+        "source_bar_age",
+        "bar_age_seconds",
+    )
+    return bool(
+        age is not None
+        and 0.0 <= age <= MAX_OPERATOR_BAR_AGE_SECONDS
+    )
+
+
+def reset_retest_attention_evidence(record: dict) -> dict:
+    """Return provider-free GS404 reset/retest attention evidence."""
+    from mide import gs404_reset_retest_look_now as gs404
+
+    previous = (
+        record.get("opportunity_pulse_previous")
+        or {}
+    )
+    continuity = bool(previous)
+
+    previous_distance = reset_retest_number(
+        previous,
+        "vwap_distance_pct",
+    )
+    current_distance = reset_retest_number(
+        record,
+        "vwap_distance_pct",
+    )
+    previous_extended = bool(
+        previous_distance is not None
+        and previous_distance
+        > gs404.PREVIOUS_EXTENSION_MIN_PCT
+    )
+    near_vwap_now = bool(
+        current_distance is not None
+        and abs(current_distance)
+        <= gs404.NEAR_VWAP_WINDOW_PCT
+    )
+
+    one = reset_retest_one_minute(record)
+    one_minute_bullish = bool(
+        one.get("supertrend")
+    )
+
+    participation = (
+        reset_retest_number(
+            record,
+            "participation_score",
+            "participation_surge_score",
+            default=0.0,
+        )
+        or 0.0
+    )
+    volume_acceleration = (
+        reset_retest_number(
+            record,
+            "volume_acceleration",
+            default=0.0,
+        )
+        or 0.0
+    )
+    dollar_flow = (
+        reset_retest_number(
+            record,
+            "dollar_flow_acceleration_1m",
+            "dollar_flow_acceleration",
+            default=0.0,
+        )
+        or 0.0
+    )
+
+    participation_present = bool(
+        participation
+        >= gs404.MIN_PARTICIPATION
+    )
+    flow_present = bool(
+        volume_acceleration
+        >= gs404.MIN_VOLUME_ACCELERATION
+        or dollar_flow
+        >= gs404.MIN_DOLLAR_FLOW_ACCELERATION
+    )
+    current_radar_attention = (
+        reset_retest_current_webull_radar_attention(
+            record
+        )
+    )
+    fresh_source = reset_retest_fresh_source(
+        record
+    )
+
+    recent = bool(
+        continuity
+        and previous_extended
+        and near_vwap_now
+        and one_minute_bullish
+        and participation_present
+        and flow_present
+        and current_radar_attention
+        and fresh_source
+    )
+    return {
+        "recent": recent,
+        "trigger": (
+            "RESET_RETEST_NEAR_VWAP"
+            if recent
+            else None
+        ),
+        "chart_review_only": True,
+        "entry_authority_unchanged": True,
+        "continuity": continuity,
+        "previous_vwap_distance_pct": previous_distance,
+        "previous_extended": previous_extended,
+        "current_vwap_distance_pct": current_distance,
+        "near_vwap_now": near_vwap_now,
+        "one_minute_supertrend_bullish": one_minute_bullish,
+        "participation_score": round(
+            float(participation),
+            1,
+        ),
+        "participation_present": participation_present,
+        "volume_acceleration": round(
+            float(volume_acceleration),
+            2,
+        ),
+        "dollar_flow_acceleration": round(
+            float(dollar_flow),
+            2,
+        ),
+        "flow_present": flow_present,
+        "current_webull_radar_attention": current_radar_attention,
+        "fresh_source": fresh_source,
+    }
+
+
+def reset_retest_eligible(record: dict) -> bool:
+    return bool(
+        reset_retest_attention_evidence(
+            record
+        )["recent"]
+    )
+
+
+# ---------------------------------------------------------------------------
 # GS456 canonical 30s VWAP / SuperTrend alignment evidence
 # ---------------------------------------------------------------------------
 #
@@ -6711,6 +6917,12 @@ def install_partial_snapshot_recovery_for_provider(
 
 
 __all__ = [
+    "reset_retest_number",
+    "reset_retest_one_minute",
+    "reset_retest_current_webull_radar_attention",
+    "reset_retest_fresh_source",
+    "reset_retest_attention_evidence",
+    "reset_retest_eligible",
     "canonical_30s_progression_rung",
     "install_canonical_30s_progression_rung",
     "canonical_30s_primary_above_vwap",

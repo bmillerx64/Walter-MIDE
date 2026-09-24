@@ -40,7 +40,24 @@ WEBULL_DAY_GAINER_REASON = "Webull native: day_gainers"
 WEBULL_FIVE_MINUTE_REASON = "Webull native: five_minute_movers"
 
 
+def _market_evidence():
+    from mide.authorities import market_evidence
+
+    return market_evidence
+
+
 def _number(record: dict, *keys: str, default: float | None = None) -> float | None:
+    current = getattr(
+        _market_evidence(),
+        "reset_retest_number",
+        None,
+    )
+    if callable(current):
+        return current(
+            record,
+            *keys,
+            default=default,
+        )
     for key in keys:
         value = record.get(key)
         if value is None or value == "":
@@ -53,17 +70,38 @@ def _number(record: dict, *keys: str, default: float | None = None) -> float | N
 
 
 def _one_minute(record: dict) -> dict:
+    current = getattr(
+        _market_evidence(),
+        "reset_retest_one_minute",
+        None,
+    )
+    if callable(current):
+        return current(record)
     states = record.get("timeframes") or {}
     value = states.get("1m") if isinstance(states, dict) else None
     return dict(value) if isinstance(value, dict) else {}
 
 
 def _current_webull_radar_attention(record: dict) -> bool:
+    current = getattr(
+        _market_evidence(),
+        "reset_retest_current_webull_radar_attention",
+        None,
+    )
+    if callable(current):
+        return bool(current(record))
     reasons = " | ".join(str(value or "") for value in record.get("discovery_reasons") or [])
     return WEBULL_DAY_GAINER_REASON in reasons or WEBULL_FIVE_MINUTE_REASON in reasons
 
 
 def _fresh_source(record: dict) -> bool:
+    current = getattr(
+        _market_evidence(),
+        "reset_retest_fresh_source",
+        None,
+    )
+    if callable(current):
+        return bool(current(record))
     from .gs373_operator_visibility_freshness import MAX_OPERATOR_BAR_AGE_SECONDS
 
     age = _number(record, "source_bar_age_seconds", "source_bar_age", "bar_age_seconds")
@@ -71,7 +109,16 @@ def _fresh_source(record: dict) -> bool:
 
 
 def reset_retest_attention_evidence(record: dict) -> dict:
-    """Detect a fresh extended-move reset that deserves immediate chart review."""
+    """Warm-deploy-safe facade for authoritative reset/retest market evidence."""
+    current = getattr(
+        _market_evidence(),
+        "reset_retest_attention_evidence",
+        None,
+    )
+    if callable(current):
+        return current(record)
+
+    # Retained-runtime fallback for an older Market Evidence generation.
     previous = record.get("opportunity_pulse_previous") or {}
     continuity = bool(previous)
 
@@ -138,6 +185,13 @@ def reset_retest_attention_evidence(record: dict) -> dict:
 
 
 def reset_retest_eligible(record: dict) -> bool:
+    current = getattr(
+        _market_evidence(),
+        "reset_retest_eligible",
+        None,
+    )
+    if callable(current):
+        return bool(current(record))
     return bool(reset_retest_attention_evidence(record)["recent"])
 
 
