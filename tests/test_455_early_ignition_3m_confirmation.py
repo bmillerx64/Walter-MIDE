@@ -318,15 +318,19 @@ def test_line_cross_event_normalizes_unready_nan_instead_of_breaking_scan_equali
 
 
 def test_gs455_reuses_gs423_and_gs421_supertrend_passes_instead_of_requesting_history():
-    source = Path("mide/gs455_early_ignition_3m_confirmation.py").read_text(
+    legacy = Path("mide/gs455_early_ignition_3m_confirmation.py").read_text(
         encoding="utf-8"
     )
-    assert "gs423.install()" in source
-    assert "gs378._confirmation_details = _confirmation_details_with_line_cross" in source
-    assert "gs421._timeframe_event = _timeframe_event_with_line_cross" in source
-    assert "client.bars(" not in source
-    assert "provider.bars(" not in source
-    assert "extra_crossover_events" not in source
+    authority = Path("mide/authorities/market_evidence.py").read_text(
+        encoding="utf-8"
+    )
+    assert "install_maturation_line_cross_enrichment" in legacy
+    assert "gs423.install()" in authority
+    assert "gs378._confirmation_details = (" in authority
+    assert "gs421._timeframe_event = (" in authority
+    assert "client.bars(" not in authority
+    assert "provider.bars(" not in authority
+    assert "extra_crossover_events" not in authority
 
 
 def test_gs455_keeps_gs378_canonical_for_1m_3m_cross_truth():
