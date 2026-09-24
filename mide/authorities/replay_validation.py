@@ -527,6 +527,217 @@ def retest_entry_shadow(record: dict) -> dict:
 
 
 # ---------------------------------------------------------------------------
+# GS536 session-forensic persistence rollover
+# ---------------------------------------------------------------------------
+#
+# Candidate History and Flight Recorder lifecycle belong to Replay / Validation.
+# The historical gs536 module remains the mutable compatibility seam for marker names,
+# timestamp regex, lock identity, and wrapper callbacks. This keeps existing retained
+# runtimes and regression monkeypatches stable while removing duplicate ownership.
+
+FORENSIC_ROLLOVER_AUTHORITY = "REPLAY_PERSISTENCE_LIFECYCLE_ONLY"
+
+
+def forensic_archive_target(
+    path: Path,
+    session_date,
+    *,
+    archive_dir: Path | None = None,
+) -> Path:
+    directory = archive_dir or (path.parent / "session_archives")
+    directory.mkdir(parents=True, exist_ok=True)
+    base = (
+        directory
+        / f"{path.stem}-{session_date.strftime('%Y%m%d')}{path.suffix}"
+    )
+    if not base.exists():
+        return base
+    counter = 2
+    while True:
+        candidate = (
+            directory
+            / (
+                f"{path.stem}-{session_date.strftime('%Y%m%d')}"
+                f"-{counter}{path.suffix}"
+            )
+        )
+        if not candidate.exists():
+            return candidate
+        counter += 1
+
+
+def embedded_forensic_session_date(path: Path):
+    from datetime import datetime, timezone
+    from mide import gs536_session_forensic_rollover as gs536
+    from mide.time_service import eastern_time
+
+    try:
+        with path.open("rb") as handle:
+            prefix = handle.read(256 * 1024)
+    except OSError:
+        return None
+    match = gs536._ISO_RE.search(prefix)
+    if not match:
+        return None
+    text = (
+        match.group(0)
+        .decode("ascii")
+        .replace("Z", "+00:00")
+    )
+    try:
+        stamp = datetime.fromisoformat(text)
+    except ValueError:
+        return None
+    if stamp.tzinfo is None:
+        stamp = stamp.replace(tzinfo=timezone.utc)
+    return eastern_time(stamp).date()
+
+
+def active_forensic_file_session_date(path: str | Path):
+    from datetime import datetime, timezone
+    from mide import gs536_session_forensic_rollover as gs536
+    from mide.time_service import eastern_time
+
+    active = Path(path)
+    embedded = gs536._embedded_session_date(active)
+    if embedded is not None:
+        return embedded
+    try:
+        stamp = datetime.fromtimestamp(
+            active.stat().st_mtime,
+            tz=timezone.utc,
+        )
+    except OSError:
+        return None
+    return eastern_time(stamp).date()
+
+
+def roll_active_forensic_file_if_new_session(
+    path: str | Path,
+    *,
+    now=None,
+    archive_dir: str | Path | None = None,
+) -> dict[str, Any]:
+    from mide import gs536_session_forensic_rollover as gs536
+    from mide.time_service import eastern_time
+
+    active = Path(path)
+    current_date = eastern_time(now).date()
+    directory = (
+        Path(archive_dir)
+        if archive_dir is not None
+        else None
+    )
+
+    with gs536._LOCK:
+        try:
+            stat = active.stat()
+        except FileNotFoundError:
+            return {
+                "rolled": False,
+                "reason": "missing",
+            }
+        except OSError:
+            return {
+                "rolled": False,
+                "reason": "stat_error",
+            }
+        if stat.st_size <= 0:
+            return {
+                "rolled": False,
+                "reason": "empty",
+            }
+
+        prior_date = gs536.active_file_session_date(active)
+        if prior_date is None:
+            return {
+                "rolled": False,
+                "reason": "date_unknown",
+            }
+        if prior_date >= current_date:
+            return {
+                "rolled": False,
+                "reason": "same_session",
+                "prior_date": prior_date.isoformat(),
+                "current_date": current_date.isoformat(),
+            }
+
+        target = gs536._archive_target(
+            active,
+            prior_date,
+            archive_dir=directory,
+        )
+        active.replace(target)
+        return {
+            "rolled": True,
+            "reason": "new_session",
+            "archive_path": str(target),
+            "prior_date": prior_date.isoformat(),
+            "current_date": current_date.isoformat(),
+            "archived_bytes": int(stat.st_size),
+        }
+
+
+def install_forensic_store_rollover(store_class) -> None:
+    from mide import gs536_session_forensic_rollover as gs536
+
+    current = store_class.append
+    if getattr(current, gs536._MARKER_STORE, False):
+        return
+
+    @wraps(current)
+    def append(self, records):
+        if records:
+            gs536.roll_active_file_if_new_session(
+                self.path
+            )
+        return current(self, records)
+
+    setattr(
+        append,
+        gs536._MARKER_STORE,
+        True,
+    )
+    append._gs536_original = current
+    store_class.append = append
+
+
+def install_forensic_flight_rollover(recorder_class) -> None:
+    from mide import gs536_session_forensic_rollover as gs536
+
+    current = recorder_class.record_scan
+    if getattr(current, gs536._MARKER_FLIGHT, False):
+        return
+
+    @wraps(current)
+    def record_scan(self, *args, **kwargs):
+        gs536.roll_active_file_if_new_session(
+            self.path,
+            now=kwargs.get("timestamp"),
+        )
+        return current(self, *args, **kwargs)
+
+    setattr(
+        record_scan,
+        gs536._MARKER_FLIGHT,
+        True,
+    )
+    record_scan._gs536_original = current
+    recorder_class.record_scan = record_scan
+
+
+def install_session_forensic_rollover() -> None:
+    from mide import flight_recorder, memory
+
+    install_forensic_store_rollover(
+        memory.MemoryStore
+    )
+    install_forensic_flight_rollover(
+        flight_recorder.FlightRecorder
+    )
+
+
+# ---------------------------------------------------------------------------
 # GS425 live-scan latency truth recorder
 # ---------------------------------------------------------------------------
 
@@ -2195,6 +2406,14 @@ def install_connection_limit_stream_trace() -> None:
 
 
 __all__ = [
+    "FORENSIC_ROLLOVER_AUTHORITY",
+    "forensic_archive_target",
+    "embedded_forensic_session_date",
+    "active_forensic_file_session_date",
+    "roll_active_forensic_file_if_new_session",
+    "install_forensic_store_rollover",
+    "install_forensic_flight_rollover",
+    "install_session_forensic_rollover",
     "ENTRY_SHADOW_AUTHORITY",
     "entry_shadow_fresh_progression",
     "shadow_entry_calibration",
