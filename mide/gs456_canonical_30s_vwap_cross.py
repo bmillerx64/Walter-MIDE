@@ -49,7 +49,20 @@ def _finite(value: Any) -> float | None:
     return number if pd.notna(number) else None
 
 
+def _market_evidence():
+    from mide.authorities import market_evidence
+
+    return market_evidence
+
+
 def _empty_30s_alignment() -> dict:
+    current = getattr(
+        _market_evidence(),
+        "canonical_30s_empty_alignment",
+        None,
+    )
+    if callable(current):
+        return current()
     return {
         "above_vwap": False,
         "supertrend_bullish": False,
@@ -74,72 +87,17 @@ def _empty_30s_alignment() -> dict:
     }
 
 
-def alignment_30s_truth(frame_30s: pd.DataFrame | None) -> dict:
-    """Compute and retain 30s VWAP/ST truth in the existing alignment ST pass."""
-    from . import gs455_early_ignition_3m_confirmation as gs455
-
-    day = gs378._eastern_day(frame_30s)
-    if day.empty:
+def alignment_30s_truth(
+    frame_30s: pd.DataFrame | None,
+) -> dict:
+    current = getattr(
+        _market_evidence(),
+        "canonical_30s_alignment_truth",
+        None,
+    )
+    if not callable(current):
         return _empty_30s_alignment()
-
-    # Deliberately call the installed canonical VWAP function. GS391 owns this in
-    # production today; if that policy changes later, 30s follows the same truth.
-    context = gs378.primary_vwap_context(day)
-    day = context.get("day")
-    primary = context.get("series")
-    if day is None or day.empty or primary is None or primary.empty:
-        return _empty_30s_alignment()
-
-    vwap = primary.reindex(day.index)
-    close = day["close"].astype(float)
-    latest_close = _finite(close.iloc[-1]) if len(close) else None
-    latest_vwap = _finite(vwap.iloc[-1]) if len(vwap) else None
-
-    ema65 = gs378.ema(close, 65).iloc[-1] if len(day) >= 65 else float("nan")
-    # This replaces GS378's old 30s alignment ST call; it does not stack another one.
-    st_line, direction = gs378.supertrend(day, 10, 3)
-    latest_st = _finite(st_line.iloc[-1]) if len(st_line) else None
-    hh = gs378._higher_highs(day)
-    hl = gs378.higher_lows(day) if len(day) >= 4 else None
-    structure = None if hh is None or hl is None else bool(hh and hl)
-
-    above_vwap = bool(
-        latest_close is not None
-        and latest_vwap is not None
-        and latest_close >= latest_vwap
-    )
-    bullish = bool(len(direction) and direction.iloc[-1])
-    above_ema = bool(
-        pd.notna(ema65)
-        and latest_close is not None
-        and latest_close >= float(ema65)
-    )
-    aligned = bool(above_vwap and bullish and above_ema and structure is not False)
-
-    cross = gs455._line_cross_event(
-        day,
-        vwap,
-        st_line,
-        direction,
-        "30s",
-        latest_source_time=day.index[-1],
-    )
-
-    anchor = context.get("anchor_time")
-    return {
-        "above_vwap": above_vwap,
-        "supertrend_bullish": bullish,
-        "above_ema65": above_ema,
-        "higher_highs_higher_lows": structure,
-        "aligned": aligned,
-        "vwap_value": round(latest_vwap, 6) if latest_vwap is not None else None,
-        "vwap_anchor_mode": context.get("anchor_mode"),
-        "vwap_anchor_time_et": anchor.isoformat() if anchor is not None else None,
-        "supertrend_value": round(latest_st, 6) if latest_st is not None else None,
-        "st_vwap_line_cross": cross,
-        "vwap_truth_authority": AUTHORITY,
-        "source": SOURCE,
-    }
+    return current(frame_30s)
 
 
 def alignment_summary_with_30s_truth(
@@ -147,31 +105,32 @@ def alignment_summary_with_30s_truth(
     primary_1m: pd.Series,
     frame_30s: pd.DataFrame | None = None,
 ) -> dict:
-    """Preserve GS378's 1m/3m contract while retaining canonical 30s values."""
-    details: dict[str, dict] = {
-        "30s": alignment_30s_truth(frame_30s),
-        "1m": gs378._alignment_evaluation(day_1m, primary_1m, "1m"),
-    }
-    frame_3m = gs378._timeframe_frame(day_1m, "3m")
-    details["3m"] = gs378._alignment_evaluation(frame_3m, primary_1m, "3m")
-    score = sum(
-        bool(details[label].get("aligned")) for label in ("30s", "1m", "3m")
+    current = getattr(
+        _market_evidence(),
+        "canonical_alignment_summary_with_30s_truth",
+        None,
     )
-    return {
-        "timeframe_alignment": details,
-        "alignment_score": score,
-        "alignment_total": 3,
-        "alignment_label": gs378._ALIGNMENT_LABELS[score],
-    }
+    if not callable(current):
+        return gs378._alignment_summary(
+            day_1m,
+            primary_1m,
+            frame_30s,
+        )
+    return current(
+        day_1m,
+        primary_1m,
+        frame_30s,
+    )
 
 
 def _install_alignment_truth() -> None:
-    current = gs378._alignment_summary
-    if getattr(current, "_gs456_canonical_30s_vwap", False):
-        return
-    alignment_summary_with_30s_truth._gs456_canonical_30s_vwap = True
-    alignment_summary_with_30s_truth._gs456_original = current
-    gs378._alignment_summary = alignment_summary_with_30s_truth
+    current = getattr(
+        _market_evidence(),
+        "install_canonical_30s_alignment_truth",
+        None,
+    )
+    if callable(current):
+        current()
 
 
 def _install_gs397_canonicalization() -> None:
