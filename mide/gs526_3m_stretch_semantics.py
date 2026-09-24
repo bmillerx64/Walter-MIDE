@@ -1,4 +1,4 @@
-"""Compatibility facade for Walter Next 3m-stretch semantics.
+"""Compatibility shim/facade for Walter Next 3m-stretch semantics.
 
 Thesis / State owns GS526's presentation-only 3m-stretch adjudication. This historical
 module preserves the validated helper/install surface while resolving Thesis / State
