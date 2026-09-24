@@ -13,6 +13,7 @@ authoritative base interpretation.
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from copy import deepcopy
 from functools import wraps
 import math
@@ -1186,6 +1187,25 @@ def install_vwap_truth() -> None:
     hierarchy.opportunity_state = calibrated
 
 
+
+def mission_ranked_records(
+    records: Iterable[dict],
+) -> list[dict]:
+    """Return Stage 8 Expansion-qualified records strongest-first.
+
+    Mission Ranking direction is thesis/state semantics over already-qualified
+    candidates. The existing trader-priority key remains higher-is-better; no score,
+    threshold, gate, qualification, readiness, or execution authority is changed.
+    """
+    from mide.trader_priority import trader_priority_sort_key
+
+    return sorted(
+        list(records or []),
+        key=trader_priority_sort_key,
+        reverse=True,
+    )
+
+
 def opportunity_state(record: dict) -> dict:
     """Return the fully calibrated current thesis through the compatibility surface.
 
@@ -1215,10 +1235,6 @@ def __getattr__(name: str):
         from mide import escalation
 
         return getattr(escalation, name)
-    if name == "mission_ranked_records":
-        from mide.gs498_mission_ranking_direction import mission_ranked_records
-
-        return mission_ranked_records
     if name == "walter_mission_control":
         from mide import ui
 
