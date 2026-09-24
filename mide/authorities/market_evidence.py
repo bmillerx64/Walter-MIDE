@@ -1685,6 +1685,118 @@ def install_price_trajectory_metrics() -> None:
 # authority lives in these functions.
 
 
+def thirty_second_progression_rung(record: dict) -> dict:
+    """Return the historical GS455 30s fallback rung from retained market evidence."""
+    from mide import gs455_early_ignition_3m_confirmation as gs455
+
+    tripwire = record.get("thirty_second_tripwire") or {}
+    stamp = (
+        record.get("supertrend_30s_last_flip_timestamp")
+        or tripwire.get("last_flip_timestamp")
+    )
+    age = gs455._number(
+        record,
+        "supertrend_30s_last_flip_age_seconds",
+        "supertrend_30s_flip_age_seconds",
+    )
+    if age is None:
+        age = gs455._number(
+            tripwire,
+            "last_flip_age_seconds",
+        )
+    bullish = bool(
+        record.get("supertrend_30s_bullish")
+        or tripwire.get("supertrend_bullish")
+    )
+    active = bool(stamp and bullish)
+    return {
+        "timeframe": "30s",
+        "crossed": active,
+        "recent": bool(
+            active
+            and age is not None
+            and age <= gs455._RECENT_WINDOWS_SECONDS["30s"]
+        ),
+        "new": bool(
+            active
+            and age is not None
+            and age <= gs455._NEW_WINDOWS_SECONDS["30s"]
+        ),
+        "timestamp": stamp,
+        "age_seconds": age,
+        "current_confirmed": bullish,
+        "kind": "canonical_30s_tripwire_flip",
+    }
+
+
+def progression_rung_event(
+    record: dict,
+    label: str,
+) -> dict:
+    """Assemble one GS455 maturation rung from already-retained evidence."""
+    from mide import gs455_early_ignition_3m_confirmation as gs455
+
+    if label == "30s":
+        # Preserve GS456's installed literal-cross wrapper at the historical seam.
+        return gs455._thirty_second_rung(record)
+
+    if label in {"1m", "3m"}:
+        canonical = dict(
+            (record.get("st_vwap_cross_events") or {}).get(label)
+            or {}
+        )
+        detail = dict(
+            (record.get("timeframes") or {}).get(label)
+            or {}
+        )
+        enriched = dict(
+            detail.get("st_vwap_line_cross")
+            or {}
+        )
+        event = canonical or enriched
+        if canonical and enriched:
+            event = dict(canonical)
+            event["current_confirmed"] = enriched.get(
+                "current_confirmed",
+                bool(
+                    detail.get("above_vwap")
+                    and detail.get("supertrend")
+                ),
+            )
+        elif event:
+            event.setdefault(
+                "current_confirmed",
+                bool(
+                    detail.get("above_vwap")
+                    and detail.get("supertrend")
+                ),
+            )
+        return event
+
+    if label in {"5m", "10m"}:
+        detail = dict(
+            (record.get("timeframes") or {}).get(label)
+            or {}
+        )
+        return dict(
+            detail.get("st_vwap_line_cross")
+            or {}
+        )
+
+    maturation = (
+        record.get("multitimeframe_maturation")
+        or {}
+    )
+    detail = dict(
+        (maturation.get("timeframes") or {}).get("15m")
+        or {}
+    )
+    return dict(
+        detail.get("st_vwap_line_cross")
+        or {}
+    )
+
+
 def crossover_progression(record: dict) -> dict:
     """Return Walter's ordered current 30s->15m maturation ladder."""
     from mide import gs455_early_ignition_3m_confirmation as gs455
@@ -5995,6 +6107,8 @@ __all__ = [
     "maturation_confirmation_details_with_line_cross",
     "maturation_timeframe_event_with_line_cross",
     "install_maturation_line_cross_enrichment",
+    "thirty_second_progression_rung",
+    "progression_rung_event",
     "crossover_progression",
     "progression_signal",
     "install_partial_snapshot_recovery_for_provider",
