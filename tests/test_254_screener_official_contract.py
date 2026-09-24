@@ -1,3 +1,4 @@
+from mide import webull_native_radar as radar
 from mide.webull_native_radar import fetch_native_radar
 
 class Response:
@@ -9,7 +10,8 @@ class Screener:
     def get_gainers_losers(self,**kwargs): self.calls.append(("gainers",kwargs)); return Response(kwargs["rank_type"])
     def get_most_active(self,**kwargs): self.calls.append(("active",kwargs)); return Response(kwargs["rank_type"])
 
-def test_native_radar_uses_official_rank_contract():
+def test_native_radar_uses_official_rank_contract(monkeypatch):
+    monkeypatch.setattr(radar, "_day_gainers_rank_type", lambda: "DAY_1")
     screener=Screener(); report=fetch_native_radar(screener)
     assert report["all_feeds_available"] is True
     calls={kwargs["rank_type"]:kwargs for _kind,kwargs in screener.calls}

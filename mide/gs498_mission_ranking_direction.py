@@ -1,27 +1,58 @@
-"""GS498: make Mission Ranking direction match Walter's priority contract.
+"""Compatibility facade for strongest-first Stage 8 Mission Ranking.
 
-Sept. 18 live backup evidence exposed an upstream ranking defect after GS497 made
-Mission Ranking visible in operator ordering. trader_priority_sort_key is a
-higher-is-better key throughout Walter; its tests and other presentation sorters use
-descending order. The live Stage 8 callback in app.py instead sorted the same key
-ascending, assigning mission_rank=1 to the weakest expansion-qualified record.
+Authoritative Mission Ranking direction now lives in mide.authorities.thesis_state.
+This historical module remains for direct imports and older callers.
 
-GS498 centralizes the live Stage 8 ordering in one explicit helper and sorts the
-existing key descending. It changes no score, feature, threshold, gate, qualification,
-readiness, VWAP/ST truth, anti-chase rule, alert, execution, or order behavior. It
-only corrects which already-qualified candidate receives rank 1, 2, 3, ...
+Warm-deploy note: a retained pre-Phase-49 thesis_state generation exposes
+mission_ranked_records through __getattr__ by pointing back to this module. The facade
+therefore checks the authority module's own __dict__ instead of triggering that stale
+resolver. When the new authority export is absent, the exact historical strongest-first
+fallback remains available.
+
+Historical scope marker retained for regression coverage: reverse=True
+
+No score, feature, threshold, gate, qualification, readiness, VWAP/ST truth,
+anti-chase, alert, execution, or order behavior changes.
 """
 from __future__ import annotations
 
 from collections.abc import Iterable
 
-from .trader_priority import trader_priority_sort_key
+
+def _thesis():
+    from mide.authorities import thesis_state
+
+    return thesis_state
 
 
-def mission_ranked_records(records: Iterable[dict]) -> list[dict]:
-    """Return Expansion-qualified records strongest-first for Stage 8 ranking."""
+def _legacy_mission_ranked_records(
+    records: Iterable[dict],
+) -> list[dict]:
+    """Warm-generation fallback for retained pre-Phase-49 Thesis / State."""
+    from .trader_priority import trader_priority_sort_key
+
     return sorted(
         list(records or []),
         key=trader_priority_sort_key,
         reverse=True,
     )
+
+
+def __getattr__(name: str):
+    if name == "mission_ranked_records":
+        authority = _thesis()
+        current = getattr(
+            authority,
+            "__dict__",
+            {},
+        ).get("mission_ranked_records")
+        if callable(current):
+            return current
+        return _legacy_mission_ranked_records
+    try:
+        return getattr(_thesis(), name)
+    except AttributeError:
+        raise AttributeError(name) from None
+
+
+__all__ = ["mission_ranked_records"]

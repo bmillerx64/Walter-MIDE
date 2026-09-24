@@ -1,3 +1,4 @@
+from mide import webull_native_radar as radar
 from mide.webull_native_radar import fetch_native_radar
 
 class Response:
@@ -16,7 +17,8 @@ class SnapshotClient:
 class LiveProviderShape:
     def __init__(self): self._snapshot_client=SnapshotClient()
 
-def test_native_radar_decodes_official_response_json_through_live_wrapper_graph():
+def test_native_radar_decodes_official_response_json_through_live_wrapper_graph(monkeypatch):
+    monkeypatch.setattr(radar, "_day_gainers_rank_type", lambda: "DAY_1")
     report=fetch_native_radar(LiveProviderShape())
     assert report["all_feeds_available"] is True
     assert {row["symbol"] for row in report["symbols"]}=={"GAIN","M5","VOL","RVOL"}
