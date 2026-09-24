@@ -1,4 +1,4 @@
-"""Compatibility facade for Walter Next late-attention freshness semantics.
+"""Compatibility shim/facade for Walter Next late-attention freshness semantics.
 
 Thesis / State owns GS525's five-minute 30s attention freshness and late-continuation
 presentation semantics. This historical module preserves the validated callable and
