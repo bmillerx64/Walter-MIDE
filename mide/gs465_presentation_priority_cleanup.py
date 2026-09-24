@@ -31,14 +31,14 @@ HALTED_BAND = 20
 OTHER_BAND = 10
 
 
-def _presentation():
+def _presentation_module():
     from mide.authorities import presentation_audio
 
     return presentation_audio
 
 
 def strict_state_band(record: dict) -> int:
-    current = getattr(_presentation(), "strict_state_band", None)
+    current = getattr(_presentation_module(), "strict_state_band", None)
     if not callable(current):
         raise RuntimeError(
             "Current Presentation + Audio generation does not yet expose GS465"
@@ -47,7 +47,7 @@ def strict_state_band(record: dict) -> int:
 
 
 def attention_tiebreak(record: dict) -> tuple[int, float, float]:
-    current = getattr(_presentation(), "attention_tiebreak", None)
+    current = getattr(_presentation_module(), "attention_tiebreak", None)
     if not callable(current):
         raise RuntimeError(
             "Current Presentation + Audio generation does not yet expose GS465"
@@ -60,7 +60,7 @@ def ordered_state_contiguous_records(
     baseline_order=None,
 ) -> list[dict]:
     current = getattr(
-        _presentation(),
+        _presentation_module(),
         "ordered_state_contiguous_records",
         None,
     )
@@ -76,7 +76,7 @@ def ordered_state_contiguous_records(
 
 def _specific_look_now(view: dict) -> bool:
     current = getattr(
-        _presentation(),
+        _presentation_module(),
         "_specific_extreme_look_now",
         None,
     )
@@ -88,7 +88,7 @@ def _specific_look_now(view: dict) -> bool:
 
 
 def cleaned_extreme_event(original, record: dict) -> dict | None:
-    current = getattr(_presentation(), "cleaned_extreme_event", None)
+    current = getattr(_presentation_module(), "cleaned_extreme_event", None)
     if not callable(current):
         raise RuntimeError(
             "Current Presentation + Audio generation does not yet expose GS465"
@@ -101,7 +101,7 @@ def _non_extreme_actionable_symbols(
     extreme_symbols: set[str],
 ) -> set[str]:
     current = getattr(
-        _presentation(),
+        _presentation_module(),
         "_non_extreme_actionable_symbols",
         None,
     )
@@ -119,7 +119,7 @@ def prioritized_extreme_with_watch_continuity(
     now=None,
 ):
     current = getattr(
-        _presentation(),
+        _presentation_module(),
         "prioritized_extreme_with_watch_continuity",
         None,
     )
@@ -135,33 +135,30 @@ def prioritized_extreme_with_watch_continuity(
 
 
 def _install_order() -> None:
-    current = getattr(
-        _presentation(),
-        "activate_operator_order_stage",
-        None,
-    )
-    if callable(current):
-        current("state_contiguous")
+    _presentation = _presentation_module()
+    if not callable(
+        getattr(_presentation, "activate_operator_order_stage", None)
+    ):
+        return
+    _presentation.activate_operator_order_stage("state_contiguous")
 
 
 def _install_extreme_semantics() -> None:
-    current = getattr(
-        _presentation(),
-        "activate_extreme_event_stage",
-        None,
-    )
-    if callable(current):
-        current("cleanup")
+    _presentation = _presentation_module()
+    if not callable(
+        getattr(_presentation, "activate_extreme_event_stage", None)
+    ):
+        return
+    _presentation.activate_extreme_event_stage("cleanup")
 
 
 def _install_extreme_selection_continuity() -> None:
-    current = getattr(
-        _presentation(),
-        "install_extreme_selection_continuity",
-        None,
-    )
-    if callable(current):
-        current()
+    _presentation = _presentation_module()
+    if not callable(
+        getattr(_presentation, "install_extreme_selection_continuity", None)
+    ):
+        return
+    _presentation.install_extreme_selection_continuity()
 
 
 def install() -> None:
@@ -173,7 +170,7 @@ def install() -> None:
 
 def __getattr__(name: str):
     try:
-        return getattr(_presentation(), name)
+        return getattr(_presentation_module(), name)
     except AttributeError:
         raise AttributeError(name) from None
 
