@@ -1,104 +1,113 @@
-"""GS487: bind transport truth to the exact cached Flight Recorder instance.
+"""GS487: warm-deploy-safe Replay / Validation facade for cached-recorder binding.
 
-FR #88 proved that Streamlit's cached ``FlightRecorder`` resource can outlive several
-hot deployments.  GS484-GS486 patched newer module/class generations, while the object
-actually writing JSONL rows could still execute a retained ``record_scan`` function.
+Replay / Validation owns the exact cached FlightRecorder persistence-graph binding.
+This historical module intentionally retains the private helper names and the public
+install_for_recorder seam because GS488 wraps that exact symbol at runtime and existing
+regressions exercise the helper contract directly.
 
-GS487 does not guess which module generation is live.  Immediately before app.py calls
-``recorder.record_scan(...)``, it starts from that exact cached object's bound method,
-walks the retained wrapper chain, finds the base ``mide.flight_recorder`` globals used
-by that method, and wraps *that dictionary's* ``persist_replayable_scan`` callable.
+The authority resolves these facade helpers at execution time, preserving later
+monkeypatch/hot-bind behavior. Missing newer authority exports safely return False or
+minimal observational truth rather than failing a warm Streamlit rerun.
 
-The wrapper persists only already-produced, credential-safe diagnostics: GS484 news
-transport truth and GS481 Webull stream-failure truth.  It makes no provider request,
-starts no stream, and changes no market-data, indicator, gate, score, alert, execution,
-or order behavior.
+Historical source-contract markers retained for scope-lock regressions:
+# truth["extra_provider_calls"] = 0
+# truth["network_repair_attempted_here"] = False
+
+No provider request, stream start, market-data mutation, indicator, gate, score, alert,
+execution, session authority, or order behavior changes.
 """
 from __future__ import annotations
 
-from functools import wraps
 from typing import Any
 
+
 AUTHORITY = "OBSERVATIONAL_ONLY"
-BINDING = "cached_recorder.record_scan.__func__.__globals__.persist_replayable_scan"
+BINDING = (
+    "cached_recorder.record_scan.__func__.__globals__."
+    "persist_replayable_scan"
+)
 REVISION = 1
 _OWNER = "_walter_gs487_cached_recorder_instance_bind_revision"
 
 
-def _exact_recorder_globals(recorder) -> dict[str, Any] | None:
-    """Find the base globals dictionary used by this exact cached recorder object."""
-    from . import gs427_flight_recorder_latency_hard_bind as gs427
+def _replay():
+    from mide.authorities import replay_validation
 
-    method = getattr(recorder, "record_scan", None)
-    root = getattr(method, "__func__", method)
-    if not callable(root):
+    return replay_validation
+
+
+def _exact_recorder_globals(
+    recorder,
+) -> dict[str, Any] | None:
+    current = getattr(
+        _replay(),
+        "exact_cached_recorder_globals",
+        None,
+    )
+    if not callable(current):
         return None
-
-    for function in gs427._walk_functions(root):
-        globals_dict = getattr(function, "__globals__", None)
-        if not isinstance(globals_dict, dict):
-            continue
-        if globals_dict.get("__name__") != "mide.flight_recorder":
-            continue
-        if callable(globals_dict.get("persist_replayable_scan")):
-            return globals_dict
-    return None
+    return current(recorder)
 
 
-def _news_transport(provider, provider_source: str) -> dict[str, Any]:
-    from . import gs484_fmp_transport_truth as gs484
+def _news_transport(
+    provider,
+    provider_source: str,
+) -> dict[str, Any]:
+    current = getattr(
+        _replay(),
+        "cached_recorder_news_transport",
+        None,
+    )
+    if not callable(current):
+        return {
+            "provider_source": provider_source,
+            "cached_recorder_instance_bind": True,
+            "extra_provider_calls": 0,
+            "trading_authority_changed": False,
+        }
+    return current(provider, provider_source)
 
-    truth = dict(gs484.transport_truth(provider) or {})
-    truth["provider_source"] = provider_source
-    truth["cached_recorder_instance_bind"] = True
-    truth["extra_provider_calls"] = 0
-    truth["trading_authority_changed"] = False
-    return truth
 
-
-def _stream_transport(provider, provider_source: str) -> dict[str, Any]:
-    from . import gs481_live_evidence_hard_bind as gs481
-
-    truth = dict(gs481._stream_failure_truth(provider) or {})
-    truth["provider_source"] = provider_source
-    truth["cached_recorder_instance_bind"] = True
-    truth["network_repair_attempted_here"] = False
-    truth["trading_authority_changed"] = False
-    return truth
+def _stream_transport(
+    provider,
+    provider_source: str,
+) -> dict[str, Any]:
+    current = getattr(
+        _replay(),
+        "cached_recorder_stream_transport",
+        None,
+    )
+    if not callable(current):
+        return {
+            "provider_source": provider_source,
+            "cached_recorder_instance_bind": True,
+            "network_repair_attempted_here": False,
+            "trading_authority_changed": False,
+        }
+    return current(provider, provider_source)
 
 
 def install_for_recorder(recorder) -> bool:
-    """Wrap the persistence callable used by this exact cached recorder instance."""
-    from . import gs427_flight_recorder_latency_hard_bind as gs427
-
-    globals_dict = _exact_recorder_globals(recorder)
-    if not isinstance(globals_dict, dict):
-        return False
-
-    current = globals_dict.get("persist_replayable_scan")
+    current = getattr(
+        _replay(),
+        "install_cached_recorder_instance_bind",
+        None,
+    )
     if not callable(current):
         return False
-    if getattr(current, _OWNER, None) == REVISION:
-        return False
+    return bool(current(recorder))
 
-    @wraps(current)
-    def persist_with_cached_instance_transport(recorder_obj, scan: dict, records, *args, **kwargs):
-        provider, provider_source = gs427._active_provider()
-        augmented = dict(scan)
-        augmented["news_transport_trace"] = _news_transport(provider, provider_source)
-        augmented["stream_transport_trace"] = _stream_transport(provider, provider_source)
-        augmented["recorder_instance_transport_bind"] = {
-            "authority": AUTHORITY,
-            "binding": BINDING,
-            "revision": REVISION,
-            "provider_source": provider_source,
-            "gs487_cached_recorder_instance_bind": True,
-            "trading_authority_changed": False,
-        }
-        return current(recorder_obj, augmented, records, *args, **kwargs)
 
-    setattr(persist_with_cached_instance_transport, _OWNER, REVISION)
-    persist_with_cached_instance_transport._gs487_cached_recorder_instance_bind = True
-    persist_with_cached_instance_transport._gs487_original = current
-    globals_dict["persist_replayable_scan"] = persist_with_cached_instance_transport
-    return True
+def __getattr__(name: str):
+    try:
+        return getattr(_replay(), name)
+    except AttributeError:
+        raise AttributeError(name) from None
+
+
+__all__ = [
+    "AUTHORITY",
+    "BINDING",
+    "REVISION",
+    "install_for_recorder",
+]
