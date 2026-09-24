@@ -1562,6 +1562,118 @@ def install_catalyst_company_scale_evidence() -> None:
 
 
 # ---------------------------------------------------------------------------
+# GS459 price-trajectory market evidence
+# ---------------------------------------------------------------------------
+
+PRICE_TRAJECTORY_DISCOVERY_OWNER = "_walter_gs459_price_trajectory_metrics_owner"
+
+
+def _price_trajectory_number(value: Any, default: float = 0.0) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return float(default)
+
+
+def _price_trajectory_return_pct(start: float, end: float) -> float:
+    if start == 0:
+        return 0.0
+    return (end / start - 1.0) * 100.0
+
+
+def price_trajectory_metrics(frame) -> dict:
+    """Describe sparkline-like path acceleration from existing 1-minute bars."""
+    defaults = {
+        "price_trajectory_available": False,
+        "price_change_3m_pct": 0.0,
+        "price_change_5m_path_pct": 0.0,
+        "price_change_prior_7m_pct": 0.0,
+        "price_velocity_3m_pct_per_min": 0.0,
+        "price_velocity_prior_7m_pct_per_min": 0.0,
+        "price_path_acceleration_pct_per_min": 0.0,
+        "positive_close_ratio_5m": 0.0,
+        "giveback_from_5m_high_pct": 0.0,
+    }
+    try:
+        if frame is None or len(frame) < 11:
+            return defaults
+        closes = frame["close"].astype(float).tail(11)
+        highs = frame["high"].astype(float).tail(5)
+    except Exception:
+        return defaults
+    if len(closes) < 11 or len(highs) < 1:
+        return defaults
+
+    current = float(closes.iloc[-1])
+    three_start = float(closes.iloc[-4])
+    five_start = float(closes.iloc[-6])
+    prior_start = float(closes.iloc[-11])
+    prior_end = float(closes.iloc[-4])
+
+    change_3m = _price_trajectory_return_pct(three_start, current)
+    change_5m = _price_trajectory_return_pct(five_start, current)
+    prior_7m_change = _price_trajectory_return_pct(prior_start, prior_end)
+    recent_velocity = change_3m / 3.0
+    prior_velocity = prior_7m_change / 7.0
+    acceleration = recent_velocity - prior_velocity
+
+    recent_closes = closes.tail(6)
+    changes = recent_closes.diff().dropna()
+    positive_ratio = (
+        float((changes > 0).mean()) if len(changes) else 0.0
+    )
+    recent_high = float(highs.max())
+    giveback = (
+        max(0.0, (recent_high - current) / recent_high * 100.0)
+        if recent_high > 0
+        else 0.0
+    )
+
+    return {
+        "price_trajectory_available": True,
+        "price_change_3m_pct": round(change_3m, 3),
+        "price_change_5m_path_pct": round(change_5m, 3),
+        "price_change_prior_7m_pct": round(prior_7m_change, 3),
+        "price_velocity_3m_pct_per_min": round(recent_velocity, 4),
+        "price_velocity_prior_7m_pct_per_min": round(prior_velocity, 4),
+        "price_path_acceleration_pct_per_min": round(acceleration, 4),
+        "positive_close_ratio_5m": round(positive_ratio, 3),
+        "giveback_from_5m_high_pct": round(giveback, 3),
+    }
+
+
+def install_price_trajectory_metrics() -> None:
+    """Attach GS459 path evidence to the existing participation metric boundary."""
+    from mide import discovery
+
+    current = discovery.intraday_participation_metrics
+    if getattr(current, PRICE_TRAJECTORY_DISCOVERY_OWNER, False):
+        return
+
+    def intraday_participation_metrics(frame):
+        from mide import gs459_price_trajectory_attention as gs459
+
+        result = dict(current(frame) or {})
+        result.update(gs459.price_trajectory_metrics(frame))
+        return result
+
+    for name, value in getattr(current, "__dict__", {}).items():
+        if name.startswith("_gs") and not hasattr(
+            intraday_participation_metrics,
+            name,
+        ):
+            setattr(intraday_participation_metrics, name, value)
+    intraday_participation_metrics._gs459_price_trajectory_metrics = True
+    intraday_participation_metrics._gs459_original = current
+    setattr(
+        intraday_participation_metrics,
+        PRICE_TRAJECTORY_DISCOVERY_OWNER,
+        True,
+    )
+    discovery.intraday_participation_metrics = intraday_participation_metrics
+
+
+# ---------------------------------------------------------------------------
 # GS478 sparse current-session history sufficiency bridge
 # ---------------------------------------------------------------------------
 
@@ -2092,6 +2204,9 @@ def install_convergence_handoff_evidence() -> None:
 
 
 __all__ = [
+    "install_price_trajectory_metrics",
+    "price_trajectory_metrics",
+    "PRICE_TRAJECTORY_DISCOVERY_OWNER",
     "install_sparse_history_bridge",
     "bridge_sparse_history_rows",
     "sparse_history_current_bar_count",
