@@ -4746,6 +4746,99 @@ def render_sidebar_audio_health(st_module) -> None:
 
 
 # ---------------------------------------------------------------------------
+# GS401 final Opportunity render ordering
+# ---------------------------------------------------------------------------
+#
+# Presentation + Audio owns the final state-order protection around the canonical
+# Opportunity renderer's internal actionable-candidate call. The historical GS401
+# module remains the warm-deploy-safe install/import seam. GS369 is resolved at
+# render time so later ordering layers remain authoritative.
+
+
+def final_visible_opportunity_records(
+    records: list[dict],
+    *,
+    actionable_function=None,
+) -> list[dict]:
+    """Return the five final operator cards after actionable enrichment and ordering."""
+    from mide import ui
+    from mide import gs369_escalation_priority_order as gs369
+
+    actionable = (
+        actionable_function
+        or ui.actionable_candidate_records
+    )
+    enriched = actionable(
+        list(records or [])
+    )
+    return list(
+        gs369.ordered_escalation_records(
+            enriched
+        )
+    )[:5]
+
+
+def install_final_opportunity_order() -> None:
+    """Bind GS401's nested-render ordering guard at its historical UI seam."""
+    from mide import ui
+    from mide import gs369_escalation_priority_order as gs369
+
+    current = ui.render_escalation_engine
+    if getattr(
+        current,
+        "_gs401_final_opportunity_order",
+        False,
+    ):
+        return
+
+    def render_with_final_opportunity_order(
+        records: list[dict],
+    ) -> None:
+        original_actionable = (
+            ui.actionable_candidate_records
+        )
+
+        def final_actionable_records(
+            rows: list[dict],
+        ) -> list[dict]:
+            enriched = original_actionable(
+                rows
+            )
+            # Resolve GS369 dynamically so later-installed order stages win.
+            return gs369.ordered_escalation_records(
+                enriched
+            )
+
+        _inherit_audio_wrapper(
+            final_actionable_records,
+            original_actionable,
+        )
+        ui.actionable_candidate_records = (
+            final_actionable_records
+        )
+        try:
+            return current(
+                gs369.ordered_escalation_records(
+                    records
+                )
+            )
+        finally:
+            ui.actionable_candidate_records = (
+                original_actionable
+            )
+
+    _inherit_audio_wrapper(
+        render_with_final_opportunity_order,
+        current,
+    )
+    render_with_final_opportunity_order._gs401_final_opportunity_order = True
+    render_with_final_opportunity_order._gs401_original = current
+    ui.render_escalation_engine = (
+        render_with_final_opportunity_order
+    )
+
+
+# ---------------------------------------------------------------------------
 # GS414/GS436 final enriched Opportunity render boundary
 # ---------------------------------------------------------------------------
 
@@ -4811,6 +4904,8 @@ def bind_final_enriched_opportunity_order(
 
 
 __all__ = [
+    "final_visible_opportunity_records",
+    "install_final_opportunity_order",
     "progression_change",
     "spoken_progression_rung",
     "progression_audio_phrase",
