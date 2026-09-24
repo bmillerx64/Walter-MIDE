@@ -108,10 +108,14 @@ def test_failed_background_job_surfaces_safe_status(tmp_path, monkeypatch):
     assert "synthetic backup failure" in status["error_message"]
 
 
-def test_backup_fragment_self_polls_instead_of_blocking_autoscan():
+def test_backup_fragment_polls_only_while_background_job_runs():
     source = Path("mide/gs496_static_session_backup.py").read_text(encoding="utf-8")
 
-    assert "@fragment(run_every=JOB_POLL_SECONDS)" in source
+    assert "fragment(run_every=JOB_POLL_SECONDS)(backup_fragment)()" in source
+    assert "fragment(backup_fragment)()" in source
+    assert "if polling:" in source
+    assert 'st.rerun(scope="app")' in source
+    assert "@fragment(run_every=JOB_POLL_SECONDS)" not in source
     assert "start_session_backup_job(" in source
     assert "AutoScan can keep running." in source
     assert "with st.spinner(" not in source
