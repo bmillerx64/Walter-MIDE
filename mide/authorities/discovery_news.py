@@ -1123,6 +1123,151 @@ def install_benzinga_breaking_news_discovery() -> None:
 
 
 # ---------------------------------------------------------------------------
+# GS455 bounded early-open ignition admission
+# ---------------------------------------------------------------------------
+#
+# Discovery + News owns the narrow 09:30-09:45 admission exception. The historical
+# gs455 module retains its calibrated thresholds and mutable clock/helper seam so
+# replay tests and retained Streamlit runtimes keep the same observable contract.
+
+
+def early_open_market_now():
+    from mide.time_service import eastern_time
+
+    return eastern_time()
+
+
+def early_open_inside_window() -> bool:
+    from mide import gs455_early_ignition_3m_confirmation as gs455
+
+    now = gs455._market_now()
+    current = now.time().replace(tzinfo=None)
+    return (
+        gs455.EARLY_OPEN_START
+        <= current
+        < gs455.EARLY_OPEN_END
+    )
+
+
+def early_open_prefilter_decision(
+    original,
+    symbol: str,
+    snapshot: dict,
+    settings,
+) -> dict:
+    """Apply the validated bounded early-open discovery exception."""
+    from mide import gs455_early_ignition_3m_confirmation as gs455
+
+    base = original(
+        symbol,
+        snapshot,
+        settings,
+    )
+    if (
+        base.get("passed")
+        or not gs455._inside_early_open_window()
+    ):
+        return base
+    if (
+        base.get("failed_rule")
+        != gs455._PREFILTER_FAILURE
+    ):
+        return base
+
+    measured = dict(
+        base.get("measured_values") or {}
+    )
+    pct_change = (
+        gs455._number(
+            measured,
+            "pct_change",
+            default=0.0,
+        )
+        or 0.0
+    )
+    volume = (
+        gs455._number(
+            measured,
+            "volume",
+            default=0.0,
+        )
+        or 0.0
+    )
+    if (
+        pct_change
+        < gs455.EARLY_OPEN_MIN_PCT_CHANGE
+        or volume
+        < gs455.EARLY_OPEN_MIN_VOLUME
+    ):
+        return base
+
+    decision = deepcopy(base)
+    decision["passed"] = True
+    decision["failed_rule"] = None
+    decision["failed_metrics"] = []
+    decision["reason"] = (
+        "passed prefilter via early-open ignition "
+        f"(>={gs455.EARLY_OPEN_MIN_PCT_CHANGE:g}% "
+        f"and >={gs455.EARLY_OPEN_MIN_VOLUME:,.0f} shares)"
+    )
+    thresholds = dict(
+        decision.get("thresholds") or {}
+    )
+    thresholds["early_open_exception"] = {
+        "window_et": "09:30-09:45",
+        "min_pct_change": (
+            gs455.EARLY_OPEN_MIN_PCT_CHANGE
+        ),
+        "min_volume": (
+            gs455.EARLY_OPEN_MIN_VOLUME
+        ),
+    }
+    decision["thresholds"] = thresholds
+    return decision
+
+
+def install_early_open_ignition_admission() -> None:
+    """Bind the existing prefilter boundary at GS455's historical install point."""
+    from mide import discovery, flight_recorder
+    from mide import gs455_early_ignition_3m_confirmation as gs455
+
+    current = flight_recorder.prefilter_decision
+    if getattr(
+        current,
+        "_gs455_early_open_ignition",
+        False,
+    ):
+        discovery.prefilter_decision = current
+        return
+
+    @wraps(current)
+    def prefilter_decision(
+        symbol: str,
+        snapshot: dict,
+        settings,
+    ) -> dict:
+        return gs455._early_open_prefilter_decision(
+            current,
+            symbol,
+            snapshot,
+            settings,
+        )
+
+    gs455._inherit(
+        prefilter_decision,
+        current,
+    )
+    prefilter_decision._gs455_early_open_ignition = True
+    prefilter_decision._gs455_original = current
+    flight_recorder.prefilter_decision = (
+        prefilter_decision
+    )
+    discovery.prefilter_decision = (
+        prefilter_decision
+    )
+
+
+# ---------------------------------------------------------------------------
 # GS540 news-corroborated shadow RVOL discovery
 # ---------------------------------------------------------------------------
 
@@ -1420,6 +1565,10 @@ def ticker_inspection(*args, **kwargs):
 
 
 __all__ = [
+    "early_open_market_now",
+    "early_open_inside_window",
+    "early_open_prefilter_decision",
+    "install_early_open_ignition_admission",
     "install_news_corroborated_shadow_rvol",
     "merge_news_corroborated_shadow_rvol",
     "eligible_shadow_rvol_rows",
