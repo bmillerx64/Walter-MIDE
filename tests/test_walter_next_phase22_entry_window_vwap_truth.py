@@ -70,7 +70,8 @@ def test_gs511_source_is_compatibility_facade_not_duplicate_implementation():
         encoding="utf-8"
     )
 
-    assert "from mide.authorities import presentation_audio as _presentation" in source
+    assert "def _presentation(" in source
+    assert "from mide.authorities import presentation_audio as _presentation" not in source
     assert "def _near_vwap(" not in source
     assert "def escalation_state(" not in source
     assert "def escalation_snapshot(" not in source
