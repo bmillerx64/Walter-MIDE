@@ -134,64 +134,13 @@ def _install_alignment_truth() -> None:
 
 
 def _install_gs397_canonicalization() -> None:
-    from . import gs397_canonical_30s_tripwire_truth as gs397
-
-    current_above = gs397._primary_above_vwap
-    if not getattr(current_above, "_gs456_canonical_30s_vwap", False):
-        @wraps(current_above)
-        def primary_above_vwap(record: dict, alignment_30s: dict, tripwire: dict):
-            close = _finite(tripwire.get("latest_close"))
-            vwap = _finite(alignment_30s.get("vwap_value"))
-            if close is not None and vwap is not None:
-                return close >= vwap
-            if (
-                alignment_30s.get("above_vwap") is not None
-                and alignment_30s.get("vwap_truth_authority") == AUTHORITY
-            ):
-                return bool(alignment_30s.get("above_vwap"))
-            return current_above(record, alignment_30s, tripwire)
-
-        primary_above_vwap._gs456_canonical_30s_vwap = True
-        primary_above_vwap._gs456_original = current_above
-        gs397._primary_above_vwap = primary_above_vwap
-
-    current_canonicalize = gs397.canonicalize_record
-    if getattr(current_canonicalize, "_gs456_canonical_30s_vwap", False):
-        return
-
-    @wraps(current_canonicalize)
-    def canonicalize_record(record: dict) -> dict:
-        updated = current_canonicalize(record)
-        alignment = deepcopy(updated.get("timeframe_alignment") or {})
-        thirty = dict(alignment.get("30s") or {})
-        if thirty.get("vwap_truth_authority") != AUTHORITY:
-            return updated
-
-        cross = deepcopy(thirty.get("st_vwap_line_cross") or {})
-        updated["vwap_30s_value"] = thirty.get("vwap_value")
-        updated["vwap_30s_anchor_mode"] = thirty.get("vwap_anchor_mode")
-        updated["vwap_30s_anchor_time_et"] = thirty.get("vwap_anchor_time_et")
-        updated["st_vwap_30s_line_cross"] = cross
-
-        timeframes = deepcopy(updated.get("timeframes") or {})
-        tf30 = dict(timeframes.get("30s") or {})
-        tf30.update(
-            {
-                "vwap_value": thirty.get("vwap_value"),
-                "vwap_anchor_mode": thirty.get("vwap_anchor_mode"),
-                "vwap_anchor_time_et": thirty.get("vwap_anchor_time_et"),
-                "supertrend_value": thirty.get("supertrend_value"),
-                "st_vwap_line_cross": cross,
-                "vwap_truth_authority": AUTHORITY,
-            }
-        )
-        timeframes["30s"] = tf30
-        updated["timeframes"] = timeframes
-        return updated
-
-    canonicalize_record._gs456_canonical_30s_vwap = True
-    canonicalize_record._gs456_original = current_canonicalize
-    gs397.canonicalize_record = canonicalize_record
+    current = getattr(
+        _market_evidence(),
+        "install_canonical_30s_gs397_propagation",
+        None,
+    )
+    if callable(current):
+        current()
 
 
 def _install_gs455_first_rung() -> None:
