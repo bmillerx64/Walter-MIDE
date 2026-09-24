@@ -34,8 +34,23 @@ _HISTORY_LIMITS = {
 }
 
 
+def _replay_validation():
+    from mide.authorities import replay_validation
+
+    return replay_validation
+
+
 def compact_candidate_history_record(record: Mapping[str, Any]) -> dict[str, Any]:
-    """Return a persistence-only snapshot without cumulative nested-history growth."""
+    """Warm-deploy-safe facade for bounded Candidate History persistence."""
+    current = getattr(
+        _replay_validation(),
+        "compact_candidate_history_record",
+        None,
+    )
+    if callable(current):
+        return current(record)
+
+    # Retained-runtime fallback for an older Replay / Validation generation.
     snapshot = dict(record)
     for field, limit in _HISTORY_LIMITS.items():
         value = record.get(field)

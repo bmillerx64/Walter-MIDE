@@ -2406,6 +2406,30 @@ def install_connection_limit_stream_trace() -> None:
 
 
 # ---------------------------------------------------------------------------
+# GS499 Candidate History persistence containment
+# ---------------------------------------------------------------------------
+
+CANDIDATE_HISTORY_LIMITS = {
+    "architecture_audit": 8,
+    "ranking_history": 2,
+    "discovery_history": 2,
+    "reevaluation_history": 2,
+}
+
+
+def compact_candidate_history_record(record) -> dict:
+    """Return GS499's bounded persistence-only Candidate History projection."""
+    snapshot = dict(record)
+    for field, limit in CANDIDATE_HISTORY_LIMITS.items():
+        value = record.get(field)
+        if isinstance(value, list):
+            snapshot[field] = list(
+                value[-limit:]
+            )
+    return snapshot
+
+
+# ---------------------------------------------------------------------------
 # GS458 Flight Recorder fragment freshness lifecycle
 # ---------------------------------------------------------------------------
 
@@ -2424,6 +2448,8 @@ def install_flight_recorder_fragment_freshness() -> None:
 
 
 __all__ = [
+    "CANDIDATE_HISTORY_LIMITS",
+    "compact_candidate_history_record",
     "install_flight_recorder_fragment_freshness",
     "FORENSIC_ROLLOVER_AUTHORITY",
     "forensic_archive_target",
