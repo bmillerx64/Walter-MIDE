@@ -1,4 +1,4 @@
-"""GS466: warm-deploy-safe facade for current-extreme awareness continuity.
+"""Compatibility facade for current-extreme awareness continuity.\n\nWarm-deploy-safe GS466 facade.
 
 Presentation + Audio owns GS466's awareness-only stale-source-bar exception. Phase 36
 keeps this historical import/install point but resolves the authority lazily so a warm
