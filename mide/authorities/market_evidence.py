@@ -1678,11 +1678,11 @@ def install_price_trajectory_metrics() -> None:
 # GS455 ordered ST/VWAP maturation progression evidence
 # ---------------------------------------------------------------------------
 #
-# Market Evidence owns the current 30s -> 15m ordered progression and fresh-rung
-# signal. The historical gs455 module remains the calibration/monkeypatch seam for
-# the ladder, rung extraction, freshness windows, support-flow test, and halt truth.
-# No provider request, qualification, readiness, state promotion, audio, or order
-# authority lives in these functions.
+# Market Evidence owns rung extraction, the current 30s -> 15m ordered progression,
+# and the fresh-rung signal. The historical gs455 module remains the calibration seam
+# for ladder/freshness thresholds, support-flow, halt truth, and the mutable 30s helper
+# that GS456 wraps to prefer literal 30s ST/VWAP crossings. No provider request,
+# qualification, readiness, state promotion, audio, or order authority lives here.
 
 
 def thirty_second_progression_rung(record: dict) -> dict:
