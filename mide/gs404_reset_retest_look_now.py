@@ -317,28 +317,40 @@ def _inherit(wrapper, wrapped) -> None:
 
 
 def install() -> None:
-    """Install after GS401 as the final narrow live-attention correction."""
-    from . import ui
+    """Warm-deploy coordinator for GS404's split authority-owned bindings."""
+    presentation = getattr(
+        _presentation_audio(),
+        "install_reset_retest_awareness",
+        None,
+    )
+    if callable(presentation):
+        presentation()
+    else:
+        # Retained-runtime fallback for an older Presentation + Audio generation.
+        from . import ui
 
-    current_records = ui.actionable_candidate_records
-    if not getattr(current_records, "_gs404_reset_retest", False):
-        original_records = current_records
+        current_records = ui.actionable_candidate_records
+        if not getattr(current_records, "_gs404_reset_retest", False):
+            original_records = current_records
 
-        def operator_records(records: list[dict]) -> list[dict]:
-            return augment_reset_retest_records(records, original_records(records))
+            def operator_records(records: list[dict]) -> list[dict]:
+                return augment_reset_retest_records(
+                    records,
+                    original_records(records),
+                )
 
-        _inherit(operator_records, original_records)
-        operator_records._gs404_reset_retest = True
-        operator_records._gs404_original = original_records
-        ui.actionable_candidate_records = operator_records
+            _inherit(operator_records, original_records)
+            operator_records._gs404_reset_retest = True
+            operator_records._gs404_original = original_records
+            ui.actionable_candidate_records = operator_records
 
-    authority = getattr(
+    state = getattr(
         _thesis_state(),
         "install_reset_retest_state",
         None,
     )
-    if callable(authority):
-        authority()
+    if callable(state):
+        state()
         return
 
     # Retained-runtime fallback for an older Thesis / State generation.
@@ -352,7 +364,10 @@ def install() -> None:
         original_state = current_state
 
         def retest_state(record: dict) -> dict:
-            return reset_retest_opportunity_state(record, original_state)
+            return reset_retest_opportunity_state(
+                record,
+                original_state,
+            )
 
         _inherit(retest_state, original_state)
         retest_state._gs404_reset_retest = True
