@@ -4956,7 +4956,195 @@ def install_graduated_backoff_for_provider(
     return True
 
 
+
+# ---------------------------------------------------------------------------
+# GS490 Webull TICK initiation window
+# ---------------------------------------------------------------------------
+
+WEBULL_TICK_WINDOW_AUTHORITY = (
+    "WEBULL_TICK_INITIATION_WINDOW"
+)
+WEBULL_TICK_STREAM_START_ET = time(4, 0)
+WEBULL_TICK_STREAM_END_ET = time(20, 0)
+
+
+def webull_tick_window_utc(
+    value: datetime | None = None,
+) -> datetime:
+    if value is None:
+        return datetime.now(timezone.utc)
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
+
+
+def webull_tick_stream_window_open(
+    value: datetime | None = None,
+) -> bool:
+    from mide import gs490_webull_stream_window_guard as gs490
+    from mide.time_service import eastern_time
+
+    current = eastern_time(gs490._utc(value))
+    clock = current.time().replace(tzinfo=None)
+    return (
+        current.weekday() < 5
+        and gs490.STREAM_START_ET
+        <= clock
+        < gs490.STREAM_END_ET
+    )
+
+
+def webull_tick_window_stream(provider) -> dict:
+    diagnostics = getattr(provider, "diagnostics", None)
+    if not isinstance(diagnostics, dict):
+        diagnostics = {}
+        try:
+            provider.diagnostics = diagnostics
+        except Exception:
+            return {}
+    stream = diagnostics.get("webull_stream")
+    if not isinstance(stream, dict):
+        stream = {}
+        diagnostics["webull_stream"] = stream
+    return stream
+
+
+def ensure_stream_in_window(
+    original: Callable,
+    provider,
+    symbols,
+    *,
+    now: datetime | None = None,
+):
+    from mide import gs490_webull_stream_window_guard as gs490
+
+    stream = gs490._stream(provider)
+    existing = (
+        getattr(provider, "_subscription", None)
+        is not None
+    )
+    allowed = gs490.stream_window_open(now)
+    state = stream.get(
+        "gs490_stream_window_guard"
+    )
+    if not isinstance(state, dict):
+        state = {
+            "authority": gs490.AUTHORITY,
+            "blocked_new_connection_attempts": 0,
+            "trading_authority_changed": False,
+            "rest_snapshot_history_unchanged": True,
+            "genuine_webull_tick_only": True,
+        }
+        stream[
+            "gs490_stream_window_guard"
+        ] = state
+    state.update(
+        window_open=allowed,
+        subscription_present=existing,
+        stream_start_et="04:00",
+        stream_end_et="20:00",
+        weekdays_only=True,
+    )
+
+    if not existing and not allowed:
+        state[
+            "blocked_new_connection_attempts"
+        ] = int(
+            state.get(
+                "blocked_new_connection_attempts",
+                0,
+            )
+            or 0
+        ) + 1
+        state["blocked_last_check"] = True
+        stream[
+            "stream_connection_status"
+        ] = "bypassed"
+        stream[
+            "stream_bypass_reason"
+        ] = gs490.BYPASS_REASON
+        return False
+
+    state["blocked_last_check"] = False
+    if (
+        stream.get("stream_bypass_reason")
+        == gs490.BYPASS_REASON
+    ):
+        stream["stream_bypass_reason"] = None
+        if (
+            stream.get(
+                "stream_connection_status"
+            )
+            == "bypassed"
+        ):
+            stream[
+                "stream_connection_status"
+            ] = "disconnected"
+    return original(symbols)
+
+
+def install_stream_window_for_provider(
+    provider,
+) -> bool:
+    from mide import gs490_webull_stream_window_guard as gs490
+
+    if provider is None:
+        return False
+    current = getattr(
+        provider,
+        "ensure_stream",
+        None,
+    )
+    if not callable(current):
+        return False
+    function = getattr(
+        current,
+        "__func__",
+        current,
+    )
+    if (
+        getattr(
+            function,
+            gs490._OWNER,
+            None,
+        )
+        == gs490.REVISION
+        or getattr(
+            current,
+            gs490._OWNER,
+            None,
+        )
+        == gs490.REVISION
+    ):
+        return False
+
+    @wraps(current)
+    def guarded(symbols):
+        return ensure_stream_in_window(
+            current,
+            provider,
+            symbols,
+        )
+
+    setattr(
+        guarded,
+        gs490._OWNER,
+        gs490.REVISION,
+    )
+    guarded._gs490_original = current
+    try:
+        provider.ensure_stream = guarded
+    except (AttributeError, TypeError):
+        return False
+    return True
+
+
 __all__ = [
+    "install_stream_window_for_provider",
+    "ensure_stream_in_window",
+    "webull_tick_window_stream",
+    "webull_tick_stream_window_open",
+    "webull_tick_window_utc",
     "install_graduated_backoff_for_provider",
     "ensure_stream_with_graduated_backoff",
     "refresh_graduated_backoff_deadline",
