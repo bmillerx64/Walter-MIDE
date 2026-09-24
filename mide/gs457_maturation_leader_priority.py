@@ -45,8 +45,23 @@ def _number(value: Any) -> float | None:
     return number
 
 
+def _presentation_audio():
+    from mide.authorities import presentation_audio
+
+    return presentation_audio
+
+
 def maturation_attention(record: dict) -> dict:
-    """Return presentation-only maturation priority details for one record."""
+    """Warm-deploy-safe facade for authoritative GS457 presentation semantics."""
+    current = getattr(
+        _presentation_audio(),
+        "maturation_attention",
+        None,
+    )
+    if callable(current):
+        return current(record)
+
+    # Retained-runtime fallback for an older Presentation + Audio generation.
     from . import gs310_unified_opportunity_state as unified
     from . import gs455_early_ignition_3m_confirmation as gs455
 
@@ -131,6 +146,9 @@ def maturation_attention(record: dict) -> dict:
         "progression_sequence": progression.get("sequence") or "",
         "supporting_flow": supporting_flow,
     }
+
+
+maturation_attention._walter_next_presentation_facade = True
 
 
 def _effective_progression_priority(attention: dict) -> tuple[int, float]:

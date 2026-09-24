@@ -103,6 +103,180 @@ def render_live_evidence_diagnostics(*args, **kwargs):
 
 
 # ---------------------------------------------------------------------------
+# GS457 maturation-leader presentation semantics
+# ---------------------------------------------------------------------------
+#
+# Presentation + Audio owns how already-authoritative GS455 progression/state facts
+# become a presentation band. This changes no opportunity state, qualification, entry,
+# evidence, or execution truth.
+
+MATURATION_WATCH_FOR_ENTRY_BAND = 50
+MATURATION_FRESH_BAND = 45
+MATURATION_LOOK_NOW_BAND = 40
+MATURATION_RECENT_CONFIRMATION_BAND = 35
+MATURATION_DEVELOPING_BAND = 30
+MATURATION_CHASE_WAIT_BAND = 20
+MATURATION_HALTED_BAND = 10
+MATURATION_HIGHER_CONFIRMATION_RUNGS = (
+    "3m",
+    "5m",
+    "10m",
+    "15m",
+)
+
+
+def maturation_attention(record: dict) -> dict:
+    """Return GS457's presentation-only maturation priority details."""
+    from mide import gs310_unified_opportunity_state as unified
+    from mide import gs455_early_ignition_3m_confirmation as gs455
+
+    view = unified.opportunity_state(record)
+    state = str(view.get("state") or "")
+    progression = gs455.crossover_progression(record)
+    signal = gs455.progression_signal(record)
+
+    events = progression.get("events") or {}
+    active = list(
+        progression.get("active_rungs")
+        or []
+    )
+    recent_higher: list[str] = []
+    for label in MATURATION_HIGHER_CONFIRMATION_RUNGS:
+        if label not in active:
+            continue
+        event = dict(
+            events.get(label)
+            or {}
+        )
+        if (
+            event.get("recent")
+            and event.get("current_confirmed")
+            and event.get("crossed")
+        ):
+            recent_higher.append(label)
+
+    supporting_flow = bool(
+        gs455._supporting_flow(record)
+    )
+    sustained_confirmation = bool(
+        progression.get("ordered")
+        and recent_higher
+        and supporting_flow
+        and state != unified.HALTED
+    )
+    fresh_maturation = bool(
+        signal.get("active")
+        and state != unified.HALTED
+        and state != unified.WATCH_FOR_ENTRY
+    )
+
+    if state == unified.WATCH_FOR_ENTRY:
+        band = MATURATION_WATCH_FOR_ENTRY_BAND
+        reason = "watch_for_entry"
+    elif fresh_maturation:
+        band = MATURATION_FRESH_BAND
+        reason = "fresh_maturation"
+    elif state == unified.LOOK_NOW:
+        band = MATURATION_LOOK_NOW_BAND
+        reason = "look_now"
+    elif sustained_confirmation:
+        band = MATURATION_RECENT_CONFIRMATION_BAND
+        reason = "recent_3m_plus_confirmation"
+    elif state == unified.DEVELOPING:
+        band = MATURATION_DEVELOPING_BAND
+        reason = "developing"
+    elif state == unified.CHASE_WAIT:
+        band = MATURATION_CHASE_WAIT_BAND
+        reason = "chase_wait"
+    else:
+        band = MATURATION_HALTED_BAND
+        reason = "halted_or_other"
+
+    highest_recent = (
+        recent_higher[-1]
+        if recent_higher
+        else None
+    )
+    latest_new = progression.get(
+        "latest_new_rung"
+    )
+    priority_rung = (
+        latest_new
+        or highest_recent
+    )
+    rung_rank = (
+        gs455.CROSSOVER_LADDER.index(
+            priority_rung
+        )
+        + 1
+        if priority_rung
+        in gs455.CROSSOVER_LADDER
+        else 0
+    )
+
+    event = (
+        dict(
+            events.get(priority_rung)
+            or {}
+        )
+        if priority_rung
+        else {}
+    )
+    try:
+        age = float(
+            event.get("age_seconds")
+        )
+    except (TypeError, ValueError):
+        age = None
+    freshness = (
+        -age
+        if age is not None
+        else float("-inf")
+    )
+
+    return {
+        "band": band,
+        "reason": reason,
+        "state": state,
+        "fresh_maturation": fresh_maturation,
+        "sustained_confirmation": sustained_confirmation,
+        "recent_higher_rungs": recent_higher,
+        "priority_rung": priority_rung,
+        "rung_rank": rung_rank,
+        "freshness": freshness,
+        "progression_stage": progression.get(
+            "stage"
+        ),
+        "progression_sequence": (
+            progression.get("sequence")
+            or ""
+        ),
+        "supporting_flow": supporting_flow,
+    }
+
+
+def _maturation_attention_compat(record: dict) -> dict:
+    """Honor historical GS457 monkeypatch/warm-runtime seams without recursion."""
+    from mide import gs457_maturation_leader_priority as gs457
+
+    current = getattr(
+        gs457,
+        "maturation_attention",
+        None,
+    )
+    if (
+        callable(current)
+        and not getattr(
+            current,
+            "_walter_next_presentation_facade",
+            False,
+        )
+    ):
+        return current(record)
+    return maturation_attention(record)
+
+
+# ---------------------------------------------------------------------------
 # Authoritative operator ordering
 # ---------------------------------------------------------------------------
 #
@@ -166,7 +340,6 @@ _OPERATOR_ORDER_STAGE_METADATA = {
 def effective_operator_attention_band(record: dict) -> int:
     """Return the historical GS463 state/attention presentation band."""
     from mide import gs310_unified_opportunity_state as unified
-    from mide import gs457_maturation_leader_priority as gs457
     from mide import gs459_price_trajectory_attention as gs459
     from mide import gs462_preflip_ignition_watch as gs462
 
@@ -184,7 +357,7 @@ def effective_operator_attention_band(record: dict) -> int:
             else STATE_FIRST_EARLY_WATCH_BAND
         )
 
-    maturation = gs457.maturation_attention(record)
+    maturation = _maturation_attention_compat(record)
     if maturation.get("fresh_maturation"):
         return STATE_FIRST_FRESH_MATURATION_BAND
 
@@ -235,7 +408,6 @@ def strict_state_band(record: dict) -> int:
 
 def attention_tiebreak(record: dict) -> tuple[int, float, float]:
     """Rank attention evidence only inside an already-equal Opportunity State."""
-    from mide import gs457_maturation_leader_priority as gs457
     from mide import gs459_price_trajectory_attention as gs459
     from mide import gs462_preflip_ignition_watch as gs462
 
@@ -253,7 +425,7 @@ def attention_tiebreak(record: dict) -> tuple[int, float, float]:
             three_gap = 999.0
         return (60 if preflip.get("jet_fuel") else 55, -one_gap, -three_gap)
 
-    maturation = gs457.maturation_attention(record)
+    maturation = _maturation_attention_compat(record)
     if maturation.get("fresh_maturation"):
         return (50, 0.0, 0.0)
     if gs459.trajectory_attention(record).get("active"):
@@ -2482,10 +2654,9 @@ def trajectory_attention(record: dict) -> dict:
 
 def effective_trajectory_attention_band(record: dict) -> int:
     """Insert trajectory ignition below LOOK NOW and above older/developing bands."""
-    from mide import gs457_maturation_leader_priority as gs457
     from mide import gs459_price_trajectory_attention as gs459
 
-    base = int(gs457.maturation_attention(record).get("band") or 0)
+    base = int(_maturation_attention_compat(record).get("band") or 0)
     if gs459.trajectory_attention(record).get("active"):
         return max(base, PRICE_TRAJECTORY_BAND)
     return base
