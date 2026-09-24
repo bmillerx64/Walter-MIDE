@@ -131,3 +131,42 @@ def test_scope_lock_is_forensics_only():
         ".history(",
     )
     assert not any(token in source for token in forbidden)
+
+
+def test_gs551_compact_bundle_uses_streamlit_static_root_and_href(tmp_path):
+    candidate = tmp_path / "candidate_history.jsonl"
+    flight = tmp_path / "flight_recorder.jsonl"
+    candidate.write_text('{"symbol":"TEST"}\n', encoding="utf-8")
+    flight.write_text('{"scan_id":"one"}\n', encoding="utf-8")
+
+    info = gs510.build_analysis_bundle(
+        candidate,
+        flight,
+        output_dir=tmp_path / "static",
+        token="gs551",
+    )
+
+    assert info["href"] == f"/app/static/{info['filename']}"
+    assert gs510.STATIC_DIR == Path("static")
+
+
+def test_gs551_direct_link_fallback_targets_prepared_archive():
+    info = {
+        "filename": "walter-analysis-bundle-test.zip",
+        "href": "/app/static/walter-analysis-bundle-test.zip",
+        "archive_bytes": 6 * 1024 * 1024,
+    }
+
+    markup = gs510.analysis_bundle_link_markup(info)
+
+    assert 'href="/app/static/walter-analysis-bundle-test.zip"' in markup
+    assert 'download="walter-analysis-bundle-test.zip"' in markup
+    assert "Direct compact-bundle download" in markup
+
+
+def test_gs551_render_keeps_native_download_and_adds_static_fallback():
+    source = Path("mide/gs510_compact_analysis_bundle.py").read_text(encoding="utf-8")
+    assert "data=materialize_compact_bundle" in source
+    assert "analysis_bundle_link_markup(info)" in source
+    assert "unsafe_allow_html=True" in source
+    assert 'STATIC_DIR = Path("static")' in source

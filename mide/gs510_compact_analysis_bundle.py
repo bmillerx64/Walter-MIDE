@@ -24,6 +24,7 @@ cadence, execution or order behavior changes.
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import html
 import json
 from pathlib import Path
 import secrets
@@ -36,7 +37,7 @@ from .gs496_static_session_backup import _write_snapshot_member
 
 
 AUTHORITY = "COMPACT_ANALYSIS_BUNDLE_ONLY"
-STATIC_DIR = Path("app/static")
+STATIC_DIR = Path("static")
 SESSION_KEY = "_walter_gs510_analysis_bundle"
 JOB_SESSION_KEY = "_walter_gs510_analysis_job_id"
 JOB_POLL_SECONDS = 2.0
@@ -220,6 +221,7 @@ def build_analysis_bundle(
         "authority": AUTHORITY,
         "filename": filename,
         "path": str(final_path),
+        "href": f"/app/static/{filename}",
         "archive_bytes": archive_bytes,
         "source_bytes_total": int(sum(int(v or 0) for v in captured.values())),
         "generated_at_utc": instant.isoformat(),
@@ -320,6 +322,21 @@ def analysis_bundle_job_status(job_id: str) -> dict[str, Any] | None:
     return job
 
 
+def analysis_bundle_link_markup(info: dict[str, Any]) -> str:
+    """Return a browser-native fallback link for a prepared compact bundle."""
+    filename = html.escape(str(info.get("filename") or ""), quote=True)
+    href = html.escape(str(info.get("href") or ""), quote=True)
+    archive_mb = float(info.get("archive_bytes") or 0) / (1024 * 1024)
+    return (
+        '<a href="' + href + '" download="' + filename + '" '
+        'style="display:block;text-align:center;padding:0.55rem 0.75rem;'
+        'border:1px solid rgba(250,250,250,.25);border-radius:0.5rem;'
+        'text-decoration:none;font-weight:600;margin-top:0.35rem;">'
+        f'⬇ Direct compact-bundle download ({archive_mb:.1f} MB)'
+        "</a>"
+    )
+
+
 def _render(candidate_path: Path, flight_path: Path) -> None:
     import streamlit as st
 
@@ -390,6 +407,14 @@ def _render(candidate_path: Path, flight_path: Path) -> None:
         key=f"walter-gs510-download-{filename}",
         on_click="ignore",
         width="stretch",
+    )
+    # GS551: Streamlit's native download callback can be starved while a long
+    # synchronous scan rerun owns the session. Serve the already-prepared archive
+    # from Streamlit's documented root ./static directory as a browser-native
+    # fallback that does not depend on another app callback.
+    st.markdown(
+        analysis_bundle_link_markup(info),
+        unsafe_allow_html=True,
     )
     st.caption(
         f"{int(info.get('candidate_rows') or 0):,} candidate rows retained. "
