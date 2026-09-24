@@ -24,7 +24,6 @@ cadence, execution or order behavior changes.
 from __future__ import annotations
 
 from datetime import datetime, timezone
-import html
 import json
 from pathlib import Path
 import secrets
@@ -39,6 +38,7 @@ from .gs496_static_session_backup import _write_snapshot_member
 AUTHORITY = "COMPACT_ANALYSIS_BUNDLE_ONLY"
 STATIC_DIR = Path("static")
 SESSION_KEY = "_walter_gs510_analysis_bundle"
+PAYLOAD_SESSION_KEY = "_walter_gs552_analysis_bundle_payload"
 JOB_SESSION_KEY = "_walter_gs510_analysis_job_id"
 JOB_POLL_SECONDS = 2.0
 STRIPPED_CUMULATIVE_FIELDS = (
@@ -322,21 +322,6 @@ def analysis_bundle_job_status(job_id: str) -> dict[str, Any] | None:
     return job
 
 
-def analysis_bundle_link_markup(info: dict[str, Any]) -> str:
-    """Return a browser-native fallback link for a prepared compact bundle."""
-    filename = html.escape(str(info.get("filename") or ""), quote=True)
-    href = html.escape(str(info.get("href") or ""), quote=True)
-    archive_mb = float(info.get("archive_bytes") or 0) / (1024 * 1024)
-    return (
-        '<a href="' + href + '" download="' + filename + '" '
-        'style="display:block;text-align:center;padding:0.55rem 0.75rem;'
-        'border:1px solid rgba(250,250,250,.25);border-radius:0.5rem;'
-        'text-decoration:none;font-weight:600;margin-top:0.35rem;">'
-        f'⬇ Direct compact-bundle download ({archive_mb:.1f} MB)'
-        "</a>"
-    )
-
-
 def _render(candidate_path: Path, flight_path: Path) -> None:
     import streamlit as st
 
@@ -358,6 +343,7 @@ def _render(candidate_path: Path, flight_path: Path) -> None:
         job = start_analysis_bundle_job(candidate_path, flight_path)
         st.session_state[JOB_SESSION_KEY] = str(job["job_id"])
         st.session_state.pop(SESSION_KEY, None)
+        st.session_state.pop(PAYLOAD_SESSION_KEY, None)
         running = True
 
     if running and isinstance(job, dict):
@@ -393,28 +379,29 @@ def _render(candidate_path: Path, flight_path: Path) -> None:
         st.session_state.pop(SESSION_KEY, None)
         return
 
-    def materialize_compact_bundle() -> bytes:
-        return archive_path.read_bytes()
+    # GS552: the compact bundle is small enough to preload once. Passing bytes
+    # directly registers the browser-facing download payload during fragment render,
+    # so the click does not depend on a later Python callback or static-file route.
+    # Cache one payload per prepared filename to avoid rereading it every AutoScan.
+    payload = st.session_state.get(PAYLOAD_SESSION_KEY)
+    if not isinstance(payload, dict) or payload.get("filename") != filename:
+        payload = {
+            "filename": filename,
+            "bytes": archive_path.read_bytes(),
+        }
+        st.session_state[PAYLOAD_SESSION_KEY] = payload
 
     st.download_button(
         label=(
             f"⬇ Download compact analysis bundle "
             f"({float(info.get('archive_bytes') or 0) / (1024 * 1024):.1f} MB)"
         ),
-        data=materialize_compact_bundle,
+        data=payload["bytes"],
         file_name=filename,
         mime="application/zip",
-        key=f"walter-gs510-download-{filename}",
+        key=f"walter-gs552-download-{filename}",
         on_click="ignore",
         width="stretch",
-    )
-    # GS551: Streamlit's native download callback can be starved while a long
-    # synchronous scan rerun owns the session. Serve the already-prepared archive
-    # from Streamlit's documented root ./static directory as a browser-native
-    # fallback that does not depend on another app callback.
-    st.markdown(
-        analysis_bundle_link_markup(info),
-        unsafe_allow_html=True,
     )
     st.caption(
         f"{int(info.get('candidate_rows') or 0):,} candidate rows retained. "
