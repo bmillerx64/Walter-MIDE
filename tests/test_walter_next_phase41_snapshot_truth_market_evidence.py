@@ -88,7 +88,7 @@ def test_phase41_scope_remains_source_price_truth_only():
         ROOT / "mide/gs475_premarket_snapshot_truth.py"
     ).read_text(encoding="utf-8")
 
-    assert "overnight_required=True is deliberately never requested" in source
+    assert "separately entitled overnight snapshot flag is deliberately never requested" in source
     assert "extend_hour_required=True" in source
     assert "ext_price" in source
     assert "scanner_v2" not in source
