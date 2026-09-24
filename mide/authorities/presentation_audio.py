@@ -276,6 +276,196 @@ def _maturation_attention_compat(record: dict) -> dict:
     return maturation_attention(record)
 
 
+# GS457 maturation ordering and historical GS369 bind.
+
+MATURATION_ORDER_OWNER = "_walter_gs457_maturation_leader_priority_owner"
+
+
+def effective_maturation_priority(
+    attention: dict,
+) -> tuple[int, float]:
+    """Use crossover tie-breaks only for GS457's promoted maturation bands."""
+    promoted = bool(
+        attention.get("fresh_maturation")
+        or attention.get("sustained_confirmation")
+    )
+    if not promoted:
+        return 0, float("-inf")
+    return (
+        int(attention.get("rung_rank") or 0),
+        float(
+            attention.get(
+                "freshness",
+                float("-inf"),
+            )
+        ),
+    )
+
+
+def maturation_priority_sort_key(
+    record: dict,
+) -> tuple:
+    """Return GS457's presentation keys with established ordinary tie-breaks."""
+    from mide import ui
+    from mide.gs363_operator_attention_hierarchy import (
+        operator_attention_score,
+    )
+
+    attention = _maturation_attention_compat(
+        record
+    )
+    rung_rank, freshness = (
+        effective_maturation_priority(
+            attention
+        )
+    )
+    try:
+        established = (
+            ui.trader_priority_sort_key(
+                record
+            )
+        )
+    except Exception:
+        established = ()
+    return (
+        int(attention["band"]),
+        rung_rank,
+        freshness,
+        int(
+            operator_attention_score(
+                record
+            )
+        ),
+        established,
+    )
+
+
+def ordered_maturation_records(
+    records: list[dict],
+) -> list[dict]:
+    """Preserve GS457's stable presentation-only maturation ordering."""
+    from mide import ui
+    from mide.gs363_operator_attention_hierarchy import (
+        operator_attention_score,
+    )
+
+    pairs = [
+        (
+            record,
+            _maturation_attention_compat(
+                record
+            ),
+        )
+        for record in (
+            records
+            or []
+        )
+    ]
+    pairs.sort(
+        key=lambda item: str(
+            item[0].get("symbol")
+            or ""
+        ).upper()
+    )
+    try:
+        pairs.sort(
+            key=lambda item: (
+                ui.trader_priority_sort_key(
+                    item[0]
+                )
+            ),
+            reverse=True,
+        )
+    except Exception:
+        pass
+    pairs.sort(
+        key=lambda item: (
+            operator_attention_score(
+                item[0]
+            )
+        ),
+        reverse=True,
+    )
+    pairs.sort(
+        key=lambda item: (
+            effective_maturation_priority(
+                item[1]
+            )[1]
+        ),
+        reverse=True,
+    )
+    pairs.sort(
+        key=lambda item: (
+            effective_maturation_priority(
+                item[1]
+            )[0]
+        ),
+        reverse=True,
+    )
+    pairs.sort(
+        key=lambda item: int(
+            item[1]["band"]
+        ),
+        reverse=True,
+    )
+    return [
+        record
+        for record, _attention
+        in pairs
+    ]
+
+
+def install_maturation_leader_priority() -> None:
+    """Bind GS457 at its historical final GS369 ordering seam."""
+    from mide import gs369_escalation_priority_order as gs369
+
+    current = (
+        gs369.ordered_escalation_records
+    )
+    if getattr(
+        current,
+        MATURATION_ORDER_OWNER,
+        False,
+    ):
+        return
+
+    def ordered_escalation_records(
+        records: list[dict],
+    ) -> list[dict]:
+        return ordered_maturation_records(
+            records
+        )
+
+    for name, value in getattr(
+        current,
+        "__dict__",
+        {},
+    ).items():
+        if (
+            name.startswith("_gs")
+            and not hasattr(
+                ordered_escalation_records,
+                name,
+            )
+        ):
+            setattr(
+                ordered_escalation_records,
+                name,
+                value,
+            )
+
+    ordered_escalation_records._gs457_maturation_leader_priority = True
+    ordered_escalation_records._gs457_original = current
+    setattr(
+        ordered_escalation_records,
+        MATURATION_ORDER_OWNER,
+        True,
+    )
+    gs369.ordered_escalation_records = (
+        ordered_escalation_records
+    )
+
+
 # ---------------------------------------------------------------------------
 # Authoritative operator ordering
 # ---------------------------------------------------------------------------
