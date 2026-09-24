@@ -381,6 +381,240 @@ def ordered_fresh_event_records(
     return _fresh_event_stage(rows)
 
 
+# ---------------------------------------------------------------------------
+# GS527 explosive 30s operator-attention watch
+# ---------------------------------------------------------------------------
+#
+# GS527 is presentation-only. It consumes already-computed 30s/VWAP/flow evidence,
+# annotates the visible state without promotion, lifts a fresh burst in operator
+# ordering, and supplies an attention-only spoken cue when stronger audio is absent.
+#
+# The historical gs527 module remains the mutable compatibility seam. These authority
+# functions deliberately call back through that facade where the original module used
+# module globals, preserving monkeypatches and retained warm-runtime wrapper behavior.
+
+_EXPLOSIVE_30S_STATE_OWNER = "_walter_gs527_explosive_30s_surge_state_owner"
+_EXPLOSIVE_30S_ORDER_OWNER = "_walter_gs527_explosive_30s_surge_order_owner"
+_EXPLOSIVE_30S_AUDIO_OWNER = "_walter_gs527_explosive_30s_surge_audio_owner"
+
+
+def explosive_30s_number(value: Any) -> float | None:
+    try:
+        return float(value) if value is not None and value != "" else None
+    except (TypeError, ValueError):
+        return None
+
+
+def explosive_30s_surge(record: dict) -> dict:
+    """Return bounded attention truth from already-computed 30s tripwire evidence."""
+    from mide import gs462_preflip_ignition_watch as gs462
+    from mide import gs527_explosive_30s_surge_watch as gs527
+
+    thirty = gs462._timeframe_detail(record, "30s")
+    age = gs527._number(thirty.get("flip_age_seconds"))
+    volume = gs527._number(record.get("volume_acceleration_30s"))
+    dollar = gs527._number(record.get("dollar_flow_acceleration_30s"))
+
+    active = bool(
+        thirty.get("bullish")
+        and thirty.get("above_vwap")
+        and age is not None
+        and 0.0 <= age <= float(gs527.FRESH_BURST_SECONDS)
+        and volume is not None
+        and volume >= float(gs527.MIN_VOLUME_ACCELERATION_30S)
+        and dollar is not None
+        and dollar >= float(gs527.MIN_DOLLAR_FLOW_ACCELERATION_30S)
+    )
+    return {
+        "active": active,
+        "symbol": str(record.get("symbol") or "").strip().upper(),
+        "flip_age_seconds": age,
+        "volume_acceleration_30s": volume,
+        "dollar_flow_acceleration_30s": dollar,
+        "thirty_second_above_vwap": bool(thirty.get("above_vwap")),
+        "thirty_second_bullish": bool(thirty.get("bullish")),
+        "authority": "OPERATOR_ATTENTION_ONLY",
+        "entry_authority_changed": False,
+        "qualification_authority_changed": False,
+        "readiness_authority_changed": False,
+    }
+
+
+def state_with_explosive_30s(original, record: dict) -> dict:
+    """Annotate the existing state; never promote it."""
+    from mide import gs310_unified_opportunity_state as unified
+    from mide import gs527_explosive_30s_surge_watch as gs527
+
+    view = original(record)
+    event = gs527.explosive_30s_surge(record)
+    if not event.get("active") or view.get("state") == unified.HALTED:
+        return view
+
+    result = deepcopy(view)
+    provenance = list(result.get("attention_provenance") or [])
+    if gs527._PROVENANCE not in provenance:
+        provenance.append(gs527._PROVENANCE)
+    result["attention_provenance"] = provenance
+    result["explosive_30s_surge"] = event
+
+    volume = event["volume_acceleration_30s"]
+    dollar = event["dollar_flow_acceleration_30s"]
+    age = event["flip_age_seconds"]
+    surge_text = (
+        f"EARLY SURGE WATCH: fresh 30s bullish flip ({age:.0f}s old) with "
+        f"{volume:.1f}x volume and {dollar:.1f}x dollar-flow acceleration."
+    )
+    reason = str(result.get("reason") or "").strip()
+    if "EARLY SURGE WATCH:" not in reason:
+        result["reason"] = f"{surge_text} {reason}".strip()
+
+    next_step = str(result.get("next_step") or "").strip()
+    discipline = (
+        "Open the chart now for observation, but do not treat this as entry authority. "
+        "1m/3m confirmation, existing VWAP guards, readiness and execution rules remain authoritative."
+    )
+    if discipline not in next_step:
+        result["next_step"] = f"{discipline} {next_step}".strip()
+    return result
+
+
+def explosive_30s_attention_band(record: dict) -> int:
+    """Final event ordering: entry > fresh maturation > explosive 30s > baseline."""
+    from mide import gs310_unified_opportunity_state as unified
+    from mide import gs517_fresh_event_priority as gs517
+    from mide import gs527_explosive_30s_surge_watch as gs527
+
+    try:
+        state = str(unified.opportunity_state(record).get("state") or "")
+    except Exception:
+        state = ""
+    if state == unified.WATCH_FOR_ENTRY:
+        return 4
+    if state == unified.HALTED:
+        return 0
+    if gs517.fresh_maturation_event(record):
+        return 3
+    if gs527.explosive_30s_surge(record).get("active"):
+        return 2
+    return 1
+
+
+def ordered_explosive_30s_records(
+    records: list[dict],
+    baseline_order=None,
+) -> list[dict]:
+    """Stable event lift over the established GS517/Mission-Rank order."""
+    from mide import gs527_explosive_30s_surge_watch as gs527
+
+    source = list(records or [])
+    rows = list(baseline_order(source) if baseline_order is not None else source)
+    rows.sort(key=gs527._attention_band, reverse=True)
+    return rows
+
+
+def explosive_30s_audio_phrase(records: list[dict]) -> str:
+    """Speak one attention-only surge cue without manufacturing LOOK NOW/ENTRY READY."""
+    from mide import gs527_explosive_30s_surge_watch as gs527
+
+    for record in records or []:
+        event = gs527.explosive_30s_surge(record)
+        if not event.get("active") or not event.get("symbol"):
+            continue
+        return (
+            f"{event['symbol']}. EARLY SURGE WATCH. Fresh 30 second bullish flip with "
+            f"{event['volume_acceleration_30s']:.1f} times volume and "
+            f"{event['dollar_flow_acceleration_30s']:.1f} times dollar flow. "
+            "One minute confirmation is still pending. Attention only."
+        )
+    return ""
+
+
+def install_explosive_30s_state() -> None:
+    """Bind GS527 explanatory state annotation at its historical install position."""
+    from mide import gs310_unified_opportunity_state as unified
+    from mide import gs311_unified_voice as voice
+    from mide import gs314_state_consistency as consistency
+    from mide import gs363_operator_attention_hierarchy as hierarchy
+    from mide import gs527_explosive_30s_surge_watch as gs527
+
+    current = unified.opportunity_state
+    if getattr(current, _EXPLOSIVE_30S_STATE_OWNER, False):
+        calibrated = current
+    else:
+        @wraps(current)
+        def calibrated(record: dict) -> dict:
+            return gs527.state_with_explosive_30s(current, record)
+
+        _inherit_audio_wrapper(calibrated, current)
+        calibrated._gs527_explosive_30s_surge_watch = True
+        calibrated._gs527_original = current
+        setattr(calibrated, _EXPLOSIVE_30S_STATE_OWNER, True)
+        unified.opportunity_state = calibrated
+
+    voice.opportunity_state = calibrated
+    consistency.opportunity_state = calibrated
+    hierarchy.opportunity_state = calibrated
+
+
+def install_explosive_30s_order() -> None:
+    """Bind the historical GS527 event-lift wrapper without changing its position."""
+    from mide import gs369_escalation_priority_order as gs369
+    from mide import gs527_explosive_30s_surge_watch as gs527
+
+    current = gs369.ordered_escalation_records
+    if getattr(current, _EXPLOSIVE_30S_ORDER_OWNER, False):
+        return
+
+    def ordered_escalation_records(records: list[dict]) -> list[dict]:
+        return gs527.ordered_explosive_30s_records(
+            records,
+            baseline_order=current,
+        )
+
+    _inherit_audio_wrapper(ordered_escalation_records, current)
+    ordered_escalation_records._gs527_explosive_30s_surge_watch = True
+    ordered_escalation_records._gs527_original = current
+    setattr(
+        ordered_escalation_records,
+        _EXPLOSIVE_30S_ORDER_OWNER,
+        True,
+    )
+    gs369.ordered_escalation_records = ordered_escalation_records
+
+
+def install_explosive_30s_audio() -> None:
+    """Bind GS527 attention-only audio after established higher-tier audio."""
+    from mide import escalation
+    from mide.gs365_chime_semantic_classifier import semantic_chime_count
+    from mide import gs527_explosive_30s_surge_watch as gs527
+
+    current = escalation.escalation_alert_phrase
+    if getattr(current, _EXPLOSIVE_30S_AUDIO_OWNER, False):
+        return
+
+    @wraps(current)
+    def alert_phrase(records: list[dict]) -> str:
+        rows = list(records or [])
+        established = current(rows)
+        if established and semantic_chime_count(established) >= 2:
+            return established
+        burst = gs527.explosive_30s_audio_phrase(rows)
+        return burst or established
+
+    _inherit_audio_wrapper(alert_phrase, current)
+    alert_phrase._gs527_explosive_30s_surge_watch = True
+    alert_phrase._gs527_original = current
+    setattr(alert_phrase, _EXPLOSIVE_30S_AUDIO_OWNER, True)
+    escalation.escalation_alert_phrase = alert_phrase
+
+
+def install_explosive_30s_presentation() -> None:
+    """Install GS527's state, ordering, and audio slices at the historical boundary."""
+    install_explosive_30s_state()
+    install_explosive_30s_order()
+    install_explosive_30s_audio()
+
+
 def _pe_number(value: Any) -> float | None:
     try:
         return float(value)
@@ -3986,6 +4220,16 @@ def bind_final_enriched_opportunity_order(
 
 
 __all__ = [
+    "install_explosive_30s_presentation",
+    "install_explosive_30s_audio",
+    "install_explosive_30s_order",
+    "install_explosive_30s_state",
+    "explosive_30s_audio_phrase",
+    "ordered_explosive_30s_records",
+    "explosive_30s_attention_band",
+    "state_with_explosive_30s",
+    "explosive_30s_surge",
+    "explosive_30s_number",
     "alert_audio_health_markup",
     "render_sidebar_audio_health",
     "install_distinct_attention_audio",
