@@ -1822,17 +1822,17 @@ def _run_live_pipeline(
                             client,
                             build_shadow_news_client,
                         )
-                    shadow_trace = observe_shadow(
+                    gs550 = importlib.import_module(
+                        "mide.gs550_nonblocking_shadow_news"
+                    )
+                    gs550.schedule_observation(
+                        client,
                         shadow_client,
+                        observe_shadow,
                         symbols,
                         news_items,
+                        facade_used=facade_used,
                     )
-                    if isinstance(shadow_trace, dict):
-                        shadow_trace["warm_deploy_news_facade_used"] = facade_used
-                        shadow_trace["warm_deploy_news_facade_authority"] = (
-                            "WARM_DEPLOY_SHADOW_NEWS_FACADE"
-                        )
-                        client.diagnostics["gs544_alpaca_news_shadow"] = shadow_trace
             except Exception as exc:
                 client.diagnostics["gs544_alpaca_news_shadow"] = {
                     "authority": "NEWS_COVERAGE_OBSERVATION_ONLY",
