@@ -4873,6 +4873,36 @@ def augment_reset_retest_visible_records(
     return output
 
 
+def install_reset_retest_awareness() -> None:
+    """Bind GS404 visible-awareness injection at the historical UI seam."""
+    from mide import ui
+
+    current = ui.actionable_candidate_records
+    if getattr(
+        current,
+        "_gs404_reset_retest",
+        False,
+    ):
+        return
+
+    original = current
+
+    @wraps(original)
+    def operator_records(records: list[dict]) -> list[dict]:
+        return augment_reset_retest_visible_records(
+            records,
+            original(records),
+        )
+
+    _inherit_audio_wrapper(
+        operator_records,
+        original,
+    )
+    operator_records._gs404_reset_retest = True
+    operator_records._gs404_original = original
+    ui.actionable_candidate_records = operator_records
+
+
 # ---------------------------------------------------------------------------
 # GS401 final Opportunity render ordering
 # ---------------------------------------------------------------------------
@@ -5034,6 +5064,7 @@ def bind_final_enriched_opportunity_order(
 __all__ = [
     "reset_retest_awareness_copy",
     "augment_reset_retest_visible_records",
+    "install_reset_retest_awareness",
     "critical_only_audio_markup",
     "install_critical_only_audio",
     "final_visible_opportunity_records",
