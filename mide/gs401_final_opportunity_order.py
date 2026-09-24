@@ -31,8 +31,23 @@ def _inherit(wrapper, wrapped) -> None:
             setattr(wrapper, name, value)
 
 
+def _presentation_audio():
+    from mide.authorities import presentation_audio
+
+    return presentation_audio
+
+
 def final_visible_records(records: list[dict]) -> list[dict]:
-    """Return the final five operator cards after all visibility enrichment is done."""
+    """Warm-deploy-safe facade for authoritative final Opportunity ordering."""
+    current = getattr(
+        _presentation_audio(),
+        "final_visible_opportunity_records",
+        None,
+    )
+    if callable(current):
+        return current(records)
+
+    # Retained-runtime fallback for an older Presentation + Audio generation.
     from . import gs369_escalation_priority_order as gs369
     from . import ui
 
@@ -41,7 +56,17 @@ def final_visible_records(records: list[dict]) -> list[dict]:
 
 
 def install() -> None:
-    """Pin post-filter ordering while preserving the complete existing renderer stack."""
+    """Warm-deploy-safe facade for GS401's final render-order binding."""
+    authority = getattr(
+        _presentation_audio(),
+        "install_final_opportunity_order",
+        None,
+    )
+    if callable(authority):
+        authority()
+        return
+
+    # Retained-runtime fallback for an older Presentation + Audio generation.
     from . import gs369_escalation_priority_order as gs369
     from . import ui
 
@@ -57,9 +82,6 @@ def install() -> None:
             # GS538: resolve the final sorter now, not when this wrapper installed.
             return gs369.ordered_escalation_records(enriched)
 
-        # GS310 performs its five-card slice after calling actionable_candidate_records.
-        # Make that one internal call observe the canonical order, but keep every
-        # existing renderer/wrapper intact and restore the public callable immediately.
         ui.actionable_candidate_records = final_actionable_records
         try:
             return current(gs369.ordered_escalation_records(records))
