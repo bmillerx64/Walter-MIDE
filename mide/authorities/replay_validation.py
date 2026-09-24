@@ -2190,7 +2190,7 @@ CACHED_RECORDER_BINDING = (
     "cached_recorder.record_scan.__func__.__globals__."
     "persist_replayable_scan"
 )
-CACHED_RECORDER_BIND_REVISION = 1
+CACHED_RECORDER_BIND_REVISION = 2
 _CACHED_RECORDER_BIND_OWNER = (
     "_walter_gs487_cached_recorder_instance_bind_revision"
 )
@@ -2240,6 +2240,54 @@ def cached_recorder_news_transport(
     return truth
 
 
+def cached_recorder_shadow_news_trace(
+    provider,
+    provider_source: str,
+) -> dict[str, Any]:
+    """Persist GS544 shadow-news coverage without making another provider call."""
+    diagnostics = getattr(
+        provider,
+        "diagnostics",
+        None,
+    )
+    trace = (
+        deepcopy(
+            diagnostics.get(
+                "gs544_alpaca_news_shadow"
+            )
+            or {}
+        )
+        if isinstance(diagnostics, dict)
+        else {}
+    )
+    if not isinstance(trace, dict):
+        trace = {}
+    trace.setdefault(
+        "authority",
+        "NEWS_COVERAGE_OBSERVATION_ONLY",
+    )
+    trace.setdefault(
+        "provider_role",
+        "shadow_context_only",
+    )
+    trace["available"] = bool(
+        trace.get("polled_at")
+        or trace.get("request_made")
+        or trace.get("cache_reused")
+        or trace.get("requested_missing_symbols")
+    )
+    if not trace["available"]:
+        trace.setdefault(
+            "reason",
+            "GS544 shadow-news diagnostics unavailable",
+        )
+    trace["provider_source"] = provider_source
+    trace["cached_recorder_instance_bind"] = True
+    trace["extra_provider_calls"] = 0
+    trace["trading_authority_changed"] = False
+    return trace
+
+
 def cached_recorder_stream_transport(
     provider,
     provider_source: str,
@@ -2273,15 +2321,21 @@ def install_cached_recorder_instance_bind(
     )
     if not callable(current):
         return False
-    if (
-        getattr(
+    marker = getattr(
+        current,
+        gs487._OWNER,
+        None,
+    )
+    if marker == gs487.REVISION:
+        return False
+    if marker:
+        original = getattr(
             current,
-            gs487._OWNER,
+            "_gs487_original",
             None,
         )
-        == gs487.REVISION
-    ):
-        return False
+        if callable(original):
+            current = original
 
     @wraps(current)
     def persist_with_cached_instance_transport(
@@ -2304,6 +2358,12 @@ def install_cached_recorder_instance_bind(
         augmented[
             "stream_transport_trace"
         ] = gs487._stream_transport(
+            provider,
+            provider_source,
+        )
+        augmented[
+            "gs544_alpaca_news_shadow"
+        ] = gs487._shadow_news_trace(
             provider,
             provider_source,
         )
@@ -2468,6 +2528,7 @@ __all__ = [
     "install_cached_recorder_instance_bind",
     "exact_cached_recorder_globals",
     "cached_recorder_news_transport",
+    "cached_recorder_shadow_news_trace",
     "cached_recorder_stream_transport",
     "CACHED_RECORDER_BIND_AUTHORITY",
     "CACHED_RECORDER_BINDING",
