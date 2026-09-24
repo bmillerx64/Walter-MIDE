@@ -115,12 +115,15 @@ def test_gs545_rebinds_exact_retained_provider_without_opening_network(monkeypat
 def test_gs545_live_app_binds_takeover_before_stream_open():
     source = (ROOT / "app.py").read_text(encoding="utf-8")
     start = source.index('if provider_name.upper() == "WEBULL":')
-    block = source[start: source.index("    else:", start)]
+    bind = source.index("gs545.install_for_provider(", start)
+    initialize = source.index("client.initialize_quotes(seeds", start)
+    alpaca_branch = source.index(
+        '    else:\n        api_key = get_secret("ALPACA_API_KEY")',
+        start,
+    )
 
-    bind = block.index("gs545.install_for_provider(")
-    initialize = block.index("client.initialize_quotes(")
-
-    assert bind < initialize
+    assert start < bind < initialize
+    assert bind < alpaca_branch
 
 
 def test_gs545_30s_health_exposes_takeover_truth():
