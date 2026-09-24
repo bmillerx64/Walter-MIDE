@@ -14,18 +14,13 @@ def test_gs474_is_compatibility_only():
 
 
 def test_gs525_is_compatibility_only():
-    assert gs525.thirty_second_flip_age is thesis_state.thirty_second_flip_age
-    assert gs525.fresh_higher_maturation is thesis_state.fresh_higher_maturation
-    assert gs525.stale_legacy_developing is thesis_state.stale_legacy_developing
-    assert gs525.tightened_opportunity_state is thesis_state.tighten_late_attention_state
-    assert gs525.install is thesis_state.install_fresh_attention_expiry
+    assert gs525._thesis() is thesis_state
+    assert gs525.FRESH_30S_ATTENTION_SECONDS == thesis_state.FRESH_30S_ATTENTION_SECONDS
 
 
 def test_gs526_is_compatibility_only():
-    assert gs526.fresh_higher_maturation is thesis_state.fresh_higher_maturation
-    assert gs526.materially_stretched_developing is thesis_state.materially_stretched_developing
-    assert gs526.tightened_opportunity_state is thesis_state.stretch_adjusted_state
-    assert gs526.install is thesis_state.install_3m_stretch_semantics
+    assert gs526._thesis() is thesis_state
+    assert gs526.MAX_DEVELOPING_3M_ST_GAP_PCT == thesis_state.MAX_DEVELOPING_3M_ST_GAP_PCT
 
 
 def test_freshness_and_extension_meaning_lives_in_thesis_state():
