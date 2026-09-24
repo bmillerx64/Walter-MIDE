@@ -524,84 +524,58 @@ def _rung_event(record: dict, label: str) -> dict:
     return dict(detail.get("st_vwap_line_cross") or {})
 
 
+def _market_evidence():
+    from mide.authorities import market_evidence
+
+    return market_evidence
+
+
 def crossover_progression(record: dict) -> dict:
-    """Return Walter's ordered current 30s->15m maturation ladder."""
-    active_rungs: list[str] = []
-    timestamps: list[datetime] = []
-    fresh_rungs: list[str] = []
-    rung_events: dict[str, dict] = {}
-
-    for label in CROSSOVER_LADDER:
-        event = _rung_event(record, label)
-        rung_events[label] = event
-        if not event.get("crossed") or not event.get("current_confirmed"):
-            continue
-        active_rungs.append(label)
-        stamp = _timestamp(event.get("timestamp"))
-        if stamp is not None:
-            timestamps.append(stamp)
-        if event.get("new"):
-            fresh_rungs.append(label)
-
-    ordered = all(
-        earlier <= later for earlier, later in zip(timestamps, timestamps[1:])
+    """Compatibility facade for authoritative ordered maturation evidence."""
+    current = getattr(
+        _market_evidence(),
+        "crossover_progression",
+        None,
     )
-    highest = active_rungs[-1] if active_rungs else None
-    latest_new = fresh_rungs[-1] if fresh_rungs else None
-
-    if any(label in active_rungs for label in ("5m", "10m", "15m")):
-        stage = "PERSISTENCE"
-    elif "3m" in active_rungs:
-        stage = "CONFIRMATION"
-    elif any(label in active_rungs for label in ("30s", "1m")):
-        stage = "IGNITION"
-    else:
-        stage = "NONE"
-
-    return {
-        "ladder": list(CROSSOVER_LADDER),
-        "active_rungs": active_rungs,
-        "fresh_rungs": fresh_rungs,
-        "depth": len(active_rungs),
-        "ordered": ordered,
-        "highest_rung": highest,
-        "latest_new_rung": latest_new,
-        "stage": stage,
-        "sequence": " -> ".join(active_rungs),
-        "events": rung_events,
-    }
+    if not callable(current):
+        return {
+            "ladder": list(CROSSOVER_LADDER),
+            "active_rungs": [],
+            "fresh_rungs": [],
+            "depth": 0,
+            "ordered": True,
+            "highest_rung": None,
+            "latest_new_rung": None,
+            "stage": "NONE",
+            "sequence": "",
+            "events": {},
+        }
+    return current(record)
 
 
 def progression_signal(record: dict) -> dict:
-    """Return a fresh operator signal from a newly reached ordered maturation rung."""
-    progression = crossover_progression(record)
-    new_rung = progression.get("latest_new_rung")
-    distance = _number(record, "vwap_distance_pct")
-    relation = str(record.get("vwap_relation") or "").strip().lower()
-    above_vwap = relation == "above" or (distance is not None and distance >= 0.0)
-    supported = _supporting_flow(record)
-    depth = int(progression.get("depth") or 0)
-    ordered = bool(progression.get("ordered"))
-    active = bool(
-        new_rung
-        and not _halted(record)
-        and above_vwap
-        and supported
-        and (ordered or depth <= 1)
+    """Compatibility facade for authoritative fresh-rung evidence."""
+    current = getattr(
+        _market_evidence(),
+        "progression_signal",
+        None,
     )
-    event = dict((progression.get("events") or {}).get(new_rung) or {})
-    return {
-        "active": active,
-        "new_rung": new_rung,
-        "timestamp": event.get("timestamp"),
-        "stage": progression.get("stage"),
-        "sequence": progression.get("sequence") or "",
-        "depth": depth,
-        "ordered": ordered,
-        "supporting_flow": supported,
-        "vwap_distance_pct": distance,
-    }
-
+    if not callable(current):
+        return {
+            "active": False,
+            "new_rung": None,
+            "timestamp": None,
+            "stage": "NONE",
+            "sequence": "",
+            "depth": 0,
+            "ordered": True,
+            "supporting_flow": False,
+            "vwap_distance_pct": _number(
+                record,
+                "vwap_distance_pct",
+            ),
+        }
+    return current(record)
 
 def _state_with_progression(original, record: dict) -> dict:
     from . import gs310_unified_opportunity_state as unified

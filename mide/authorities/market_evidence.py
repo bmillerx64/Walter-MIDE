@@ -1675,6 +1675,151 @@ def install_price_trajectory_metrics() -> None:
 
 
 # ---------------------------------------------------------------------------
+# GS455 ordered ST/VWAP maturation progression evidence
+# ---------------------------------------------------------------------------
+#
+# Market Evidence owns the current 30s -> 15m ordered progression and fresh-rung
+# signal. The historical gs455 module remains the calibration/monkeypatch seam for
+# the ladder, rung extraction, freshness windows, support-flow test, and halt truth.
+# No provider request, qualification, readiness, state promotion, audio, or order
+# authority lives in these functions.
+
+
+def crossover_progression(record: dict) -> dict:
+    """Return Walter's ordered current 30s->15m maturation ladder."""
+    from mide import gs455_early_ignition_3m_confirmation as gs455
+
+    active_rungs: list[str] = []
+    timestamps: list[datetime] = []
+    fresh_rungs: list[str] = []
+    rung_events: dict[str, dict] = {}
+
+    for label in gs455.CROSSOVER_LADDER:
+        event = gs455._rung_event(record, label)
+        rung_events[label] = event
+        if (
+            not event.get("crossed")
+            or not event.get("current_confirmed")
+        ):
+            continue
+        active_rungs.append(label)
+        stamp = gs455._timestamp(
+            event.get("timestamp")
+        )
+        if stamp is not None:
+            timestamps.append(stamp)
+        if event.get("new"):
+            fresh_rungs.append(label)
+
+    ordered = all(
+        earlier <= later
+        for earlier, later in zip(
+            timestamps,
+            timestamps[1:],
+        )
+    )
+    highest = (
+        active_rungs[-1]
+        if active_rungs
+        else None
+    )
+    latest_new = (
+        fresh_rungs[-1]
+        if fresh_rungs
+        else None
+    )
+
+    if any(
+        label in active_rungs
+        for label in ("5m", "10m", "15m")
+    ):
+        stage = "PERSISTENCE"
+    elif "3m" in active_rungs:
+        stage = "CONFIRMATION"
+    elif any(
+        label in active_rungs
+        for label in ("30s", "1m")
+    ):
+        stage = "IGNITION"
+    else:
+        stage = "NONE"
+
+    return {
+        "ladder": list(gs455.CROSSOVER_LADDER),
+        "active_rungs": active_rungs,
+        "fresh_rungs": fresh_rungs,
+        "depth": len(active_rungs),
+        "ordered": ordered,
+        "highest_rung": highest,
+        "latest_new_rung": latest_new,
+        "stage": stage,
+        "sequence": " -> ".join(active_rungs),
+        "events": rung_events,
+    }
+
+
+def progression_signal(record: dict) -> dict:
+    """Return a fresh operator signal from a newly reached ordered maturation rung."""
+    from mide import gs455_early_ignition_3m_confirmation as gs455
+
+    progression = gs455.crossover_progression(
+        record
+    )
+    new_rung = progression.get(
+        "latest_new_rung"
+    )
+    distance = gs455._number(
+        record,
+        "vwap_distance_pct",
+    )
+    relation = str(
+        record.get("vwap_relation") or ""
+    ).strip().lower()
+    above_vwap = bool(
+        relation == "above"
+        or (
+            distance is not None
+            and distance >= 0.0
+        )
+    )
+    supported = gs455._supporting_flow(record)
+    depth = int(
+        progression.get("depth") or 0
+    )
+    ordered = bool(
+        progression.get("ordered")
+    )
+    active = bool(
+        new_rung
+        and not gs455._halted(record)
+        and above_vwap
+        and supported
+        and (ordered or depth <= 1)
+    )
+    event = dict(
+        (
+            progression.get("events")
+            or {}
+        ).get(new_rung)
+        or {}
+    )
+    return {
+        "active": active,
+        "new_rung": new_rung,
+        "timestamp": event.get("timestamp"),
+        "stage": progression.get("stage"),
+        "sequence": (
+            progression.get("sequence")
+            or ""
+        ),
+        "depth": depth,
+        "ordered": ordered,
+        "supporting_flow": supported,
+        "vwap_distance_pct": distance,
+    }
+
+
+# ---------------------------------------------------------------------------
 # GS460/GS461 ST compression + cascade runway market evidence
 # ---------------------------------------------------------------------------
 
@@ -5354,6 +5499,8 @@ def install_partial_snapshot_recovery_for_provider(
 
 
 __all__ = [
+    "crossover_progression",
+    "progression_signal",
     "install_partial_snapshot_recovery_for_provider",
     "initialize_quotes_with_partial_retry",
     "partial_snapshot_symbols",
