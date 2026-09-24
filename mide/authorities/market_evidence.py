@@ -11,8 +11,8 @@ from dataclasses import dataclass
 from datetime import datetime, time, timedelta, timezone
 from functools import wraps
 from statistics import median
-from time import monotonic
-from typing import Any
+from time import monotonic, time as epoch_time
+from typing import Any, Callable
 
 import pandas as pd
 
@@ -4043,7 +4043,608 @@ def install_snapshot_session_truth() -> None:
     )
 
 
+
+# ---------------------------------------------------------------------------
+# GS488 Webull rc105 connection-limit containment
+# ---------------------------------------------------------------------------
+
+WEBULL_CONNECTION_LIMIT_AUTHORITY = (
+    "WEBULL_CONNECTION_LIMIT_CONTAINMENT"
+)
+WEBULL_CONNECTION_LIMIT_COOLDOWN_SECONDS = 300.0
+WEBULL_CONNECTION_LIMIT_BACKOFF_SECONDS = (
+    300.0,
+    600.0,
+    900.0,
+)
+
+
+def connection_limit_stream(provider) -> dict:
+    diagnostics = getattr(provider, "diagnostics", None)
+    if not isinstance(diagnostics, dict):
+        diagnostics = {}
+        try:
+            provider.diagnostics = diagnostics
+        except Exception:
+            return {}
+    stream = diagnostics.get("webull_stream")
+    if not isinstance(stream, dict):
+        stream = {}
+        diagnostics["webull_stream"] = stream
+    return stream
+
+
+def connection_limit_rejection(value: Any) -> bool:
+    text = " ".join(
+        str(value or "").split()
+    ).casefold()
+    return (
+        "connection limit exceeded" in text
+        or (
+            "rc code: 105" in text
+            and "limit" in text
+        )
+    )
+
+
+def connection_limit_cooldown(
+    failures: Any,
+) -> float:
+    from mide import gs488_webull_connection_limit_backoff as gs488
+
+    try:
+        count = max(1, int(failures))
+    except (TypeError, ValueError):
+        count = 1
+    return gs488.BACKOFF_SECONDS[
+        min(count - 1, len(gs488.BACKOFF_SECONDS) - 1)
+    ]
+
+
+def connection_limit_state(provider) -> dict:
+    from mide import gs488_webull_connection_limit_backoff as gs488
+
+    stream = gs488._stream(provider)
+    state = stream.get(
+        "gs488_connection_limit_backoff"
+    )
+    if not isinstance(state, dict):
+        state = {
+            "authority": gs488.AUTHORITY,
+            "active": False,
+            "cooldown_seconds": gs488.COOLDOWN_SECONDS,
+            "backoff_schedule_seconds": list(
+                gs488.BACKOFF_SECONDS
+            ),
+            "gs489_graduated_backoff": True,
+            "next_retry_epoch": None,
+            "consecutive_limit_failures": 0,
+            "suppressed_attempts": 0,
+            "last_limit_failure": None,
+            "rest_snapshot_history_unchanged": True,
+            "genuine_webull_tick_only": True,
+            "trading_authority_changed": False,
+        }
+        stream[
+            "gs488_connection_limit_backoff"
+        ] = state
+    return state
+
+
+def refresh_connection_limit_deadline(
+    provider,
+    *,
+    now: float,
+) -> dict:
+    from mide import gs488_webull_connection_limit_backoff as gs488
+
+    state = gs488._state(provider)
+    if (
+        not state.get("active")
+        or getattr(
+            provider,
+            "_subscription",
+            None,
+        )
+        is not None
+    ):
+        return state
+    failures = int(
+        state.get(
+            "consecutive_limit_failures",
+            0,
+        )
+        or 0
+    )
+    if failures <= 0:
+        return state
+    cooldown = gs488._cooldown_for_failures(
+        failures
+    )
+    try:
+        last_failure = float(
+            state.get("last_limit_failure_epoch")
+        )
+    except (TypeError, ValueError):
+        last_failure = now
+    desired_deadline = last_failure + cooldown
+    try:
+        current_deadline = float(
+            state.get("next_retry_epoch")
+        )
+    except (TypeError, ValueError):
+        current_deadline = 0.0
+    state["cooldown_seconds"] = cooldown
+    if desired_deadline > current_deadline:
+        state["next_retry_epoch"] = (
+            desired_deadline
+        )
+        state[
+            "gs489_retained_deadline_extended"
+        ] = True
+    state["gs489_graduated_backoff"] = True
+    return state
+
+
+def connection_limit_backoff_snapshot(
+    provider,
+    *,
+    now: float | None = None,
+) -> dict:
+    from mide import gs488_webull_connection_limit_backoff as gs488
+
+    if provider is None:
+        return {
+            "authority": gs488.AUTHORITY,
+            "provider_present": False,
+            "active": False,
+            "cooldown_seconds": gs488.COOLDOWN_SECONDS,
+            "backoff_schedule_seconds": list(
+                gs488.BACKOFF_SECONDS
+            ),
+            "gs489_graduated_backoff": True,
+            "next_retry_epoch": None,
+            "seconds_remaining": None,
+            "consecutive_limit_failures": 0,
+            "suppressed_attempts": 0,
+            "rest_snapshot_history_unchanged": True,
+            "trading_authority_changed": False,
+        }
+    current = float(
+        epoch_time() if now is None else now
+    )
+    state = dict(
+        gs488._refresh_active_deadline(
+            provider,
+            now=current,
+        )
+    )
+    deadline = state.get("next_retry_epoch")
+    try:
+        remaining = (
+            max(
+                0.0,
+                float(deadline) - current,
+            )
+            if deadline is not None
+            else 0.0
+        )
+    except (TypeError, ValueError):
+        remaining = 0.0
+    active = bool(
+        getattr(
+            provider,
+            "_subscription",
+            None,
+        )
+        is None
+        and remaining > 0.0
+        and state.get("active")
+    )
+    state.update(
+        provider_present=True,
+        active=active,
+        seconds_remaining=(
+            round(remaining, 1)
+            if active
+            else 0.0
+        ),
+    )
+    return state
+
+
+def ensure_stream_with_backoff(
+    original: Callable,
+    provider,
+    symbols,
+    *,
+    now: float | None = None,
+):
+    from mide import gs488_webull_connection_limit_backoff as gs488
+
+    current = float(
+        epoch_time() if now is None else now
+    )
+    state = gs488._refresh_active_deadline(
+        provider,
+        now=current,
+    )
+
+    if (
+        getattr(
+            provider,
+            "_subscription",
+            None,
+        )
+        is not None
+    ):
+        result = original(symbols)
+        if result:
+            state["active"] = False
+            state["next_retry_epoch"] = None
+            state[
+                "consecutive_limit_failures"
+            ] = 0
+            state["cooldown_seconds"] = (
+                gs488.COOLDOWN_SECONDS
+            )
+        return result
+
+    deadline = state.get("next_retry_epoch")
+    try:
+        remaining = (
+            float(deadline) - current
+            if deadline is not None
+            else 0.0
+        )
+    except (TypeError, ValueError):
+        remaining = 0.0
+    if (
+        bool(state.get("active"))
+        and remaining > 0.0
+    ):
+        state["suppressed_attempts"] = int(
+            state.get(
+                "suppressed_attempts",
+                0,
+            )
+            or 0
+        ) + 1
+        state[
+            "last_suppressed_epoch"
+        ] = current
+        return False
+
+    stream = gs488._stream(provider)
+    failures_before = len(
+        list(
+            stream.get(
+                "subscription_failures"
+            )
+            or []
+        )
+    )
+    result = original(symbols)
+    failures = list(
+        stream.get("subscription_failures")
+        or []
+    )
+    newest = (
+        failures[-1]
+        if len(failures) > failures_before
+        else None
+    )
+
+    if result:
+        state["active"] = False
+        state["next_retry_epoch"] = None
+        state[
+            "consecutive_limit_failures"
+        ] = 0
+        state["cooldown_seconds"] = (
+            gs488.COOLDOWN_SECONDS
+        )
+        state[
+            "last_recovery_epoch"
+        ] = current
+        return result
+
+    if gs488._is_connection_limit(newest):
+        state["active"] = True
+        failures_count = int(
+            state.get(
+                "consecutive_limit_failures",
+                0,
+            )
+            or 0
+        ) + 1
+        cooldown = gs488._cooldown_for_failures(
+            failures_count
+        )
+        state["cooldown_seconds"] = cooldown
+        state[
+            "backoff_schedule_seconds"
+        ] = list(gs488.BACKOFF_SECONDS)
+        state[
+            "gs489_graduated_backoff"
+        ] = True
+        state[
+            "next_retry_epoch"
+        ] = current + cooldown
+        state[
+            "consecutive_limit_failures"
+        ] = failures_count
+        state[
+            "last_limit_failure"
+        ] = "WEBULL_RC105_CONNECTION_LIMIT"
+        state[
+            "last_limit_failure_epoch"
+        ] = current
+    else:
+        state["active"] = False
+        state["next_retry_epoch"] = None
+    return result
+
+
+def upgrade_connection_limit_wrapper_global(
+    function,
+    name: str,
+    value: Any,
+) -> bool:
+    globals_dict = getattr(
+        function,
+        "__globals__",
+        None,
+    )
+    if (
+        not isinstance(globals_dict, dict)
+        or name not in globals_dict
+    ):
+        return False
+    globals_dict[name] = value
+    return True
+
+
+def install_for_provider(provider) -> bool:
+    from mide import gs488_webull_connection_limit_backoff as gs488
+
+    if provider is None:
+        return False
+    current = getattr(
+        provider,
+        "ensure_stream",
+        None,
+    )
+    if not callable(current):
+        return False
+    function = getattr(
+        current,
+        "__func__",
+        current,
+    )
+    marker = (
+        getattr(
+            function,
+            gs488._OWNER,
+            None,
+        )
+        or getattr(
+            current,
+            gs488._PROVIDER_OWNER,
+            None,
+        )
+    )
+    if marker == gs488.REVISION:
+        gs488._refresh_active_deadline(
+            provider,
+            now=epoch_time(),
+        )
+        return False
+    if marker:
+        if not gs488._upgrade_wrapper_global(
+            function,
+            "ensure_stream_with_backoff",
+            ensure_stream_with_backoff,
+        ):
+            return False
+        setattr(
+            function,
+            gs488._OWNER,
+            gs488.REVISION,
+        )
+        setattr(
+            function,
+            gs488._PROVIDER_OWNER,
+            gs488.REVISION,
+        )
+        gs488._refresh_active_deadline(
+            provider,
+            now=epoch_time(),
+        )
+        return True
+
+    @wraps(current)
+    def guarded(symbols):
+        return ensure_stream_with_backoff(
+            current,
+            provider,
+            symbols,
+        )
+
+    setattr(
+        guarded,
+        gs488._OWNER,
+        gs488.REVISION,
+    )
+    setattr(
+        guarded,
+        gs488._PROVIDER_OWNER,
+        gs488.REVISION,
+    )
+    guarded._gs488_original = current
+    try:
+        provider.ensure_stream = guarded
+    except (AttributeError, TypeError):
+        return False
+    gs488._state(provider)
+    return True
+
+
+def install_connection_limit_clean_class() -> None:
+    from mide import gs488_webull_connection_limit_backoff as gs488
+    from mide import webull_live
+
+    current = (
+        webull_live.LiveWebullProvider.ensure_stream
+    )
+    marker = getattr(
+        current,
+        gs488._OWNER,
+        None,
+    )
+    if marker == gs488.REVISION:
+        return
+    if marker:
+        if gs488._upgrade_wrapper_global(
+            current,
+            "ensure_stream_with_backoff",
+            ensure_stream_with_backoff,
+        ):
+            setattr(
+                current,
+                gs488._OWNER,
+                gs488.REVISION,
+            )
+        return
+
+    @wraps(current)
+    def ensure_stream(self, symbols):
+        return ensure_stream_with_backoff(
+            lambda active_symbols: current(
+                self,
+                active_symbols,
+            ),
+            self,
+            symbols,
+        )
+
+    setattr(
+        ensure_stream,
+        gs488._OWNER,
+        gs488.REVISION,
+    )
+    ensure_stream._gs488_original = current
+    webull_live.LiveWebullProvider.ensure_stream = (
+        ensure_stream
+    )
+
+
+def install_connection_limit_activation_bind() -> None:
+    from mide import gs470_30s_activation_truth as gs470
+    from mide import gs488_webull_connection_limit_backoff as gs488
+
+    current = gs470._safe_activate
+    marker = getattr(
+        current,
+        gs488._GS470_OWNER,
+        None,
+    )
+    if marker == gs488.REVISION:
+        return
+    if marker:
+        if gs488._upgrade_wrapper_global(
+            current,
+            "install_for_provider",
+            install_for_provider,
+        ):
+            setattr(
+                current,
+                gs488._GS470_OWNER,
+                gs488.REVISION,
+            )
+        return
+
+    @wraps(current)
+    def safe_activate(provider):
+        install_for_provider(provider)
+        return current(provider)
+
+    setattr(
+        safe_activate,
+        gs488._GS470_OWNER,
+        gs488.REVISION,
+    )
+    safe_activate._gs488_original = current
+    gs470._safe_activate = safe_activate
+
+
+def install_connection_limit_recorder_bind() -> None:
+    from mide import gs427_flight_recorder_latency_hard_bind as gs427
+    from mide import gs487_cached_recorder_instance_bind as gs487
+    from mide import gs488_webull_connection_limit_backoff as gs488
+
+    current = gs487.install_for_recorder
+    marker = getattr(
+        current,
+        gs488._GS487_OWNER,
+        None,
+    )
+    if marker == gs488.REVISION:
+        return
+    if marker:
+        if gs488._upgrade_wrapper_global(
+            current,
+            "install_for_provider",
+            install_for_provider,
+        ):
+            setattr(
+                current,
+                gs488._GS487_OWNER,
+                gs488.REVISION,
+            )
+        return
+
+    @wraps(current)
+    def install_for_recorder(recorder):
+        provider, _provider_source = (
+            gs427._active_provider()
+        )
+        install_for_provider(provider)
+        return current(recorder)
+
+    setattr(
+        install_for_recorder,
+        gs488._GS487_OWNER,
+        gs488.REVISION,
+    )
+    install_for_recorder._gs488_original = (
+        current
+    )
+    gs487.install_for_recorder = (
+        install_for_recorder
+    )
+
+
+def install_connection_limit_market_evidence() -> None:
+    install_connection_limit_clean_class()
+    install_connection_limit_activation_bind()
+    install_connection_limit_recorder_bind()
+
+
 __all__ = [
+    "install_connection_limit_market_evidence",
+    "install_connection_limit_clean_class",
+    "install_connection_limit_activation_bind",
+    "install_connection_limit_recorder_bind",
+    "install_for_provider",
+    "upgrade_connection_limit_wrapper_global",
+    "ensure_stream_with_backoff",
+    "connection_limit_backoff_snapshot",
+    "refresh_connection_limit_deadline",
+    "connection_limit_state",
+    "connection_limit_cooldown",
+    "connection_limit_rejection",
+    "connection_limit_stream",
     "install_snapshot_session_truth",
     "extended_snapshot_without_overnight",
     "apply_snapshot_session_truth",

@@ -1,23 +1,20 @@
-"""GS488: contain Webull OpenAPI rc105 connection-limit retry storms.
+"""GS488: warm-deploy-safe split authority facade for Webull rc105 containment.
 
-Flight Recorder #89 finally preserved the exact live transport failure through GS487:
-Webull rejected repeated TICK-stream attempts with ``rc code: 105, msg: Connection
-limit exceeded``.  Because ``initialize_quotes`` normally calls ``ensure_stream`` on
-every 60-second scan whenever no subscription exists, that remote rejection was being
-retried once per scan.
+Market Evidence owns the rc105 retry/backoff lifecycle plus clean/retained provider
+binding. Replay / Validation owns only the observational stream-failure trace
+augmentation.
 
-GS488 adds a narrow cooldown only after Webull explicitly reports a connection-limit
-failure. GS489 graduates repeated rc105 retries from 5 to 10 to 15 minutes rather than
-probing the same occupied account slot every five minutes indefinitely. During that
-window Walter keeps the proven REST snapshot/history path fully active but suppresses
-redundant MQTT reconnect attempts. Unrelated stream failures retain the existing retry
-behavior, and an existing/healthy subscription is never blocked. The cooldown lives
-on the session-retained provider, so ordinary Streamlit reruns preserve it without
-adding global account state.
+The historical helper names remain mutable compatibility seams. In particular,
+Market Evidence intentionally defines and uses a module-global ensure_stream_with_backoff
+inside installed wrappers so GS489 can keep upgrading retained/new GS488 wrappers
+in place by replacing that exact global name.
 
-Warm-deploy safety matters here: Walter may retain a provider from an older Python
-class generation.  ``install_for_provider`` therefore wraps the exact provider object,
-and ``install`` also hooks GS470/GS487 so retained providers are rebound when observed.
+Scope-lock contract remains:
+COOLDOWN_SECONDS = 300.0
+BACKOFF_SECONDS = (300.0, 600.0, 900.0)
+REVISION = 2
+rest_snapshot_history_unchanged remains true and
+"trading_authority_changed": False remains true.
 
 No discovery, market-data value, 30-second synthesis, indicator, VWAP/ST formula,
 score, gate, ranking, qualification, alert, execution, session-entry, or order
@@ -25,9 +22,8 @@ authority is changed.
 """
 from __future__ import annotations
 
-from functools import wraps
-import time
 from typing import Any, Callable
+
 
 AUTHORITY = "WEBULL_CONNECTION_LIMIT_CONTAINMENT"
 COOLDOWN_SECONDS = 300.0
@@ -40,119 +36,103 @@ _TRACE_OWNER = "_walter_gs488_stream_trace"
 REVISION = 2
 
 
+def _market():
+    from mide.authorities import market_evidence
+
+    return market_evidence
+
+
+def _replay():
+    from mide.authorities import replay_validation
+
+    return replay_validation
+
+
 def _stream(provider) -> dict:
-    diagnostics = getattr(provider, "diagnostics", None)
-    if not isinstance(diagnostics, dict):
-        diagnostics = {}
-        try:
-            provider.diagnostics = diagnostics
-        except Exception:
-            return {}
-    stream = diagnostics.get("webull_stream")
-    if not isinstance(stream, dict):
-        stream = {}
-        diagnostics["webull_stream"] = stream
-    return stream
+    current = getattr(
+        _market(),
+        "connection_limit_stream",
+        None,
+    )
+    if not callable(current):
+        return {}
+    return current(provider)
 
 
 def _is_connection_limit(value: Any) -> bool:
-    text = " ".join(str(value or "").split()).casefold()
-    return "connection limit exceeded" in text or (
-        "rc code: 105" in text and "limit" in text
+    current = getattr(
+        _market(),
+        "connection_limit_rejection",
+        None,
+    )
+    return bool(
+        current(value)
+        if callable(current)
+        else False
     )
 
 
-def _cooldown_for_failures(failures: Any) -> float:
-    """Return 5m, 10m, then a capped 15m rc105 retry interval."""
-    try:
-        count = max(1, int(failures))
-    except (TypeError, ValueError):
-        count = 1
-    return BACKOFF_SECONDS[min(count - 1, len(BACKOFF_SECONDS) - 1)]
-
-
-def _refresh_active_deadline(provider, *, now: float) -> dict:
-    """Upgrade a retained flat GS488 cooldown without forcing an early retry."""
-    state = _state(provider)
-    if not state.get("active") or getattr(provider, "_subscription", None) is not None:
-        return state
-    failures = int(state.get("consecutive_limit_failures", 0) or 0)
-    if failures <= 0:
-        return state
-    cooldown = _cooldown_for_failures(failures)
-    try:
-        last_failure = float(state.get("last_limit_failure_epoch"))
-    except (TypeError, ValueError):
-        last_failure = now
-    desired_deadline = last_failure + cooldown
-    try:
-        current_deadline = float(state.get("next_retry_epoch"))
-    except (TypeError, ValueError):
-        current_deadline = 0.0
-    state["cooldown_seconds"] = cooldown
-    if desired_deadline > current_deadline:
-        state["next_retry_epoch"] = desired_deadline
-        state["gs489_retained_deadline_extended"] = True
-    state["gs489_graduated_backoff"] = True
-    return state
+def _cooldown_for_failures(
+    failures: Any,
+) -> float:
+    current = getattr(
+        _market(),
+        "connection_limit_cooldown",
+        None,
+    )
+    if not callable(current):
+        return COOLDOWN_SECONDS
+    return float(current(failures))
 
 
 def _state(provider) -> dict:
-    stream = _stream(provider)
-    state = stream.get("gs488_connection_limit_backoff")
-    if not isinstance(state, dict):
-        state = {
-            "authority": AUTHORITY,
-            "active": False,
-            "cooldown_seconds": COOLDOWN_SECONDS,
-            "backoff_schedule_seconds": list(BACKOFF_SECONDS),
-            "gs489_graduated_backoff": True,
-            "next_retry_epoch": None,
-            "consecutive_limit_failures": 0,
-            "suppressed_attempts": 0,
-            "last_limit_failure": None,
-            "rest_snapshot_history_unchanged": True,
-            "genuine_webull_tick_only": True,
-            "trading_authority_changed": False,
-        }
-        stream["gs488_connection_limit_backoff"] = state
-    return state
-
-
-def backoff_snapshot(provider, *, now: float | None = None) -> dict:
-    if provider is None:
+    current = getattr(
+        _market(),
+        "connection_limit_state",
+        None,
+    )
+    if not callable(current):
         return {
             "authority": AUTHORITY,
-            "provider_present": False,
             "active": False,
             "cooldown_seconds": COOLDOWN_SECONDS,
-            "backoff_schedule_seconds": list(BACKOFF_SECONDS),
-            "gs489_graduated_backoff": True,
-            "next_retry_epoch": None,
-            "seconds_remaining": None,
-            "consecutive_limit_failures": 0,
-            "suppressed_attempts": 0,
+            "backoff_schedule_seconds": list(
+                BACKOFF_SECONDS
+            ),
             "rest_snapshot_history_unchanged": True,
             "trading_authority_changed": False,
         }
-    current = float(time.time() if now is None else now)
-    state = dict(_refresh_active_deadline(provider, now=current))
-    deadline = state.get("next_retry_epoch")
-    try:
-        remaining = max(0.0, float(deadline) - current) if deadline is not None else 0.0
-    except (TypeError, ValueError):
-        remaining = 0.0
-    active = bool(
-        getattr(provider, "_subscription", None) is None
-        and remaining > 0.0
-        and state.get("active")
+    return current(provider)
+
+
+def _refresh_active_deadline(
+    provider,
+    *,
+    now: float,
+) -> dict:
+    current = getattr(
+        _market(),
+        "refresh_connection_limit_deadline",
+        None,
     )
-    state.update(
-        provider_present=True,
-        active=active,
-        seconds_remaining=round(remaining, 1) if active else 0.0,
+    if not callable(current):
+        return _state(provider)
+    return current(provider, now=now)
+
+
+def backoff_snapshot(
+    provider,
+    *,
+    now: float | None = None,
+) -> dict:
+    current = getattr(
+        _market(),
+        "connection_limit_backoff_snapshot",
+        None,
     )
-    return state
+    if not callable(current):
+        return _state(provider)
+    return current(provider, now=now)
 
 
 def ensure_stream_with_backoff(
@@ -162,207 +142,117 @@ def ensure_stream_with_backoff(
     *,
     now: float | None = None,
 ):
-    """Delegate once unless a recent explicit Webull connection-limit rejection exists."""
-    current = float(time.time() if now is None else now)
-    state = _refresh_active_deadline(provider, now=current)
+    current = getattr(
+        _market(),
+        "ensure_stream_with_backoff",
+        None,
+    )
+    if not callable(current):
+        return original(symbols)
+    return current(
+        original,
+        provider,
+        symbols,
+        now=now,
+    )
 
-    # A real live subscription always wins.  Backoff may never suppress upkeep of a
-    # stream that actually recovered between scans.
-    if getattr(provider, "_subscription", None) is not None:
-        result = original(symbols)
-        if result:
-            state["active"] = False
-            state["next_retry_epoch"] = None
-            state["consecutive_limit_failures"] = 0
-            state["cooldown_seconds"] = COOLDOWN_SECONDS
-        return result
 
-    deadline = state.get("next_retry_epoch")
-    try:
-        remaining = float(deadline) - current if deadline is not None else 0.0
-    except (TypeError, ValueError):
-        remaining = 0.0
-    if bool(state.get("active")) and remaining > 0.0:
-        state["suppressed_attempts"] = int(state.get("suppressed_attempts", 0) or 0) + 1
-        state["last_suppressed_epoch"] = current
+def _upgrade_wrapper_global(
+    function,
+    name: str,
+    value: Any,
+) -> bool:
+    current = getattr(
+        _market(),
+        "upgrade_connection_limit_wrapper_global",
+        None,
+    )
+    if not callable(current):
         return False
-
-    stream = _stream(provider)
-    failures_before = len(list(stream.get("subscription_failures") or []))
-    result = original(symbols)
-    failures = list(stream.get("subscription_failures") or [])
-    newest = failures[-1] if len(failures) > failures_before else None
-
-    if result:
-        state["active"] = False
-        state["next_retry_epoch"] = None
-        state["consecutive_limit_failures"] = 0
-        state["cooldown_seconds"] = COOLDOWN_SECONDS
-        state["last_recovery_epoch"] = current
-        return result
-
-    if _is_connection_limit(newest):
-        state["active"] = True
-        failures = int(state.get("consecutive_limit_failures", 0) or 0) + 1
-        cooldown = _cooldown_for_failures(failures)
-        state["cooldown_seconds"] = cooldown
-        state["backoff_schedule_seconds"] = list(BACKOFF_SECONDS)
-        state["gs489_graduated_backoff"] = True
-        state["next_retry_epoch"] = current + cooldown
-        state["consecutive_limit_failures"] = failures
-        state["last_limit_failure"] = "WEBULL_RC105_CONNECTION_LIMIT"
-        state["last_limit_failure_epoch"] = current
-    else:
-        # Do not broaden GS488 into a generic reconnect policy.  Existing behavior
-        # remains authoritative for every failure class other than rc105/limit.
-        state["active"] = False
-        state["next_retry_epoch"] = None
-    return result
-
-
-def _upgrade_wrapper_global(function, name: str, value: Any) -> bool:
-    """Replace one referenced helper inside a retained older GS488 wrapper."""
-    globals_dict = getattr(function, "__globals__", None)
-    if not isinstance(globals_dict, dict) or name not in globals_dict:
-        return False
-    globals_dict[name] = value
-    return True
+    return bool(
+        current(function, name, value)
+    )
 
 
 def install_for_provider(provider) -> bool:
-    """Patch or in-place upgrade the exact retained provider instance."""
-    if provider is None:
-        return False
-    current = getattr(provider, "ensure_stream", None)
+    current = getattr(
+        _market(),
+        "install_for_provider",
+        None,
+    )
     if not callable(current):
         return False
-    function = getattr(current, "__func__", current)
-    marker = getattr(function, _OWNER, None) or getattr(current, _PROVIDER_OWNER, None)
-    if marker == REVISION:
-        _refresh_active_deadline(provider, now=time.time())
-        return False
-    if marker:
-        if not _upgrade_wrapper_global(function, "ensure_stream_with_backoff", ensure_stream_with_backoff):
-            return False
-        setattr(function, _OWNER, REVISION)
-        setattr(function, _PROVIDER_OWNER, REVISION)
-        _refresh_active_deadline(provider, now=time.time())
-        return True
-
-    @wraps(current)
-    def guarded(symbols):
-        return ensure_stream_with_backoff(current, provider, symbols)
-
-    setattr(guarded, _OWNER, REVISION)
-    setattr(guarded, _PROVIDER_OWNER, REVISION)
-    guarded._gs488_original = current
-    try:
-        provider.ensure_stream = guarded
-    except (AttributeError, TypeError):
-        return False
-    _state(provider)
-    return True
+    return bool(current(provider))
 
 
 def _install_clean_class() -> None:
-    from . import webull_live
-
-    current = webull_live.LiveWebullProvider.ensure_stream
-    marker = getattr(current, _OWNER, None)
-    if marker == REVISION:
-        return
-    if marker:
-        if _upgrade_wrapper_global(current, "ensure_stream_with_backoff", ensure_stream_with_backoff):
-            setattr(current, _OWNER, REVISION)
-        return
-
-    @wraps(current)
-    def ensure_stream(self, symbols):
-        return ensure_stream_with_backoff(
-            lambda active_symbols: current(self, active_symbols), self, symbols
-        )
-
-    setattr(ensure_stream, _OWNER, REVISION)
-    ensure_stream._gs488_original = current
-    webull_live.LiveWebullProvider.ensure_stream = ensure_stream
+    current = getattr(
+        _market(),
+        "install_connection_limit_clean_class",
+        None,
+    )
+    if callable(current):
+        current()
 
 
 def _install_retained_activation_bind() -> None:
-    from . import gs470_30s_activation_truth as gs470
-
-    current = gs470._safe_activate
-    marker = getattr(current, _GS470_OWNER, None)
-    if marker == REVISION:
-        return
-    if marker:
-        if _upgrade_wrapper_global(current, "install_for_provider", install_for_provider):
-            setattr(current, _GS470_OWNER, REVISION)
-        return
-
-    @wraps(current)
-    def safe_activate(provider):
-        install_for_provider(provider)
-        return current(provider)
-
-    setattr(safe_activate, _GS470_OWNER, REVISION)
-    safe_activate._gs488_original = current
-    gs470._safe_activate = safe_activate
+    current = getattr(
+        _market(),
+        "install_connection_limit_activation_bind",
+        None,
+    )
+    if callable(current):
+        current()
 
 
 def _install_recorder_provider_bind() -> None:
-    # app.py dynamically resolves GS487 immediately before every recorder write.
-    # That gives warm deployments a reliable exact-provider foothold for the *next*
-    # scan even when the provider class itself predates GS488.
-    from . import gs427_flight_recorder_latency_hard_bind as gs427
-    from . import gs487_cached_recorder_instance_bind as gs487
-
-    current = gs487.install_for_recorder
-    marker = getattr(current, _GS487_OWNER, None)
-    if marker == REVISION:
-        return
-    if marker:
-        if _upgrade_wrapper_global(current, "install_for_provider", install_for_provider):
-            setattr(current, _GS487_OWNER, REVISION)
-        return
-
-    @wraps(current)
-    def install_for_recorder(recorder):
-        provider, _provider_source = gs427._active_provider()
-        install_for_provider(provider)
-        return current(recorder)
-
-    setattr(install_for_recorder, _GS487_OWNER, REVISION)
-    install_for_recorder._gs488_original = current
-    gs487.install_for_recorder = install_for_recorder
+    current = getattr(
+        _market(),
+        "install_connection_limit_recorder_bind",
+        None,
+    )
+    if callable(current):
+        current()
 
 
 def _install_stream_trace() -> None:
-    from . import gs481_live_evidence_hard_bind as gs481
-
-    current = gs481._stream_failure_truth
-    marker = getattr(current, _TRACE_OWNER, None)
-    if marker == REVISION:
-        return
-    if marker:
-        if _upgrade_wrapper_global(current, "backoff_snapshot", backoff_snapshot):
-            setattr(current, _TRACE_OWNER, REVISION)
-        return
-
-    @wraps(current)
-    def stream_failure_truth(provider):
-        truth = dict(current(provider) or {})
-        truth["connection_limit_backoff"] = backoff_snapshot(provider)
-        truth["gs488_connection_limit_containment"] = True
-        return truth
-
-    setattr(stream_failure_truth, _TRACE_OWNER, REVISION)
-    stream_failure_truth._gs488_original = current
-    gs481._stream_failure_truth = stream_failure_truth
+    current = getattr(
+        _replay(),
+        "install_connection_limit_stream_trace",
+        None,
+    )
+    if callable(current):
+        current()
 
 
 def install() -> None:
-    """Install clean-process and retained-provider connection-limit containment."""
-    _install_clean_class()
-    _install_retained_activation_bind()
-    _install_recorder_provider_bind()
+    current = getattr(
+        _market(),
+        "install_connection_limit_market_evidence",
+        None,
+    )
+    if callable(current):
+        current()
     _install_stream_trace()
+
+
+def __getattr__(name: str):
+    try:
+        return getattr(_market(), name)
+    except AttributeError:
+        try:
+            return getattr(_replay(), name)
+        except AttributeError:
+            raise AttributeError(name) from None
+
+
+__all__ = [
+    "AUTHORITY",
+    "COOLDOWN_SECONDS",
+    "BACKOFF_SECONDS",
+    "REVISION",
+    "backoff_snapshot",
+    "ensure_stream_with_backoff",
+    "install_for_provider",
+    "install",
+]
