@@ -233,58 +233,36 @@ def _install_existing_maturation_source() -> None:
         current()
 
 def _halted(record: dict) -> bool:
-    if any(
-        record.get(key) is True
-        for key in ("halted", "is_halted", "suspended", "is_suspended")
-    ):
+    current = getattr(
+        _market_evidence(),
+        "progression_halted",
+        None,
+    )
+    if not callable(current):
         return True
-    text = " ".join(
-        str(record.get(key) or "")
-        for key in ("halt_status", "trading_status", "market_status", "status_reason")
-    ).lower()
-    return "halt" in text or "suspend" in text
+    return bool(current(record))
 
 
 def _current_attention(record: dict) -> bool:
-    reasons = " ".join(str(item) for item in (record.get("discovery_reasons") or []))
-    if "webull native:" in reasons.lower():
-        return True
-    try:
-        from .gs309_current_attention_mission import current_attention_provenance
-
-        if current_attention_provenance(record):
-            return True
-    except Exception:
-        pass
-    return bool(
-        str(record.get("headline") or "").strip()
-        or record.get("fresh_news")
-        or record.get("news_catalyst")
-        or record.get("has_catalyst")
-        or record.get("catalyst_confirmed")
+    current = getattr(
+        _market_evidence(),
+        "progression_current_attention",
+        None,
     )
+    if not callable(current):
+        return False
+    return bool(current(record))
 
 
 def _supporting_flow(record: dict) -> bool:
-    volume = _number(record, "volume", default=0.0) or 0.0
-    participation = _number(
-        record, "participation_surge_score", "participation_score", default=0.0
-    ) or 0.0
-    expansion = _number(
-        record, "expansion_quality", "expansion_score", default=0.0
-    ) or 0.0
-    volume_acceleration = _number(record, "volume_acceleration", default=0.0) or 0.0
-    dollar_flow = _number(
-        record, "dollar_flow_acceleration_5m", "dollar_flow_acceleration", default=0.0
-    ) or 0.0
-    return bool(
-        volume >= 100_000
-        or participation >= 20.0
-        or expansion >= 40.0
-        or volume_acceleration >= 1.0
-        or dollar_flow >= 1.25
-        or _current_attention(record)
+    current = getattr(
+        _market_evidence(),
+        "progression_supporting_flow",
+        None,
     )
+    if not callable(current):
+        return False
+    return bool(current(record))
 
 
 def _timestamp(value: Any) -> datetime | None:

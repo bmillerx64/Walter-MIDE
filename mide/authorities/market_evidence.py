@@ -1678,11 +1678,11 @@ def install_price_trajectory_metrics() -> None:
 # GS455 ordered ST/VWAP maturation progression evidence
 # ---------------------------------------------------------------------------
 #
-# Market Evidence owns rung extraction, the current 30s -> 15m ordered progression,
-# and the fresh-rung signal. The historical gs455 module remains the calibration seam
-# for ladder/freshness thresholds, support-flow, halt truth, and the mutable 30s helper
-# that GS456 wraps to prefer literal 30s ST/VWAP crossings. No provider request,
-# qualification, readiness, state promotion, audio, or order authority lives here.
+# Market Evidence owns rung extraction, halt/current-attention/support-flow evidence,
+# the current 30s -> 15m ordered progression, and the fresh-rung signal. The historical
+# gs455 module remains the calibration/monkeypatch seam for ladder/freshness thresholds,
+# numeric parsing, and the mutable helper names consumed by GS456/GS457/GS460. No provider
+# request, qualification, readiness, state promotion, audio, or order authority lives here.
 
 
 def thirty_second_progression_rung(record: dict) -> dict:
@@ -1794,6 +1794,119 @@ def progression_rung_event(
     return dict(
         detail.get("st_vwap_line_cross")
         or {}
+    )
+
+
+def progression_halted(record: dict) -> bool:
+    """Return whether retained status evidence says the symbol is halted/suspended."""
+    if any(
+        record.get(key) is True
+        for key in (
+            "halted",
+            "is_halted",
+            "suspended",
+            "is_suspended",
+        )
+    ):
+        return True
+    text = " ".join(
+        str(record.get(key) or "")
+        for key in (
+            "halt_status",
+            "trading_status",
+            "market_status",
+            "status_reason",
+        )
+    ).lower()
+    return "halt" in text or "suspend" in text
+
+
+def progression_current_attention(record: dict) -> bool:
+    """Return whether retained discovery/news evidence supplies live attention support."""
+    reasons = " ".join(
+        str(item)
+        for item in (
+            record.get("discovery_reasons")
+            or []
+        )
+    )
+    if "webull native:" in reasons.lower():
+        return True
+    try:
+        from mide.gs309_current_attention_mission import (
+            current_attention_provenance,
+        )
+
+        if current_attention_provenance(record):
+            return True
+    except Exception:
+        pass
+    return bool(
+        str(
+            record.get("headline")
+            or ""
+        ).strip()
+        or record.get("fresh_news")
+        or record.get("news_catalyst")
+        or record.get("has_catalyst")
+        or record.get("catalyst_confirmed")
+    )
+
+
+def progression_supporting_flow(record: dict) -> bool:
+    """Return the historical GS455 supporting-flow evidence gate."""
+    from mide import gs455_early_ignition_3m_confirmation as gs455
+
+    volume = (
+        gs455._number(
+            record,
+            "volume",
+            default=0.0,
+        )
+        or 0.0
+    )
+    participation = (
+        gs455._number(
+            record,
+            "participation_surge_score",
+            "participation_score",
+            default=0.0,
+        )
+        or 0.0
+    )
+    expansion = (
+        gs455._number(
+            record,
+            "expansion_quality",
+            "expansion_score",
+            default=0.0,
+        )
+        or 0.0
+    )
+    volume_acceleration = (
+        gs455._number(
+            record,
+            "volume_acceleration",
+            default=0.0,
+        )
+        or 0.0
+    )
+    dollar_flow = (
+        gs455._number(
+            record,
+            "dollar_flow_acceleration_5m",
+            "dollar_flow_acceleration",
+            default=0.0,
+        )
+        or 0.0
+    )
+    return bool(
+        volume >= 100_000
+        or participation >= 20.0
+        or expansion >= 40.0
+        or volume_acceleration >= 1.0
+        or dollar_flow >= 1.25
+        or gs455._current_attention(record)
     )
 
 
@@ -6109,6 +6222,9 @@ __all__ = [
     "install_maturation_line_cross_enrichment",
     "thirty_second_progression_rung",
     "progression_rung_event",
+    "progression_halted",
+    "progression_current_attention",
+    "progression_supporting_flow",
     "crossover_progression",
     "progression_signal",
     "install_partial_snapshot_recovery_for_provider",
