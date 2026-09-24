@@ -262,6 +262,123 @@ def install_ignition_state() -> None:
     hierarchy.opportunity_state = calibrated
 
 
+# ---------------------------------------------------------------------------
+# GS455 ordered maturation Thesis / State interpretation
+# ---------------------------------------------------------------------------
+
+def progression_opportunity_state(original, record: dict) -> dict:
+    """Interpret a fresh ordered maturation rung without changing Entry Authority."""
+    from mide import gs455_early_ignition_3m_confirmation as gs455
+
+    base = original(record)
+    signal = gs455.progression_signal(record)
+    if not signal.get("active"):
+        return base
+    if base.get("state") in {
+        HALTED,
+        WATCH_FOR_ENTRY,
+    }:
+        return base
+
+    view = deepcopy(base)
+    provenance = list(
+        view.get("attention_provenance") or []
+    )
+    if gs455._PROGRESSION_PROVENANCE not in provenance:
+        provenance.append(
+            gs455._PROGRESSION_PROVENANCE
+        )
+    view["attention_provenance"] = provenance
+    view["st_vwap_progression"] = (
+        gs455.crossover_progression(record)
+    )
+
+    rung = str(
+        signal.get("new_rung") or ""
+    ).upper()
+    sequence = (
+        signal.get("sequence") or rung
+    )
+    distance = signal.get(
+        "vwap_distance_pct"
+    )
+
+    if (
+        distance is not None
+        and distance
+        > gs455.LOOK_NOW_MAX_VWAP_DISTANCE_PCT
+    ):
+        view["state"] = CHASE_WAIT
+        view["color"] = STATE_COLORS[
+            CHASE_WAIT
+        ]
+        view["reason"] = (
+            f"ST/VWAP maturation reached {rung}; "
+            f"{sequence}. Price is already "
+            f"{distance:.1f}% above VWAP."
+        )
+        view["next_step"] = (
+            "LOOK NOW for continuation context, but DO NOT CHASE. "
+            "The VWAP anti-chase guard remains authoritative; "
+            "wait for a constructive reset."
+        )
+        return view
+
+    view["state"] = LOOK_NOW
+    view["color"] = STATE_COLORS[
+        LOOK_NOW
+    ]
+    view["reason"] = (
+        f"ST/VWAP maturation reached {rung}; "
+        f"{sequence}."
+    )
+    view["next_step"] = (
+        "Open the chart now. The maturation ladder is "
+        "operator-attention evidence, not entry authority; "
+        "normal participation, expansion, readiness, and "
+        "VWAP guards still decide the trade."
+    )
+    return view
+
+
+def install_progression_state() -> None:
+    """Bind GS455 state meaning at its historical install position."""
+    from mide import gs310_unified_opportunity_state as unified
+    from mide import gs311_unified_voice as voice
+    from mide import gs314_state_consistency as consistency
+    from mide import gs363_operator_attention_hierarchy as hierarchy
+    from mide import gs455_early_ignition_3m_confirmation as gs455
+
+    current = unified.opportunity_state
+    if getattr(
+        current,
+        "_gs455_crossover_progression",
+        False,
+    ):
+        calibrated = current
+    else:
+        original = current
+
+        @wraps(original)
+        def calibrated(record: dict) -> dict:
+            return gs455._state_with_progression(
+                original,
+                record,
+            )
+
+        _inherit_state_wrapper(
+            calibrated,
+            current,
+        )
+        calibrated._gs455_crossover_progression = True
+        calibrated._gs455_original = original
+        unified.opportunity_state = calibrated
+
+    voice.opportunity_state = calibrated
+    consistency.opportunity_state = calibrated
+    hierarchy.opportunity_state = calibrated
+
+
 _LEADER_RESET_PROVENANCE = "PROVEN_LEADER_RESET_REIGNITION"
 _LEADER_RESET_STATE_OWNER = "_walter_gs477_leader_reset_state_owner"
 
@@ -1243,6 +1360,8 @@ def __getattr__(name: str):
 
 
 __all__ = [
+    "progression_opportunity_state",
+    "install_progression_state",
     "CHASE_WAIT",
     "DEVELOPING",
     "HALTED",
