@@ -1,26 +1,46 @@
 """Compatibility facade for P/E Strength presentation ordering.
 
-Visible Participation/Expansion strength meaning and the final ordering stage now live
-in mide.authorities.presentation_audio.
+Presentation + Audio owns GS539's visible Participation/Expansion strength meaning,
+state annotation, and final operator-order stage. This historical module preserves the
+validated callable/install surface while resolving the authority lazily for warm
+Streamlit safety.
+
+A stale retained Presentation generation fails closed: missing strength evidence
+returns None, incoming baseline order is preserved, state is left unchanged, and
+installation becomes a no-op. No qualification, readiness, execution, or order
+authority changes.
 """
 
 from __future__ import annotations
 
 from collections.abc import Callable, Iterable
 
-from .authorities import presentation_audio as _presentation
+
+def _presentation():
+    from mide.authorities import presentation_audio
+
+    return presentation_audio
 
 
 def participation_value(record: dict) -> float | None:
-    return _presentation.participation_value(record)
+    current = getattr(_presentation(), "participation_value", None)
+    if not callable(current):
+        return None
+    return current(record)
 
 
 def expansion_value(record: dict) -> float | None:
-    return _presentation.expansion_value(record)
+    current = getattr(_presentation(), "expansion_value", None)
+    if not callable(current):
+        return None
+    return current(record)
 
 
 def pe_strength_score(record: dict) -> float | None:
-    return _presentation.pe_strength_score(record)
+    current = getattr(_presentation(), "pe_strength_score", None)
+    if not callable(current):
+        return None
+    return current(record)
 
 
 def ordered_pe_strength_records(
@@ -28,18 +48,38 @@ def ordered_pe_strength_records(
     *,
     baseline_order: Callable[[list[dict]], list[dict]] | None = None,
 ) -> list[dict]:
-    return _presentation.ordered_pe_strength_records(
+    current = getattr(_presentation(), "ordered_pe_strength_records", None)
+    if not callable(current):
+        rows = list(records or [])
+        return list(
+            baseline_order(rows)
+            if baseline_order is not None
+            else rows
+        )
+    return current(
         records,
         baseline_order=baseline_order,
     )
 
 
 def state_with_pe_strength(original, record: dict) -> dict:
-    return _presentation.state_with_pe_strength(original, record)
+    current = getattr(_presentation(), "state_with_pe_strength", None)
+    if not callable(current):
+        return original(record)
+    return current(original, record)
 
 
 def install() -> None:
-    _presentation.install_pe_strength_order()
+    current = getattr(_presentation(), "install_pe_strength_order", None)
+    if callable(current):
+        current()
+
+
+def __getattr__(name: str):
+    try:
+        return getattr(_presentation(), name)
+    except AttributeError:
+        raise AttributeError(name) from None
 
 
 __all__ = [
