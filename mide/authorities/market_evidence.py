@@ -10,6 +10,7 @@ from copy import deepcopy
 from dataclasses import dataclass
 from datetime import datetime, time, timedelta, timezone
 from functools import wraps
+import math
 from statistics import median
 from time import monotonic, time as epoch_time
 from typing import Any, Callable
@@ -1678,11 +1679,43 @@ def install_price_trajectory_metrics() -> None:
 # GS455 ordered ST/VWAP maturation progression evidence
 # ---------------------------------------------------------------------------
 #
-# Market Evidence owns rung extraction, halt/current-attention/support-flow evidence,
-# the current 30s -> 15m ordered progression, and the fresh-rung signal. The historical
-# gs455 module remains the calibration/monkeypatch seam for ladder/freshness thresholds,
-# numeric parsing, and the mutable helper names consumed by GS456/GS457/GS460. No provider
-# request, qualification, readiness, state promotion, audio, or order authority lives here.
+# Market Evidence owns numeric/timestamp normalization, rung extraction,
+# halt/current-attention/support-flow evidence, the current 30s -> 15m ordered progression,
+# and the fresh-rung signal. The historical gs455 module remains the calibration/monkeypatch
+# seam for ladder/freshness thresholds and mutable helper names consumed by GS456/GS457/GS460.
+# No provider request, qualification, readiness, state promotion, audio, or order authority
+# lives here.
+
+
+def progression_number(
+    record: dict,
+    *keys: str,
+    default: float | None = None,
+) -> float | None:
+    """Return the first finite numeric value from retained record evidence."""
+    for key in keys:
+        value = record.get(key)
+        if value is None or value == "":
+            continue
+        try:
+            number = float(value)
+        except (TypeError, ValueError):
+            continue
+        if math.isfinite(number):
+            return number
+    return default
+
+
+def progression_timestamp(value: Any) -> datetime | None:
+    """Parse one retained ISO timestamp for ordered-rung comparison."""
+    if value in (None, ""):
+        return None
+    try:
+        return datetime.fromisoformat(
+            str(value).replace("Z", "+00:00")
+        )
+    except (TypeError, ValueError):
+        return None
 
 
 def thirty_second_progression_rung(record: dict) -> dict:
@@ -1694,13 +1727,13 @@ def thirty_second_progression_rung(record: dict) -> dict:
         record.get("supertrend_30s_last_flip_timestamp")
         or tripwire.get("last_flip_timestamp")
     )
-    age = gs455._number(
+    age = progression_number(
         record,
         "supertrend_30s_last_flip_age_seconds",
         "supertrend_30s_flip_age_seconds",
     )
     if age is None:
-        age = gs455._number(
+        age = progression_number(
             tripwire,
             "last_flip_age_seconds",
         )
@@ -1858,7 +1891,7 @@ def progression_supporting_flow(record: dict) -> bool:
     from mide import gs455_early_ignition_3m_confirmation as gs455
 
     volume = (
-        gs455._number(
+        progression_number(
             record,
             "volume",
             default=0.0,
@@ -1866,7 +1899,7 @@ def progression_supporting_flow(record: dict) -> bool:
         or 0.0
     )
     participation = (
-        gs455._number(
+        progression_number(
             record,
             "participation_surge_score",
             "participation_score",
@@ -1875,7 +1908,7 @@ def progression_supporting_flow(record: dict) -> bool:
         or 0.0
     )
     expansion = (
-        gs455._number(
+        progression_number(
             record,
             "expansion_quality",
             "expansion_score",
@@ -1884,7 +1917,7 @@ def progression_supporting_flow(record: dict) -> bool:
         or 0.0
     )
     volume_acceleration = (
-        gs455._number(
+        progression_number(
             record,
             "volume_acceleration",
             default=0.0,
@@ -1892,7 +1925,7 @@ def progression_supporting_flow(record: dict) -> bool:
         or 0.0
     )
     dollar_flow = (
-        gs455._number(
+        progression_number(
             record,
             "dollar_flow_acceleration_5m",
             "dollar_flow_acceleration",
@@ -1928,7 +1961,7 @@ def crossover_progression(record: dict) -> dict:
         ):
             continue
         active_rungs.append(label)
-        stamp = gs455._timestamp(
+        stamp = progression_timestamp(
             event.get("timestamp")
         )
         if stamp is not None:
@@ -1993,7 +2026,7 @@ def progression_signal(record: dict) -> dict:
     new_rung = progression.get(
         "latest_new_rung"
     )
-    distance = gs455._number(
+    distance = progression_number(
         record,
         "vwap_distance_pct",
     )
@@ -6220,6 +6253,8 @@ __all__ = [
     "maturation_confirmation_details_with_line_cross",
     "maturation_timeframe_event_with_line_cross",
     "install_maturation_line_cross_enrichment",
+    "progression_number",
+    "progression_timestamp",
     "thirty_second_progression_rung",
     "progression_rung_event",
     "progression_halted",
