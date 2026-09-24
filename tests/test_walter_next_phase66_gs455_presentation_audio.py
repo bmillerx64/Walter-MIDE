@@ -93,7 +93,7 @@ def test_phase66_alert_meaning_lives_in_presentation_audio():
     ):
         assert f"def {name}(" in authority
 
-    start = legacy.index("def _progression_change(")
+    start = legacy.index("def _presentation_audio(")
     end = legacy.index("def _inherit(", start)
     facade = legacy[start:end]
     assert "def _presentation_audio(" in facade
