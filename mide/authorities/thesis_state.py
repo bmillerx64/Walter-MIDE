@@ -379,6 +379,68 @@ def install_progression_state() -> None:
     hierarchy.opportunity_state = calibrated
 
 
+# ---------------------------------------------------------------------------
+# GS404 reset/retest LOOK NOW state meaning
+# ---------------------------------------------------------------------------
+
+
+def reset_retest_opportunity_state(
+    original,
+    record: dict,
+) -> dict:
+    """Promote confirmed reset/retest evidence to LOOK NOW for chart review only."""
+    from mide import gs404_reset_retest_look_now as gs404
+    from mide.authorities import market_evidence
+
+    view = deepcopy(
+        original(record)
+    )
+    evidence = (
+        market_evidence.reset_retest_attention_evidence(
+            record
+        )
+    )
+    if not evidence.get("recent"):
+        return view
+
+    if view.get("state") in {
+        WATCH_FOR_ENTRY,
+        HALTED,
+    }:
+        return view
+
+    view["state"] = LOOK_NOW
+    view["color"] = STATE_COLORS[
+        LOOK_NOW
+    ]
+    view["reason"] = (
+        "Reset/retest: a current Webull mover returned to the near-VWAP window after "
+        "extension while 1m SuperTrend remains bullish and participation/flow persist."
+    )
+    view["next_step"] = (
+        "Open the chart now and evaluate the retest. This is investigation only; "
+        "Walter's normal entry/readiness and anti-chase rules remain authoritative."
+    )
+    provenance = list(
+        view.get("attention_provenance")
+        or []
+    )
+    if (
+        gs404.RESET_RETEST_PROVENANCE
+        not in provenance
+    ):
+        provenance.append(
+            gs404.RESET_RETEST_PROVENANCE
+        )
+    view["attention_provenance"] = (
+        provenance
+    )
+    view["reset_retest_attention"] = (
+        evidence
+    )
+    return view
+
+
 _LEADER_RESET_PROVENANCE = "PROVEN_LEADER_RESET_REIGNITION"
 _LEADER_RESET_STATE_OWNER = "_walter_gs477_leader_reset_state_owner"
 
@@ -1360,6 +1422,7 @@ def __getattr__(name: str):
 
 
 __all__ = [
+    "reset_retest_opportunity_state",
     "progression_opportunity_state",
     "install_progression_state",
     "CHASE_WAIT",

@@ -46,6 +46,12 @@ def _market_evidence():
     return market_evidence
 
 
+def _thesis_state():
+    from mide.authorities import thesis_state
+
+    return thesis_state
+
+
 def _number(record: dict, *keys: str, default: float | None = None) -> float | None:
     current = getattr(
         _market_evidence(),
@@ -233,12 +239,26 @@ def reset_retest_opportunity_state(
     record: dict,
     state_function: Callable[[dict], dict] | None = None,
 ) -> dict:
-    """Promote only the qualifying retest to LOOK NOW for chart review."""
+    """Warm-deploy-safe facade for authoritative reset/retest state meaning."""
     from . import gs310_unified_opportunity_state as unified
 
     original = state_function or getattr(
-        unified.opportunity_state, "_gs404_original", unified.opportunity_state
+        unified.opportunity_state,
+        "_gs404_original",
+        unified.opportunity_state,
     )
+    current = getattr(
+        _thesis_state(),
+        "reset_retest_opportunity_state",
+        None,
+    )
+    if callable(current):
+        return current(
+            original,
+            record,
+        )
+
+    # Retained-runtime fallback for an older Thesis / State generation.
     view = deepcopy(original(record))
     evidence = reset_retest_attention_evidence(record)
     if not evidence["recent"]:
