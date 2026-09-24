@@ -1,34 +1,22 @@
-"""GS536: make forensic logs roll cleanly at each Eastern trading date.
+"""GS536: warm-deploy-safe Replay / Validation facade for forensic rollover.
 
-Sept. 23 live backup exposed that the active Candidate History still began on Sept. 21
-and Flight Recorder also remained cumulative. The resulting routine backup had grown
-to about 2.23 GB of raw JSON / about 240 MB compressed and took several minutes to
-prepare/upload.
+GS536's Candidate History and Flight Recorder session rollover now lives in authoritative
+Replay / Validation. This historical module retains the two validated wrapper markers,
+the shared lock, and the embedded-ISO timestamp regex so existing runtime identity and
+regression seams remain stable.
 
-GS501 relied on file mtime and converted a naive datetime.fromtimestamp value as
-though it were already Eastern. On a UTC cloud host, a late-evening ET write can
-therefore look like the next calendar date and suppress next-session rollover. Flight
-Recorder had no session rollover at all.
-
-GS536 uses the earliest embedded ISO timestamp near the beginning of each active JSONL
-file as the primary session date, with a timezone-aware mtime fallback. It installs
-the same metadata-only rollover before Candidate History append and Flight Recorder
-record_scan. Prior files are atomically moved to data/session_archives; new active
-files then start small.
-
-Persistence/export lifecycle only. No market data, discovery, score, gate, ranking,
-qualification, readiness, alert, cadence, execution, or order behavior changes.
+A stale warm Replay / Validation generation fails closed: active files are not moved,
+wrapper installation no-ops, and no persistence content or trading behavior is changed.
+No market data, discovery, score, gate, ranking, qualification, readiness, alert,
+cadence, execution, or order behavior changes.
 """
 from __future__ import annotations
 
-from datetime import datetime, timezone
-from functools import wraps
 from pathlib import Path
 import re
 import threading
 from typing import Any
 
-from .time_service import eastern_time
 
 _MARKER_STORE = "_walter_gs536_candidate_rollover"
 _MARKER_FLIGHT = "_walter_gs536_flight_rollover"
@@ -38,129 +26,119 @@ _ISO_RE = re.compile(
 )
 
 
-def _archive_target(path: Path, session_date, *, archive_dir: Path | None = None) -> Path:
-    directory = archive_dir or (path.parent / "session_archives")
-    directory.mkdir(parents=True, exist_ok=True)
-    base = directory / f"{path.stem}-{session_date.strftime('%Y%m%d')}{path.suffix}"
-    if not base.exists():
-        return base
-    counter = 2
-    while True:
-        candidate = directory / (
-            f"{path.stem}-{session_date.strftime('%Y%m%d')}-{counter}{path.suffix}"
+def _replay():
+    from mide.authorities import replay_validation
+
+    return replay_validation
+
+
+def _archive_target(
+    path: Path,
+    session_date,
+    *,
+    archive_dir: Path | None = None,
+) -> Path:
+    current = getattr(
+        _replay(),
+        "forensic_archive_target",
+        None,
+    )
+    if not callable(current):
+        return (
+            (archive_dir or (path.parent / "session_archives"))
+            / f"{path.stem}-{session_date.strftime('%Y%m%d')}{path.suffix}"
         )
-        if not candidate.exists():
-            return candidate
-        counter += 1
+    return current(
+        path,
+        session_date,
+        archive_dir=archive_dir,
+    )
 
 
 def _embedded_session_date(path: Path):
-    try:
-        with path.open("rb") as handle:
-            prefix = handle.read(256 * 1024)
-    except OSError:
+    current = getattr(
+        _replay(),
+        "embedded_forensic_session_date",
+        None,
+    )
+    if not callable(current):
         return None
-    match = _ISO_RE.search(prefix)
-    if not match:
-        return None
-    text = match.group(0).decode("ascii").replace("Z", "+00:00")
-    try:
-        stamp = datetime.fromisoformat(text)
-    except ValueError:
-        return None
-    if stamp.tzinfo is None:
-        stamp = stamp.replace(tzinfo=timezone.utc)
-    return eastern_time(stamp).date()
+    return current(path)
 
 
 def active_file_session_date(path: str | Path):
-    active = Path(path)
-    embedded = _embedded_session_date(active)
-    if embedded is not None:
-        return embedded
-    try:
-        stamp = datetime.fromtimestamp(active.stat().st_mtime, tz=timezone.utc)
-    except OSError:
+    current = getattr(
+        _replay(),
+        "active_forensic_file_session_date",
+        None,
+    )
+    if not callable(current):
         return None
-    return eastern_time(stamp).date()
+    return current(path)
 
 
 def roll_active_file_if_new_session(
     path: str | Path,
     *,
-    now: datetime | None = None,
+    now=None,
     archive_dir: str | Path | None = None,
 ) -> dict[str, Any]:
-    active = Path(path)
-    current_date = eastern_time(now).date()
-    directory = Path(archive_dir) if archive_dir is not None else None
-
-    with _LOCK:
-        try:
-            stat = active.stat()
-        except FileNotFoundError:
-            return {"rolled": False, "reason": "missing"}
-        except OSError:
-            return {"rolled": False, "reason": "stat_error"}
-        if stat.st_size <= 0:
-            return {"rolled": False, "reason": "empty"}
-
-        prior_date = active_file_session_date(active)
-        if prior_date is None:
-            return {"rolled": False, "reason": "date_unknown"}
-        if prior_date >= current_date:
-            return {
-                "rolled": False,
-                "reason": "same_session",
-                "prior_date": prior_date.isoformat(),
-                "current_date": current_date.isoformat(),
-            }
-
-        target = _archive_target(active, prior_date, archive_dir=directory)
-        active.replace(target)
+    current = getattr(
+        _replay(),
+        "roll_active_forensic_file_if_new_session",
+        None,
+    )
+    if not callable(current):
         return {
-            "rolled": True,
-            "reason": "new_session",
-            "archive_path": str(target),
-            "prior_date": prior_date.isoformat(),
-            "current_date": current_date.isoformat(),
-            "archived_bytes": int(stat.st_size),
+            "rolled": False,
+            "reason": "Replay / Validation unavailable",
         }
+    return current(
+        path,
+        now=now,
+        archive_dir=archive_dir,
+    )
 
 
 def _install_store(store_class) -> None:
-    current = store_class.append
-    if getattr(current, _MARKER_STORE, False):
-        return
-
-    @wraps(current)
-    def append(self, records):
-        if records:
-            roll_active_file_if_new_session(self.path)
-        return current(self, records)
-
-    setattr(append, _MARKER_STORE, True)
-    append._gs536_original = current
-    store_class.append = append
+    current = getattr(
+        _replay(),
+        "install_forensic_store_rollover",
+        None,
+    )
+    if callable(current):
+        current(store_class)
 
 
 def _install_flight(recorder_class) -> None:
-    current = recorder_class.record_scan
-    if getattr(current, _MARKER_FLIGHT, False):
-        return
-
-    @wraps(current)
-    def record_scan(self, *args, **kwargs):
-        roll_active_file_if_new_session(self.path, now=kwargs.get("timestamp"))
-        return current(self, *args, **kwargs)
-
-    setattr(record_scan, _MARKER_FLIGHT, True)
-    record_scan._gs536_original = current
-    recorder_class.record_scan = record_scan
+    current = getattr(
+        _replay(),
+        "install_forensic_flight_rollover",
+        None,
+    )
+    if callable(current):
+        current(recorder_class)
 
 
 def install() -> None:
-    from . import memory, flight_recorder
+    current = getattr(
+        _replay(),
+        "install_session_forensic_rollover",
+        None,
+    )
+    if callable(current):
+        current()
 
-    _install_store(memory.MemoryStore)
-    _install_flight(flight_recorder.FlightRecorder)
+
+def __getattr__(name: str):
+    try:
+        return getattr(_replay(), name)
+    except AttributeError:
+        raise AttributeError(name) from None
+
+
+__all__ = [
+    "active_file_session_date",
+    "roll_active_file_if_new_session",
+    "install",
+]
