@@ -8,8 +8,10 @@ from __future__ import annotations
 
 from copy import deepcopy
 from functools import wraps
+import json
 import re
-from typing import Any
+from pathlib import Path
+from typing import Any, Iterator
 
 from mide.flight_recorder import FlightRecorder
 from mide.mission_outcomes import MissionOutcomeStore
@@ -795,7 +797,208 @@ def install_top_level_transport_truth() -> bool:
     return True
 
 
+# ---------------------------------------------------------------------------
+# GS483 Flight Recorder read-side resource containment
+# ---------------------------------------------------------------------------
+
+RESOURCE_CONTAINMENT_AUTHORITY = "RESOURCE_CONTAINMENT_ONLY"
+RESOURCE_TAIL_CHUNK_BYTES = 64 * 1024
+_RESOURCE_CONTAINMENT_INSTALL_GENERATION = object()
+
+
+def decode_recorder_json_line(raw: bytes):
+    """Decode one JSONL row, skipping malformed/non-object content."""
+    raw = raw.strip()
+    if not raw:
+        return None
+    try:
+        value = json.loads(raw.decode("utf-8", errors="ignore"))
+    except (UnicodeError, ValueError, TypeError):
+        return None
+    return value if isinstance(value, dict) else None
+
+
+def iter_valid_recorder_scans(path: Path) -> Iterator[dict]:
+    """Stream valid JSONL records without materializing the whole recorder file."""
+    if not path.exists():
+        return
+    with path.open("rb") as handle:
+        for raw in handle:
+            value = decode_recorder_json_line(raw)
+            if value is not None:
+                yield value
+
+
+def bounded_latest_scan(
+    path: Path,
+    *,
+    chunk_bytes: int = RESOURCE_TAIL_CHUNK_BYTES,
+) -> dict | None:
+    """Return the newest valid JSONL object using bounded reverse reads."""
+    if not path.exists():
+        return None
+    try:
+        size = path.stat().st_size
+    except OSError:
+        return None
+    if size <= 0:
+        return None
+
+    chunk_bytes = max(1024, int(chunk_bytes))
+    with path.open("rb") as handle:
+        position = size
+        carry = b""
+        while position > 0:
+            take = min(chunk_bytes, position)
+            position -= take
+            handle.seek(position)
+            block = handle.read(take) + carry
+            parts = block.split(b"\n")
+            if position > 0:
+                carry = parts.pop(0) if parts else block
+            else:
+                carry = b""
+            for raw in reversed(parts):
+                value = decode_recorder_json_line(raw)
+                if value is not None:
+                    return value
+        if carry:
+            return decode_recorder_json_line(carry)
+    return None
+
+
+def streaming_scans(path: Path) -> list[dict]:
+    """Preserve FlightRecorder's historical list contract with lower transient memory."""
+    return list(iter_valid_recorder_scans(path))
+
+
+def streaming_symbol_history(path: Path, symbol: str) -> list[dict]:
+    """Return one symbol's history without first materializing every scan."""
+    wanted = str(symbol or "").strip().upper()
+    if not wanted:
+        return []
+    history: list[dict] = []
+    for scan in iter_valid_recorder_scans(path):
+        symbol_path = next(
+            (
+                item
+                for item in scan.get("symbols", [])
+                if str(item.get("symbol", "")).upper() == wanted
+            ),
+            None,
+        )
+        if symbol_path:
+            history.append(
+                {
+                    "scan_id": scan.get("scan_id"),
+                    "timestamp": scan.get("timestamp"),
+                    "scanner_version": scan.get("scanner_version"),
+                    **symbol_path,
+                }
+            )
+    return history
+
+
+def recorder_resource_snapshot(recorder) -> dict:
+    """Return small recorder/process metadata without reading recorder contents."""
+    path = Path(recorder.path)
+    try:
+        file_bytes = int(path.stat().st_size) if path.exists() else 0
+    except OSError:
+        file_bytes = 0
+
+    rss_mb = None
+    try:
+        import resource
+
+        raw = float(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss)
+        # Linux reports KiB; macOS reports bytes. Walter production is Linux.
+        rss_mb = (
+            round(raw / 1024.0, 1)
+            if raw < 10_000_000
+            else round(raw / (1024.0 * 1024.0), 1)
+        )
+    except Exception:
+        pass
+
+    return {
+        "authority": RESOURCE_CONTAINMENT_AUTHORITY,
+        "flight_recorder_bytes": file_bytes,
+        "flight_recorder_mb": round(file_bytes / (1024.0 * 1024.0), 2),
+        "process_max_rss_mb": rss_mb,
+        "trading_logic_changed": False,
+    }
+
+
+def _inherit_resource_wrapper(wrapper, wrapped) -> None:
+    for name, value in getattr(wrapped, "__dict__", {}).items():
+        if name.startswith("_gs") and not hasattr(wrapper, name):
+            setattr(wrapper, name, value)
+
+
+def install_resource_containment() -> None:
+    """Bind bounded FlightRecorder read helpers through Replay / Validation."""
+    from mide.flight_recorder import FlightRecorder
+
+    current_latest = FlightRecorder.latest_scan
+    if (
+        getattr(current_latest, "_gs483_install_generation", None)
+        is not _RESOURCE_CONTAINMENT_INSTALL_GENERATION
+    ):
+        def latest_scan(self):
+            return bounded_latest_scan(Path(self.path))
+
+        _inherit_resource_wrapper(latest_scan, current_latest)
+        latest_scan._gs483_resource_containment = True
+        latest_scan._gs483_install_generation = (
+            _RESOURCE_CONTAINMENT_INSTALL_GENERATION
+        )
+        latest_scan._gs483_original = current_latest
+        FlightRecorder.latest_scan = latest_scan
+
+    current_scans = FlightRecorder.scans
+    if (
+        getattr(current_scans, "_gs483_install_generation", None)
+        is not _RESOURCE_CONTAINMENT_INSTALL_GENERATION
+    ):
+        def scans(self):
+            return streaming_scans(Path(self.path))
+
+        _inherit_resource_wrapper(scans, current_scans)
+        scans._gs483_resource_containment = True
+        scans._gs483_install_generation = (
+            _RESOURCE_CONTAINMENT_INSTALL_GENERATION
+        )
+        scans._gs483_original = current_scans
+        FlightRecorder.scans = scans
+
+    current_history = FlightRecorder.history_for_symbol
+    if (
+        getattr(current_history, "_gs483_install_generation", None)
+        is not _RESOURCE_CONTAINMENT_INSTALL_GENERATION
+    ):
+        def history_for_symbol(self, symbol: str):
+            return streaming_symbol_history(Path(self.path), symbol)
+
+        _inherit_resource_wrapper(history_for_symbol, current_history)
+        history_for_symbol._gs483_resource_containment = True
+        history_for_symbol._gs483_install_generation = (
+            _RESOURCE_CONTAINMENT_INSTALL_GENERATION
+        )
+        history_for_symbol._gs483_original = current_history
+        FlightRecorder.history_for_symbol = history_for_symbol
+
+
 __all__ = [
+    "install_resource_containment",
+    "recorder_resource_snapshot",
+    "streaming_symbol_history",
+    "streaming_scans",
+    "bounded_latest_scan",
+    "iter_valid_recorder_scans",
+    "decode_recorder_json_line",
+    "RESOURCE_CONTAINMENT_AUTHORITY",
+    "RESOURCE_TAIL_CHUNK_BYTES",
     "install_top_level_transport_truth",
     "top_level_stream_transport",
     "top_level_news_transport",
