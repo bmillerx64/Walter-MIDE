@@ -615,9 +615,11 @@ def install_fmp_transport_truth() -> None:
 
     @wraps(current)
     def news_truth_with_transport(*args, **kwargs):
+        from mide import gs484_fmp_transport_truth as gs484
+
         truth = dict(current(*args, **kwargs) or {})
         provider, provider_source = gs427._active_provider()
-        transport = transport_truth(provider)
+        transport = gs484.transport_truth(provider)
         transport["provider_source"] = provider_source
         truth["transport"] = transport
         truth["gs484_transport_truth"] = True
@@ -758,13 +760,15 @@ def install_top_level_transport_truth() -> bool:
         *args,
         **kwargs,
     ):
+        from mide import gs486_top_level_transport_truth as gs486
+
         provider, provider_source = gs427._active_provider()
         augmented = dict(scan)
-        augmented["news_transport_trace"] = top_level_news_transport(
+        augmented["news_transport_trace"] = gs486._news_transport(
             provider,
             provider_source,
         )
-        augmented["stream_transport_trace"] = top_level_stream_transport(
+        augmented["stream_transport_trace"] = gs486._stream_transport(
             provider,
             provider_source,
         )
