@@ -2112,53 +2112,7 @@ def bind_final_enriched_opportunity_order(
     setattr(ui, attr, render_with_final_enriched_order)
 
 
-# ---------------------------------------------------------------------------
-# GS479 headline catalyst magnitude presentation
-# ---------------------------------------------------------------------------
-
-_HEADLINE_MAGNITUDE_WHY_OWNER = "_walter_gs479_headline_magnitude_why_owner"
-
-
-def headline_catalyst_magnitude_display_summary(record: dict) -> str:
-    """Return the factual GS479 headline-scale summary for Catalyst display."""
-    detail = record.get("catalyst_magnitude") or {}
-    return str(detail.get("summary") or "").strip()
-
-
-def install_headline_catalyst_magnitude_presentation() -> None:
-    """Append GS479 factual magnitude context to the Catalyst display section."""
-    from mide import ui
-
-    current = ui._why_sections
-    if getattr(current, _HEADLINE_MAGNITUDE_WHY_OWNER, False):
-        return
-
-    @wraps(current)
-    def why_sections_with_magnitude(record: dict):
-        sections = dict(current(record))
-        summary = headline_catalyst_magnitude_display_summary(record)
-        if summary:
-            existing = str(sections.get("Catalyst") or "").strip()
-            if summary not in existing:
-                sections["Catalyst"] = (
-                    f"{existing} · {summary}" if existing else summary
-                )
-        return sections
-
-    _inherit_audio_wrapper(why_sections_with_magnitude, current)
-    why_sections_with_magnitude._gs479_headline_catalyst_magnitude = True
-    why_sections_with_magnitude._gs479_original = current
-    setattr(
-        why_sections_with_magnitude,
-        _HEADLINE_MAGNITUDE_WHY_OWNER,
-        True,
-    )
-    ui._why_sections = why_sections_with_magnitude
-
-
 __all__ = [
-    "install_headline_catalyst_magnitude_presentation",
-    "headline_catalyst_magnitude_display_summary",
     "bind_final_enriched_opportunity_order",
     "final_enriched_opportunity_records",
     "FINAL_ORDER_OWNER_ATTR",
