@@ -1273,7 +1273,71 @@ def install_resource_containment() -> None:
         FlightRecorder.history_for_symbol = history_for_symbol
 
 
+
+# ---------------------------------------------------------------------------
+# GS464 session-aware VWAP parity replay labeling
+# ---------------------------------------------------------------------------
+
+_SESSION_VWAP_PARITY_OWNER = (
+    "_walter_gs464_session_aware_vwap_parity_owner"
+)
+
+
+def install_session_aware_vwap_parity_labels() -> None:
+    """Name GS464's decision policy in future Flight Recorder parity blocks."""
+    from mide import gs391_webull_vwap_st_parity as gs391
+    from mide import gs464_session_aware_vwap_parity as gs464
+
+    current = gs391._build_scan_parity
+    if getattr(
+        current,
+        _SESSION_VWAP_PARITY_OWNER,
+        False,
+    ):
+        return
+
+    @wraps(current)
+    def build_scan_parity(records) -> dict:
+        payload = dict(current(records) or {})
+        payload["legacy_gs391_observation_policy"] = (
+            gs391.PRIMARY_POLICY
+        )
+        payload["primary_vwap_policy"] = (
+            gs464.SESSION_POLICY
+        )
+        for item in payload.get("symbols") or []:
+            mode = item.get("vwap_anchor_mode")
+            item["decision_vwap_policy"] = mode
+            parity = item.get("parity")
+            if isinstance(parity, dict):
+                parity["decision_vwap_policy"] = mode
+                parity["legacy_observation_policy"] = (
+                    gs391.PRIMARY_POLICY
+                )
+        return payload
+
+    for name, value in getattr(
+        current,
+        "__dict__",
+        {},
+    ).items():
+        if name.startswith("_gs") and not hasattr(
+            build_scan_parity,
+            name,
+        ):
+            setattr(build_scan_parity, name, value)
+    build_scan_parity._gs464_session_aware_vwap_parity = True
+    build_scan_parity._gs464_original = current
+    setattr(
+        build_scan_parity,
+        _SESSION_VWAP_PARITY_OWNER,
+        True,
+    )
+    gs391._build_scan_parity = build_scan_parity
+
+
 __all__ = [
+    "install_session_aware_vwap_parity_labels",
     "install_latency_truth_recorder",
     "build_latency_truth",
     "latency_provider_from_trace",
