@@ -1743,7 +1743,172 @@ def install_recorder_runtime_hard_bind() -> None:
         )
 
 
+
+# ---------------------------------------------------------------------------
+# GS487 exact cached-recorder persistence binding
+# ---------------------------------------------------------------------------
+
+CACHED_RECORDER_BIND_AUTHORITY = "OBSERVATIONAL_ONLY"
+CACHED_RECORDER_BINDING = (
+    "cached_recorder.record_scan.__func__.__globals__."
+    "persist_replayable_scan"
+)
+CACHED_RECORDER_BIND_REVISION = 1
+_CACHED_RECORDER_BIND_OWNER = (
+    "_walter_gs487_cached_recorder_instance_bind_revision"
+)
+
+
+def exact_cached_recorder_globals(
+    recorder,
+) -> dict[str, Any] | None:
+    from mide import gs427_flight_recorder_latency_hard_bind as gs427
+
+    method = getattr(recorder, "record_scan", None)
+    root = getattr(method, "__func__", method)
+    if not callable(root):
+        return None
+
+    for function in gs427._walk_functions(root):
+        globals_dict = getattr(
+            function,
+            "__globals__",
+            None,
+        )
+        if not isinstance(globals_dict, dict):
+            continue
+        if (
+            globals_dict.get("__name__")
+            != "mide.flight_recorder"
+        ):
+            continue
+        if callable(
+            globals_dict.get("persist_replayable_scan")
+        ):
+            return globals_dict
+    return None
+
+
+def cached_recorder_news_transport(
+    provider,
+    provider_source: str,
+) -> dict[str, Any]:
+    from mide import gs484_fmp_transport_truth as gs484
+
+    truth = dict(gs484.transport_truth(provider) or {})
+    truth["provider_source"] = provider_source
+    truth["cached_recorder_instance_bind"] = True
+    truth["extra_provider_calls"] = 0
+    truth["trading_authority_changed"] = False
+    return truth
+
+
+def cached_recorder_stream_transport(
+    provider,
+    provider_source: str,
+) -> dict[str, Any]:
+    from mide import gs481_live_evidence_hard_bind as gs481
+
+    truth = dict(
+        gs481._stream_failure_truth(provider) or {}
+    )
+    truth["provider_source"] = provider_source
+    truth["cached_recorder_instance_bind"] = True
+    truth["network_repair_attempted_here"] = False
+    truth["trading_authority_changed"] = False
+    return truth
+
+
+def install_cached_recorder_instance_bind(
+    recorder,
+) -> bool:
+    from mide import gs427_flight_recorder_latency_hard_bind as gs427
+    from mide import gs487_cached_recorder_instance_bind as gs487
+
+    globals_dict = gs487._exact_recorder_globals(
+        recorder
+    )
+    if not isinstance(globals_dict, dict):
+        return False
+
+    current = globals_dict.get(
+        "persist_replayable_scan"
+    )
+    if not callable(current):
+        return False
+    if (
+        getattr(
+            current,
+            gs487._OWNER,
+            None,
+        )
+        == gs487.REVISION
+    ):
+        return False
+
+    @wraps(current)
+    def persist_with_cached_instance_transport(
+        recorder_obj,
+        scan: dict,
+        records,
+        *args,
+        **kwargs,
+    ):
+        provider, provider_source = (
+            gs427._active_provider()
+        )
+        augmented = dict(scan)
+        augmented[
+            "news_transport_trace"
+        ] = gs487._news_transport(
+            provider,
+            provider_source,
+        )
+        augmented[
+            "stream_transport_trace"
+        ] = gs487._stream_transport(
+            provider,
+            provider_source,
+        )
+        augmented[
+            "recorder_instance_transport_bind"
+        ] = {
+            "authority": gs487.AUTHORITY,
+            "binding": gs487.BINDING,
+            "revision": gs487.REVISION,
+            "provider_source": provider_source,
+            "gs487_cached_recorder_instance_bind": True,
+            "trading_authority_changed": False,
+        }
+        return current(
+            recorder_obj,
+            augmented,
+            records,
+            *args,
+            **kwargs,
+        )
+
+    setattr(
+        persist_with_cached_instance_transport,
+        gs487._OWNER,
+        gs487.REVISION,
+    )
+    persist_with_cached_instance_transport._gs487_cached_recorder_instance_bind = True
+    persist_with_cached_instance_transport._gs487_original = current
+    globals_dict[
+        "persist_replayable_scan"
+    ] = persist_with_cached_instance_transport
+    return True
+
+
 __all__ = [
+    "install_cached_recorder_instance_bind",
+    "exact_cached_recorder_globals",
+    "cached_recorder_news_transport",
+    "cached_recorder_stream_transport",
+    "CACHED_RECORDER_BIND_AUTHORITY",
+    "CACHED_RECORDER_BINDING",
+    "CACHED_RECORDER_BIND_REVISION",
     "install_recorder_runtime_hard_bind",
     "recorder_runtime_identity",
     "recorder_active_provider",
