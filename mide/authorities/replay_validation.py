@@ -2405,7 +2405,26 @@ def install_connection_limit_stream_trace() -> None:
     )
 
 
+# ---------------------------------------------------------------------------
+# GS458 Flight Recorder fragment freshness lifecycle
+# ---------------------------------------------------------------------------
+
+def install_flight_recorder_fragment_freshness() -> None:
+    """Rebind GS350 outside the final download wrapper chain."""
+    import streamlit as st
+
+    from mide import gs350_download_export_reliability as gs350
+    from mide import gs458_flight_recorder_fragment_freshness as gs458
+
+    gs350.install()
+    current = st.download_button
+    current._gs458_flight_recorder_fragment_freshness = True
+    current._gs458_authority = gs458.AUTHORITY
+    current._gs458_trading_logic_changed = False
+
+
 __all__ = [
+    "install_flight_recorder_fragment_freshness",
     "FORENSIC_ROLLOVER_AUTHORITY",
     "forensic_archive_target",
     "embedded_forensic_session_date",

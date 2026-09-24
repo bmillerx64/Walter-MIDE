@@ -21,13 +21,29 @@ from __future__ import annotations
 AUTHORITY = "FLIGHT_RECORDER_FRAGMENT_FRESHNESS_ONLY"
 
 
+def _replay_validation():
+    from mide.authorities import replay_validation
+
+    return replay_validation
+
+
 def install() -> None:
-    """Rebind GS350 outside the final download wrapper chain."""
+    """Warm-deploy-safe facade for GS458 export lifecycle authority."""
+    current = getattr(
+        _replay_validation(),
+        "install_flight_recorder_fragment_freshness",
+        None,
+    )
+    if callable(current):
+        current()
+        return
+
+    # Retained-runtime fallback for an older Replay / Validation generation.
     import streamlit as st
     from . import gs350_download_export_reliability as gs350
 
     gs350.install()
-    current = st.download_button
-    current._gs458_flight_recorder_fragment_freshness = True
-    current._gs458_authority = AUTHORITY
-    current._gs458_trading_logic_changed = False
+    active = st.download_button
+    active._gs458_flight_recorder_fragment_freshness = True
+    active._gs458_authority = AUTHORITY
+    active._gs458_trading_logic_changed = False
