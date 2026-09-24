@@ -2062,6 +2062,83 @@ def install_canonical_30s_gs397_propagation() -> None:
 
 
 # ---------------------------------------------------------------------------
+# GS456 canonical literal 30s cross preference for GS455 first rung
+# ---------------------------------------------------------------------------
+#
+# Market Evidence owns whether retained literal 30s ST/VWAP cross truth supersedes
+# the older bullish-flip tripwire for the first GS455 maturation rung. The historical
+# GS456 installer remains the mutable compatibility seam.
+
+
+def canonical_30s_progression_rung(
+    original,
+    record: dict,
+) -> dict:
+    """Prefer literal canonical 30s ST/VWAP cross evidence when confirmed."""
+    event = dict(
+        record.get("st_vwap_30s_line_cross")
+        or {}
+    )
+    if not event:
+        alignment = (
+            record.get("timeframe_alignment")
+            or {}
+        )
+        event = dict(
+            (
+                alignment.get("30s")
+                or {}
+            ).get("st_vwap_line_cross")
+            or {}
+        )
+    if (
+        event.get("crossed")
+        and event.get("current_confirmed")
+    ):
+        event["kind"] = (
+            "literal_30s_st_vwap_line_cross"
+        )
+        return event
+
+    fallback = dict(
+        original(record)
+    )
+    fallback.setdefault(
+        "kind",
+        "canonical_30s_tripwire_flip_fallback",
+    )
+    return fallback
+
+
+def install_canonical_30s_progression_rung() -> None:
+    """Bind GS456 literal-cross preference at GS455's historical first-rung seam."""
+    from mide import gs455_early_ignition_3m_confirmation as gs455
+
+    current = gs455._thirty_second_rung
+    if getattr(
+        current,
+        "_gs456_literal_30s_cross",
+        False,
+    ):
+        return
+
+    @wraps(current)
+    def thirty_second_rung(
+        record: dict,
+    ) -> dict:
+        return canonical_30s_progression_rung(
+            current,
+            record,
+        )
+
+    thirty_second_rung._gs456_literal_30s_cross = True
+    thirty_second_rung._gs456_original = current
+    gs455._thirty_second_rung = (
+        thirty_second_rung
+    )
+
+
+# ---------------------------------------------------------------------------
 # GS455 ordered ST/VWAP maturation progression evidence
 # ---------------------------------------------------------------------------
 #
@@ -6634,6 +6711,8 @@ def install_partial_snapshot_recovery_for_provider(
 
 
 __all__ = [
+    "canonical_30s_progression_rung",
+    "install_canonical_30s_progression_rung",
     "canonical_30s_primary_above_vwap",
     "canonicalize_gs397_with_30s_vwap",
     "install_canonical_30s_gs397_propagation",
