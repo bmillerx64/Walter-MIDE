@@ -67,13 +67,18 @@ def _number(record: dict, *keys: str, default: float | None = None) -> float | N
         "progression_number",
         None,
     )
-    if not callable(current):
-        return default
-    return current(
-        record,
-        *keys,
-        default=default,
-    )
+    if callable(current):
+        return current(
+            record,
+            *keys,
+            default=default,
+        )
+    # Warm-deploy fallback for a retained runtime with an older authority module.
+    for key in keys:
+        value = _finite(record.get(key))
+        if value is not None:
+            return value
+    return default
 
 
 def _finite(value: Any) -> float | None:
@@ -272,9 +277,17 @@ def _timestamp(value: Any) -> datetime | None:
         "progression_timestamp",
         None,
     )
-    if not callable(current):
+    if callable(current):
+        return current(value)
+    # Warm-deploy fallback for a retained runtime with an older authority module.
+    if value in (None, ""):
         return None
-    return current(value)
+    try:
+        return datetime.fromisoformat(
+            str(value).replace("Z", "+00:00")
+        )
+    except (TypeError, ValueError):
+        return None
 
 
 def _thirty_second_rung(record: dict) -> dict:
