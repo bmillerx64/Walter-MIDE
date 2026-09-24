@@ -1793,11 +1793,46 @@ def _run_live_pipeline(
                     None,
                 )
                 if callable(observe_shadow):
-                    observe_shadow(
-                        client,
+                    shadow_client = client
+                    facade_used = False
+                    retained_alpaca = getattr(client, "_universe_client", None)
+                    if not callable(getattr(retained_alpaca, "news", None)):
+                        gs549 = importlib.import_module(
+                            "mide.gs549_warm_shadow_news_facade"
+                        )
+
+                        def build_shadow_news_client():
+                            alpaca_key = get_secret("ALPACA_API_KEY")
+                            alpaca_secret = get_secret("ALPACA_SECRET_KEY")
+                            if not alpaca_key or not alpaca_secret:
+                                raise RuntimeError(
+                                    "Alpaca credentials unavailable for GS549 shadow news"
+                                )
+                            provider_module = importlib.import_module(
+                                "mide.market_data_providers"
+                            )
+                            return provider_module.AlpacaProvider(
+                                alpaca_key,
+                                alpaca_secret,
+                                feed=settings.feed,
+                                timeout=8,
+                            )
+
+                        shadow_client, facade_used = gs549.observer_client(
+                            client,
+                            build_shadow_news_client,
+                        )
+                    shadow_trace = observe_shadow(
+                        shadow_client,
                         symbols,
                         news_items,
                     )
+                    if isinstance(shadow_trace, dict):
+                        shadow_trace["warm_deploy_news_facade_used"] = facade_used
+                        shadow_trace["warm_deploy_news_facade_authority"] = (
+                            "WARM_DEPLOY_SHADOW_NEWS_FACADE"
+                        )
+                        client.diagnostics["gs544_alpaca_news_shadow"] = shadow_trace
             except Exception as exc:
                 client.diagnostics["gs544_alpaca_news_shadow"] = {
                     "authority": "NEWS_COVERAGE_OBSERVATION_ONLY",
