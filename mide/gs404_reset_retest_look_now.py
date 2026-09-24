@@ -318,10 +318,6 @@ def _inherit(wrapper, wrapped) -> None:
 
 def install() -> None:
     """Install after GS401 as the final narrow live-attention correction."""
-    from . import gs310_unified_opportunity_state as unified
-    from . import gs311_unified_voice as voice
-    from . import gs314_state_consistency as consistency
-    from . import gs363_operator_attention_hierarchy as hierarchy
     from . import ui
 
     current_records = ui.actionable_candidate_records
@@ -336,6 +332,21 @@ def install() -> None:
         operator_records._gs404_original = original_records
         ui.actionable_candidate_records = operator_records
 
+    authority = getattr(
+        _thesis_state(),
+        "install_reset_retest_state",
+        None,
+    )
+    if callable(authority):
+        authority()
+        return
+
+    # Retained-runtime fallback for an older Thesis / State generation.
+    from . import gs310_unified_opportunity_state as unified
+    from . import gs311_unified_voice as voice
+    from . import gs314_state_consistency as consistency
+    from . import gs363_operator_attention_hierarchy as hierarchy
+
     current_state = unified.opportunity_state
     if not getattr(current_state, "_gs404_reset_retest", False):
         original_state = current_state
@@ -347,9 +358,9 @@ def install() -> None:
         retest_state._gs404_reset_retest = True
         retest_state._gs404_original = original_state
         unified.opportunity_state = retest_state
+    else:
+        retest_state = current_state
 
-        # GS398 derives audible LOOK NOW from GS311's visible transition truth, so
-        # keep the imported state aliases on the same final callable.
-        voice.opportunity_state = retest_state
-        consistency.opportunity_state = retest_state
-        hierarchy.opportunity_state = retest_state
+    voice.opportunity_state = retest_state
+    consistency.opportunity_state = retest_state
+    hierarchy.opportunity_state = retest_state
