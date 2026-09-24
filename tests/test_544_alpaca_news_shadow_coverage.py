@@ -85,6 +85,8 @@ def test_gs544_queries_only_symbols_missing_from_active_news():
     assert trace["headline_changed"] is False
     assert trace["catalyst_score_changed"] is False
     assert client._universe_client.calls[0]["symbols"] == ["RAVE"]
+    assert client._universe_client.calls[0]["sort"] == "desc"
+    assert client._universe_client.calls[0]["limit"] == 100
 
 
 def test_gs544_reuses_bounded_shadow_cache_inside_five_minutes():
@@ -149,11 +151,45 @@ def test_gs544_shadow_failure_is_diagnostic_only():
         now=NOW,
     )
 
-    assert trace["request_made"] is False
+    assert trace["request_made"] is True
     assert "synthetic outage" in trace["reason"]
     assert trace["found_symbols"] == []
     assert trace["trading_authority_changed"] is False
 
+
+
+
+def test_gs544_failed_shadow_request_enters_five_minute_cooldown():
+    class BrokenAlpaca:
+        provider_name = "Alpaca Market Data"
+
+        def __init__(self):
+            self.calls = 0
+
+        def news(self, *_args, **_kwargs):
+            self.calls += 1
+            raise RuntimeError("synthetic outage")
+
+    client = FakeLiveClient()
+    client._universe_client = BrokenAlpaca()
+
+    first = discovery_news.observe_alpaca_news_shadow(
+        client,
+        ["RAVE"],
+        [],
+        now=NOW,
+    )
+    second = discovery_news.observe_alpaca_news_shadow(
+        client,
+        ["RAVE"],
+        [],
+        now=NOW + timedelta(minutes=1),
+    )
+
+    assert first["request_made"] is True
+    assert second["request_made"] is False
+    assert second["cache_reused"] is True
+    assert client._universe_client.calls == 1
 
 def test_gs544_live_app_does_not_merge_shadow_articles_into_catalyst_input():
     source = Path("app.py").read_text(encoding="utf-8")
