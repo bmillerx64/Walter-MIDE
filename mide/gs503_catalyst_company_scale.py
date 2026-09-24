@@ -4,9 +4,10 @@ Market Evidence owns native Webull market-value carry-through, prefilter carry-t
 factual catalyst/company relative-scale context and analyzed-record diagnostics.
 Presentation + Audio owns the Catalyst-section display of those scale facts.
 
-The two authorities are resolved lazily at call/install time for warm Streamlit safety.
-Historical private installer seams remain callable because GS503 regression coverage
-patches the live snapshot, prefilter, analyze and operator-presentation boundaries.
+Authority-owned compatibility callables resolve lazily through module __getattr__, so
+GS503 preserves exact function identity without eager authority imports. The historical
+private installer names remain available because regression coverage patches the live
+snapshot, prefilter, analyze and operator-presentation boundaries.
 
 Historical scope-lock markers retained:
 additional_provider_requests
@@ -16,6 +17,28 @@ No provider request, score, rank, qualification, readiness, alert, execution or 
 authority is added here.
 """
 from __future__ import annotations
+
+
+_MARKET_EXPORTS = {
+    "AUTHORITY": "CATALYST_SCALE_AUTHORITY",
+    "_SNAPSHOT_OWNER": "_CATALYST_SCALE_SNAPSHOT_OWNER",
+    "_PREFILTER_OWNER": "_CATALYST_SCALE_PREFILTER_OWNER",
+    "_ANALYZE_OWNER": "_CATALYST_SCALE_ANALYZE_OWNER",
+    "_number": "_scale_number",
+    "_money": "_scale_money",
+    "_ratio_text": "_scale_ratio_text",
+    "_scale_band": "_relative_scale_band",
+    "_quantity_values": "_scale_quantity_values",
+    "_market_cap_reference": "market_cap_reference",
+    "company_scale_context": "company_scale_context",
+    "_install_snapshot_reference": "install_catalyst_scale_snapshot_reference",
+    "_install_prefilter_reference": "install_catalyst_scale_prefilter_reference",
+    "_install_analyzed_context": "install_catalyst_scale_analyzed_context",
+}
+_PRESENTATION_EXPORTS = {
+    "_WHY_OWNER": "_CATALYST_SCALE_WHY_OWNER",
+    "_install_operator_presentation": "install_catalyst_company_scale_presentation",
+}
 
 
 def _market():
@@ -30,110 +53,40 @@ def _presentation():
     return presentation_audio
 
 
-def _number(value):
-    current = getattr(_market(), "_scale_number", None)
-    return current(value) if callable(current) else None
-
-
-def _money(value) -> str:
-    current = getattr(_market(), "_scale_money", None)
-    return str(current(value)) if callable(current) else ""
-
-
-def _ratio_text(value) -> str:
-    current = getattr(_market(), "_scale_ratio_text", None)
-    return str(current(value)) if callable(current) else ""
-
-
-def _scale_band(*args, **kwargs):
-    current = getattr(_market(), "_relative_scale_band", None)
-    return (
-        current(*args, **kwargs)
-        if callable(current)
-        else "NOT_EVALUATED_NO_COMPARABLE_RATIO"
-    )
-
-
-def _quantity_values(*args, **kwargs):
-    current = getattr(_market(), "_scale_quantity_values", None)
-    return list(current(*args, **kwargs) or []) if callable(current) else []
-
-
-def _market_cap_reference(*args, **kwargs):
-    current = getattr(_market(), "market_cap_reference", None)
-    return current(*args, **kwargs) if callable(current) else (None, None)
-
-
-def company_scale_context(
-    record: dict,
-    candidate: dict | None = None,
-) -> dict:
-    current = getattr(_market(), "company_scale_context", None)
-    if callable(current):
-        return current(record, candidate)
-    return {
-        "authority": "CATALYST_COMPANY_SCALE_CONTEXT_ONLY",
-        "market_cap_available": False,
-        "relative_scale_band": "NOT_EVALUATED_NO_MARKET_CAP",
-        "summary": "",
-        "valuation_impact_inferred": False,
-        "trading_authority_changed": False,
-    }
-
-
-def _install_snapshot_reference() -> None:
-    current = getattr(
-        _market(),
-        "install_catalyst_scale_snapshot_reference",
-        None,
-    )
-    if callable(current):
-        current()
-
-
-def _install_prefilter_reference() -> None:
-    current = getattr(
-        _market(),
-        "install_catalyst_scale_prefilter_reference",
-        None,
-    )
-    if callable(current):
-        current()
-
-
-def _install_analyzed_context() -> None:
-    current = getattr(
-        _market(),
-        "install_catalyst_scale_analyzed_context",
-        None,
-    )
-    if callable(current):
-        current()
-
-
-def _install_operator_presentation() -> None:
-    current = getattr(
-        _presentation(),
-        "install_catalyst_company_scale_presentation",
-        None,
-    )
-    if callable(current):
-        current()
-
-
 def install() -> None:
     """Install GS503 through lazy Market Evidence and Presentation + Audio."""
-    current = getattr(
+    evidence_install = getattr(
         _market(),
         "install_catalyst_company_scale_evidence",
         None,
     )
-    if callable(current):
-        current()
-    _install_operator_presentation()
+    if callable(evidence_install):
+        evidence_install()
+
+    presentation_install = getattr(
+        _presentation(),
+        "install_catalyst_company_scale_presentation",
+        None,
+    )
+    if callable(presentation_install):
+        presentation_install()
 
 
 def __getattr__(name: str):
+    target = _MARKET_EXPORTS.get(name)
+    if target is not None:
+        try:
+            return getattr(_market(), target)
+        except AttributeError:
+            raise AttributeError(name) from None
+
+    target = _PRESENTATION_EXPORTS.get(name)
+    if target is not None:
+        try:
+            return getattr(_presentation(), target)
+        except AttributeError:
+            raise AttributeError(name) from None
+
     try:
         return getattr(_market(), name)
     except AttributeError:
@@ -144,6 +97,7 @@ def __getattr__(name: str):
 
 
 __all__ = [
+    "AUTHORITY",
     "company_scale_context",
     "install",
 ]
