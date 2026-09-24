@@ -441,6 +441,43 @@ def reset_retest_opportunity_state(
     return view
 
 
+def install_reset_retest_state() -> None:
+    """Bind GS404 reset/retest LOOK NOW meaning at the historical state seam."""
+    from mide import gs310_unified_opportunity_state as unified
+    from mide import gs311_unified_voice as voice
+    from mide import gs314_state_consistency as consistency
+    from mide import gs363_operator_attention_hierarchy as hierarchy
+
+    current = unified.opportunity_state
+    if getattr(
+        current,
+        "_gs404_reset_retest",
+        False,
+    ):
+        calibrated = current
+    else:
+        original = current
+
+        @wraps(original)
+        def calibrated(record: dict) -> dict:
+            return reset_retest_opportunity_state(
+                original,
+                record,
+            )
+
+        _inherit_state_wrapper(
+            calibrated,
+            current,
+        )
+        calibrated._gs404_reset_retest = True
+        calibrated._gs404_original = original
+        unified.opportunity_state = calibrated
+
+    voice.opportunity_state = calibrated
+    consistency.opportunity_state = calibrated
+    hierarchy.opportunity_state = calibrated
+
+
 _LEADER_RESET_PROVENANCE = "PROVEN_LEADER_RESET_REIGNITION"
 _LEADER_RESET_STATE_OWNER = "_walter_gs477_leader_reset_state_owner"
 
@@ -1422,6 +1459,7 @@ def __getattr__(name: str):
 
 
 __all__ = [
+    "install_reset_retest_state",
     "reset_retest_opportunity_state",
     "progression_opportunity_state",
     "install_progression_state",
