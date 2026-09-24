@@ -7,7 +7,7 @@ seam before installation.
 
 Authority contract: WebullSDKClient.stock_snapshot = stock_snapshot_with_session_truth
 Entitled PRE/ATH transport uses extend_hour_required=True and ext_price.
-overnight_required=True is deliberately never requested by the implementation.
+The separately entitled overnight snapshot flag is deliberately never requested.
 
 No scanner threshold, qualification, participation, expansion, ranking, alert,
 readiness, execution, order, or 30s/1m/3m crossover rule changes.
