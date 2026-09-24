@@ -5139,7 +5139,224 @@ def install_stream_window_for_provider(
     return True
 
 
+
+# ---------------------------------------------------------------------------
+# GS494 bounded partial Webull snapshot recovery
+# ---------------------------------------------------------------------------
+
+PARTIAL_SNAPSHOT_AUTHORITY = (
+    "WEBULL_OFFICIAL_SNAPSHOT_PARTIAL_RETRY"
+)
+
+
+def partial_snapshot_symbols(
+    values: Iterable[str],
+) -> list[str]:
+    return list(
+        dict.fromkeys(
+            str(value or "").strip().upper()
+            for value in values or []
+            if str(value or "").strip()
+        )
+    )
+
+
+def initialize_quotes_with_partial_retry(
+    original: Callable,
+    provider,
+    symbols: Iterable[str],
+    *,
+    batch_size: int,
+):
+    from mide import gs494_partial_snapshot_recovery as gs494
+    from mide.webull_live import webull_snapshot_symbol_supported
+
+    submitted = gs494._symbols(symbols)
+    wanted = [
+        symbol
+        for symbol in submitted
+        if webull_snapshot_symbol_supported(symbol)
+    ]
+
+    first = original(
+        submitted,
+        batch_size=batch_size,
+    )
+    if not isinstance(first, dict):
+        return first
+
+    missing = [
+        symbol
+        for symbol in wanted
+        if symbol not in first
+    ]
+    diagnostics = getattr(
+        provider,
+        "diagnostics",
+        None,
+    )
+    if not isinstance(diagnostics, dict):
+        diagnostics = {}
+        try:
+            provider.diagnostics = diagnostics
+        except Exception:
+            pass
+    stream = diagnostics.setdefault(
+        "webull_stream",
+        {},
+    )
+    trace = {
+        "authority": PARTIAL_SNAPSHOT_AUTHORITY,
+        "requested_symbols": len(wanted),
+        "first_pass_returned": len(
+            [
+                symbol
+                for symbol in wanted
+                if symbol in first
+            ]
+        ),
+        "retry_attempted": bool(missing),
+        "retry_requested": len(missing),
+        "retry_recovered": 0,
+        "unresolved_count": len(missing),
+        "unresolved_symbols": list(missing),
+        "extra_provider_requests_max": (
+            1 if missing else 0
+        ),
+        "stale_price_substitution": False,
+        "trading_authority_changed": False,
+    }
+    stream[
+        "snapshot_partial_retry"
+    ] = trace
+
+    if not missing:
+        return first
+
+    previous_discovered = stream.get(
+        "discovered_symbols"
+    )
+    try:
+        retry = original(
+            missing,
+            batch_size=min(
+                max(1, int(batch_size)),
+                len(missing),
+            ),
+        )
+    except Exception as exc:
+        trace[
+            "retry_error_type"
+        ] = type(exc).__name__
+        trace[
+            "unresolved_count"
+        ] = len(missing)
+        trace[
+            "unresolved_symbols"
+        ] = list(missing)
+        if previous_discovered is not None:
+            stream[
+                "discovered_symbols"
+            ] = previous_discovered
+        return first
+    finally:
+        if previous_discovered is not None:
+            stream[
+                "discovered_symbols"
+            ] = previous_discovered
+
+    retry = (
+        retry
+        if isinstance(retry, dict)
+        else {}
+    )
+    recovered = {
+        symbol: retry[symbol]
+        for symbol in missing
+        if symbol in retry
+    }
+    combined = dict(first)
+    combined.update(recovered)
+    unresolved = [
+        symbol
+        for symbol in missing
+        if symbol not in recovered
+    ]
+    trace.update(
+        retry_recovered=len(recovered),
+        unresolved_count=len(unresolved),
+        unresolved_symbols=unresolved,
+    )
+    return combined
+
+
+def install_partial_snapshot_recovery_for_provider(
+    provider,
+) -> bool:
+    from mide import gs494_partial_snapshot_recovery as gs494
+
+    if provider is None:
+        return False
+    current = getattr(
+        provider,
+        "initialize_quotes",
+        None,
+    )
+    if not callable(current):
+        return False
+    function = getattr(
+        current,
+        "__func__",
+        current,
+    )
+    if (
+        getattr(
+            function,
+            gs494._OWNER,
+            None,
+        )
+        == gs494.REVISION
+        or getattr(
+            current,
+            gs494._OWNER,
+            None,
+        )
+        == gs494.REVISION
+    ):
+        return False
+
+    @wraps(current)
+    def initialize_quotes(
+        symbols,
+        *,
+        batch_size=100,
+    ):
+        return gs494.initialize_quotes_with_partial_retry(
+            current,
+            provider,
+            symbols,
+            batch_size=batch_size,
+        )
+
+    setattr(
+        initialize_quotes,
+        gs494._OWNER,
+        gs494.REVISION,
+    )
+    initialize_quotes._gs494_original = current
+    try:
+        provider.initialize_quotes = (
+            initialize_quotes
+        )
+    except (AttributeError, TypeError):
+        return False
+    return True
+
+
 __all__ = [
+    "install_partial_snapshot_recovery_for_provider",
+    "initialize_quotes_with_partial_retry",
+    "partial_snapshot_symbols",
     "install_stream_window_for_provider",
     "ensure_stream_in_window",
     "webull_tick_window_stream",
