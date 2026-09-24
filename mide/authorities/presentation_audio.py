@@ -255,6 +255,27 @@ def maturation_attention(record: dict) -> dict:
     }
 
 
+def _maturation_attention_compat(record: dict) -> dict:
+    """Honor historical GS457 monkeypatch/warm-runtime seams without recursion."""
+    from mide import gs457_maturation_leader_priority as gs457
+
+    current = getattr(
+        gs457,
+        "maturation_attention",
+        None,
+    )
+    if (
+        callable(current)
+        and not getattr(
+            current,
+            "_walter_next_presentation_facade",
+            False,
+        )
+    ):
+        return current(record)
+    return maturation_attention(record)
+
+
 # ---------------------------------------------------------------------------
 # Authoritative operator ordering
 # ---------------------------------------------------------------------------
@@ -336,7 +357,7 @@ def effective_operator_attention_band(record: dict) -> int:
             else STATE_FIRST_EARLY_WATCH_BAND
         )
 
-    maturation = maturation_attention(record)
+    maturation = _maturation_attention_compat(record)
     if maturation.get("fresh_maturation"):
         return STATE_FIRST_FRESH_MATURATION_BAND
 
@@ -404,7 +425,7 @@ def attention_tiebreak(record: dict) -> tuple[int, float, float]:
             three_gap = 999.0
         return (60 if preflip.get("jet_fuel") else 55, -one_gap, -three_gap)
 
-    maturation = maturation_attention(record)
+    maturation = _maturation_attention_compat(record)
     if maturation.get("fresh_maturation"):
         return (50, 0.0, 0.0)
     if gs459.trajectory_attention(record).get("active"):
@@ -2635,7 +2656,7 @@ def effective_trajectory_attention_band(record: dict) -> int:
     """Insert trajectory ignition below LOOK NOW and above older/developing bands."""
     from mide import gs459_price_trajectory_attention as gs459
 
-    base = int(maturation_attention(record).get("band") or 0)
+    base = int(_maturation_attention_compat(record).get("band") or 0)
     if gs459.trajectory_attention(record).get("active"):
         return max(base, PRICE_TRAJECTORY_BAND)
     return base
