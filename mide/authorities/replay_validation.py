@@ -13,6 +13,7 @@ import re
 import weakref
 from pathlib import Path
 from threading import local
+from types import FunctionType
 from time import monotonic
 from typing import Any, Iterable, Iterator
 
@@ -1452,7 +1453,308 @@ def install_production_30s_replay_validation() -> None:
     install_30s_hard_recorder_health()
 
 
+
+# ---------------------------------------------------------------------------
+# GS427/GS472 active-recorder runtime identity + provider self-heal
+# ---------------------------------------------------------------------------
+
+RECORDER_RUNTIME_AUTHORITY = "OBSERVATIONAL_ONLY"
+RECORDER_RUNTIME_BINDING = (
+    "FlightRecorder.record_scan.__globals__.persist_replayable_scan"
+)
+_RECORDER_RUNTIME_INSTALL_GENERATION = object()
+_RECORDER_RUNTIME_LAST_PROVIDER_REF = None
+
+
+def recorder_runtime_walk_functions(
+    root,
+) -> list[FunctionType]:
+    stack = [root]
+    seen: set[int] = set()
+    found: list[FunctionType] = []
+    while stack:
+        current = stack.pop()
+        if (
+            not isinstance(current, FunctionType)
+            or id(current) in seen
+        ):
+            continue
+        seen.add(id(current))
+        found.append(current)
+
+        wrapped = getattr(current, "__wrapped__", None)
+        if isinstance(wrapped, FunctionType):
+            stack.append(wrapped)
+        for name, value in getattr(
+            current,
+            "__dict__",
+            {},
+        ).items():
+            if (
+                name.endswith("_original")
+                and isinstance(value, FunctionType)
+            ):
+                stack.append(value)
+        for cell in (
+            getattr(current, "__closure__", ()) or ()
+        ):
+            try:
+                value = cell.cell_contents
+            except ValueError:
+                continue
+            if isinstance(value, FunctionType):
+                stack.append(value)
+    return found
+
+
+def active_recorder_globals() -> dict[str, Any]:
+    from mide import flight_recorder
+    from mide import gs427_flight_recorder_latency_hard_bind as gs427
+
+    for function in gs427._walk_functions(
+        flight_recorder.FlightRecorder.record_scan
+    ):
+        globals_dict = getattr(
+            function,
+            "__globals__",
+            {},
+        )
+        if (
+            globals_dict.get("__name__")
+            != "mide.flight_recorder"
+        ):
+            continue
+        if callable(
+            globals_dict.get("persist_replayable_scan")
+        ):
+            return globals_dict
+    return flight_recorder.__dict__
+
+
+def remember_recorder_active_provider(provider) -> None:
+    global _RECORDER_RUNTIME_LAST_PROVIDER_REF
+    try:
+        _RECORDER_RUNTIME_LAST_PROVIDER_REF = (
+            weakref.ref(provider)
+            if provider is not None
+            else None
+        )
+    except TypeError:
+        _RECORDER_RUNTIME_LAST_PROVIDER_REF = None
+
+
+def remembered_recorder_active_provider():
+    reference = _RECORDER_RUNTIME_LAST_PROVIDER_REF
+    if reference is None:
+        return None
+    try:
+        return reference()
+    except TypeError:
+        return None
+
+
+def heal_recorder_active_provider(
+    provider,
+) -> dict[str, Any]:
+    if provider is None:
+        return {}
+    try:
+        from mide import gs470_30s_activation_truth as gs470
+
+        result = gs470._safe_activate(provider)
+    except Exception as exc:
+        result = {
+            "authority": "LIVE_WEBULL_PRODUCTION_30S_ACTIVATION",
+            "runtime_hard_bind": True,
+            "activation_error": type(exc).__name__,
+            "genuine_webull_tick_only": True,
+            "synthetic_30s_bars": False,
+            "entry_authority_changed": False,
+        }
+    diagnostics = getattr(provider, "diagnostics", None)
+    if isinstance(diagnostics, dict):
+        stream = diagnostics.setdefault(
+            "webull_stream",
+            {},
+        )
+        if isinstance(stream, dict):
+            stream[
+                "gs472_recorder_provider_self_heal"
+            ] = {
+                "performed": True,
+                "network_subscription_started_here": False,
+                "next_initialize_owns_stream_start": True,
+                "genuine_webull_tick_only": True,
+                "trading_authority_changed": False,
+            }
+    return result
+
+
+def recorder_provider_health(
+    provider,
+) -> dict[str, Any]:
+    try:
+        from mide import gs470_30s_activation_truth as gs470
+
+        health = dict(
+            gs470.stream_30s_health(provider)
+        )
+    except Exception as exc:
+        health = {
+            "authority": "LIVE_WEBULL_PRODUCTION_30S_ACTIVATION",
+            "provider_present": provider is not None,
+            "health_error": type(exc).__name__,
+            "runtime_hard_bind": True,
+            "genuine_webull_tick_only": True,
+            "synthetic_30s_bars": False,
+        }
+    health[
+        "gs472_recorder_provider_self_heal"
+    ] = True
+    health[
+        "network_subscription_started_here"
+    ] = False
+    return health
+
+
+def recorder_active_provider():
+    from mide import gs425_latency_truth_recorder as gs425
+
+    provider = gs425._provider_from_trace()
+    source = "gs425_stage6_trace"
+    if provider is None:
+        try:
+            from mide.gs386_30s_observational_recorder import (
+                _active_provider as stream_provider,
+            )
+
+            provider = stream_provider()
+        except Exception:
+            provider = None
+        source = (
+            "gs379_active_provider"
+            if provider is not None
+            else "unavailable"
+        )
+
+    if provider is not None:
+        from mide import gs427_flight_recorder_latency_hard_bind as gs427
+
+        gs427._remember_active_provider(provider)
+        gs427._heal_active_provider(provider)
+    return provider, source
+
+
+def recorder_runtime_identity(
+    provider_source: str,
+) -> dict[str, Any]:
+    from mide import gs427_flight_recorder_latency_hard_bind as gs427
+    from mide.version import BUILD
+
+    freshness = BUILD.freshness()
+    provider = gs427._remembered_active_provider()
+    return {
+        "authority": RECORDER_RUNTIME_AUTHORITY,
+        "gs427_hard_bind": True,
+        "gs472_provider_self_heal": True,
+        "binding": RECORDER_RUNTIME_BINDING,
+        "provider_source": provider_source,
+        "version": BUILD.version,
+        "loaded_git_sha": BUILD.loaded_git_sha,
+        "checkout_git_sha": freshness.get(
+            "checkout_git_sha"
+        ),
+        "runtime_stale": bool(
+            freshness.get("runtime_stale")
+        ),
+        "runtime_status": freshness.get("status"),
+        "stream_30s_health": gs427._provider_health(
+            provider
+        ),
+        "trading_logic_changed": False,
+    }
+
+
+def install_recorder_runtime_hard_bind() -> None:
+    from mide import flight_recorder
+    from mide import gs425_latency_truth_recorder as gs425
+    from mide import gs427_flight_recorder_latency_hard_bind as gs427
+
+    globals_dict = gs427._active_recorder_globals()
+    current = globals_dict.get(
+        "persist_replayable_scan"
+    )
+    if not callable(current):
+        raise RuntimeError(
+            "Flight Recorder persistence callable is unavailable"
+        )
+    if (
+        getattr(
+            current,
+            "_gs427_install_generation",
+            None,
+        )
+        is _RECORDER_RUNTIME_INSTALL_GENERATION
+    ):
+        return
+
+    @wraps(current)
+    def persist_with_hard_bound_latency(
+        recorder,
+        scan: dict,
+        records,
+        *args,
+        **kwargs,
+    ):
+        provider, provider_source = (
+            gs427._active_provider()
+        )
+        augmented = dict(scan)
+        augmented[
+            "recorder_runtime_identity"
+        ] = gs427._runtime_identity(provider_source)
+        augmented[
+            "stream_30s_health"
+        ] = gs427._provider_health(provider)
+        augmented["latency_truth"] = (
+            gs425.build_latency_truth(provider)
+        )
+        return current(
+            recorder,
+            augmented,
+            records,
+            *args,
+            **kwargs,
+        )
+
+    persist_with_hard_bound_latency._gs427_flight_recorder_latency_hard_bind = True
+    persist_with_hard_bound_latency._gs472_live_provider_self_heal = True
+    persist_with_hard_bound_latency._gs427_install_generation = (
+        _RECORDER_RUNTIME_INSTALL_GENERATION
+    )
+    persist_with_hard_bound_latency._gs427_original = current
+    globals_dict[
+        "persist_replayable_scan"
+    ] = persist_with_hard_bound_latency
+
+    if globals_dict is flight_recorder.__dict__:
+        flight_recorder.persist_replayable_scan = (
+            persist_with_hard_bound_latency
+        )
+
+
 __all__ = [
+    "install_recorder_runtime_hard_bind",
+    "recorder_runtime_identity",
+    "recorder_active_provider",
+    "recorder_provider_health",
+    "heal_recorder_active_provider",
+    "remembered_recorder_active_provider",
+    "remember_recorder_active_provider",
+    "active_recorder_globals",
+    "recorder_runtime_walk_functions",
+    "RECORDER_RUNTIME_AUTHORITY",
+    "RECORDER_RUNTIME_BINDING",
     "install_production_30s_replay_validation",
     "install_30s_recorder_health",
     "install_30s_hard_recorder_health",
