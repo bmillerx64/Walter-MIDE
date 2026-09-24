@@ -3836,7 +3836,219 @@ def install_production_30s_market_evidence() -> None:
     install_production_30s_scan_context_hard_bind()
 
 
+
+# ---------------------------------------------------------------------------
+# GS475/GS476 session-aware Webull snapshot source-price truth
+# ---------------------------------------------------------------------------
+
+def snapshot_truth_number(value):
+    try:
+        return float(value) if value is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
+def snapshot_session_price_fields(
+    now_et: datetime,
+) -> tuple[str, str, str] | None:
+    from mide import gs475_premarket_snapshot_truth as gs475
+
+    if now_et.tzinfo is None:
+        now_et = now_et.replace(tzinfo=gs475.EASTERN)
+    else:
+        now_et = now_et.astimezone(gs475.EASTERN)
+    clock = now_et.time().replace(tzinfo=None)
+    if time(4, 0) <= clock < time(9, 30):
+        return ("ext_price", "ext_trade_time", "PRE")
+    if time(16, 0) <= clock < time(20, 0):
+        return ("ext_price", "ext_trade_time", "ATH")
+    return None
+
+
+def overlay_snapshot_session_price(
+    row: dict,
+    now_et: datetime,
+) -> dict:
+    from mide import gs475_premarket_snapshot_truth as gs475
+
+    fields = gs475._session_price_fields(now_et)
+    if fields is None:
+        return row
+    price_field, trade_time_field, session = fields
+    session_price = snapshot_truth_number(
+        row.get(price_field)
+    )
+    if session_price is None or session_price <= 0:
+        return row
+    updated = dict(row)
+    updated["_walter_regular_session_price"] = row.get(
+        "price"
+    )
+    updated["price"] = row.get(price_field)
+    session_trade_time = row.get(trade_time_field)
+    if session_trade_time not in (None, ""):
+        updated["last_trade_time"] = session_trade_time
+    updated["_walter_snapshot_price_source"] = price_field
+    updated["_walter_snapshot_session"] = session
+    return updated
+
+
+def apply_snapshot_session_truth(
+    payload,
+    *,
+    now_et: datetime | None = None,
+):
+    from mide import gs475_premarket_snapshot_truth as gs475
+
+    now_et = now_et or gs475._now_eastern()
+    if isinstance(payload, list):
+        return [
+            apply_snapshot_session_truth(
+                item,
+                now_et=now_et,
+            )
+            for item in payload
+        ]
+    if isinstance(payload, tuple):
+        return tuple(
+            apply_snapshot_session_truth(
+                item,
+                now_et=now_et,
+            )
+            for item in payload
+        )
+    if not isinstance(payload, dict):
+        return payload
+
+    updated = {
+        key: apply_snapshot_session_truth(
+            value,
+            now_et=now_et,
+        )
+        for key, value in payload.items()
+    }
+    symbol = (
+        updated.get("symbol")
+        or updated.get("ticker")
+        or updated.get("ticker_symbol")
+    )
+    if symbol:
+        return overlay_snapshot_session_price(
+            updated,
+            now_et,
+        )
+    return updated
+
+
+def extended_snapshot_without_overnight(
+    client,
+    symbols,
+):
+    from mide import webull_sdk
+
+    symbols = list(symbols)
+    if len(symbols) > webull_sdk.MAX_SNAPSHOT_SYMBOLS:
+        raise ValueError(
+            "Webull snapshot requests are limited to 100 symbols"
+        )
+    method = client._operation(
+        ("get_snapshot", "get_stock_snapshot")
+    )
+    response = method(
+        symbols=",".join(symbols),
+        category="US_STOCK",
+        extend_hour_required=True,
+    )
+    client._capture_first_snapshot_response(response)
+    return webull_sdk._plain(response)
+
+
+def inherit_snapshot_truth_wrapper(
+    wrapper,
+    wrapped,
+) -> None:
+    for name, value in getattr(
+        wrapped,
+        "__dict__",
+        {},
+    ).items():
+        if (
+            name.startswith("_gs")
+            and not hasattr(wrapper, name)
+        ):
+            setattr(wrapper, name, value)
+
+
+def install_snapshot_session_truth() -> None:
+    from mide import gs475_premarket_snapshot_truth as gs475
+    from mide import webull_sdk
+
+    current = webull_sdk.WebullSDKClient.stock_snapshot
+    if getattr(current, gs475.OWNER_ATTR, False):
+        return
+
+    base = getattr(current, "_gs475_original", current)
+
+    def stock_snapshot_with_session_truth(
+        self,
+        symbols,
+        *,
+        extended_hours: bool = False,
+    ):
+        now_et = gs475._now_eastern()
+        fields = gs475._session_price_fields(now_et)
+        request_extended = fields is not None
+
+        if request_extended:
+            payload = (
+                gs475._extended_snapshot_without_overnight(
+                    self,
+                    symbols,
+                )
+            )
+        else:
+            payload = base(
+                self,
+                symbols,
+                extended_hours=False,
+            )
+
+        result = gs475.apply_snapshot_session_truth(
+            payload,
+            now_et=now_et,
+        )
+        self.last_snapshot_extended_requested = (
+            request_extended
+        )
+        self.last_snapshot_overnight_requested = False
+        self.last_snapshot_session_price_field = (
+            fields[0] if fields else "price"
+        )
+        return result
+
+    inherit_snapshot_truth_wrapper(
+        stock_snapshot_with_session_truth,
+        current,
+    )
+    stock_snapshot_with_session_truth._gs475_premarket_snapshot_truth = True
+    stock_snapshot_with_session_truth._gs476_night_entitlement_safe = True
+    stock_snapshot_with_session_truth._gs475_original = base
+    setattr(
+        stock_snapshot_with_session_truth,
+        gs475.OWNER_ATTR,
+        True,
+    )
+    webull_sdk.WebullSDKClient.stock_snapshot = (
+        stock_snapshot_with_session_truth
+    )
+
+
 __all__ = [
+    "install_snapshot_session_truth",
+    "extended_snapshot_without_overnight",
+    "apply_snapshot_session_truth",
+    "overlay_snapshot_session_price",
+    "snapshot_session_price_fields",
     "install_live_30s_stream_continuity",
     "ensure_live_30s_stream_continuity",
     "reassert_active_30s_provider",
