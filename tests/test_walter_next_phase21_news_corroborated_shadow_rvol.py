@@ -42,7 +42,8 @@ def test_gs540_source_is_compatibility_facade_not_duplicate_implementation():
         encoding="utf-8"
     )
 
-    assert "from mide.authorities import discovery_news as _news" in source
+    assert "def _news(" in source
+    assert "from mide.authorities import discovery_news as _news" not in source
     assert "DISCOVERY_IDENTITY_ONLY_NEWS_CORROBORATED_SHADOW_RVOL" in source
     assert "def shadow_rvol_rows(" not in source
     assert "def eligible_shadow_rows(" not in source
