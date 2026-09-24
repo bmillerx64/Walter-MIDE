@@ -25,19 +25,10 @@ def _thesis():
     return thesis_state
 
 
-def mission_ranked_records(
+def _legacy_mission_ranked_records(
     records: Iterable[dict],
 ) -> list[dict]:
-    authority = _thesis()
-    current = getattr(
-        authority,
-        "__dict__",
-        {},
-    ).get("mission_ranked_records")
-    if callable(current):
-        return current(records)
-
-    # Warm-generation fallback only. Canonical current ownership is Thesis / State.
+    """Warm-generation fallback for retained pre-Phase-49 Thesis / State."""
     from .trader_priority import trader_priority_sort_key
 
     return sorted(
@@ -48,6 +39,16 @@ def mission_ranked_records(
 
 
 def __getattr__(name: str):
+    if name == "mission_ranked_records":
+        authority = _thesis()
+        current = getattr(
+            authority,
+            "__dict__",
+            {},
+        ).get("mission_ranked_records")
+        if callable(current):
+            return current
+        return _legacy_mission_ranked_records
     try:
         return getattr(_thesis(), name)
     except AttributeError:
