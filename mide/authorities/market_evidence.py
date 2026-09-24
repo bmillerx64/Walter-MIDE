@@ -2558,6 +2558,16 @@ def operator_fresh_st_vwap_evidence(
     result["st_vwap_cross_multi_timeframe"] = len(recent) >= 2
     result["st_vwap_cross_age_seconds"] = round(min(ages), 1) if ages else None
     result["st_vwap_cross_signature"] = "|".join(signatures) if signatures else None
+    result["crossed_vwap_and_supertrend"] = bool(recent)
+
+    one = events.get("1m") or {}
+    flip_age = progression_number(one, "bullish_flip_age_seconds")
+    result["supertrend_flip_age_seconds"] = (
+        round(flip_age, 1) if flip_age is not None else None
+    )
+    result["supertrend_flipped_last_10m"] = bool(
+        flip_age is not None and 0.0 <= flip_age <= 10 * 60.0
+    )
     result["maturation_freshness_authority"] = GS548_MATURATION_FRESHNESS_AUTHORITY
     return result
 
