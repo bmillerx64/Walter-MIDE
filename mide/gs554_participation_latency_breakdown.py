@@ -65,6 +65,9 @@ def record_breakdown(
         hotspots = diagnostics.get("gs557_analyze_candidates_hotspots")
         if isinstance(hotspots, dict):
             payload["analyze_candidates_hotspots"] = deepcopy(hotspots)
+        shared_compute = diagnostics.get("gs558_shared_gs378_timeframe_compute")
+        if isinstance(shared_compute, dict):
+            payload["gs378_shared_compute"] = deepcopy(shared_compute)
         diagnostics[DIAGNOSTIC_KEY] = deepcopy(payload)
     return payload
 
