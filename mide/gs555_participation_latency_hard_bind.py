@@ -33,8 +33,9 @@ def snapshot(provider, provider_source: str) -> dict[str, Any]:
     )
     if not isinstance(payload, dict):
         payload = {}
+    available = bool(payload)
     payload.setdefault("authority", AUTHORITY)
-    payload["available"] = bool(payload)
+    payload["available"] = available
     payload["provider_source"] = provider_source
     payload["gs555_hard_bind"] = True
     payload["extra_provider_calls"] = 0
