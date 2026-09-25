@@ -129,3 +129,12 @@ def test_gs558_scope_is_local_compute_reuse_only():
         ".history(",
     )
     assert not any(token in source for token in forbidden)
+
+
+def test_gs558_gs554_payload_carries_shared_compute_diagnostics():
+    source = (
+        ROOT / "mide/gs554_participation_latency_breakdown.py"
+    ).read_text(encoding="utf-8")
+
+    assert "gs558_shared_gs378_timeframe_compute" in source
+    assert '"gs378_shared_compute"' in source
