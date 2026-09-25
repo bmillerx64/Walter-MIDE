@@ -1861,14 +1861,24 @@ def native_market_event_audio_phrase(
     # A currently-hot mover whose analyzed source bar freezes deserves a second
     # attention cue because that is consistent with a trading pause. Keep the
     # language explicitly probabilistic; Webull Desktop remains the status truth.
-    pause_choices: list[tuple[float, dict, dict, float]] = []
+    pause_choices: list[tuple[float, dict, dict, float | None]] = []
     for event in current_events:
         symbol = str(event.get("symbol") or "").strip().upper()
         record = by_symbol.get(symbol)
         source_age = _native_market_event_source_age(record)
+        observation = _native_market_event_observations.get(symbol) or {}
+        pause_state = str(observation.get("pause_state") or "")
+        stale_source = bool(
+            source_age is not None
+            and source_age > MAX_OPERATOR_BAR_AGE_SECONDS
+        )
+        repeated_static_native = bool(
+            pause_state
+            and int(observation.get("static_scans") or 0) >= 2
+        )
+        explicit_halt = bool((record or {}).get("halted"))
         if (
-            source_age is None
-            or source_age <= MAX_OPERATOR_BAR_AGE_SECONDS
+            not (stale_source or repeated_static_native or explicit_halt)
             or (symbol, "possible_pause") in _native_market_event_audio_seen
         ):
             continue
@@ -1893,11 +1903,14 @@ def native_market_event_audio_phrase(
         )
         observation["last_alert_price"] = float(event.get("price") or 0.0)
         observation["last_alert_pct"] = float(event.get("pct_change") or 0.0)
+        if source_age is not None and source_age > MAX_OPERATOR_BAR_AGE_SECONDS:
+            evidence = f"no fresh analyzed source bar for {source_age:.0f} seconds"
+        else:
+            evidence = "native price and volume have stopped changing across repeated scans"
         return (
-            f"{symbol}. CHECK TRADING STATUS. LOOK NOW. This current Webull mover "
-            f"has no fresh analyzed source bar for {source_age:.0f} seconds. "
-            "Possible trading pause or halt. Do not anticipate a reopen; verify in "
-            "Webull and reassess fresh price, VWAP, trend, and volume after prints resume."
+            f"{symbol}. CHECK TRADING STATUS. LOOK NOW. This current Webull mover has "
+            f"{evidence}. Possible trading pause or halt. Do not anticipate a reopen; "
+            "verify in Webull and reassess fresh price, VWAP, trend, and volume after prints resume."
         )
 
     choices: list[tuple[tuple[int, float, float], dict, str]] = []
