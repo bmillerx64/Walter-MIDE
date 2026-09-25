@@ -68,6 +68,9 @@ def record_breakdown(
         shared_compute = diagnostics.get("gs558_shared_gs378_timeframe_compute")
         if isinstance(shared_compute, dict):
             payload["gs378_shared_compute"] = deepcopy(shared_compute)
+        supertrend_reuse = diagnostics.get("gs559_scan_local_supertrend_reuse")
+        if isinstance(supertrend_reuse, dict):
+            payload["supertrend_reuse"] = deepcopy(supertrend_reuse)
         diagnostics[DIAGNOSTIC_KEY] = deepcopy(payload)
     return payload
 
