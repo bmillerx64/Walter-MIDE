@@ -57,6 +57,7 @@ def ensure_late_runtime_installers() -> None:
     from .gs485_retained_news_transport_hard_bind import install as install_gs485
     from .gs486_top_level_transport_truth import install as install_gs486
     from .gs483_resource_containment import install as install_gs483
+    from .gs563_native_fast_mover_attention import install as install_gs563
 
     install_late_chain()
     # GS453 is deliberately outside the established GS392->GS404 presentation chain.
@@ -176,6 +177,11 @@ def ensure_late_runtime_installers() -> None:
     # distinguishes the actual outer renderer from a stale wrapper that merely copied
     # GS414's historical marker during a warm Streamlit deployment.
     install_final_order()
+    # GS563 sits outside the completed presentation/audio chain so its native
+    # Webull event cue can defer to already-established LOOK NOW / Entry Ready
+    # audio while still surfacing a fast mover that never reached qualification.
+    # It consumes only the native radar already fetched by discovery.
+    install_gs563()
 
 
 def log_startup(component: str, message: str = "starting") -> None:
