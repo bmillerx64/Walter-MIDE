@@ -343,6 +343,18 @@ except Exception as exc:
         type(exc).__name__,
     )
 
+# GS559: share mathematically identical SuperTrend work across the base analyzer,
+# timeframe alignment, and GS378 only for one analyze_candidates call.
+try:
+    importlib.import_module(
+        "mide.gs559_scan_local_supertrend_reuse"
+    ).install()
+except Exception as exc:
+    logging.getLogger(__name__).warning(
+        "GS559 scan-local SuperTrend reuse unavailable error_type=%s",
+        type(exc).__name__,
+    )
+
 
 WEBULL_STOCK_CACHE_PATH = Path(__file__).resolve().parent / "cache" / "webull_stock_data.json"
 WEBULL_CACHE_WARNING_TEXT = "Displaying Cached Data due to API Timeout"
