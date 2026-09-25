@@ -65,8 +65,18 @@ STRATEGY_LEADER_MAX_DAY_GAINER_RANK = 10
 STRATEGY_LEADER_PRICE_CEILING = 5.0
 STRATEGY_LEADER_LIMIT = 5
 
+# GS563 reuses the established strategy-leader gain/price boundaries for the
+# faster native five-minute-movers feed. This is operator attention only: a
+# native fast mover can be surfaced even when free-float/reference data keeps it
+# out of the trade-qualified pipeline.
+FAST_MOVER_MIN_GAIN_PCT = STRATEGY_LEADER_MIN_GAIN_PCT
+FAST_MOVER_MAX_RANK = 10
+FAST_MOVER_PRICE_CEILING = STRATEGY_LEADER_PRICE_CEILING
+FAST_MOVER_LIMIT = 5
+
 _LATEST_MARKET_EVENTS: list[dict] = []
 _market_event_liquidity_stage_active = False
+_native_fast_mover_stage_active = False
 _MARKET_EVENT_CAPTURE_OWNER = "_walter_gs334_market_event_capture"
 _STRATEGY_LEADER_CAPTURE_OWNER = "_walter_gs377_strategy_leader_awareness"
 
@@ -169,20 +179,31 @@ def market_event_rows(
     threshold: float = EXTREME_MOVER_PCT,
     limit: int = MARKET_EVENT_LIMIT,
 ) -> list[dict]:
-    """Return the historical GS334 row contract plus activated GS340 evidence."""
+    """Return native awareness events without changing candidate/trade authority."""
     rows = list(native_rows or [])
     baseline = base_market_event_rows(rows, threshold=threshold, limit=limit)
-    if not _market_event_liquidity_stage_active:
+    if not _market_event_liquidity_stage_active and not _native_fast_mover_stage_active:
         return baseline
 
-    extras = high_liquidity_trend_rows(rows)
-    seen = {str(event.get("symbol") or "").upper() for event in baseline}
     combined = list(baseline)
-    for event in extras:
-        symbol = str(event.get("symbol") or "").upper()
-        if symbol not in seen:
-            combined.append(event)
-            seen.add(symbol)
+    seen = {
+        str(event.get("symbol") or "").strip().upper()
+        for event in combined
+        if str(event.get("symbol") or "").strip()
+    }
+    if _market_event_liquidity_stage_active:
+        for event in high_liquidity_trend_rows(rows):
+            symbol = str(event.get("symbol") or "").strip().upper()
+            if symbol and symbol not in seen:
+                combined.append(event)
+                seen.add(symbol)
+
+    if _native_fast_mover_stage_active:
+        for event in fast_mover_rows(rows):
+            symbol = str(event.get("symbol") or "").strip().upper()
+            if symbol and symbol not in seen:
+                combined.append(event)
+                seen.add(symbol)
     return combined
 
 
@@ -244,10 +265,25 @@ def install_market_event_capture() -> None:
         diagnostics = getattr(self, "diagnostics", None)
         if isinstance(diagnostics, dict):
             diagnostics["market_event_lane"] = {
-                "source": "Webull native DAY_GAINERS",
+                "source": (
+                    "Webull native DAY_GAINERS + FIVE_MINUTE_MOVERS"
+                    if _native_fast_mover_stage_active
+                    else "Webull native DAY_GAINERS"
+                ),
                 "threshold_pct": EXTREME_MOVER_PCT,
                 "attention_only": True,
                 "events": [dict(event) for event in events],
+                "fast_mover_attention": (
+                    {
+                        "active": True,
+                        "min_gain_pct": FAST_MOVER_MIN_GAIN_PCT,
+                        "max_five_minute_rank": FAST_MOVER_MAX_RANK,
+                        "price_ceiling": FAST_MOVER_PRICE_CEILING,
+                        "entry_authority_changed": False,
+                    }
+                    if _native_fast_mover_stage_active
+                    else {"active": False}
+                ),
             }
         return assets
 
@@ -329,6 +365,95 @@ def strategy_leader_rows(
     leaders.sort(key=lambda row: (row["rank"], -row["pct_change"], row["symbol"]))
     return leaders[: max(0, int(limit))]
 
+
+
+def fast_mover_rows(
+    native_rows: Iterable[dict] | None,
+    *,
+    min_gain_pct: float = FAST_MOVER_MIN_GAIN_PCT,
+    max_rank: int = FAST_MOVER_MAX_RANK,
+    price_ceiling: float = FAST_MOVER_PRICE_CEILING,
+    limit: int = FAST_MOVER_LIMIT,
+) -> list[dict]:
+    """Return current native five-minute movers that deserve chart attention.
+
+    GS563 deliberately uses already-fetched Webull radar rows and the same 15%
+    move / $5 strategy context already accepted by GS377. Free-float, readiness,
+    anti-chase and entry authority are not consulted or changed here.
+    """
+    movers: list[dict] = []
+    for source in native_rows or []:
+        symbol = str(source.get("symbol") or "").strip().upper()
+        sources = {str(value or "") for value in source.get("sources") or []}
+        if not symbol or "five_minute_movers" not in sources:
+            continue
+
+        pct_change = _market_event_number(source.get("change_ratio"))
+        price = _market_event_number(source.get("price"))
+        volume = _market_event_number(source.get("volume"))
+        ranks = source.get("ranks") or {}
+        rank = (
+            _market_event_number(
+                ranks.get("five_minute_movers"),
+                default=999.0,
+            )
+            or 999.0
+        )
+        if pct_change is None or pct_change < float(min_gain_pct):
+            continue
+        if rank > int(max_rank):
+            continue
+
+        prior_close = implied_previous_close(price, pct_change)
+        currently_in_range = (
+            price is not None
+            and 0 < price <= float(price_ceiling)
+        )
+        launched_from_range = (
+            prior_close is not None
+            and 0 < prior_close <= float(price_ceiling)
+        )
+        if not (currently_in_range or launched_from_range):
+            continue
+
+        movers.append(
+            {
+                "symbol": symbol,
+                "pct_change": round(float(pct_change), 2),
+                "rank": int(rank),
+                "price": price,
+                "volume": volume,
+                "sources": sorted(sources),
+                "attention_only": True,
+                "event_type": "five_minute_fast_mover",
+                "source_feed": "five_minute_movers",
+                "strategy_price_reference": (
+                    "current_price"
+                    if currently_in_range
+                    else "implied_previous_close"
+                ),
+                "implied_previous_close": (
+                    round(prior_close, 4)
+                    if prior_close is not None
+                    else None
+                ),
+            }
+        )
+
+    movers.sort(
+        key=lambda row: (
+            row["rank"],
+            -row["pct_change"],
+            row["symbol"],
+        )
+    )
+    return movers[: max(0, int(limit))]
+
+
+def activate_native_fast_mover_attention() -> None:
+    """Activate GS563's already-fetched five-minute-mover awareness lane."""
+    global _native_fast_mover_stage_active
+    _native_fast_mover_stage_active = True
 
 def merge_strategy_leader_events(
     baseline_events: Iterable[dict] | None,
