@@ -60,6 +60,34 @@ def test_fast_mover_above_five_is_kept_when_it_launched_from_strategy_range():
     assert events[0]["implied_previous_close"] < 5.0
 
 
+def test_extreme_event_keeps_fast_mover_provenance_when_feeds_overlap(
+    monkeypatch,
+):
+    monkeypatch.setattr(
+        market_evidence,
+        "_native_fast_mover_stage_active",
+        True,
+    )
+    rows = [
+        _native(
+            "MSGY",
+            202.03,
+            1,
+            price=5.95,
+            volume=23_270_000,
+            sources=["day_gainers", "five_minute_movers"],
+        )
+    ]
+    rows[0]["ranks"]["day_gainers"] = 1
+
+    events = market_evidence.market_event_rows(rows)
+    assert len(events) == 1
+    assert events[0]["symbol"] == "MSGY"
+    assert events[0]["pct_change"] == 202.03
+    assert events[0]["native_fast_mover"] is True
+    assert events[0]["five_minute_rank"] == 1
+
+
 def test_unresolved_day_gainer_keeps_reference_data_awareness():
     row = {
         "symbol": "RDGT",
@@ -120,6 +148,7 @@ def test_hot_mover_with_stale_source_print_gets_possible_pause_not_fake_halt():
         "rank": 1,
         "price": 5.95,
         "attention_only": True,
+        "native_fast_mover": True,
     }
     record = {
         "symbol": "MSGY",
