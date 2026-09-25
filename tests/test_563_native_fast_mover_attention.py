@@ -247,6 +247,7 @@ def test_lzmh_style_midday_thin_tape_is_not_operator_consideration():
         "dollar_volume": 129_059.4,
         "rvol_proxy": 0.34,
         "volume_pace_diagnostics": {"passed": False},
+        "volume_session_diagnostics": {"current_session": "Midday"},
     }
 
     diagnostic = operator_liquidity_diagnostics(record)
@@ -268,6 +269,7 @@ def test_rdgt_style_low_absolute_volume_can_stay_visible_with_exceptional_rvol()
         "dollar_volume": 177_568,
         "rvol_proxy": 8.86,
         "volume_pace_diagnostics": {"passed": False},
+        "volume_session_diagnostics": {"current_session": "Midday"},
     }
 
     diagnostic = operator_liquidity_diagnostics(record)
@@ -275,4 +277,17 @@ def test_rdgt_style_low_absolute_volume_can_stay_visible_with_exceptional_rvol()
     assert diagnostic["session"] == "Midday"
     assert diagnostic["actual_volume"] < diagnostic["expected_minimum_volume"]
     assert diagnostic["actual_rvol"] > diagnostic["expected_minimum_rvol"]
+    assert diagnostic["passed"] is True
+
+
+def test_liquidity_floor_ignores_noncanonical_ui_fixture_without_session_diagnostics():
+    record = {
+        "symbol": "LEGACY",
+        "candidate_status": "Watching",
+        "dollar_volume": 1_000_000,
+    }
+
+    diagnostic = operator_liquidity_diagnostics(record)
+
+    assert diagnostic["applicable"] is False
     assert diagnostic["passed"] is True
