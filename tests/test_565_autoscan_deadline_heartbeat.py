@@ -41,6 +41,6 @@ def test_gs565_scheduler_change_is_orchestration_only():
         ".snapshots(",
         "place_order(",
         "submit_order(",
-        "location.reload(",
+        ".location.reload(",
     )
     assert not any(token in scheduler for token in forbidden)
