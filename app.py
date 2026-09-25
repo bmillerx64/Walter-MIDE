@@ -318,6 +318,19 @@ except Exception as exc:
         type(exc).__name__,
     )
 
+# GS557: observational hotspot attribution inside the existing Stage-6 analyzer.
+# It wraps the current discovery analyzer after the late installer chain has converged
+# and contributes timing only; inputs, outputs and provider-call count are unchanged.
+try:
+    importlib.import_module(
+        "mide.gs557_analyze_candidates_hotspots"
+    ).install()
+except Exception as exc:
+    logging.getLogger(__name__).warning(
+        "GS557 analyzer hotspot timing unavailable error_type=%s",
+        type(exc).__name__,
+    )
+
 
 WEBULL_STOCK_CACHE_PATH = Path(__file__).resolve().parent / "cache" / "webull_stock_data.json"
 WEBULL_CACHE_WARNING_TEXT = "Displaying Cached Data due to API Timeout"

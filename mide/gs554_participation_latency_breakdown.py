@@ -62,6 +62,9 @@ def record_breakdown(
     }
     diagnostics = getattr(provider, "diagnostics", None)
     if isinstance(diagnostics, dict):
+        hotspots = diagnostics.get("gs557_analyze_candidates_hotspots")
+        if isinstance(hotspots, dict):
+            payload["analyze_candidates_hotspots"] = deepcopy(hotspots)
         diagnostics[DIAGNOSTIC_KEY] = deepcopy(payload)
     return payload
 
