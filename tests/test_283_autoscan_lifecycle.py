@@ -92,8 +92,7 @@ def test_autoscan_uses_session_preserving_streamlit_fragment_not_browser_reload(
     function_end = source.index("\ndef _run_live_pipeline(", function_start)
     scheduler = source[function_start:function_end]
 
-    assert "scheduler_poll_seconds = min(max(1, int(interval)), 5)" in scheduler
-    assert "@st.fragment(run_every=timedelta(seconds=scheduler_poll_seconds))" in scheduler
+    assert "@st.fragment(run_every=timedelta(seconds=interval))" in scheduler
     assert 'st.rerun(scope="app")' in scheduler
     # Guard executable browser reload calls, not explanatory comments/docstrings.
     assert ".location.reload(" not in scheduler
@@ -179,5 +178,5 @@ def test_live_clock_fragment_queues_scan_at_start_to_start_deadline():
     assert "interval = autoscan_wait_seconds(" in scheduler
     assert "autoscan_request_due(" in scheduler
     assert "st.session_state[SCAN_REQUESTED_KEY] = True" in scheduler
-    assert "scheduler_poll_seconds = min(max(1, int(interval)), 5)" in scheduler
-    assert "_walter_live_scan_fragment_tick" not in scheduler
+    assert "tick_key = \"_walter_live_scan_fragment_tick\"" in scheduler
+    assert "interval * 0.9" in scheduler
