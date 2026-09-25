@@ -1,3 +1,5 @@
+from pathlib import Path
+
 from mide.authorities import market_evidence, presentation_audio
 from mide.gs375_operator_awareness import reference_data_blocked_mover
 from mide.webull_live import WebullOpenAPIClient
@@ -180,3 +182,27 @@ def test_no_status_field_does_not_manufacture_halt_truth():
 
     assert "halted" not in snapshot
     assert "trading_status" not in snapshot
+
+
+def test_gs563_late_install_runs_after_established_final_audio_chain():
+    source = Path("mide/startup.py").read_text(encoding="utf-8")
+    body = source.split("def ensure_late_runtime_installers() -> None:", 1)[1]
+    assert body.index("install_final_order()") < body.index("install_gs563()")
+
+
+def test_gs563_facade_scope_lock_adds_no_provider_or_trade_authority():
+    source = Path("mide/gs563_native_fast_mover_attention.py").read_text(
+        encoding="utf-8"
+    )
+    forbidden = (
+        ".bars(",
+        ".get_bars(",
+        ".history(",
+        "qualified_for_entry =",
+        "qualified_for_alert =",
+        "qualified_for_watch =",
+        "place_order(",
+        "submit_order(",
+        "execute_order(",
+    )
+    assert not any(token in source for token in forbidden)
