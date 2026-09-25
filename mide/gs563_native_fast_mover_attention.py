@@ -27,8 +27,7 @@ from __future__ import annotations
 from datetime import datetime
 
 
-_LIQUIDITY_REASON_OWNER = "_walter_gs563_operator_liquidity_reason_owner"
-_LIQUIDITY_VISIBLE_OWNER = "_walter_gs563_operator_liquidity_visible_owner"
+_LIQUIDITY_ACTIONABLE_OWNER = "_walter_gs564_operator_liquidity_actionable_owner"
 
 
 def _scan_time(record: dict) -> datetime | None:
@@ -120,42 +119,30 @@ def operator_liquidity_diagnostics(record: dict) -> dict:
 
 
 def install_operator_liquidity_floor() -> None:
-    """Keep thin names out of the live consideration/audio surface."""
-    from . import gs373_operator_visibility_freshness as freshness
+    """Filter canonical thin-tape records at the live operator boundary only."""
+    from . import ui
 
-    current_reason = freshness.operator_visibility_reason
-    if not getattr(current_reason, _LIQUIDITY_REASON_OWNER, False):
-        original_reason = current_reason
+    current = ui.actionable_candidate_records
+    if getattr(current, _LIQUIDITY_ACTIONABLE_OWNER, False):
+        return
 
-        def operator_visibility_reason(record: dict) -> str:
-            reason = original_reason(record)
-            if reason:
-                return reason
+    def actionable_candidate_records(records: list[dict]) -> list[dict]:
+        established = current(records)
+        output = []
+        for record in established:
             diagnostic = operator_liquidity_diagnostics(record)
             if diagnostic.get("applicable") and not diagnostic.get("passed"):
-                return str(diagnostic.get("reason") or "operator liquidity below floor")
-            return ""
+                continue
+            output.append(record)
+        return output
 
-        for name, value in getattr(original_reason, "__dict__", {}).items():
-            if name.startswith("_gs") and not hasattr(operator_visibility_reason, name):
-                setattr(operator_visibility_reason, name, value)
-        operator_visibility_reason._gs563_operator_liquidity_floor = True
-        operator_visibility_reason._gs563_original = original_reason
-        setattr(operator_visibility_reason, _LIQUIDITY_REASON_OWNER, True)
-        freshness.operator_visibility_reason = operator_visibility_reason
-
-    current_visible = freshness.operator_visible
-    if not getattr(current_visible, _LIQUIDITY_VISIBLE_OWNER, False):
-        def operator_visible(record: dict) -> bool:
-            return not freshness.operator_visibility_reason(record)
-
-        for name, value in getattr(current_visible, "__dict__", {}).items():
-            if name.startswith("_gs") and not hasattr(operator_visible, name):
-                setattr(operator_visible, name, value)
-        operator_visible._gs563_operator_liquidity_floor = True
-        operator_visible._gs563_original = current_visible
-        setattr(operator_visible, _LIQUIDITY_VISIBLE_OWNER, True)
-        freshness.operator_visible = operator_visible
+    for name, value in getattr(current, "__dict__", {}).items():
+        if name.startswith("_gs") and not hasattr(actionable_candidate_records, name):
+            setattr(actionable_candidate_records, name, value)
+    actionable_candidate_records._gs564_operator_liquidity_floor = True
+    actionable_candidate_records._gs564_original = current
+    setattr(actionable_candidate_records, _LIQUIDITY_ACTIONABLE_OWNER, True)
+    ui.actionable_candidate_records = actionable_candidate_records
 
 
 def install() -> None:
