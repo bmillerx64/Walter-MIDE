@@ -15,8 +15,11 @@ rows themselves:
 - discovery_history
 - reevaluation_history
 
-The exact point-in-time Flight Recorder is retained in full. A manifest records the
-source byte sizes, row count, stripped fields and compact archive size.
+For routine ChatGPT review, the export is deliberately bounded to the most recent
+two hours of Candidate History and Flight Recorder evidence so the browser payload
+does not grow without limit. Full Session Backup remains the complete archival source.
+A manifest records the source byte sizes, review cutoff, retained/omitted row counts,
+stripped fields and compact archive size.
 
 This is export/forensics only. No scanner, provider, score, rank, qualification, alert,
 cadence, execution or order behavior changes.
