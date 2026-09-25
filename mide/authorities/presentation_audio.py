@@ -1638,7 +1638,10 @@ def market_event_markup(
 
 
 _native_market_event_audio_seen: set[tuple[str, str]] = set()
+_native_market_event_observations: dict[str, dict[str, float | int | str | bool | None]] = {}
 _NATIVE_MARKET_EVENT_AUDIO_OWNER = "_walter_gs563_native_market_event_audio_owner"
+_NATIVE_MATERIAL_ADVANCE_RATIO = 1.20
+_NATIVE_MATERIAL_ADVANCE_PCT_POINTS = 25.0
 
 
 def _native_market_event_type(event: dict) -> str:
@@ -1672,8 +1675,9 @@ def _native_market_event_source_age(record: dict | None) -> float | None:
 
 
 def reset_native_market_event_audio_state() -> None:
-    """Reset only GS563's per-process native-event audio latch."""
+    """Reset only native market-event audio latches/observations."""
     _native_market_event_audio_seen.clear()
+    _native_market_event_observations.clear()
 
 
 def native_market_event_audio_phrase(
@@ -1692,6 +1696,12 @@ def native_market_event_audio_phrase(
         MAX_OPERATOR_BAR_AGE_SECONDS,
     )
 
+    eligible_types = {
+        "extreme_mover",
+        "five_minute_fast_mover",
+        "high_liquidity_trend",
+        "strategy_leader",
+    }
     current_events = [
         dict(event)
         for event in (
@@ -1703,8 +1713,7 @@ def native_market_event_audio_phrase(
         and str(event.get("symbol") or "").strip()
         and (
             event.get("native_fast_mover") is True
-            or str(event.get("event_type") or "")
-            == "five_minute_fast_mover"
+            or str(event.get("event_type") or "") in eligible_types
         )
     ]
     current_symbols = {
@@ -1727,6 +1736,127 @@ def native_market_event_audio_phrase(
         if isinstance(record, dict)
         and str(record.get("symbol") or "").strip()
     }
+
+    # GS566: observe the already-fetched native event itself so halt/pause/resume
+    # awareness still works when a mover is outside the trade-qualified record set
+    # (for example after price runs above Walter's normal ceiling).
+    resumed_choices: list[tuple[float, dict, str]] = []
+    advance_choices: list[tuple[float, dict, float]] = []
+    for event in current_events:
+        symbol = str(event.get("symbol") or "").strip().upper()
+        record = by_symbol.get(symbol) or {}
+        try:
+            price = float(event.get("price") or 0.0)
+        except (TypeError, ValueError):
+            price = 0.0
+        try:
+            volume = float(event.get("volume") or 0.0)
+        except (TypeError, ValueError):
+            volume = 0.0
+        try:
+            pct_change = float(event.get("pct_change") or 0.0)
+        except (TypeError, ValueError):
+            pct_change = 0.0
+
+        previous = dict(_native_market_event_observations.get(symbol) or {})
+        previous_price = float(previous.get("price") or 0.0)
+        previous_volume = float(previous.get("volume") or 0.0)
+        static_scans = int(previous.get("static_scans") or 0)
+        explicit_halt = bool(record.get("halted"))
+        source_age = _native_market_event_source_age(record)
+
+        changed = bool(
+            previous
+            and (
+                (price > 0 and previous_price > 0 and price != previous_price)
+                or (volume > 0 and previous_volume > 0 and volume > previous_volume)
+            )
+        )
+        static_now = bool(
+            previous
+            and price > 0
+            and previous_price > 0
+            and price == previous_price
+            and volume > 0
+            and previous_volume > 0
+            and volume == previous_volume
+        )
+        static_scans = static_scans + 1 if static_now else 0
+
+        pause_state = str(previous.get("pause_state") or "")
+        if explicit_halt:
+            pause_state = "confirmed"
+        elif source_age is not None and source_age > MAX_OPERATOR_BAR_AGE_SECONDS:
+            pause_state = pause_state or "possible"
+        elif static_scans >= 2 and pct_change >= 20.0:
+            pause_state = pause_state or "possible"
+
+        if previous.get("pause_state") and changed and not explicit_halt:
+            resumed_choices.append(
+                (
+                    pct_change,
+                    event,
+                    str(previous.get("pause_state") or "possible"),
+                )
+            )
+            pause_state = ""
+
+        last_alert_price = float(previous.get("last_alert_price") or 0.0)
+        last_alert_pct = float(previous.get("last_alert_pct") or 0.0)
+        if (
+            last_alert_price > 0
+            and price >= last_alert_price * _NATIVE_MATERIAL_ADVANCE_RATIO
+        ) or (
+            last_alert_pct > 0
+            and pct_change >= last_alert_pct + _NATIVE_MATERIAL_ADVANCE_PCT_POINTS
+        ):
+            advance_choices.append((pct_change, event, last_alert_price))
+
+        _native_market_event_observations[symbol] = {
+            "price": price,
+            "volume": volume,
+            "pct_change": pct_change,
+            "static_scans": static_scans,
+            "pause_state": pause_state,
+            "last_alert_price": last_alert_price,
+            "last_alert_pct": last_alert_pct,
+        }
+
+    if resumed_choices:
+        _pct, event, prior_pause = max(resumed_choices, key=lambda item: item[0])
+        symbol = str(event.get("symbol") or "").strip().upper()
+        try:
+            price = float(event.get("price") or 0.0)
+        except (TypeError, ValueError):
+            price = 0.0
+        observation = _native_market_event_observations.setdefault(symbol, {})
+        observation["last_alert_price"] = price
+        observation["last_alert_pct"] = float(event.get("pct_change") or 0.0)
+        if prior_pause == "confirmed":
+            return (
+                f"{symbol}. HALT RELEASE. LOOK NOW. Fresh prints have resumed. "
+                "Reassess price, VWAP, SuperTrend and volume now. Do not chase the first print."
+            )
+        return (
+            f"{symbol}. FRESH PRINTS RESUMED. LOOK NOW. A prior possible trading pause "
+            "has ended. Reassess price, VWAP, SuperTrend and volume now. Do not chase."
+        )
+
+    if advance_choices:
+        _pct, event, previous_alert_price = max(
+            advance_choices,
+            key=lambda item: item[0],
+        )
+        symbol = str(event.get("symbol") or "").strip().upper()
+        price = float(event.get("price") or 0.0)
+        observation = _native_market_event_observations.setdefault(symbol, {})
+        observation["last_alert_price"] = price
+        observation["last_alert_pct"] = float(event.get("pct_change") or 0.0)
+        return (
+            f"{symbol}. MOVER ADVANCE. LOOK NOW. This current Webull leader has "
+            f"materially advanced since the last mover alert to {price:.2f}. "
+            "Reassess the chart; normal entry and anti-chase rules still apply."
+        )
 
     # A currently-hot mover whose analyzed source bar freezes deserves a second
     # attention cue because that is consistent with a trading pause. Keep the
@@ -1755,6 +1885,14 @@ def native_market_event_audio_phrase(
         )
         symbol = str(event.get("symbol") or "").strip().upper()
         _native_market_event_audio_seen.add((symbol, "possible_pause"))
+        observation = _native_market_event_observations.setdefault(symbol, {})
+        observation["pause_state"] = (
+            "confirmed"
+            if bool((by_symbol.get(symbol) or {}).get("halted"))
+            else "possible"
+        )
+        observation["last_alert_price"] = float(event.get("price") or 0.0)
+        observation["last_alert_pct"] = float(event.get("pct_change") or 0.0)
         return (
             f"{symbol}. CHECK TRADING STATUS. LOOK NOW. This current Webull mover "
             f"has no fresh analyzed source bar for {source_age:.0f} seconds. "
@@ -1805,6 +1943,15 @@ def native_market_event_audio_phrase(
     )
     symbol = str(event.get("symbol") or "").strip().upper()
     _native_market_event_audio_seen.add((symbol, event_type))
+    observation = _native_market_event_observations.setdefault(symbol, {})
+    try:
+        observation["last_alert_price"] = float(event.get("price") or 0.0)
+    except (TypeError, ValueError):
+        observation["last_alert_price"] = 0.0
+    try:
+        observation["last_alert_pct"] = float(event.get("pct_change") or 0.0)
+    except (TypeError, ValueError):
+        observation["last_alert_pct"] = 0.0
     try:
         pct_change = float(event.get("pct_change") or 0.0)
     except (TypeError, ValueError):
@@ -1868,11 +2015,29 @@ def install_native_market_event_audio() -> None:
     def alert_phrase(records: list[dict]) -> str:
         rows = list(records or [])
         established = current(rows)
-        # Existing candidate-state transitions always win. GS563 fills only the
-        # silence where a native mover never reached the ordinary alert path.
-        if established:
+        # Always evaluate native events so pause/resume and material-advance memory
+        # cannot be starved by an unrelated candidate transition on the same scan.
+        native = native_market_event_audio_phrase(rows)
+        if not established:
+            return native
+        if not native:
             return established
-        return native_market_event_audio_phrase(rows)
+
+        # Entry/LOOK NOW candidate alerts remain senior. A halt release, resumed
+        # prints, or a material mover advance may preempt only ordinary one-chime
+        # background transitions; arbitrary/unknown established phrases are kept.
+        from mide.gs365_chime_semantic_classifier import semantic_chime_count
+        if semantic_chime_count(established) >= 2:
+            return established
+        urgent_native = any(
+            token in native
+            for token in (
+                "HALT RELEASE.",
+                "FRESH PRINTS RESUMED.",
+                "MOVER ADVANCE.",
+            )
+        )
+        return native if urgent_native else established
 
     _inherit_audio_wrapper(alert_phrase, current)
     alert_phrase._gs563_native_fast_mover_attention = True
