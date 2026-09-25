@@ -278,7 +278,22 @@ def trigger_diagnostics(
     )
     distance = float(vwap.get("distance_pct", _num(record, "vwap_distance_pct")) or 0)
     st_age = _trigger_st_age_seconds(record, scan_time)
-    fresh_st = bool(record.get("supertrend_30s_flip", record.get("supertrend_flip")))
+    # GS561: live validation proved that GS378/GS548 can reconstruct a genuine,
+    # source-age-adjusted 1m bullish flip while the older point-in-time
+    # `supertrend_flip` boolean remains false.  That split left the canonical ST
+    # entry lock closed even though Walter's existing 1m entry authority had
+    # already established a fresh flip.  Admit only the freshness-corrected GS548
+    # field here; the older legacy boolean remains insufficient on its own and the
+    # GS396 30s tripwire stays attention-only.
+    source_aged_1m_flip = bool(
+        record.get("supertrend_flipped_last_10m")
+        and record.get("maturation_freshness_authority")
+        == "SOURCE_AGE_ADJUSTED_MATURATION_FRESHNESS"
+    )
+    fresh_st = bool(
+        record.get("supertrend_30s_flip", record.get("supertrend_flip"))
+        or source_aged_1m_flip
+    )
     fresh_st_passed = fresh_st and (
         st_age is None or st_age <= TRIGGER_ST_MAX_AGE_SECONDS
     )
