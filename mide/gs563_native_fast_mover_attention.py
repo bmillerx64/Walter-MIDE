@@ -47,15 +47,13 @@ def operator_liquidity_diagnostics(record: dict) -> dict:
     """Use Walter's existing session thresholds to decide operator consideration."""
     from . import scanner_v2
 
-    liquidity_keys = (
-        "volume",
-        "dollar_volume",
-        "rvol_proxy",
-        "relative_volume_10d",
-        "volume_pace_ratio",
-        "volume_pace_diagnostics",
-    )
-    if not any(record.get(key) not in (None, "") for key in liquidity_keys):
+    # Apply only to records that have completed Scanner V2's canonical
+    # session-volume enrichment. Synthetic/UI-only records and pre-scanner
+    # awareness rows must preserve their established visibility semantics.
+    # This keeps GS564 at the operator boundary instead of silently redefining
+    # historical test fixtures or GS466 extreme-awareness continuity.
+    canonical_session = record.get("volume_session_diagnostics")
+    if not isinstance(canonical_session, dict):
         return {"applicable": False, "passed": True, "reason": ""}
 
     session = scanner_v2.session_volume_diagnostics(record, _scan_time(record))
