@@ -304,6 +304,18 @@ except Exception as exc:
         type(exc).__name__,
     )
 
+# GS554: persist Participation sub-phase timing through the existing GS425
+# latency-truth seam. This is observational only and adds no provider calls.
+try:
+    importlib.import_module(
+        "mide.gs554_participation_latency_breakdown"
+    ).install()
+except Exception as exc:
+    logging.getLogger(__name__).warning(
+        "GS554 Participation latency bind unavailable error_type=%s",
+        type(exc).__name__,
+    )
+
 
 WEBULL_STOCK_CACHE_PATH = Path(__file__).resolve().parent / "cache" / "webull_stock_data.json"
 WEBULL_CACHE_WARNING_TEXT = "Displaying Cached Data due to API Timeout"
@@ -1935,6 +1947,10 @@ def _run_live_pipeline(
         return decisions
 
     def participation(records):
+        gs554 = importlib.import_module(
+            "mide.gs554_participation_latency_breakdown"
+        )
+        participation_started = perf_counter()
         symbols = {item["symbol"] for item in records}
         eligible_snapshots = {
             symbol: snap for symbol, snap in state["snapshots"].items()
@@ -2001,21 +2017,28 @@ def _run_live_pipeline(
             len(records), len(candidates), history_symbols,
             (history_symbols + 19) // 20,
         )
+        analyze_started = perf_counter()
         analyzed = analyze_candidates(
             client, candidates, index_news(state["news"]), state["reasons"]
         )
+        analyze_finished = perf_counter()
+
+        velocity_started = perf_counter()
         analyzed = history.enrich_velocity(analyzed, previous=previous)
+        velocity_finished = perf_counter()
         # GS530: the live Walter Architecture must run the canonical Scanner V2
         # enrichment before Expansion/Ranking. This is field enrichment only:
         # Scanner V2 does not filter architecture membership here. Resolve the
         # function dynamically so retained Streamlit modules receive the latest
         # GS396+ patches and GS529 shadow instrumentation.
         scanner_module = importlib.import_module("mide.scanner_v2")
+        scanner_started = perf_counter()
         analyzed = scanner_module.apply_scanner_v2(
             analyzed,
             previous,
             scan_time=datetime.now(timezone.utc),
         )
+        scanner_finished = perf_counter()
         analyzed_by_symbol = {item["symbol"]: item for item in analyzed}
         state["candidates"], state["analyzed"] = candidates, analyzed
         state["runtime_stages"]["Analyzed"] = runtime_stage_observation(analyzed)
@@ -2027,6 +2050,7 @@ def _run_live_pipeline(
             client.diagnostics, "analyzed", state["analyzed"],
             statement="analyzed = apply_scanner_v2(history.enrich_velocity(analyze_candidates(...)))",
         )
+        decision_started = perf_counter()
         result = {}
         for item in records:
             symbol = item["symbol"]
@@ -2068,6 +2092,22 @@ def _run_live_pipeline(
             ),
             fields=("volume", "dollar_volume", "prev_volume", "spread_pct"),
         ))
+        participation_finished = perf_counter()
+        gs554.record_breakdown(
+            client,
+            stage_input_count=len(records),
+            prefilter_output_count=len(candidates),
+            history_symbol_count=history_symbols,
+            analyzed_count=len(analyzed),
+            pre_analysis_ms=(analyze_started - participation_started) * 1000.0,
+            analyze_candidates_ms=(analyze_finished - analyze_started) * 1000.0,
+            velocity_enrichment_ms=(velocity_finished - velocity_started) * 1000.0,
+            scanner_v2_ms=(scanner_finished - scanner_started) * 1000.0,
+            decision_materialization_ms=(
+                participation_finished - decision_started
+            ) * 1000.0,
+            total_ms=(participation_finished - participation_started) * 1000.0,
+        )
         return result
 
     def expansion(records):
