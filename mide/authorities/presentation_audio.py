@@ -1701,6 +1701,11 @@ def native_market_event_audio_phrase(
         )
         if isinstance(event, dict)
         and str(event.get("symbol") or "").strip()
+        and (
+            event.get("native_fast_mover") is True
+            or str(event.get("event_type") or "")
+            == "five_minute_fast_mover"
+        )
     ]
     current_symbols = {
         str(event.get("symbol") or "").strip().upper()
