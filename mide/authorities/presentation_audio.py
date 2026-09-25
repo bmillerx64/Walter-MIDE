@@ -2034,7 +2034,13 @@ def install_native_market_event_audio() -> None:
         # cue is retried on the next scan instead of being silently consumed.
         seen_before = set(_native_market_event_audio_seen)
         observations_before = deepcopy(_native_market_event_observations)
-        native = native_market_event_audio_phrase(rows)
+        # Use the durable event snapshot attached to this exact CompletedScan.
+        # Process-global market-event memory can outlive an unrelated unit test or
+        # warm rerun and must never manufacture audio for the wrong scan.
+        native = native_market_event_audio_phrase(
+            rows,
+            _streamlit_completed_scan_market_events(),
+        )
         if not established:
             return native
         if not native:
