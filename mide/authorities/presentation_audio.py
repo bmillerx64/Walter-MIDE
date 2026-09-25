@@ -2028,20 +2028,19 @@ def install_native_market_event_audio() -> None:
     def alert_phrase(records: list[dict]) -> str:
         rows = list(records or [])
         established = current(rows)
-        # Always evaluate native events so pause/resume and material-advance memory
-        # cannot be starved by an unrelated candidate transition on the same scan.
+
+        # Evaluate native events every scan, but snapshot their latch state first.
+        # If a senior established alert wins, restore the snapshot so the mover
+        # cue is retried on the next scan instead of being silently consumed.
+        seen_before = set(_native_market_event_audio_seen)
+        observations_before = deepcopy(_native_market_event_observations)
         native = native_market_event_audio_phrase(rows)
         if not established:
             return native
         if not native:
             return established
 
-        # Entry/LOOK NOW candidate alerts remain senior. A halt release, resumed
-        # prints, or a material mover advance may preempt only ordinary one-chime
-        # background transitions; arbitrary/unknown established phrases are kept.
         from mide.gs365_chime_semantic_classifier import semantic_chime_count
-        if semantic_chime_count(established) >= 2:
-            return established
         urgent_native = any(
             token in native
             for token in (
@@ -2050,7 +2049,14 @@ def install_native_market_event_audio() -> None:
                 "MOVER ADVANCE.",
             )
         )
-        return native if urgent_native else established
+        if urgent_native and semantic_chime_count(established) < 2:
+            return native
+
+        _native_market_event_audio_seen.clear()
+        _native_market_event_audio_seen.update(seen_before)
+        _native_market_event_observations.clear()
+        _native_market_event_observations.update(observations_before)
+        return established
 
     _inherit_audio_wrapper(alert_phrase, current)
     alert_phrase._gs563_native_fast_mover_attention = True
