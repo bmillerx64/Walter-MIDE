@@ -21,6 +21,8 @@ from mide.gs485_retained_news_transport_hard_bind import install as _install_gs4
 _install_gs485_retained_news_transport()
 from mide.gs486_top_level_transport_truth import install as _install_gs486_top_level_transport_truth
 _install_gs486_top_level_transport_truth()
+from mide.gs555_participation_latency_hard_bind import install as _install_gs555_participation_latency
+_install_gs555_participation_latency()
 from mide.gs500_candidate_history_warm_bind import install as _install_gs500_candidate_history
 _install_gs500_candidate_history()
 from mide.gs501_session_history_rollover import install as _install_gs501_history_rollover
