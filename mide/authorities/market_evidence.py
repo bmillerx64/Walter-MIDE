@@ -201,9 +201,30 @@ def market_event_rows(
     if _native_fast_mover_stage_active:
         for event in fast_mover_rows(rows):
             symbol = str(event.get("symbol") or "").strip().upper()
-            if symbol and symbol not in seen:
-                combined.append(event)
-                seen.add(symbol)
+            if not symbol:
+                continue
+            if symbol in seen:
+                # Preserve the stronger established event classification (for
+                # example EXTREME MOVER) while retaining proof that the symbol is
+                # also a current top five-minute mover for GS563 audio.
+                existing = next(
+                    (
+                        item
+                        for item in combined
+                        if str(item.get("symbol") or "").strip().upper()
+                        == symbol
+                    ),
+                    None,
+                )
+                if existing is not None:
+                    existing["native_fast_mover"] = True
+                    existing["five_minute_rank"] = int(event["rank"])
+                    existing["five_minute_pct_change"] = event["pct_change"]
+                continue
+            event = dict(event)
+            event["native_fast_mover"] = True
+            combined.append(event)
+            seen.add(symbol)
     return combined
 
 
