@@ -28,10 +28,15 @@ from typing import Callable
 AWARENESS_ONLY_KEY = "operator_awareness_only"
 REFERENCE_DATA_BLOCKED_KEY = "reference_data_blocked_awareness"
 FIVE_MINUTE_MOVER_REASON = "Webull native: five_minute_movers"
+DAY_GAINER_REASON = "Webull native: day_gainers"
+REFERENCE_DATA_MOVER_REASONS = {
+    FIVE_MINUTE_MOVER_REASON,
+    DAY_GAINER_REASON,
+}
 
 
 def reference_data_blocked_mover(record: dict) -> bool:
-    """Keep a current 5m mover visible when float authority is unresolved, not failed."""
+    """Keep a current native mover visible when float authority is unresolved, not failed."""
     if str(record.get("terminal_stage") or "") != "Free-Float Gate":
         return False
     if str(record.get("terminal_outcome") or "").strip().lower() != "rejected":
@@ -40,7 +45,7 @@ def reference_data_blocked_mover(record: dict) -> bool:
         return False
 
     reasons = {str(value or "").strip() for value in record.get("discovery_reasons") or []}
-    if FIVE_MINUTE_MOVER_REASON not in reasons:
+    if not reasons.intersection(REFERENCE_DATA_MOVER_REASONS):
         return False
 
     status = str(record.get("free_float_verification_status") or "").strip().lower()
@@ -139,7 +144,7 @@ def awareness_safe_opportunity_state(
         view["state"] = unified.LOOK_NOW
         view["color"] = unified.STATE_COLORS[unified.LOOK_NOW]
         view["reason"] = (
-            "Current Webull 5-minute mover, but free-float reference data is unresolved. "
+            "Current Webull mover, but free-float reference data is unresolved. "
             "This is awareness only; entry remains locked."
         )
         view["next_step"] = (
