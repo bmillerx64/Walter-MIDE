@@ -124,9 +124,9 @@ def test_gs566_confirmed_halt_can_emit_halt_release_when_fresh_prints_return():
 def test_gs566_senior_candidate_alert_does_not_consume_waiting_mover(monkeypatch):
     presentation_audio.reset_native_market_event_audio_state()
     monkeypatch.setattr(
-        market_evidence,
-        "_LATEST_MARKET_EVENTS",
-        [_event(symbol="CNET", pct=28.8, price=1.765)],
+        presentation_audio,
+        "_streamlit_completed_scan_market_events",
+        lambda: [_event(symbol="CNET", pct=28.8, price=1.765)],
     )
     calls = {"count": 0}
 
