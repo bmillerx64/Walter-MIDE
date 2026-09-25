@@ -1355,31 +1355,29 @@ def arm_live_clock_engine(
             last_scan_attempt,
             retry_seconds=retry_seconds,
         )
-        tick_key = "_walter_live_scan_fragment_tick"
+        # GS565: the Sept. 25 CAB showed that scan work itself remained fast
+        # (~8s median) while the 60s cadence occasionally went 80-150s because
+        # the long-sleep timed fragment was not observed until well after its
+        # deadline. Keep the fragment awake on a bounded heartbeat and let the
+        # existing autoscan_request_due authority decide whether a full-app rerun
+        # is actually permitted. This adds no provider work and never shortens the
+        # configured start-to-start cadence.
+        scheduler_poll_seconds = min(max(1, int(interval)), 5)
 
-        @st.fragment(run_every=timedelta(seconds=interval))
+        @st.fragment(run_every=timedelta(seconds=scheduler_poll_seconds))
         def request_session_preserving_rerun() -> None:
             now = datetime.now().astimezone()
-            previous = st.session_state.get(tick_key)
-            if previous is not None and last_scan_attempt and previous < last_scan_attempt:
-                previous = None
-            if previous is None:
-                st.session_state[tick_key] = now
-            elif (now - previous).total_seconds() >= interval * 0.9:
-                if autoscan_request_due(
-                    refresh_seconds,
-                    last_updated,
-                    last_scan_attempt,
-                    retry_seconds=retry_seconds,
-                    now=now,
-                ):
-                    st.session_state[SCAN_REQUESTED_KEY] = True
-                st.session_state[tick_key] = now
+            if autoscan_request_due(
+                refresh_seconds,
+                last_updated,
+                last_scan_attempt,
+                retry_seconds=retry_seconds,
+                now=now,
+            ):
+                st.session_state[SCAN_REQUESTED_KEY] = True
                 st.rerun(scope="app")
 
         request_session_preserving_rerun()
-    else:
-        st.session_state.pop("_walter_live_scan_fragment_tick", None)
     updated_ms = int(last_updated.timestamp() * 1000) if last_updated else 0
     attempt_ms = int(last_scan_attempt.timestamp() * 1000) if last_scan_attempt else 0
     baseline_ms = max(updated_ms, attempt_ms)
