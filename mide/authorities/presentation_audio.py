@@ -1637,6 +1637,245 @@ def market_event_markup(
     )
 
 
+_native_market_event_audio_seen: set[tuple[str, str]] = set()
+_NATIVE_MARKET_EVENT_AUDIO_OWNER = "_walter_gs563_native_market_event_audio_owner"
+
+
+def _native_market_event_type(event: dict) -> str:
+    from mide.authorities import market_evidence
+
+    event_type = str(event.get("event_type") or "").strip()
+    if event_type:
+        return event_type
+    try:
+        pct_change = float(event.get("pct_change") or 0.0)
+    except (TypeError, ValueError):
+        pct_change = 0.0
+    return (
+        "extreme_mover"
+        if pct_change >= market_evidence.EXTREME_MOVER_PCT
+        else "market_event"
+    )
+
+
+def _native_market_event_source_age(record: dict | None) -> float | None:
+    if not isinstance(record, dict):
+        return None
+    for key in ("source_bar_age_seconds", "source_bar_age", "bar_age_seconds"):
+        try:
+            value = record.get(key)
+            if value is not None:
+                return max(0.0, float(value))
+        except (TypeError, ValueError):
+            continue
+    return None
+
+
+def reset_native_market_event_audio_state() -> None:
+    """Reset only GS563's per-process native-event audio latch."""
+    _native_market_event_audio_seen.clear()
+
+
+def native_market_event_audio_phrase(
+    records: list[dict],
+    events: Iterable[dict] | None = None,
+) -> str:
+    """Speak one newly-current native mover that trade qualification may not expose.
+
+    The native Webull radar is already fetched for discovery. GS563 uses only that
+    retained evidence. A stale source bar may additionally produce a *possible*
+    pause cue; it never asserts a confirmed halt because the current market-data
+    snapshot contract does not supply exchange trading-status truth.
+    """
+    from mide.authorities import market_evidence
+    from mide.gs373_operator_visibility_freshness import (
+        MAX_OPERATOR_BAR_AGE_SECONDS,
+    )
+
+    current_events = [
+        dict(event)
+        for event in (
+            market_evidence._LATEST_MARKET_EVENTS
+            if events is None
+            else events
+        )
+        if isinstance(event, dict)
+        and str(event.get("symbol") or "").strip()
+    ]
+    current_symbols = {
+        str(event.get("symbol") or "").strip().upper()
+        for event in current_events
+    }
+    _native_market_event_audio_seen.difference_update(
+        {
+            signature
+            for signature in _native_market_event_audio_seen
+            if signature[0] not in current_symbols
+        }
+    )
+    if not current_events:
+        return ""
+
+    by_symbol = {
+        str(record.get("symbol") or "").strip().upper(): record
+        for record in records or []
+        if isinstance(record, dict)
+        and str(record.get("symbol") or "").strip()
+    }
+
+    # A currently-hot mover whose analyzed source bar freezes deserves a second
+    # attention cue because that is consistent with a trading pause. Keep the
+    # language explicitly probabilistic; Webull Desktop remains the status truth.
+    pause_choices: list[tuple[float, dict, dict, float]] = []
+    for event in current_events:
+        symbol = str(event.get("symbol") or "").strip().upper()
+        record = by_symbol.get(symbol)
+        source_age = _native_market_event_source_age(record)
+        if (
+            source_age is None
+            or source_age <= MAX_OPERATOR_BAR_AGE_SECONDS
+            or (symbol, "possible_pause") in _native_market_event_audio_seen
+        ):
+            continue
+        try:
+            pct_change = float(event.get("pct_change") or 0.0)
+        except (TypeError, ValueError):
+            pct_change = 0.0
+        pause_choices.append((pct_change, event, record or {}, source_age))
+
+    if pause_choices:
+        _pct, event, _record, source_age = max(
+            pause_choices,
+            key=lambda item: item[0],
+        )
+        symbol = str(event.get("symbol") or "").strip().upper()
+        _native_market_event_audio_seen.add((symbol, "possible_pause"))
+        return (
+            f"{symbol}. CHECK TRADING STATUS. LOOK NOW. This current Webull mover "
+            f"has no fresh analyzed source bar for {source_age:.0f} seconds. "
+            "Possible trading pause or halt. Do not anticipate a reopen; verify in "
+            "Webull and reassess fresh price, VWAP, trend, and volume after prints resume."
+        )
+
+    choices: list[tuple[tuple[int, float, float], dict, str]] = []
+    event_priority = {
+        "extreme_mover": 4,
+        "five_minute_fast_mover": 3,
+        "high_liquidity_trend": 2,
+        "strategy_leader": 1,
+        "market_event": 0,
+    }
+    for event in current_events:
+        symbol = str(event.get("symbol") or "").strip().upper()
+        event_type = _native_market_event_type(event)
+        signature = (symbol, event_type)
+        if signature in _native_market_event_audio_seen:
+            continue
+        try:
+            pct_change = float(event.get("pct_change") or 0.0)
+        except (TypeError, ValueError):
+            pct_change = 0.0
+        try:
+            rank = float(event.get("rank") or 999.0)
+        except (TypeError, ValueError):
+            rank = 999.0
+        choices.append(
+            (
+                (
+                    event_priority.get(event_type, 0),
+                    pct_change,
+                    -rank,
+                ),
+                event,
+                event_type,
+            )
+        )
+
+    if not choices:
+        return ""
+
+    _priority, event, event_type = max(
+        choices,
+        key=lambda item: item[0],
+    )
+    symbol = str(event.get("symbol") or "").strip().upper()
+    _native_market_event_audio_seen.add((symbol, event_type))
+    try:
+        pct_change = float(event.get("pct_change") or 0.0)
+    except (TypeError, ValueError):
+        pct_change = 0.0
+    try:
+        rank = int(float(event.get("rank") or 0))
+    except (TypeError, ValueError):
+        rank = 0
+
+    record = by_symbol.get(symbol) or {}
+    reference_blocked = bool(
+        record.get("reference_data_blocked_awareness")
+        or (
+            str(record.get("terminal_stage") or "") == "Free-Float Gate"
+            and record.get("free_float_verified") is False
+        )
+    )
+
+    if event_type == "five_minute_fast_mover":
+        phrase = (
+            f"{symbol}. FAST MOVER. LOOK NOW. Up {pct_change:.1f} percent"
+            + (
+                f", rank {rank} on Webull five minute movers."
+                if rank
+                else " on Webull five minute movers."
+            )
+        )
+    elif event_type == "extreme_mover":
+        phrase = (
+            f"{symbol}. EXTREME MOVER. LOOK NOW. Up {pct_change:.1f} percent "
+            "on Webull."
+        )
+    else:
+        phrase = (
+            f"{symbol}. MARKET LEADER. LOOK NOW. Up {pct_change:.1f} percent "
+            "on Webull."
+        )
+
+    if reference_blocked:
+        phrase += (
+            " Scanner reference data is unresolved, so entry remains locked. "
+            "Open the chart now. Attention only."
+        )
+    else:
+        phrase += (
+            " Open the chart now. Attention only; normal float, readiness, "
+            "anti-chase, and entry rules still apply."
+        )
+    return phrase
+
+
+def install_native_market_event_audio() -> None:
+    """Give already-fetched native mover events a bounded tier-2 audio path."""
+    from mide import escalation
+    from mide.gs365_chime_semantic_classifier import semantic_chime_count
+
+    current = escalation.escalation_alert_phrase
+    if getattr(current, _NATIVE_MARKET_EVENT_AUDIO_OWNER, False):
+        return
+
+    @wraps(current)
+    def alert_phrase(records: list[dict]) -> str:
+        rows = list(records or [])
+        established = current(rows)
+        if established and semantic_chime_count(established) >= 2:
+            return established
+        native = native_market_event_audio_phrase(rows)
+        return native or established
+
+    _inherit_audio_wrapper(alert_phrase, current)
+    alert_phrase._gs563_native_fast_mover_attention = True
+    alert_phrase._gs563_original = current
+    setattr(alert_phrase, _NATIVE_MARKET_EVENT_AUDIO_OWNER, True)
+    escalation.escalation_alert_phrase = alert_phrase
+
+
 def _streamlit_completed_scan_market_events() -> list[dict]:
     try:
         import streamlit as st
