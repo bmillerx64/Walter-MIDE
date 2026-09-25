@@ -3,6 +3,7 @@ from pathlib import Path
 from mide.authorities import market_evidence, presentation_audio
 from mide.gs375_operator_awareness import reference_data_blocked_mover
 from mide.webull_live import WebullOpenAPIClient
+from mide.gs563_native_fast_mover_attention import operator_liquidity_diagnostics
 
 
 def _native(
@@ -235,3 +236,43 @@ def test_gs563_facade_scope_lock_adds_no_provider_or_trade_authority():
         "execute_order(",
     )
     assert not any(token in source for token in forbidden)
+
+
+def test_lzmh_style_midday_thin_tape_is_not_operator_consideration():
+    record = {
+        "symbol": "LZMH",
+        "scan_time": "2026-09-25T15:28:00+00:00",
+        "price": 1.14,
+        "volume": 113_210,
+        "dollar_volume": 129_059.4,
+        "rvol_proxy": 0.34,
+        "volume_pace_diagnostics": {"passed": False},
+    }
+
+    diagnostic = operator_liquidity_diagnostics(record)
+
+    assert diagnostic["session"] == "Midday"
+    assert diagnostic["expected_minimum_volume"] == 375_000
+    assert diagnostic["expected_minimum_dollar_volume"] == 93_750
+    assert diagnostic["expected_minimum_rvol"] == 1.12
+    assert diagnostic["passed"] is False
+    assert "operator liquidity below time-of-day consideration floor" in diagnostic["reason"]
+
+
+def test_rdgt_style_low_absolute_volume_can_stay_visible_with_exceptional_rvol():
+    record = {
+        "symbol": "RDGT",
+        "scan_time": "2026-09-25T15:03:00+00:00",
+        "price": 1.24,
+        "volume": 143_200,
+        "dollar_volume": 177_568,
+        "rvol_proxy": 8.86,
+        "volume_pace_diagnostics": {"passed": False},
+    }
+
+    diagnostic = operator_liquidity_diagnostics(record)
+
+    assert diagnostic["session"] == "Midday"
+    assert diagnostic["actual_volume"] < diagnostic["expected_minimum_volume"]
+    assert diagnostic["actual_rvol"] > diagnostic["expected_minimum_rvol"]
+    assert diagnostic["passed"] is True
