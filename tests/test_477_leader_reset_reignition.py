@@ -148,6 +148,61 @@ def test_three_minute_join_strengthens_explanation_without_entry_authority():
     assert row["qualified_for_alert"] is False
 
 
+def test_msgy_like_near_vwap_reset_surfaces_on_confirmed_3m_structure_before_flow():
+    # Sept. 25 MSGY live shape: previously extended leader resets into the
+    # near-VWAP window with 30s/1m/3m bullish, but tape flow is still quiet.
+    gs477.apply_leader_reset_marks(
+        [
+            _record(
+                symbol="MSGY",
+                price=3.26,
+                pct_change=65.5,
+                vwap_distance_pct=13.446,
+                participation_score=72.3,
+                source_bar_timestamp="2026-09-25T14:27:00+00:00",
+            )
+        ],
+        now=0.0,
+    )
+
+    reset = _record(
+        symbol="MSGY",
+        price=2.865,
+        pct_change=45.4,
+        vwap_distance_pct=1.9186,
+        participation_score=31.2,
+        volume_acceleration=0.57,
+        dollar_flow_acceleration=0.56,
+        one_above=True,
+        three_bullish=True,
+        three_above=True,
+        source_bar_timestamp="2026-09-25T14:35:00+00:00",
+    )
+    row = gs477.apply_leader_reset_marks([reset], now=8 * 60.0)[0]
+
+    evidence = row["leader_reset_reignition"]
+    assert evidence["stage"] == gs477.RESET_WATCH
+    assert evidence["supporting_flow"] is False
+    assert evidence["three_minute_structure_support"] is True
+    assert evidence["reset_support_source"] == "3M_STRUCTURE"
+    assert evidence["flow_required_for_reignition"] is True
+    assert row["qualified_for_entry"] is False
+    assert row["qualified_for_alert"] is False
+
+    state = gs477.leader_reset_opportunity_state(_base_state, row)
+    assert state["state"] == unified.DEVELOPING
+    assert "LEADER RESET WATCH" in state["reason"]
+    assert "3m SuperTrend structure is still confirmed" in state["reason"]
+    assert "participation/flow has not re-accelerated yet" in state["reason"]
+    assert "wait for renewed participation/flow before LOOK NOW" in state["next_step"]
+
+    phrase = gs477.leader_reset_audio_phrase([row])
+    assert "RESET WATCH" in phrase
+    assert "30 second, 1 minute, and 3 minute SuperTrend bullish" in phrase
+    assert "Flow has not re-accelerated yet" in phrase
+    assert "Attention only" in phrase
+
+
 def test_below_vwap_reset_can_never_be_promoted_to_look_now():
     gs477.apply_leader_reset_marks([_record(vwap_distance_pct=8.0)], now=0.0)
     row = gs477.apply_leader_reset_marks(
