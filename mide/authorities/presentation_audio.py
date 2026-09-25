@@ -1854,7 +1854,6 @@ def native_market_event_audio_phrase(
 def install_native_market_event_audio() -> None:
     """Give already-fetched native mover events a bounded tier-2 audio path."""
     from mide import escalation
-    from mide.gs365_chime_semantic_classifier import semantic_chime_count
 
     current = escalation.escalation_alert_phrase
     if getattr(current, _NATIVE_MARKET_EVENT_AUDIO_OWNER, False):
@@ -1864,10 +1863,11 @@ def install_native_market_event_audio() -> None:
     def alert_phrase(records: list[dict]) -> str:
         rows = list(records or [])
         established = current(rows)
-        if established and semantic_chime_count(established) >= 2:
+        # Existing candidate-state transitions always win. GS563 fills only the
+        # silence where a native mover never reached the ordinary alert path.
+        if established:
             return established
-        native = native_market_event_audio_phrase(rows)
-        return native or established
+        return native_market_event_audio_phrase(rows)
 
     _inherit_audio_wrapper(alert_phrase, current)
     alert_phrase._gs563_native_fast_mover_attention = True
