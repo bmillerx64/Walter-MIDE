@@ -331,6 +331,18 @@ except Exception as exc:
         type(exc).__name__,
     )
 
+# GS558: reuse only identical deterministic GS378 timeframe calculations inside
+# one apply_live_vwap_truth call. No cross-scan cache and no provider call changes.
+try:
+    importlib.import_module(
+        "mide.gs558_shared_gs378_timeframe_compute"
+    ).install()
+except Exception as exc:
+    logging.getLogger(__name__).warning(
+        "GS558 shared GS378 compute unavailable error_type=%s",
+        type(exc).__name__,
+    )
+
 
 WEBULL_STOCK_CACHE_PATH = Path(__file__).resolve().parent / "cache" / "webull_stock_data.json"
 WEBULL_CACHE_WARNING_TEXT = "Displaying Cached Data due to API Timeout"
