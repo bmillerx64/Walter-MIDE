@@ -507,15 +507,29 @@ def leader_reset_opportunity_state(original, record: dict) -> dict:
     if stage == market_evidence.RESET_WATCH:
         prior = float(evidence.get("prior_max_vwap_distance_pct") or 0.0)
         current = abs(float(distance or 0.0))
-        view["reason"] = (
-            f"LEADER RESET WATCH: this mover was previously {prior:.1f}%+ above VWAP and "
-            f"has reset to within {current:.1f}% of VWAP. 30s and 1m SuperTrend are bullish "
-            "with participation/flow active."
-        )
-        view["next_step"] = (
-            "Keep the chart open. Wait for primary VWAP reclaim; 3m SuperTrend confirmation "
-            "adds ignition strength. This is attention only, not entry authority."
-        )
+        if evidence.get("supporting_flow"):
+            view["reason"] = (
+                f"LEADER RESET WATCH: this mover was previously {prior:.1f}%+ above VWAP and "
+                f"has reset to within {current:.1f}% of VWAP. 30s and 1m SuperTrend are bullish "
+                "with participation/flow active."
+            )
+        else:
+            view["reason"] = (
+                f"LEADER RESET WATCH: this mover was previously {prior:.1f}%+ above VWAP and "
+                f"has reset to within {current:.1f}% of VWAP. 30s and 1m SuperTrend are bullish, "
+                "and 3m SuperTrend structure is still confirmed; participation/flow has not "
+                "re-accelerated yet."
+            )
+        if evidence.get("vwap_reclaimed"):
+            view["next_step"] = (
+                "Keep the chart open. Primary VWAP is reclaimed; wait for renewed "
+                "participation/flow before LOOK NOW. This is attention only, not entry authority."
+            )
+        else:
+            view["next_step"] = (
+                "Keep the chart open. Wait for primary VWAP reclaim and renewed "
+                "participation/flow. This is attention only, not entry authority."
+            )
         return view
 
     if (

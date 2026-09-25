@@ -1121,22 +1121,38 @@ def leader_reset_evidence(
     current_mover = _current_webull_mover(record)
     fresh_source = _leader_fresh_source(record)
 
+    # GS562: a proven leader can deserve a RESET WATCH before tape flow has
+    # re-accelerated when the slower 3m structure is already intact. Live MSGY
+    # validation on 2026-09-25 showed exactly that shape: the leader reset back
+    # into the near-VWAP window with 30s/1m/3m bullish structure, but the existing
+    # flow gate suppressed the chart-review cue until price had already expanded.
+    # Keep this attention-only: renewed flow is still required before REIGNITION
+    # or LOOK NOW can be earned.
+    three_structure = bool(
+        three.get("bullish") and three.get("above_vwap")
+    )
+    reset_support = bool(flow or three_structure)
     reset_watch = bool(
         memory_fresh
         and near_vwap
         and thirty.get("bullish")
         and thirty.get("above_vwap")
         and one.get("bullish")
-        and flow
+        and reset_support
         and current_mover
         and fresh_source
     )
     reclaimed = bool(
         distance is not None and 0.0 <= distance <= MAX_REIGNITION_VWAP_DISTANCE_PCT
     )
-    reignition = bool(reset_watch and reclaimed and one.get("above_vwap"))
+    reignition = bool(
+        reset_watch
+        and reclaimed
+        and one.get("above_vwap")
+        and flow
+    )
     three_confirmed = bool(
-        reignition and three.get("bullish") and three.get("above_vwap")
+        reignition and three_structure
     )
     stage = (
         THREE_MINUTE_CONFIRMATION
@@ -1183,6 +1199,15 @@ def leader_reset_evidence(
         "one_minute_above_vwap": bool(one.get("above_vwap")),
         "three_minute_bullish": bool(three.get("bullish")),
         "three_minute_above_vwap": bool(three.get("above_vwap")),
+        "three_minute_structure_support": three_structure,
+        "reset_support_source": (
+            "FLOW"
+            if flow
+            else "3M_STRUCTURE"
+            if three_structure
+            else "NONE"
+        ),
+        "flow_required_for_reignition": True,
         "participation_score": round(participation, 1),
         "volume_acceleration": round(volume_acceleration, 2),
         "dollar_flow_acceleration": round(dollar_flow, 2),

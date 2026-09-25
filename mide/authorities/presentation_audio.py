@@ -2762,10 +2762,16 @@ def leader_reset_audio_phrase(records: list[dict]) -> str:
         stage = evidence.get("stage")
         if stage == market_evidence.RESET_WATCH:
             distance = abs(float(evidence.get("current_vwap_distance_pct") or 0.0))
+            if evidence.get("supporting_flow"):
+                return (
+                    f"{symbol}. RESET WATCH. Proven leader is back within {distance:.1f} percent "
+                    "of VWAP with 30 second and 1 minute SuperTrend bullish. Watch the reclaim. "
+                    "Attention only."
+                )
             return (
                 f"{symbol}. RESET WATCH. Proven leader is back within {distance:.1f} percent "
-                "of VWAP with 30 second and 1 minute SuperTrend bullish. Watch the reclaim. "
-                "Attention only."
+                "of VWAP with 30 second, 1 minute, and 3 minute SuperTrend bullish. "
+                "Flow has not re-accelerated yet. Keep the chart open. Attention only."
             )
         if stage == market_evidence.THREE_MINUTE_CONFIRMATION:
             return (
