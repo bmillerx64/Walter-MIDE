@@ -15,15 +15,18 @@ rows themselves:
 - discovery_history
 - reevaluation_history
 
-The exact point-in-time Flight Recorder is retained in full. A manifest records the
-source byte sizes, row count, stripped fields and compact archive size.
+For routine ChatGPT review, the export is deliberately bounded to the most recent
+two hours of Candidate History and Flight Recorder evidence so the browser payload
+does not grow without limit. Full Session Backup remains the complete archival source.
+A manifest records the source byte sizes, review cutoff, retained/omitted row counts,
+stripped fields and compact archive size.
 
 This is export/forensics only. No scanner, provider, score, rank, qualification, alert,
 cadence, execution or order behavior changes.
 """
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import json
 from pathlib import Path
 import secrets
@@ -41,6 +44,7 @@ SESSION_KEY = "_walter_gs510_analysis_bundle"
 PAYLOAD_SESSION_KEY = "_walter_gs552_analysis_bundle_payload"
 JOB_SESSION_KEY = "_walter_gs510_analysis_job_id"
 JOB_POLL_SECONDS = 2.0
+REVIEW_WINDOW_HOURS = 2.0
 STRIPPED_CUMULATIVE_FIELDS = (
     "architecture_audit",
     "ranking_history",
@@ -68,13 +72,100 @@ def _cleanup(directory: Path, keep: str) -> None:
             pass
 
 
+def _parse_utc_timestamp(value: Any) -> datetime | None:
+    if value in (None, ""):
+        return None
+    try:
+        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def _record_timestamp(record: dict[str, Any], fields: tuple[str, ...]) -> datetime | None:
+    stamps = [
+        stamp
+        for stamp in (
+            _parse_utc_timestamp(record.get(field))
+            for field in fields
+        )
+        if stamp is not None
+    ]
+    return max(stamps) if stamps else None
+
+
+def _write_recent_flight_rows(
+    archive: ZipFile,
+    source: Path,
+    *,
+    captured_size: int,
+    window_start: datetime | None,
+) -> dict[str, int]:
+    rows_seen = 0
+    rows_retained = 0
+    rows_omitted = 0
+    malformed_rows = 0
+    bytes_written = 0
+
+    with archive.open("flight_recorder.jsonl", "w", force_zip64=True) as target:
+        if captured_size <= 0 or not source.exists():
+            return {
+                "flight_rows_seen": 0,
+                "flight_rows_retained": 0,
+                "flight_rows_omitted": 0,
+                "flight_malformed_rows": 0,
+                "flight_recorder_bytes_copied": 0,
+            }
+
+        remaining = int(captured_size)
+        with source.open("rb") as handle:
+            while remaining > 0:
+                line = handle.readline(remaining)
+                if not line:
+                    break
+                remaining -= len(line)
+                if not line.endswith(b"\n") and remaining == 0:
+                    break
+                rows_seen += 1
+                if window_start is None:
+                    target.write(line)
+                    bytes_written += len(line)
+                    rows_retained += 1
+                    continue
+                try:
+                    record = json.loads(line)
+                except Exception:
+                    malformed_rows += 1
+                    continue
+                stamp = _record_timestamp(record, ("timestamp",))
+                if stamp is not None and stamp < window_start:
+                    rows_omitted += 1
+                    continue
+                target.write(line)
+                bytes_written += len(line)
+                rows_retained += 1
+
+    return {
+        "flight_rows_seen": rows_seen,
+        "flight_rows_retained": rows_retained,
+        "flight_rows_omitted": rows_omitted,
+        "flight_malformed_rows": malformed_rows,
+        "flight_recorder_bytes_copied": bytes_written,
+    }
+
+
 def _compact_candidate_rows(
     archive: ZipFile,
     source: Path,
     *,
     captured_size: int,
+    window_start: datetime | None = None,
 ) -> dict[str, int]:
     rows = 0
+    rows_seen = 0
+    rows_omitted = 0
     malformed_rows = 0
     source_bytes_read = 0
     compact_bytes_written = 0
@@ -87,6 +178,8 @@ def _compact_candidate_rows(
         if captured_size <= 0 or not source.exists():
             return {
                 "candidate_rows": 0,
+                "candidate_rows_seen": 0,
+                "candidate_rows_omitted": 0,
                 "candidate_malformed_rows": 0,
                 "candidate_source_bytes_read": 0,
                 "candidate_compact_bytes_written": 0,
@@ -105,11 +198,25 @@ def _compact_candidate_rows(
                 # partial JSON row in the forensic bundle.
                 if not line.endswith(b"\n") and remaining == 0:
                     break
+                rows_seen += 1
                 try:
                     record = json.loads(line)
                 except Exception:
                     malformed_rows += 1
                     continue
+                if window_start is not None:
+                    stamp = _record_timestamp(
+                        record,
+                        (
+                            "last_reevaluated_at",
+                            "discovery_last_seen_at",
+                            "timestamp",
+                            "discovery_first_seen_at",
+                        ),
+                    )
+                    if stamp is not None and stamp < window_start:
+                        rows_omitted += 1
+                        continue
                 for field in STRIPPED_CUMULATIVE_FIELDS:
                     record.pop(field, None)
                 payload = (
@@ -122,6 +229,8 @@ def _compact_candidate_rows(
 
     return {
         "candidate_rows": rows,
+        "candidate_rows_seen": rows_seen,
+        "candidate_rows_omitted": rows_omitted,
         "candidate_malformed_rows": malformed_rows,
         "candidate_source_bytes_read": source_bytes_read,
         "candidate_compact_bytes_written": compact_bytes_written,
@@ -136,6 +245,7 @@ def build_analysis_bundle(
     now: datetime | None = None,
     token: str | None = None,
     captured_sizes: dict[str, int] | None = None,
+    review_window_hours: float | None = REVIEW_WINDOW_HOURS,
 ) -> dict[str, Any]:
     candidate_path = Path(candidate_history_path)
     flight_path = Path(flight_recorder_path)
@@ -150,6 +260,11 @@ def build_analysis_bundle(
         }
 
     instant = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+    window_start = (
+        instant - timedelta(hours=max(0.0, float(review_window_hours)))
+        if review_window_hours is not None
+        else None
+    )
     safe_token = token or secrets.token_hex(10)
     filename = (
         "walter-analysis-bundle-"
@@ -176,13 +291,32 @@ def build_analysis_bundle(
                 archive,
                 candidate_path,
                 captured_size=int(captured.get("candidate_history.jsonl") or 0),
+                window_start=window_start,
             )
-            flight_bytes = _write_snapshot_member(
-                archive,
-                flight_path,
-                "flight_recorder.jsonl",
-                captured_size=int(captured.get("flight_recorder.jsonl") or 0),
-            )
+            if window_start is None:
+                flight_bytes = _write_snapshot_member(
+                    archive,
+                    flight_path,
+                    "flight_recorder.jsonl",
+                    captured_size=int(captured.get("flight_recorder.jsonl") or 0),
+                )
+                flight_stats = {
+                    "flight_rows_seen": 0,
+                    "flight_rows_retained": 0,
+                    "flight_rows_omitted": 0,
+                    "flight_malformed_rows": 0,
+                    "flight_recorder_bytes_copied": int(flight_bytes),
+                }
+            else:
+                flight_stats = _write_recent_flight_rows(
+                    archive,
+                    flight_path,
+                    captured_size=int(captured.get("flight_recorder.jsonl") or 0),
+                    window_start=window_start,
+                )
+                flight_bytes = int(
+                    flight_stats["flight_recorder_bytes_copied"]
+                )
             manifest = {
                 "authority": AUTHORITY,
                 "generated_at_utc": instant.isoformat(),
@@ -194,14 +328,32 @@ def build_analysis_bundle(
                 ),
                 "source_bytes_total": sum(int(v or 0) for v in captured.values()),
                 "flight_recorder_bytes_copied": int(flight_bytes),
+                "review_window_hours": (
+                    float(review_window_hours)
+                    if review_window_hours is not None
+                    else None
+                ),
+                "review_window_start_utc": (
+                    window_start.isoformat()
+                    if window_start is not None
+                    else None
+                ),
                 "stripped_cumulative_fields": list(STRIPPED_CUMULATIVE_FIELDS),
                 "candidate_history_semantics": (
-                    "every complete point-in-time row retained; only repeated "
+                    "recent review-window point-in-time rows retained; only repeated "
+                    "cumulative history arrays removed"
+                    if window_start is not None
+                    else "every complete point-in-time row retained; only repeated "
                     "cumulative history arrays removed"
                 ),
-                "flight_recorder_semantics": "exact captured point-in-time prefix",
+                "flight_recorder_semantics": (
+                    "recent review-window rows from captured point-in-time prefix"
+                    if window_start is not None
+                    else "exact captured point-in-time prefix"
+                ),
                 "trading_logic_changed": False,
                 **candidate_stats,
+                **flight_stats,
             }
             archive.writestr(
                 "manifest.json",
@@ -225,7 +377,18 @@ def build_analysis_bundle(
         "archive_bytes": archive_bytes,
         "source_bytes_total": int(sum(int(v or 0) for v in captured.values())),
         "generated_at_utc": instant.isoformat(),
+        "review_window_hours": (
+            float(review_window_hours)
+            if review_window_hours is not None
+            else None
+        ),
+        "review_window_start_utc": (
+            window_start.isoformat()
+            if window_start is not None
+            else None
+        ),
         "candidate_rows": int(candidate_stats["candidate_rows"]),
+        "flight_rows": int(flight_stats["flight_rows_retained"]),
         "candidate_compact_bytes": int(
             candidate_stats["candidate_compact_bytes_written"]
         ),
@@ -326,8 +489,9 @@ def _render(candidate_path: Path, flight_path: Path) -> None:
     import streamlit as st
 
     st.caption(
-        "Compact analysis bundle: full Flight Recorder + every Candidate History row, "
-        "with only four repeated cumulative history arrays removed."
+        f"Compact analysis bundle: most recent {REVIEW_WINDOW_HOURS:g} hours of "
+        "Flight Recorder + Candidate History, with only four repeated cumulative "
+        "history arrays removed. Full Session Backup remains the complete archive."
     )
 
     job_id = str(st.session_state.get(JOB_SESSION_KEY) or "")
@@ -404,8 +568,10 @@ def _render(candidate_path: Path, flight_path: Path) -> None:
         width="stretch",
     )
     st.caption(
-        f"{int(info.get('candidate_rows') or 0):,} candidate rows retained. "
-        "Use this bundle for ChatGPT review; keep Full Session Backup only for archival."
+        f"{int(info.get('candidate_rows') or 0):,} candidate rows + "
+        f"{int(info.get('flight_rows') or 0):,} Flight Recorder scans retained "
+        f"from the most recent {float(info.get('review_window_hours') or REVIEW_WINDOW_HOURS):g}h. "
+        "Use this bundle for ChatGPT review; keep Full Session Backup for the complete archive."
     )
 
 

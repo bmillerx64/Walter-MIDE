@@ -50,6 +50,7 @@ def test_compact_bundle_keeps_rows_and_strips_only_cumulative_histories(tmp_path
         output_dir=tmp_path / "static",
         now=datetime(2026, 9, 18, 22, 0, tzinfo=UTC),
         token="fixed",
+        review_window_hours=None,
     )
 
     archive = tmp_path / "static" / info["filename"]
@@ -113,6 +114,84 @@ def test_gs552_compact_download_preloads_bytes_once_per_prepared_filename():
     assert 'on_click="ignore"' in source
     assert "data=materialize_compact_bundle" not in source
 
+
+
+def test_gs560_default_review_bundle_keeps_only_recent_two_hour_window(tmp_path):
+    candidate = tmp_path / "candidate_history.jsonl"
+    flight = tmp_path / "flight_recorder.jsonl"
+    now = datetime(2026, 9, 25, 3, 30, tzinfo=UTC)
+
+    candidate_rows = [
+        {
+            "symbol": "OLD",
+            "discovery_last_seen_at": "2026-09-25T00:30:00Z",
+            "architecture_audit": [{"old": True}],
+        },
+        {
+            "symbol": "EDGE",
+            "discovery_last_seen_at": "2026-09-25T01:30:00Z",
+            "ranking_history": [{"rank": 2}],
+        },
+        {
+            "symbol": "NEW",
+            "last_reevaluated_at": "2026-09-25T03:20:00Z",
+            "reevaluation_history": [{"status": "LOOK NOW"}],
+        },
+    ]
+    candidate.write_text(
+        "".join(json.dumps(row) + "\n" for row in candidate_rows),
+        encoding="utf-8",
+    )
+    flight_rows = [
+        {"scan_id": "old", "timestamp": "2026-09-25T00:29:59+00:00"},
+        {"scan_id": "edge", "timestamp": "2026-09-25T01:30:00+00:00"},
+        {"scan_id": "new", "timestamp": "2026-09-25T03:29:00+00:00"},
+    ]
+    flight.write_text(
+        "".join(json.dumps(row) + "\n" for row in flight_rows),
+        encoding="utf-8",
+    )
+
+    info = gs510.build_analysis_bundle(
+        candidate,
+        flight,
+        output_dir=tmp_path / "static",
+        now=now,
+        token="gs560",
+    )
+
+    archive = tmp_path / "static" / info["filename"]
+    with ZipFile(archive) as zipped:
+        compact_rows = [
+            json.loads(line)
+            for line in zipped.read("candidate_history_compact.jsonl").splitlines()
+        ]
+        compact_flight = [
+            json.loads(line)
+            for line in zipped.read("flight_recorder.jsonl").splitlines()
+        ]
+        manifest = json.loads(zipped.read("manifest.json"))
+
+    assert [row["symbol"] for row in compact_rows] == ["EDGE", "NEW"]
+    assert [row["scan_id"] for row in compact_flight] == ["edge", "new"]
+    assert manifest["review_window_hours"] == gs510.REVIEW_WINDOW_HOURS
+    assert manifest["review_window_start_utc"] == "2026-09-25T01:30:00+00:00"
+    assert manifest["candidate_rows_seen"] == 3
+    assert manifest["candidate_rows"] == 2
+    assert manifest["candidate_rows_omitted"] == 1
+    assert manifest["flight_rows_seen"] == 3
+    assert manifest["flight_rows_retained"] == 2
+    assert manifest["flight_rows_omitted"] == 1
+    assert info["candidate_rows"] == 2
+    assert info["flight_rows"] == 2
+
+
+def test_gs560_ui_describes_bounded_review_bundle():
+    source = Path("mide/gs510_compact_analysis_bundle.py").read_text(encoding="utf-8")
+
+    assert "most recent {REVIEW_WINDOW_HOURS:g} hours" in source
+    assert "Full Session Backup remains the complete archive" in source
+    assert "review_window_start_utc" in source
 
 def test_scope_lock_is_forensics_only():
     source = Path("mide/gs510_compact_analysis_bundle.py").read_text(encoding="utf-8")
