@@ -905,6 +905,16 @@ def record_scan_safely(
             "Flight Recorder GS487 cached-instance bind skipped (%s)",
             type(exc).__name__,
         )
+    try:
+        latency_binder = importlib.import_module(
+            "mide.gs556_cached_recorder_participation_latency_bind"
+        )
+        latency_binder.install_for_recorder(recorder)
+    except Exception as exc:
+        logging.getLogger(__name__).warning(
+            "Flight Recorder GS556 cached latency bind skipped (%s)",
+            type(exc).__name__,
+        )
 
     try:
         try:
