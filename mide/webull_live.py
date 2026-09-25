@@ -164,7 +164,7 @@ class WebullOpenAPIClient:
             price = _number(row.get("price") or row.get("last_price") or row.get("close") or row.get("latest_price"))
             if not symbol or price is None:
                 continue
-            normalized[symbol] = {
+            snapshot = {
                 "latestTrade": {"p": price, "t": row.get("last_trade_time") or
                                 row.get("timestamp") or row.get("time")},
                 "latestQuote": {"bp": _number(row.get("bid") or row.get("bid_price")),
@@ -176,6 +176,41 @@ class WebullOpenAPIClient:
                                  "v": _number(row.get("prev_volume"))},
                 "market_data_provider": "Webull OpenAPI SDK",
             }
+
+            # GS563: preserve explicit trading-status truth if the official SDK
+            # ever supplies it. The current stock-snapshot contract does not
+            # guarantee this field, so absence remains unknown rather than False.
+            # This adds no request and never infers a halt from price behavior.
+            status_parts = [
+                str(row.get(key) or "").strip()
+                for key in (
+                    "trading_status",
+                    "market_status",
+                    "halt_status",
+                    "status_reason",
+                )
+                if row.get(key) not in (None, "")
+            ]
+            explicit_halt = any(
+                row.get(key) is True
+                for key in (
+                    "halted",
+                    "is_halted",
+                    "suspended",
+                    "is_suspended",
+                )
+            )
+            status_text = " ".join(status_parts)
+            status_halt = (
+                "halt" in status_text.casefold()
+                or "suspend" in status_text.casefold()
+            )
+            if explicit_halt or status_parts:
+                snapshot["halted"] = bool(explicit_halt or status_halt)
+                if status_parts:
+                    snapshot["trading_status"] = status_text
+
+            normalized[symbol] = snapshot
         self.last_snapshot_rows_normalized = len(normalized)
         _debug_log.log_snapshot_attempt(
             symbols=wanted,
