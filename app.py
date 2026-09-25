@@ -2905,13 +2905,20 @@ if alerts and new_early_symbols and not entry_alert_open:
         alert_voice_for_session(),
     )
 elif alerts and alert_phrase:
-    if (
-        not state_change_signature
-        or state_change_signature != st.session_state.last_escalation_alert
-    ):
+    # GS566: the legacy cross-scan guard keyed only on candidate state changes.
+    # That could suppress a different native-mover phrase (including a resume or
+    # material advance) when an unrelated candidate transition signature happened
+    # to remain unchanged. Include the spoken phrase in the guard; GS366 still
+    # owns same-completed-scan delivery dedupe.
+    alert_delivery_key = "|".join(
+        (
+            state_change_signature,
+            " ".join(str(alert_phrase).split()),
+        )
+    )
+    if alert_delivery_key != st.session_state.last_escalation_alert:
         play_alert("assets/alert.wav", alert_phrase, alert_voice_for_session())
-        if state_change_signature:
-            st.session_state.last_escalation_alert = state_change_signature
+        st.session_state.last_escalation_alert = alert_delivery_key
 
 tab_names = [
         "Radar",
