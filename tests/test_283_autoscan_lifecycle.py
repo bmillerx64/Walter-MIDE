@@ -92,7 +92,8 @@ def test_autoscan_uses_session_preserving_streamlit_fragment_not_browser_reload(
     function_end = source.index("\ndef _run_live_pipeline(", function_start)
     scheduler = source[function_start:function_end]
 
-    assert "@st.fragment(run_every=timedelta(seconds=interval))" in scheduler
+    assert "scheduler_poll_seconds = min(max(1, int(interval)), 5)" in scheduler
+    assert "@st.fragment(run_every=timedelta(seconds=scheduler_poll_seconds))" in scheduler
     assert 'st.rerun(scope="app")' in scheduler
     # Guard executable browser reload calls, not explanatory comments/docstrings.
     assert ".location.reload(" not in scheduler
@@ -178,5 +179,46 @@ def test_live_clock_fragment_queues_scan_at_start_to_start_deadline():
     assert "interval = autoscan_wait_seconds(" in scheduler
     assert "autoscan_request_due(" in scheduler
     assert "st.session_state[SCAN_REQUESTED_KEY] = True" in scheduler
-    assert "tick_key = \"_walter_live_scan_fragment_tick\"" in scheduler
-    assert "interval * 0.9" in scheduler
+    assert 'request_latch_key = "_walter_live_scan_requested_for"' in scheduler
+    assert "request_baseline = (" in scheduler
+    assert "scheduler_poll_seconds = min(max(1, int(interval)), 5)" in scheduler
+    assert "if st.session_state.get(request_latch_key) == request_baseline:" in scheduler
+    assert "st.session_state[request_latch_key] = request_baseline" in scheduler
+
+
+def test_gs568_latch_prevents_duplicate_full_app_reruns_for_same_scan_baseline():
+    source = Path("app.py").read_text(encoding="utf-8")
+    start = source.index("def arm_live_clock_engine(")
+    end = source.index("\ndef _run_live_pipeline(", start)
+    scheduler = source[start:end]
+
+    due = scheduler.index("if not autoscan_request_due(")
+    duplicate_guard = scheduler.index(
+        "if st.session_state.get(request_latch_key) == request_baseline:"
+    )
+    latch = scheduler.index("st.session_state[request_latch_key] = request_baseline")
+    request = scheduler.index("st.session_state[SCAN_REQUESTED_KEY] = True")
+    rerun = scheduler.index('st.rerun(scope="app")')
+
+    assert due < duplicate_guard < latch < request < rerun
+
+
+def test_gs568_scheduler_fix_remains_orchestration_only():
+    source = Path("app.py").read_text(encoding="utf-8")
+    start = source.index("def arm_live_clock_engine(")
+    end = source.index("\ndef _run_live_pipeline(", start)
+    scheduler = source[start:end]
+
+    forbidden = (
+        "qualified_for_entry",
+        "qualified_for_alert",
+        "participation_score",
+        "expansion_score",
+        "vwap_distance_pct",
+        ".bars(",
+        ".snapshots(",
+        "place_order(",
+        "submit_order(",
+        ".location.reload(",
+    )
+    assert not any(token in scheduler for token in forbidden)
