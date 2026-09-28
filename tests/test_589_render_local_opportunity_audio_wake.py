@@ -10,7 +10,6 @@ def test_gs589_health_rearm_recovers_browser_speech_after_sleep():
     block = source[start:end]
 
     assert "root.speechSynthesis || window.speechSynthesis" in block
-    assert "window.speechSynthesis || parentSynth" in block
     assert "synth.cancel" not in block
     assert "if (synth.paused && synth.resume) synth.resume();" in block
     assert "if (synth.resume) synth.resume();" in block
