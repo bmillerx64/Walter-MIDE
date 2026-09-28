@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import html
 from collections.abc import Callable, Iterable
+from contextvars import ContextVar
 from copy import deepcopy
 from functools import wraps
 from time import monotonic
@@ -5180,14 +5181,20 @@ def alert_audio_health_markup() -> str:
 
       const testVoice = () => {
         try {
-          const synth = root.speechSynthesis || window.speechSynthesis;
+          // GS589: use the activated iframe speech engine first and explicitly
+          // clear/resume Chrome's speech queue after laptop sleep. The Web Audio
+          // bell can recover while speechSynthesis remains paused or wedged.
+          const synth = window.speechSynthesis || root.speechSynthesis;
           const Utterance =
-            root.SpeechSynthesisUtterance || window.SpeechSynthesisUtterance;
+            window.SpeechSynthesisUtterance || root.SpeechSynthesisUtterance;
           if (!synth || !Utterance) return;
           const utterance = new Utterance('Walter alerts ready.');
           utterance.rate = 0.95;
           utterance.pitch = 0.9;
           utterance.volume = 1.0;
+          if (synth.cancel) synth.cancel();
+          if (synth.paused && synth.resume) synth.resume();
+          if (synth.resume) synth.resume();
           synth.speak(utterance);
         } catch (_) {}
       };
@@ -5475,6 +5482,44 @@ def install_final_opportunity_order() -> None:
 # ---------------------------------------------------------------------------
 
 FINAL_ORDER_OWNER_ATTR = "_walter_final_enriched_opportunity_order_owner"
+_FINAL_RENDER_CONTEXT_OWNER_ATTR = "_walter_gs589_render_local_opportunity_owner"
+_FINAL_RENDER_ACTIONABLE_GUARD_ATTR = "_walter_gs589_render_local_actionable_guard"
+_FINAL_RENDER_CONTEXT_VAR_ATTR = "_walter_gs589_final_render_actionable_context"
+
+
+def _final_render_actionable_context() -> ContextVar:
+    """Return one process-stable ContextVar shared across warm module generations."""
+    from mide import ui
+
+    current = getattr(ui, _FINAL_RENDER_CONTEXT_VAR_ATTR, None)
+    if current is None:
+        current = ContextVar(
+            "walter_gs589_final_render_actionable",
+            default=None,
+        )
+        setattr(ui, _FINAL_RENDER_CONTEXT_VAR_ATTR, current)
+    return current
+
+
+def _install_final_render_actionable_guard() -> None:
+    """Make nested actionable lookups render-local instead of process-global."""
+    from mide import ui
+
+    current = ui.actionable_candidate_records
+    if getattr(current, _FINAL_RENDER_ACTIONABLE_GUARD_ATTR, False):
+        return
+
+    @wraps(current)
+    def render_local_actionable(records: list[dict]) -> list[dict]:
+        frozen = _final_render_actionable_context().get()
+        if frozen is not None:
+            return list(frozen)
+        return current(records)
+
+    _inherit_audio_wrapper(render_local_actionable, current)
+    setattr(render_local_actionable, _FINAL_RENDER_ACTIONABLE_GUARD_ATTR, True)
+    render_local_actionable._gs589_original = current
+    ui.actionable_candidate_records = render_local_actionable
 
 
 def final_enriched_opportunity_records(
@@ -5497,12 +5542,25 @@ def bind_final_enriched_opportunity_order(
     *,
     show_legend: bool = False,
 ) -> None:
-    """Freeze final enrichment/order across one public Opportunity renderer."""
+    """Freeze final enrichment/order per render without mutating process globals."""
     from mide import ui
 
+    _install_final_render_actionable_guard()
     current = getattr(ui, attr)
-    if getattr(current, FINAL_ORDER_OWNER_ATTR, False):
+    if (
+        getattr(current, FINAL_ORDER_OWNER_ATTR, False)
+        and getattr(current, _FINAL_RENDER_CONTEXT_OWNER_ATTR, False)
+    ):
         return
+
+    # GS589 warm-deploy convergence: an older GS414/436 wrapper owns the same
+    # non-inherited sentinel but still swaps ui.actionable_candidate_records
+    # process-wide. Peel only that known outer wrapper before installing the
+    # render-local replacement.
+    if getattr(current, FINAL_ORDER_OWNER_ATTR, False):
+        legacy_original = getattr(current, "_gs414_original", None)
+        if callable(legacy_original):
+            current = legacy_original
 
     def render_with_final_enriched_order(records: list[dict]) -> None:
         public_actionable = ui.actionable_candidate_records
@@ -5510,12 +5568,8 @@ def bind_final_enriched_opportunity_order(
             records,
             actionable_function=public_actionable,
         )
-
-        def frozen_actionable(_records: list[dict]) -> list[dict]:
-            return list(ordered)
-
-        _inherit_audio_wrapper(frozen_actionable, public_actionable)
-        ui.actionable_candidate_records = frozen_actionable
+        context = _final_render_actionable_context()
+        token = context.set(tuple(ordered))
         try:
             if show_legend:
                 ui.st.caption(
@@ -5524,14 +5578,16 @@ def bind_final_enriched_opportunity_order(
                 )
             return current(list(ordered))
         finally:
-            ui.actionable_candidate_records = public_actionable
+            context.reset(token)
 
     _inherit_audio_wrapper(render_with_final_enriched_order, current)
     render_with_final_enriched_order._gs414_final_enriched_opportunity_order = True
     render_with_final_enriched_order._gs436_final_render_hard_bind = True
     render_with_final_enriched_order._gs539_live_path_hard_bind = True
+    render_with_final_enriched_order._gs589_render_local_opportunity = True
     render_with_final_enriched_order._gs414_original = current
     setattr(render_with_final_enriched_order, FINAL_ORDER_OWNER_ATTR, True)
+    setattr(render_with_final_enriched_order, _FINAL_RENDER_CONTEXT_OWNER_ATTR, True)
     setattr(ui, attr, render_with_final_enriched_order)
 
 
