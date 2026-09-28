@@ -1489,9 +1489,14 @@ def arm_live_clock_engine(
               root.sessionStorage.removeItem(recoveryKey);
               recoveryState = null;
             }}
+            // GS579: a reconnect may inherit the latest process-wide completed
+            // scan while this fresh Streamlit session still has an older
+            // session-scoped last_scan_attempt. A successful completed scan is
+            // the cadence truth; only a newer failed/in-flight attempt should
+            // own the short retry deadline.
             const deadline = attemptedAt > updatedAt
               ? attemptedAt + retryMs
-              : (attemptedAt ? attemptedAt + refreshMs : now);
+              : (updatedAt ? updatedAt + refreshMs : now);
             const remainingMs = deadline - now;
             if (remainingMs > 0) {{
               const remainingSeconds = Math.max(1, Math.ceil(remainingMs / 1000));
