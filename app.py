@@ -1094,6 +1094,11 @@ with startup_step("loading secrets"):
 memory_checkpoint("settings initialization", object_name="Settings")
 
 mission_header_slot = st.empty()
+# GS574: keep scan activity on the always-visible operator surface.  The
+# previous st.status/progress lived inside the collapsed System Status expander,
+# so real scans could execute while the Radar looked idle.
+scan_activity_slot = st.empty()
+scan_progress_slot = st.empty()
 scan_trust_slot = st.empty()
 market_session_slot = st.empty()
 early_setup_slot = st.empty()
@@ -1591,7 +1596,7 @@ def _run_live_pipeline(
             client.warnings.append(f"Alpaca credential check unavailable: {exc}")
         client.diagnostics["selected_provider"] = "ALPACA"
         logging.getLogger(__name__).warning("Walter live market-data provider: ALPACA")
-    with scan_runtime_slot:
+    with scan_progress_slot:
         progress = st.progress(0, text="Starting Walter Architecture")
 
     state = {"seeds": [], "reasons": {}, "snapshots": {}, "news": [],
@@ -2408,6 +2413,7 @@ def _run_live_pipeline(
         client.diagnostics["flight_recorder"] = flight_scan
     log("Timing summary: " + json.dumps(timing_summary, separators=(",", ":")))
     progress.progress(1.0, text="Walter Architecture complete")
+    scan_progress_slot.empty()
     status.update(label=f"Scan complete: {len(ranked)} ranked records",
                   state="complete", expanded=False)
     return (ranked, len(state["seeds"]), len(state["candidates"]),
@@ -2430,7 +2436,7 @@ def run_live(
     """
     status = None
     try:
-        with scan_runtime_slot:
+        with scan_activity_slot:
             status = st.status("Walter is scanning…", expanded=True)
         architecture = scanner_implementation(scanner_version).for_runtime(
             lambda: _run_live_pipeline(
@@ -2444,6 +2450,7 @@ def run_live(
         with startup_step("beginning scanner"):
             return architecture.run()
     except Exception as exc:
+        scan_progress_slot.empty()
         logging.getLogger(__name__).exception("Live scan pipeline failed")
         log(f"Live scan pipeline failed: {type(exc).__name__}: {exc}")
         if status is not None:
