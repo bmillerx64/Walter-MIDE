@@ -5182,7 +5182,7 @@ def alert_audio_health_markup() -> str:
           } else if (voiceTestState === 'speaking' || voiceTestState === 'ended') {
             paint('ready', 'AUDIO + VOICE READY');
           } else if (voiceTestState === 'requested') {
-            paint('warn', 'BELL READY · VOICE REQUESTED');
+            paint('warn', 'BELL READY · VOICE REQUESTED' + (voiceTestDetail ? ' · ' + voiceTestDetail : ''));
           } else {
             paint('ready', 'AUDIO READY');
           }
@@ -5193,14 +5193,22 @@ def alert_audio_health_markup() -> str:
         }
       };
 
+      const voiceEngineDetail = (synth) => {
+        if (!synth) return 'speech unavailable';
+        let voiceCount = -1;
+        try {
+          voiceCount = synth.getVoices ? synth.getVoices().length : -1;
+        } catch (_) {}
+        return `pending=${Boolean(synth.pending)} · speaking=${Boolean(synth.speaking)} · paused=${Boolean(synth.paused)} · voices=${voiceCount}`;
+      };
+
       const testVoice = () => {
         try {
-          // GS590: this function is invoked directly inside the Re-arm button's
-          // click handler, before any AudioContext.resume() Promise boundary.
-          // Chrome can discard transient user activation before a .then(play)
-          // callback runs, which explains "two bells, no voice" after reboot.
-          // Use the same parent speech engine preferred by automatic Walter voice
-          // so the explicit click activates the transport Walter will later use.
+          // GS591: an explicit Re-arm/test click is a recovery action. Monday live
+          // evidence showed Chrome accepting speak() while never firing start/end/
+          // error after laptop sleep. Clear only this browser's stale speech queue
+          // on the operator's explicit click; automatic market alerts still never
+          // call cancel() and preserve their normal queue contract.
           const synth = root.speechSynthesis || window.speechSynthesis;
           const Utterance =
             root.SpeechSynthesisUtterance || window.SpeechSynthesisUtterance;
@@ -5210,46 +5218,54 @@ def alert_audio_health_markup() -> str:
             refresh();
             return false;
           }
+          try {
+            if (synth.cancel) synth.cancel();
+            if (synth.paused && synth.resume) synth.resume();
+            if (synth.resume) synth.resume();
+          } catch (_) {}
+
           const utterance = new Utterance('Walter alerts ready.');
           utterance.rate = 0.95;
           utterance.pitch = 0.9;
           utterance.volume = 1.0;
           utterance.onstart = () => {
             voiceTestState = 'speaking';
-            voiceTestDetail = '';
+            voiceTestDetail = voiceEngineDetail(synth);
             markArmed();
             try {
               root.__walterVoiceTransport = {
                 phrase: 'Walter alerts ready.',
-                source: 'GS590 re-arm',
+                source: 'GS591 re-arm queue reset',
                 status: 'speaking',
                 armed: true,
                 startedAt: new Date().toISOString(),
+                engine: voiceTestDetail,
               };
             } catch (_) {}
             refresh();
           };
           utterance.onend = () => {
             voiceTestState = 'ended';
-            voiceTestDetail = '';
+            voiceTestDetail = voiceEngineDetail(synth);
             try {
               root.__walterVoiceTransport = {
                 ...(root.__walterVoiceTransport || {}),
                 status: 'ended',
                 completedAt: new Date().toISOString(),
+                engine: voiceTestDetail,
               };
             } catch (_) {}
             refresh();
           };
           utterance.onerror = (event) => {
             voiceTestState = 'error';
-            voiceTestDetail =
-              event && event.error ? String(event.error) : 'speech error';
+            const error = event && event.error ? String(event.error) : 'speech error';
+            voiceTestDetail = `${error} · ${voiceEngineDetail(synth)}`;
             try {
               root.__walterVoiceTransport = {
                 ...(root.__walterVoiceTransport || {}),
                 phrase: 'Walter alerts ready.',
-                source: 'GS590 re-arm',
+                source: 'GS591 re-arm queue reset',
                 status: 'error',
                 detail: voiceTestDetail,
                 completedAt: new Date().toISOString(),
@@ -5258,20 +5274,20 @@ def alert_audio_health_markup() -> str:
             refresh();
           };
           voiceTestState = 'requested';
-          voiceTestDetail = '';
+          voiceTestDetail = voiceEngineDetail(synth);
           markArmed();
-          if (synth.paused && synth.resume) synth.resume();
-          if (synth.resume) synth.resume();
           try {
             root.__walterVoiceTransport = {
               phrase: 'Walter alerts ready.',
-              source: 'GS590 re-arm',
+              source: 'GS591 re-arm queue reset',
               status: 'requested',
               armed: true,
               requestedAt: new Date().toISOString(),
+              engine: voiceTestDetail,
             };
           } catch (_) {}
           synth.speak(utterance);
+          voiceTestDetail = voiceEngineDetail(synth);
           refresh();
           return true;
         } catch (error) {
