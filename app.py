@@ -1350,9 +1350,10 @@ def arm_live_clock_engine(
     retry_seconds: int = 5,
 ) -> None:
     """Keep dashboard clocks live and trigger scheduled scans without showing a timer."""
-    # A timed fragment requests a rerun over the existing websocket.
-    # A browser ``location.reload()`` creates a new Streamlit session and loses
-    # the completed scan and persistent controls along with its session_state.
+    # The normal cadence still uses Streamlit's timed fragment over the session
+    # websocket. GS576 adds only a bounded recovery path for the observed failure
+    # where that websocket closes while the Streamlit app process remains healthy.
+    # It never starts a scan itself and does not touch any trading decision logic.
     if enabled:
         interval = autoscan_wait_seconds(
             refresh_seconds,
@@ -1397,6 +1398,13 @@ def arm_live_clock_engine(
     baseline_ms = max(updated_ms, attempt_ms)
     refresh_ms = max(1, int(refresh_seconds)) * 1000
     retry_ms = max(1, int(retry_seconds)) * 1000
+    # GS576: weekend HAR evidence captured "WebSocket onclose" followed by
+    # "Cannot send rerun backMessage when disconnected from server" while app
+    # status remained RUNNING and unthrottled. Give a legitimately blocking scan
+    # plenty of room, then recycle only the browser session if no new baseline
+    # arrives. Cross-session completed-scan handoff preserves backend evidence.
+    transport_recovery_ms = 45_000
+    transport_recovery_cooldown_ms = 90_000
     st.components.v1.html(
         f"""<script>
         (() => {{
@@ -1407,10 +1415,13 @@ def arm_live_clock_engine(
           const baselineAt = {baseline_ms};
           const refreshMs = {refresh_ms};
           const retryMs = {retry_ms};
-          // Keep an in-flight marker in this browser tab to prevent repeated
-          // reloads while Streamlit performs its blocking scan rerun. Store the
-          // scan baseline as well because server and browser clocks can skew.
+          const transportRecoveryMs = {transport_recovery_ms};
+          const transportRecoveryCooldownMs = {transport_recovery_cooldown_ms};
+          // Browser state is presentation/recovery only. The Streamlit fragment
+          // remains the normal scheduler owner; this key merely prevents a dead
+          // websocket from leaving one browser tab permanently stranded.
           const scanKey = 'walterScanState';
+          const recoveryKey = 'walterTransportRecovery';
           if (root.__walterLiveClockInterval) root.clearInterval(root.__walterLiveClockInterval);
 
           const node = id => root.document.getElementById(id);
@@ -1451,6 +1462,7 @@ def arm_live_clock_engine(
             setText('walter-market-phase', market.phase);
             if (!enabled) {{
               root.sessionStorage.removeItem(scanKey);
+              root.sessionStorage.removeItem(recoveryKey);
               setAutoScan('Disabled', '');
               return;
             }}
@@ -1463,6 +1475,18 @@ def arm_live_clock_engine(
             if (scanState && scanState.baselineUpdatedAt !== baselineAt) {{
               root.sessionStorage.removeItem(scanKey);
               scanState = null;
+            }}
+            let recoveryState = null;
+            try {{
+              recoveryState = JSON.parse(
+                root.sessionStorage.getItem(recoveryKey) || 'null'
+              );
+            }} catch (_) {{
+              root.sessionStorage.removeItem(recoveryKey);
+            }}
+            if (recoveryState && recoveryState.baselineAt !== baselineAt) {{
+              root.sessionStorage.removeItem(recoveryKey);
+              recoveryState = null;
             }}
             const deadline = attemptedAt > updatedAt
               ? attemptedAt + retryMs
@@ -1481,8 +1505,28 @@ def arm_live_clock_engine(
             }} else {{
               setAutoScan(`SCAN OVERDUE +${{overdueSeconds}}s`, '#f87171');
             }}
-            // The timed Streamlit fragment above owns reruns. Never use
-            // location.reload here: that starts a new server session.
+
+            // GS576 transport failover. The HAR showed the app process healthy
+            // while the Streamlit websocket had closed, which means the normal
+            // fragment can no longer send its rerun request. If one cadence stays
+            // overdue for 45 seconds, replace this browser document once to create
+            // a fresh websocket/session. This does not execute scan logic; the
+            // server-side watchdog and existing scheduler remain authoritative.
+            const recoveryDue = attemptedAt > 0
+              && overdueSeconds * 1000 >= transportRecoveryMs;
+            const recoveryAllowed = !recoveryState
+              || recoveryState.baselineAt !== baselineAt
+              || now - Number(recoveryState.recoveredAt || 0)
+                 >= transportRecoveryCooldownMs;
+            if (recoveryDue && recoveryAllowed) {{
+              root.sessionStorage.setItem(
+                recoveryKey,
+                JSON.stringify({{baselineAt, recoveredAt: now}})
+              );
+              setAutoScan('RECONNECTING STREAMLIT…', '#f87171');
+              root.location.replace(root.location.href);
+              return;
+            }}
           }};
           tick();
           root.__walterLiveClockInterval = root.setInterval(tick, 1000);
