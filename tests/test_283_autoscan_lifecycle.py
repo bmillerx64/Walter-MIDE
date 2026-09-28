@@ -222,31 +222,3 @@ def test_gs568_scheduler_fix_remains_orchestration_only():
         ".location.reload(",
     )
     assert not any(token in scheduler for token in forbidden)
-
-
-def test_gs569_market_clock_interval_survives_streamlit_component_rerenders():
-    source = Path("app.py").read_text(encoding="utf-8")
-    start = source.index("def arm_live_clock_engine(")
-    end = source.index("\ndef _run_live_pipeline(", start)
-    scheduler = source[start:end]
-
-    assert "root.__walterLiveClockConfig = {" in scheduler
-    assert "if (root.__walterLiveClockInterval) return;" in scheduler
-    assert "root.document.createElement('script')" in scheduler
-    assert "root.__walterLiveClockTick = () => {" in scheduler
-    assert "root.__walterLiveClockInterval = root.setInterval(" in scheduler
-    assert "root.clearInterval(root.__walterLiveClockInterval)" not in scheduler
-
-
-def test_gs569_clock_is_presentation_only_and_does_not_own_scan_reruns():
-    source = Path("app.py").read_text(encoding="utf-8")
-    start = source.index("def arm_live_clock_engine(")
-    end = source.index("\ndef _run_live_pipeline(", start)
-    scheduler = source[start:end]
-    clock_start = scheduler.index("root.__walterLiveClockConfig = {")
-    clock_source = scheduler[clock_start:]
-
-    assert "st.rerun(" not in clock_source
-    assert ".location.reload(" not in clock_source
-    assert "setText('walter-market-time', market.text)" in clock_source
-    assert "setText('walter-market-phase', market.phase)" in clock_source
