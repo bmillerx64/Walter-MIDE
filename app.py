@@ -2460,6 +2460,51 @@ def run_live(
         return [], 0, 0, [f"Recovered live scan failure: {exc}"], diagnostics
 
 
+
+def render_prescan_header() -> None:
+    """Keep the live clock mounted while a blocking scan executes."""
+    prior_scan = completed_scan_for_view(st.session_state, "pre-scan header")
+    prior_records = prior_scan.records if prior_scan else []
+    prior_actionable = actionable_candidate_records(prior_records)
+    prior_mission = walter_mission_control(prior_actionable)
+    prior_focus_count = int(prior_mission["primary"] is not None) + int(
+        prior_mission["secondary"] is not None
+    )
+    prior_escalation_count = sum(
+        escalation_snapshot(record)["state"] in {"Watch Closely", "Entry Window Open"}
+        for record in prior_actionable
+    )
+    prior_clock = market_clock()
+    prior_auto_scan = (
+        f"Every {settings.refresh_seconds} sec"
+        if mode.startswith("Live ") and auto_refresh
+        else "Disabled"
+    )
+    with mission_header_slot:
+        render_mission_header_component(
+            mission_control_header_markup(
+                live=mode.startswith("Live "),
+                market_phase=prior_clock.phase,
+                market_time=prior_clock.time_text,
+                symbols_sampled=prior_scan.symbols_sampled if prior_scan else 0,
+                prefilter_count=prior_scan.prefilter_count if prior_scan else 0,
+                candidate_count=len(prior_actionable),
+                focus_count=prior_focus_count,
+                escalation_count=prior_escalation_count,
+                auto_scan=prior_auto_scan,
+                funnel_counts=(
+                    prior_scan.diagnostics.get("funnel_counts", {})
+                    if prior_scan else {}
+                ),
+            )
+        )
+
+
+# GS572: mount the mission header before any potentially blocking scan work so
+# its self-contained one-second clock keeps running throughout AutoScan.
+render_prescan_header()
+
+
 should_scan = False
 
 if use_demo or mode == "Demo":
