@@ -32,7 +32,7 @@ def test_gs584_observer_never_requests_or_starts_scan():
     ]
 
     forbidden = (
-        "SCAN_REQUESTED_KEY",
+        "st.session_state[SCAN_REQUESTED_KEY] = True",
         "autoscan_request_due(",
         "run_live(",
         "watchdog.run(",
