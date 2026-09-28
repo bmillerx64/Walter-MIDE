@@ -1389,83 +1389,47 @@ def arm_live_clock_engine(
         request_session_preserving_rerun()
     else:
         st.session_state.pop("_walter_live_scan_requested_for", None)
-    updated_ms = int(last_updated.timestamp() * 1000) if last_updated else 0
-    attempt_ms = int(last_scan_attempt.timestamp() * 1000) if last_scan_attempt else 0
-    baseline_ms = max(updated_ms, attempt_ms)
-    refresh_ms = max(1, int(refresh_seconds)) * 1000
-    retry_ms = max(1, int(retry_seconds)) * 1000
-    st.components.v1.html(
-        f"""<script>
-        (() => {{
-          const root = window.parent;
-          const enabled = {str(enabled).lower()};
-          const updatedAt = {updated_ms};
-          const attemptedAt = {attempt_ms};
-          const baselineAt = {baseline_ms};
-          const refreshMs = {refresh_ms};
-          const retryMs = {retry_ms};
-          // Keep an in-flight marker in this browser tab to prevent repeated
-          // reloads while Streamlit performs its blocking scan rerun. Store the
-          // scan baseline as well because server and browser clocks can skew.
-          const scanKey = 'walterScanState';
-          if (root.__walterLiveClockInterval) root.clearInterval(root.__walterLiveClockInterval);
+    # GS570: the market clock is presentation-only. Drive it with its own
+    # one-second fragment instead of a long-lived browser timer, which can die
+    # when Streamlit replaces the component iframe during an app rerun.
+    @st.fragment(run_every=timedelta(seconds=1))
+    def refresh_market_clock() -> None:
+        st.components.v1.html(
+            """<script>
+            (() => {
+              const root = window.parent;
+              const parts = new Intl.DateTimeFormat('en-US', {
+                timeZone: 'America/New_York', weekday: 'short', hour: 'numeric', minute: '2-digit',
+                second: '2-digit', hour12: true, timeZoneName: 'short'
+              }).formatToParts(Date.now());
+              const value = type => parts.find(part => part.type === type)?.value || '';
+              const hour = Number(value('hour')) % 12;
+              const minute = Number(value('minute'));
+              const isPm = value('dayPeriod') === 'PM';
+              const hour24 = hour + (isPm ? 12 : 0);
+              const weekday = value('weekday');
+              const isWeekend = weekday === 'Sat' || weekday === 'Sun';
+              const clockMinutes = hour24 * 60 + minute;
+              let phase = 'Market Closed';
+              if (!isWeekend && clockMinutes >= 240 && clockMinutes < 570) phase = 'Pre-Market';
+              else if (!isWeekend && clockMinutes >= 570 && clockMinutes < 960) phase = 'Live Market';
+              else if (!isWeekend && clockMinutes >= 960 && clockMinutes < 1200) phase = 'After-Hours';
+              const setText = (id, text) => {
+                const node = root.document.getElementById(id);
+                if (node) node.textContent = text;
+              };
+              setText(
+                'walter-market-time',
+                value('hour') + ':' + value('minute') + ':' + value('second') + ' ' +
+                  value('dayPeriod') + ' ' + value('timeZoneName')
+              );
+              setText('walter-market-phase', phase);
+            })();
+            </script>""",
+            height=0,
+        )
 
-          const node = id => root.document.getElementById(id);
-          const setText = (id, value) => {{ const el = node(id); if (el) el.textContent = value; }};
-          const marketNow = now => {{
-            const parts = new Intl.DateTimeFormat('en-US', {{
-              timeZone: 'America/New_York', weekday: 'short', hour: 'numeric', minute: '2-digit',
-              second: '2-digit', hour12: true, timeZoneName: 'short'
-            }}).formatToParts(now);
-            const value = type => parts.find(part => part.type === type)?.value || '';
-            const hour = Number(value('hour')) % 12;
-            const minute = Number(value('minute'));
-            const isPm = value('dayPeriod') === 'PM';
-            const hour24 = hour + (isPm ? 12 : 0);
-            const weekday = value('weekday');
-            const isWeekend = weekday === 'Sat' || weekday === 'Sun';
-            let phase = 'Market Closed';
-            const clockMinutes = hour24 * 60 + minute;
-            if (!isWeekend && clockMinutes >= 240 && clockMinutes < 570) phase = 'Pre-Market';
-            else if (!isWeekend && clockMinutes >= 570 && clockMinutes < 960) phase = 'Live Market';
-            else if (!isWeekend && clockMinutes >= 960 && clockMinutes < 1200) phase = 'After-Hours';
-            return {{
-              text: `${{value('hour')}}:${{value('minute')}}:${{value('second')}} ${{value('dayPeriod')}} ${{value('timeZoneName')}}`,
-              phase
-            }};
-          }};
-          const tick = () => {{
-            const now = Date.now();
-            const market = marketNow(now);
-            setText('walter-market-time', market.text);
-            setText('walter-market-phase', market.phase);
-            if (!enabled) {{
-              root.sessionStorage.removeItem(scanKey);
-              return;
-            }}
-            let scanState = null;
-            try {{
-              scanState = JSON.parse(root.sessionStorage.getItem(scanKey) || 'null');
-            }} catch (_) {{
-              root.sessionStorage.removeItem(scanKey);
-            }}
-            if (scanState && scanState.baselineUpdatedAt !== baselineAt) {{
-              root.sessionStorage.removeItem(scanKey);
-              scanState = null;
-            }}
-            const deadline = attemptedAt > updatedAt
-              ? attemptedAt + retryMs
-              : (attemptedAt ? attemptedAt + refreshMs : now);
-            if (!scanState && now < deadline) return;
-            // The timed Streamlit fragment above owns reruns. Never use
-            // location.reload here: that starts a new server session.
-          }};
-          tick();
-          root.__walterLiveClockInterval = root.setInterval(tick, 1000);
-        }})();
-        </script>""",
-        height=0,
-    )
+    refresh_market_clock()
 
 
 def _run_live_pipeline(
