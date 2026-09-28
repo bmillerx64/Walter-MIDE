@@ -18,10 +18,9 @@ def test_gs581_bounded_heartbeat_preserves_gs567_no_perpetual_rerun_safety():
 
 def test_gs581_full_app_rerun_is_due_guarded_and_per_baseline_latched():
     scheduler = _scheduler_source()
-    request_fragment = scheduler[
-        scheduler.index("def request_session_preserving_rerun()"):
-        scheduler.index("request_session_preserving_rerun()")
-    ]
+    request_start = scheduler.index("def request_session_preserving_rerun()")
+    request_end = scheduler.index("\n\n        adopt_newer_process_scan()", request_start)
+    request_fragment = scheduler[request_start:request_end]
 
     due = request_fragment.index("if not autoscan_request_due(")
     duplicate_guard = request_fragment.index(
