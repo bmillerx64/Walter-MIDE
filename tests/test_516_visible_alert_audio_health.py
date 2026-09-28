@@ -30,12 +30,16 @@ def test_visible_audio_health_poll_detects_later_context_loss():
     assert "beforeunload" in markup
 
 
-def test_gs591_explicit_rearm_resets_stale_voice_queue_and_tests_speech():
+def test_gs592_explicit_rearm_resets_then_settles_before_speech():
     markup = alert_audio_health_markup()
     assert "Walter alerts ready." in markup
     assert "if (synth.cancel) synth.cancel();" in markup
+    assert "window.setTimeout(() => speakFresh(0), 300);" in markup
     assert "synth.speak(utterance)" in markup
-    assert "GS591 re-arm queue reset" in markup
+    assert markup.index("if (synth.cancel) synth.cancel();") < markup.index(
+        "window.setTimeout(() => speakFresh(0), 300);"
+    )
+    assert "GS592 settled re-arm" in markup
     assert "pending=" in markup
     assert "speaking=" in markup
     assert "paused=" in markup
@@ -60,15 +64,19 @@ def test_gs590_voice_test_stays_inside_direct_button_activation():
     assert "root.SpeechSynthesisUtterance || window.SpeechSynthesisUtterance" in markup
 
 
-def test_gs591_audio_health_reports_voice_transport_outcome():
+def test_gs592_audio_health_reports_voice_transport_outcome_and_retry():
     markup = alert_audio_health_markup()
+    assert "BELL READY · VOICE RESETTING" in markup
     assert "BELL READY · VOICE REQUESTED" in markup
     assert "AUDIO + VOICE READY" in markup
     assert "BELL READY · VOICE BLOCKED" in markup
     assert "utterance.onstart" in markup
     assert "utterance.onend" in markup
     assert "utterance.onerror" in markup
-    assert "GS591 re-arm queue reset" in markup
+    assert "error === 'canceled' || error === 'interrupted'" in markup
+    assert "window.setTimeout(() => speakFresh(attempt + 1), 450);" in markup
+    assert "no start callback" in markup
+    assert "GS592 settled re-arm" in markup
 
 
 def test_scope_lock_is_alert_transport_presentation_only():
