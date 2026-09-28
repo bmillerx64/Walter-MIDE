@@ -8,19 +8,22 @@ def _scheduler_source() -> str:
     return source[start:end]
 
 
-def test_gs579_successful_scan_anchors_browser_deadline_to_completed_scan():
+def test_gs588_process_start_anchors_browser_deadline_when_process_owned():
     scheduler = _scheduler_source()
 
-    assert "const deadline = attemptedAt > updatedAt" in scheduler
+    assert "const deadline = processOwned && processStartedAt > 0" in scheduler
+    assert "? processStartedAt + refreshMs" in scheduler
+    assert "attemptedAt > updatedAt" in scheduler
     assert "? attemptedAt + retryMs" in scheduler
-    assert ": (updatedAt ? updatedAt + refreshMs : now);" in scheduler
-    assert ": (attemptedAt ? attemptedAt + refreshMs : now);" not in scheduler
+    assert ": (updatedAt ? updatedAt + refreshMs : now)" in scheduler
 
 
-def test_gs579_reconnect_handoff_cannot_be_made_overdue_by_stale_attempt():
+def test_gs588_legacy_reconnect_fallback_remains_below_process_truth():
     scheduler = _scheduler_source()
 
-    comment = scheduler[scheduler.index("// GS579: a reconnect"):]
-    assert "process-wide completed" in comment
-    assert "session-scoped last_scan_attempt" in comment
-    assert "successful completed scan is" in comment
+    comment = scheduler[scheduler.index("// GS588: process start is"):]
+    assert "production cadence truth" in comment
+    assert "legacy fallback" in comment
+    assert comment.index("processStartedAt + refreshMs") < comment.index(
+        "attemptedAt > updatedAt"
+    )
