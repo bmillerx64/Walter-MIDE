@@ -1344,9 +1344,9 @@ def arm_live_clock_engine(
     last_scan_attempt: datetime | None = None,
     retry_seconds: int = 5,
 ) -> None:
-    """Keep dashboard clocks live and trigger scheduled scans without showing a timer."""
+    """Trigger scheduled scans without coupling presentation clock updates."""
     # A timed fragment requests a rerun over the existing websocket.
-    # A browser ``location.reload()`` creates a new Streamlit session and loses
+    # A browser location.reload() creates a new Streamlit session and loses
     # the completed scan and persistent controls along with its session_state.
     if enabled:
         interval = autoscan_wait_seconds(
@@ -1355,12 +1355,8 @@ def arm_live_clock_engine(
             last_scan_attempt,
             retry_seconds=retry_seconds,
         )
-        # GS568: retain GS567's one-request-per-scan safety while restoring a
-        # bounded lightweight heartbeat. Weekend evidence showed the long-sleep
-        # fragment waking 14-25 seconds after a nominal 60-second deadline even
-        # though scan execution itself remained fast. Poll at most every five
-        # seconds, but latch each request to the current scan-attempt baseline so
-        # stale/nested fragments cannot multiply full-app reruns.
+        # GS568: bounded lightweight polling with one full-app rerun permitted
+        # per scan-attempt baseline.
         scheduler_poll_seconds = min(max(1, int(interval)), 5)
         request_latch_key = "_walter_live_scan_requested_for"
         request_baseline = (
@@ -1389,47 +1385,71 @@ def arm_live_clock_engine(
         request_session_preserving_rerun()
     else:
         st.session_state.pop("_walter_live_scan_requested_for", None)
-    # GS570: the market clock is presentation-only. Drive it with its own
-    # one-second fragment instead of a long-lived browser timer, which can die
-    # when Streamlit replaces the component iframe during an app rerun.
-    @st.fragment(run_every=timedelta(seconds=1))
-    def refresh_market_clock() -> None:
-        st.components.v1.html(
-            """<script>
-            (() => {
-              const root = window.parent;
-              const parts = new Intl.DateTimeFormat('en-US', {
-                timeZone: 'America/New_York', weekday: 'short', hour: 'numeric', minute: '2-digit',
-                second: '2-digit', hour12: true, timeZoneName: 'short'
-              }).formatToParts(Date.now());
-              const value = type => parts.find(part => part.type === type)?.value || '';
-              const hour = Number(value('hour')) % 12;
-              const minute = Number(value('minute'));
-              const isPm = value('dayPeriod') === 'PM';
-              const hour24 = hour + (isPm ? 12 : 0);
-              const weekday = value('weekday');
-              const isWeekend = weekday === 'Sat' || weekday === 'Sun';
-              const clockMinutes = hour24 * 60 + minute;
-              let phase = 'Market Closed';
-              if (!isWeekend && clockMinutes >= 240 && clockMinutes < 570) phase = 'Pre-Market';
-              else if (!isWeekend && clockMinutes >= 570 && clockMinutes < 960) phase = 'Live Market';
-              else if (!isWeekend && clockMinutes >= 960 && clockMinutes < 1200) phase = 'After-Hours';
-              const setText = (id, text) => {
-                const node = root.document.getElementById(id);
-                if (node) node.textContent = text;
-              };
-              setText(
-                'walter-market-time',
-                value('hour') + ':' + value('minute') + ':' + value('second') + ' ' +
-                  value('dayPeriod') + ' ' + value('timeZoneName')
-              );
-              setText('walter-market-phase', phase);
-            })();
-            </script>""",
-            height=0,
-        )
 
-    refresh_market_clock()
+
+def render_mission_header_component(markup: str) -> None:
+    """Render the mission header in one self-contained iframe with its own clock."""
+    component_html = """
+    <style>
+      html,body{margin:0;padding:0;background:transparent;color:#e2e8f0;
+        font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
+      .control-header{background:linear-gradient(145deg,#0b1722,#0a1018);
+        border:1px solid #334155;border-top:4px solid #38bdf8;border-radius:14px;
+        padding:15px 18px;margin:0;box-shadow:0 12px 30px rgba(0,0,0,.22)}
+      .control-heading{display:flex;align-items:flex-end;justify-content:space-between;
+        gap:14px;flex-wrap:wrap}
+      .control-title{font-size:1.55rem;line-height:1.15;font-weight:950;color:#f8fafc}
+      .control-version{font-size:.84rem;color:#7dd3fc;font-weight:900;margin-top:3px}
+      .control-engine{font-size:.78rem;letter-spacing:.08em;text-transform:uppercase;
+        color:#94a3b8;font-weight:850}
+      .control-strip{display:grid;grid-template-columns:repeat(auto-fit,minmax(128px,1fr));
+        gap:7px;margin-top:13px}
+      .control-stat{background:#0c121a;border:1px solid #253244;border-radius:8px;
+        padding:8px 9px;min-width:0}
+      .control-stat-label{font-size:.62rem;letter-spacing:.08em;text-transform:uppercase;
+        color:#8291a5;font-weight:900;white-space:nowrap}
+      .control-stat-value{font-size:.96rem;color:#f8fafc;font-weight:950;margin-top:3px;
+        white-space:normal;overflow-wrap:anywhere;line-height:1.2;
+        font-variant-numeric:tabular-nums}
+      .control-live{color:#4ade80}.control-demo{color:#facc15}
+      .small{font-size:.8rem;color:#cbd5e1;line-height:1.45;margin-top:9px}
+    </style>
+    """ + markup + """
+    <script>
+      (() => {
+        const update = () => {
+          const parts = new Intl.DateTimeFormat('en-US', {
+            timeZone: 'America/New_York', weekday: 'short', hour: 'numeric', minute: '2-digit',
+            second: '2-digit', hour12: true, timeZoneName: 'short'
+          }).formatToParts(Date.now());
+          const value = type => parts.find(part => part.type === type)?.value || '';
+          const hour = Number(value('hour')) % 12;
+          const minute = Number(value('minute'));
+          const isPm = value('dayPeriod') === 'PM';
+          const hour24 = hour + (isPm ? 12 : 0);
+          const weekday = value('weekday');
+          const isWeekend = weekday === 'Sat' || weekday === 'Sun';
+          const clockMinutes = hour24 * 60 + minute;
+          let phase = 'Market Closed';
+          if (!isWeekend && clockMinutes >= 240 && clockMinutes < 570) phase = 'Pre-Market';
+          else if (!isWeekend && clockMinutes >= 570 && clockMinutes < 960) phase = 'Live Market';
+          else if (!isWeekend && clockMinutes >= 960 && clockMinutes < 1200) phase = 'After-Hours';
+
+          const timeNode = document.getElementById('walter-market-time');
+          const phaseNode = document.getElementById('walter-market-phase');
+          if (timeNode) {
+            timeNode.textContent =
+              value('hour') + ':' + value('minute') + ':' + value('second') + ' ' +
+              value('dayPeriod') + ' ' + value('timeZoneName');
+          }
+          if (phaseNode) phaseNode.textContent = phase;
+        };
+        update();
+        window.setInterval(update, 1000);
+      })();
+    </script>
+    """
+    st.components.v1.html(component_html, height=300, scrolling=False)
 
 
 def _run_live_pipeline(
@@ -2601,7 +2621,7 @@ auto_scan = (
     else "Disabled"
 )
 with mission_header_slot:
-    st.markdown(
+    render_mission_header_component(
         mission_control_header_markup(
             live=mode.startswith("Live "),
             market_phase=clock.phase,
@@ -2613,8 +2633,7 @@ with mission_header_slot:
             escalation_count=escalation_count,
             auto_scan=auto_scan,
             funnel_counts=scan_diagnostics.get("funnel_counts", {}),
-        ),
-        unsafe_allow_html=True,
+        )
     )
 integrity_report = scan_integrity_report(
     records,
