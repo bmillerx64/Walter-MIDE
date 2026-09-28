@@ -2761,14 +2761,6 @@ if updated:
 with opportunity_feed_slot:
     render_live_opportunity_feed(st.session_state.opportunity_feed_events)
 
-arm_live_clock_engine(
-    mode.startswith("Live ") and auto_refresh and live_possible,
-    settings.refresh_seconds,
-    updated,
-    st.session_state.last_scan_attempt,
-    retry_seconds=min(60, 5 * (2 ** min(st.session_state.scan_failure_count, 3))),
-)
-
 with escalation_engine_slot:
     render_escalation_engine(actionable_records)
 
@@ -2792,8 +2784,7 @@ with system_status_panel:
         if updated:
             st.warning("The scan completed but produced no ranked records.")
             if scan_diagnostics:
-                st.subheader("Scan diagnostics")
-                st.json(scan_diagnostics)
+                st.caption("Deep scan diagnostics are available below on demand.")
             for warning in api_warnings:
                 st.warning(warning)
         else:
@@ -2801,153 +2792,169 @@ with system_status_panel:
                 "Dashboard loaded successfully. Walter will scan automatically in live mode, or press **Run live scan** to begin now."
             )
 
-    operational_health = (
-        (scan_diagnostics.get("walter_architecture") or {}).get("operational_health")
-        if isinstance(scan_diagnostics, dict) else None
+    # GS577: collapsed Streamlit expanders still execute and serialize their
+    # contents. Live Sunday evidence showed ~3-second scans but 12-24 seconds of
+    # scheduler/UI delay while this panel emitted raw nested diagnostics on every
+    # rerun. Keep the lightweight status summary always available and make the
+    # expensive diagnostic payload explicitly on-demand.
+    load_deep_system_status = st.toggle(
+        "Load deep diagnostics",
+        value=False,
+        key="_walter_load_deep_system_status",
+        help="Off by default so AutoScan reruns stay light; enable only while troubleshooting.",
     )
-    if operational_health:
-        st.subheader("Walter operational diagnostics")
-        health_columns = st.columns(5)
-        health_columns[0].metric("Discovered", operational_health["symbols_discovered"])
-        health_columns[1].metric("Rejected", operational_health["symbols_rejected"])
-        health_columns[2].metric("Ranked", operational_health["symbols_ranked"])
-        health_columns[3].metric("Published", operational_health["symbols_published"])
-        health_columns[4].metric("Provider failures", operational_health["provider_failures"])
-        st.dataframe(
-            operational_health["stage_metrics"], use_container_width=True,
-            hide_index=True,
+    if load_deep_system_status:
+        if scan_diagnostics:
+            st.subheader("Raw scan diagnostics")
+            st.json(scan_diagnostics)
+        operational_health = (
+            (scan_diagnostics.get("walter_architecture") or {}).get("operational_health")
+            if isinstance(scan_diagnostics, dict) else None
         )
-        st.caption(
-            "Healthy · persistence completed before publication · publication identity verified"
-        )
-
-    post_universe = (
-        scan_diagnostics.get("post_universe_pipeline")
-        if isinstance(scan_diagnostics, dict) else None
-    )
-    if post_universe:
-        st.subheader("Diagnostics")
-        st.caption(
-            f"Post-universe symbol accounting from "
-            f"{post_universe.get('universe_count', 0):,} loaded symbols."
-        )
-        st.dataframe(
-            post_universe.get("table", []), use_container_width=True,
-            hide_index=True,
-        )
-        st.markdown("**Top 20 candidates before Expansion**")
-        st.caption(
-            "Ranked from the records entering Expansion, including candidates "
-            "that the Expansion gate subsequently rejected."
-        )
-        pre_expansion = post_universe.get("pre_expansion_candidates", [])
-        if pre_expansion:
-            st.dataframe(pre_expansion, use_container_width=True, hide_index=True)
-        else:
-            st.info("No candidates reached Expansion in the latest scan.")
-
-    verification = (
-        (scan_diagnostics.get("walter_architecture") or {}).get("verification")
-        if isinstance(scan_diagnostics, dict) else None
-    )
-    if verification:
-        st.subheader("Architecture Verification Dashboard")
-        integrity = int(verification.get("overall_integrity", 0))
-        st.metric("Overall Integrity", f"{integrity}%")
-        contract_rows = [
-            {"Contract": name, "Integrity": "✔" if passed else "✘"}
-            for name, passed in verification.get("contracts", {}).items()
-        ]
-        st.dataframe(contract_rows, use_container_width=True, hide_index=True)
-        st.markdown("**Candidate Accounting**")
-        st.dataframe(
-            verification.get("accounting", []), use_container_width=True,
-            hide_index=True,
-        )
-        if verification.get("failures"):
-            st.error("Architecture contract verification failed")
+        if operational_health:
+            st.subheader("Walter operational diagnostics")
+            health_columns = st.columns(5)
+            health_columns[0].metric("Discovered", operational_health["symbols_discovered"])
+            health_columns[1].metric("Rejected", operational_health["symbols_rejected"])
+            health_columns[2].metric("Ranked", operational_health["symbols_ranked"])
+            health_columns[3].metric("Published", operational_health["symbols_published"])
+            health_columns[4].metric("Provider failures", operational_health["provider_failures"])
             st.dataframe(
-                verification["failures"], use_container_width=True, hide_index=True,
+                operational_health["stage_metrics"], use_container_width=True,
+                hide_index=True,
             )
-        else:
-            st.success("Every Walter architecture contract passed.")
-        if inspect_symbol:
-            st.markdown(f"**Candidate Trace — {inspect_symbol}**")
-            trace_rows = candidate_trace(
-                list(st.session_state.walter_candidate_ledger.records.values()),
-                inspect_symbol,
+            st.caption(
+                "Healthy · persistence completed before publication · publication identity verified"
             )
-            if trace_rows:
-                st.dataframe(trace_rows, use_container_width=True, hide_index=True)
-            else:
-                st.info("No recorded candidate identity matches this symbol.")
 
-    st.markdown("#### Legacy Candidate Diagnostics")
-    if inspect_symbol:
-        st.subheader(f"Symbol lookup: {inspect_symbol}")
-        match = next((r for r in records if r.get("symbol") == inspect_symbol), None)
-        if match:
-            st.success(
-                f"{inspect_symbol} was analyzed and ranked {match.get('status', 'UNKNOWN')}."
-            )
-            st.write(
-                "; ".join(match.get("reasons", [])) or "No elevated evidence recorded."
-            )
-            st.write(
-                "Cautions: "
-                + ("; ".join(match.get("cautions", [])) or "None recorded.")
-            )
-        else:
-            st.warning(f"{inspect_symbol} is not in the current ranked set.")
-
-    strengthening = (
-        scan_diagnostics.get("strengthening")
-        if isinstance(scan_diagnostics, dict)
-        else None
-    )
-    if strengthening:
-        st.subheader("Strengthening qualification")
-        c1, c2 = st.columns(2)
-        c1.metric(
-            "Candidates discovered", strengthening.get("candidates_discovered", 0)
+        post_universe = (
+            scan_diagnostics.get("post_universe_pipeline")
+            if isinstance(scan_diagnostics, dict) else None
         )
-        c2.metric("Candidates rejected", strengthening.get("candidates_rejected", 0))
-        st.write("Rejected by first rule")
-        st.json(strengthening.get("rejected_by_rule", {}))
-        for decision in strengthening.get("decisions", []):
-            symbol = decision.get("symbol", "UNKNOWN")
-            with st.expander(
-                f"{symbol} — {decision.get('status', 'Strengthening decision')}",
-                expanded=False,
-            ):
-                st.markdown(f"**{symbol}**")
-                st.markdown(decision.get("status", "Strengthening decision"))
-                failed_structure_reasons = (
-                    decision.get("failed_structure_gate_reasons") or []
+        if post_universe:
+            st.subheader("Diagnostics")
+            st.caption(
+                f"Post-universe symbol accounting from "
+                f"{post_universe.get('universe_count', 0):,} loaded symbols."
+            )
+            st.dataframe(
+                post_universe.get("table", []), use_container_width=True,
+                hide_index=True,
+            )
+            st.markdown("**Top 20 candidates before Expansion**")
+            st.caption(
+                "Ranked from the records entering Expansion, including candidates "
+                "that the Expansion gate subsequently rejected."
+            )
+            pre_expansion = post_universe.get("pre_expansion_candidates", [])
+            if pre_expansion:
+                st.dataframe(pre_expansion, use_container_width=True, hide_index=True)
+            else:
+                st.info("No candidates reached Expansion in the latest scan.")
+
+        verification = (
+            (scan_diagnostics.get("walter_architecture") or {}).get("verification")
+            if isinstance(scan_diagnostics, dict) else None
+        )
+        if verification:
+            st.subheader("Architecture Verification Dashboard")
+            integrity = int(verification.get("overall_integrity", 0))
+            st.metric("Overall Integrity", f"{integrity}%")
+            contract_rows = [
+                {"Contract": name, "Integrity": "✔" if passed else "✘"}
+                for name, passed in verification.get("contracts", {}).items()
+            ]
+            st.dataframe(contract_rows, use_container_width=True, hide_index=True)
+            st.markdown("**Candidate Accounting**")
+            st.dataframe(
+                verification.get("accounting", []), use_container_width=True,
+                hide_index=True,
+            )
+            if verification.get("failures"):
+                st.error("Architecture contract verification failed")
+                st.dataframe(
+                    verification["failures"], use_container_width=True, hide_index=True,
                 )
-                if failed_structure_reasons:
-                    st.markdown("**Failed Structure Gate reasons**")
-                    for reason in failed_structure_reasons:
-                        st.write(f"✗ {reason}")
-                for check in decision.get("checks", []):
-                    mark = "✓" if check.get("passed") else "✗"
-                    st.write(f"{mark} {check.get('rule')}")
-                    if not check.get("passed") and decision.get(
-                        "first_rejection_rule"
-                    ) == check.get("rule"):
-                        break
-                if decision.get("first_rejection_rule"):
-                    st.caption(
-                        f"First rejection rule: {decision.get('first_rejection_rule')}"
+            else:
+                st.success("Every Walter architecture contract passed.")
+            if inspect_symbol:
+                st.markdown(f"**Candidate Trace — {inspect_symbol}**")
+                trace_rows = candidate_trace(
+                    list(st.session_state.walter_candidate_ledger.records.values()),
+                    inspect_symbol,
+                )
+                if trace_rows:
+                    st.dataframe(trace_rows, use_container_width=True, hide_index=True)
+                else:
+                    st.info("No recorded candidate identity matches this symbol.")
+
+        st.markdown("#### Legacy Candidate Diagnostics")
+        if inspect_symbol:
+            st.subheader(f"Symbol lookup: {inspect_symbol}")
+            match = next((r for r in records if r.get("symbol") == inspect_symbol), None)
+            if match:
+                st.success(
+                    f"{inspect_symbol} was analyzed and ranked {match.get('status', 'UNKNOWN')}."
+                )
+                st.write(
+                    "; ".join(match.get("reasons", [])) or "No elevated evidence recorded."
+                )
+                st.write(
+                    "Cautions: "
+                    + ("; ".join(match.get("cautions", [])) or "None recorded.")
+                )
+            else:
+                st.warning(f"{inspect_symbol} is not in the current ranked set.")
+
+        strengthening = (
+            scan_diagnostics.get("strengthening")
+            if isinstance(scan_diagnostics, dict)
+            else None
+        )
+        if strengthening:
+            st.subheader("Strengthening qualification")
+            c1, c2 = st.columns(2)
+            c1.metric(
+                "Candidates discovered", strengthening.get("candidates_discovered", 0)
+            )
+            c2.metric("Candidates rejected", strengthening.get("candidates_rejected", 0))
+            st.write("Rejected by first rule")
+            st.json(strengthening.get("rejected_by_rule", {}))
+            for decision in strengthening.get("decisions", []):
+                symbol = decision.get("symbol", "UNKNOWN")
+                with st.expander(
+                    f"{symbol} — {decision.get('status', 'Strengthening decision')}",
+                    expanded=False,
+                ):
+                    st.markdown(f"**{symbol}**")
+                    st.markdown(decision.get("status", "Strengthening decision"))
+                    failed_structure_reasons = (
+                        decision.get("failed_structure_gate_reasons") or []
                     )
-                if decision.get("volume_pace"):
-                    st.write("Volume Pace Intelligence diagnostics")
-                    st.json(decision.get("volume_pace"))
-                if decision.get("vwap_gate"):
-                    st.write("VWAP gate diagnostics")
-                    st.json(decision.get("vwap_gate"))
-    elif not inspect_symbol:
-        st.caption("No diagnostics recorded for this scan yet.")
+                    if failed_structure_reasons:
+                        st.markdown("**Failed Structure Gate reasons**")
+                        for reason in failed_structure_reasons:
+                            st.write(f"✗ {reason}")
+                    for check in decision.get("checks", []):
+                        mark = "✓" if check.get("passed") else "✗"
+                        st.write(f"{mark} {check.get('rule')}")
+                        if not check.get("passed") and decision.get(
+                            "first_rejection_rule"
+                        ) == check.get("rule"):
+                            break
+                    if decision.get("first_rejection_rule"):
+                        st.caption(
+                            f"First rejection rule: {decision.get('first_rejection_rule')}"
+                        )
+                    if decision.get("volume_pace"):
+                        st.write("Volume Pace Intelligence diagnostics")
+                        st.json(decision.get("volume_pace"))
+                    if decision.get("vwap_gate"):
+                        st.write("VWAP gate diagnostics")
+                        st.json(decision.get("vwap_gate"))
+        elif not inspect_symbol:
+            st.caption("No diagnostics recorded for this scan yet.")
+
     st.caption(f"{clock.phase} — Rankings describe evidence only.")
 
 state_changes = escalation_state_changes(actionable_records)
@@ -3850,3 +3857,16 @@ if active_tab == "Webull Debug":
                     st.warning("Missing/invalid fields: " + "; ".join(_entry["missing_fields"]))
                 st.write("**Raw Webull response** (credentials redacted):")
                 st.json(_entry.get("raw_response") or {})
+
+# GS577: arm the next browser/fragment cadence only after the selected dashboard
+# view and all always-visible presentation have finished rendering. Computing the
+# wait at the true tail prevents render time from being added on top of the
+# intended 60-second start-to-start deadline.
+arm_live_clock_engine(
+    mode.startswith("Live ") and auto_refresh and live_possible,
+    settings.refresh_seconds,
+    updated,
+    st.session_state.last_scan_attempt,
+    retry_seconds=min(60, 5 * (2 ** min(st.session_state.scan_failure_count, 3))),
+)
+
