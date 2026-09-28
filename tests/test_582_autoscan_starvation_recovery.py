@@ -11,18 +11,18 @@ def _scheduler_source() -> str:
 def test_gs582_has_separate_connected_scheduler_starvation_recovery():
     scheduler = _scheduler_source()
 
-    assert "scheduler_starvation_recovery_ms = 30_000" in scheduler
-    assert "scheduler_starvation_recovery_cooldown_ms = 120_000" in scheduler
+    assert "scheduler_starvation_recovery_ms = 15_000" in scheduler
+    assert "scheduler_starvation_recovery_cooldown_ms = 75_000" in scheduler
     assert "const schedulerRecoveryKey = 'walterSchedulerStarvationRecovery';" in scheduler
     recovery = scheduler[scheduler.index("const schedulerRecoveryDue = attemptedAt > 0"):]
     assert "&& !nativeStreamlitConnecting()" in recovery
     assert "&& !visibleWalterScanActive()" in recovery
     assert ">= schedulerStarvationRecoveryMs" in recovery
     assert "RECOVERING AUTOSCAN" in recovery
-    assert "root.location.replace(root.location.href);" in recovery
+    assert "requestRunLiveScanWidget()" in recovery
 
 
-def test_gs582_never_recycles_a_visibly_active_scan():
+def test_gs582_gs583_recovery_never_requests_scan_while_visibly_active():
     scheduler = _scheduler_source()
 
     assert "const visibleWalterScanActive = () =>" in scheduler
@@ -30,8 +30,8 @@ def test_gs582_never_recycles_a_visibly_active_scan():
     assert "text.includes('STARTING WALTER ARCHITECTURE')" in scheduler
     recovery = scheduler[scheduler.index("const schedulerRecoveryDue = attemptedAt > 0"):]
     active_guard = recovery.index("!visibleWalterScanActive()")
-    reload_pos = recovery.index("root.location.replace(root.location.href);")
-    assert active_guard < reload_pos
+    request_pos = recovery.index("requestRunLiveScanWidget()")
+    assert active_guard < request_pos
 
 
 def test_gs582_recovery_is_per_baseline_and_cooldown_latched():

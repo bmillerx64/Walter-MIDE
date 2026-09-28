@@ -1409,13 +1409,15 @@ def arm_live_clock_engine(
     # arrives. Cross-session completed-scan handoff preserves backend evidence.
     transport_recovery_ms = 45_000
     transport_recovery_cooldown_ms = 90_000
-    # GS582: Monday live validation on GS581 proved the browser remained alive
-    # while Streamlit's timed fragment stopped delivering app reruns for more
-    # than three minutes. Keep transport recovery separate from scheduler
-    # starvation recovery: a connected page may self-recycle only after one full
-    # cadence is at least 30 seconds overdue and Walter is not visibly scanning.
-    scheduler_starvation_recovery_ms = 30_000
-    scheduler_starvation_recovery_cooldown_ms = 120_000
+    # GS583: GS582 correctly detected starvation but its iframe-initiated
+    # top-level navigation did not actually recover the Streamlit session.
+    # Keep the browser detector, but use Walter's existing native Streamlit
+    # "Run live scan" widget as the recovery transport. Its widget event causes
+    # Streamlit to perform the normal full-app rerun and preserves all existing
+    # scan/request/watchdog authority. Fifteen seconds gives a normal 5-7 second
+    # scan ample room before recovery while keeping live data from going stale.
+    scheduler_starvation_recovery_ms = 15_000
+    scheduler_starvation_recovery_cooldown_ms = 75_000
     st.components.v1.html(
         f"""<script>
         (() => {{
@@ -1464,6 +1466,20 @@ def arm_live_clock_engine(
               const text = (root.document.body?.innerText || '').toUpperCase();
               return text.includes('WALTER IS SCANNING')
                 || text.includes('STARTING WALTER ARCHITECTURE');
+            }} catch (_) {{
+              return false;
+            }}
+          }};
+          const requestRunLiveScanWidget = () => {{
+            try {{
+              const buttons = Array.from(root.document.querySelectorAll('button'));
+              const button = buttons.find(candidate => {{
+                const label = (candidate.innerText || candidate.textContent || '').trim();
+                return label === 'Run live scan';
+              }});
+              if (!button || button.disabled) return false;
+              button.click();
+              return true;
             }} catch (_) {{
               return false;
             }}
@@ -1585,12 +1601,11 @@ def arm_live_clock_engine(
               return;
             }}
 
-            // GS582 scheduler-starvation fail-safe. The browser-side clock is
-            // independent of Streamlit fragment delivery, so it can detect the
-            // exact failure observed live on GS581: the page remains responsive
-            // while no server rerun arrives. Never recycle while Walter is
-            // visibly scanning, and keep this path separate from CONNECTING
-            // transport recovery.
+            // GS583 scheduler-starvation fail-safe. GS582 proved the
+            // detector fires, but navigation from the embedded HTML component
+            // did not recover the app. Instead, trigger Walter's existing native
+            // Streamlit scan widget. That widget event owns the normal rerun and
+            // scan-request path; this browser code never executes scan logic.
             const schedulerRecoveryDue = attemptedAt > 0
               && !nativeStreamlitConnecting()
               && !visibleWalterScanActive()
@@ -1600,13 +1615,18 @@ def arm_live_clock_engine(
               || now - Number(schedulerRecoveryState.recoveredAt || 0)
                  >= schedulerStarvationRecoveryCooldownMs;
             if (schedulerRecoveryDue && schedulerRecoveryAllowed) {{
-              root.sessionStorage.setItem(
-                schedulerRecoveryKey,
-                JSON.stringify({{baselineAt, recoveredAt: now}})
-              );
-              setAutoScan('RECOVERING AUTOSCAN…', '#f87171');
-              root.location.replace(root.location.href);
-              return;
+              const requested = requestRunLiveScanWidget();
+              if (requested) {{
+                root.sessionStorage.setItem(
+                  schedulerRecoveryKey,
+                  JSON.stringify({{baselineAt, recoveredAt: now}})
+                );
+                setAutoScan('RECOVERING AUTOSCAN…', '#f87171');
+                return;
+              }}
+              // Do not latch a failed lookup/disabled button. A later browser
+              // tick may find the widget once Streamlit finishes rendering.
+              setAutoScan('AUTOSCAN RECOVERY WAITING…', '#f87171');
             }}
           }};
           tick();
