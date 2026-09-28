@@ -8,32 +8,35 @@ def _scheduler_source() -> str:
     return source[start:end]
 
 
-def test_gs567_restores_single_interval_fragment_not_five_second_heartbeat():
+def test_gs581_bounded_heartbeat_preserves_gs567_no_perpetual_rerun_safety():
     scheduler = _scheduler_source()
 
-    assert "@st.fragment(run_every=timedelta(seconds=interval))" in scheduler
-    assert "scheduler_poll_seconds" not in scheduler
-    assert "min(max(1, int(interval)), 5)" not in scheduler
+    assert "scheduler_poll_seconds = min(max(1, int(interval)), 5)" in scheduler
+    assert "@st.fragment(run_every=timedelta(seconds=scheduler_poll_seconds))" in scheduler
+    assert 'request_latch_key = "_walter_live_scan_requested_for"' in scheduler
 
 
-def test_gs567_fragment_has_one_local_tick_guard_before_full_app_rerun():
+def test_gs581_full_app_rerun_is_due_guarded_and_per_baseline_latched():
     scheduler = _scheduler_source()
 
-    assert 'tick_key = "_walter_live_scan_fragment_tick"' in scheduler
-    assert "interval * 0.9" in scheduler
-    assert "autoscan_request_due(" in scheduler
-    assert scheduler.index("autoscan_request_due(") < scheduler.index(
-        'st.rerun(scope="app")'
+    due = scheduler.index("if not autoscan_request_due(")
+    duplicate_guard = scheduler.index(
+        "if st.session_state.get(request_latch_key) == request_baseline:"
     )
+    latch = scheduler.index("st.session_state[request_latch_key] = request_baseline")
+    request = scheduler.index("st.session_state[SCAN_REQUESTED_KEY] = True")
+    rerun = scheduler.index('st.rerun(scope="app")')
+
+    assert due < duplicate_guard < latch < request < rerun
 
 
-def test_gs567_clears_fragment_tick_when_autoscan_is_disabled():
+def test_gs581_latch_clears_when_autoscan_is_disabled():
     scheduler = _scheduler_source()
 
-    assert 'st.session_state.pop("_walter_live_scan_fragment_tick", None)' in scheduler
+    assert 'st.session_state.pop("_walter_live_scan_requested_for", None)' in scheduler
 
 
-def test_gs567_scheduler_rollback_is_orchestration_only():
+def test_gs581_scheduler_change_remains_orchestration_only():
     scheduler = _scheduler_source()
 
     forbidden = (
@@ -49,3 +52,11 @@ def test_gs567_scheduler_rollback_is_orchestration_only():
         ".location.reload(",
     )
     assert not any(token in scheduler for token in forbidden)
+
+
+def test_gs581_keeps_gs580_transport_proof_requirement():
+    scheduler = _scheduler_source()
+
+    recovery = scheduler[scheduler.index("const recoveryDue = attemptedAt > 0"):]
+    assert "&& nativeStreamlitConnecting()" in recovery
+    assert "&& overdueSeconds * 1000 >= transportRecoveryMs" in recovery
