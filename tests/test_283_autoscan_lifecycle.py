@@ -99,17 +99,22 @@ def test_autoscan_uses_session_preserving_streamlit_fragment_not_browser_reload(
     assert ".location.reload(" not in scheduler
 
 
-def test_autoscan_scheduler_requires_live_enabled_idle_and_due_state():
+def test_autoscan_process_service_requires_live_enabled_and_not_stopped():
     source = Path("app.py").read_text(encoding="utf-8")
-    start = source.index("    due = (")
-    end = source.index("    should_scan =", start)
-    due_block = source[start:end]
+    start = source.index("_gs585_enabled = (")
+    end = source.index("\n_gs585_baseline =", start)
+    enabled_block = source[start:end]
 
-    assert 'mode.startswith("Live ")' in due_block
-    assert "and auto_refresh" in due_block
-    assert "and live_possible" in due_block
-    assert "and not st.session_state.scan_in_progress" in due_block
-    assert ">= settings.refresh_seconds" in due_block
+    assert 'mode.startswith("Live ")' in enabled_block
+    assert "and auto_refresh" in enabled_block
+    assert "and live_possible" in enabled_block
+    assert "and not st.session_state[STOP_REQUESTED_KEY]" in enabled_block
+
+    decision_start = source.index("# GS585: automatic cadence is process-owned.")
+    decision_end = source.index("\n\nif mode.startswith", decision_start)
+    decision = source[decision_start:decision_end]
+    assert "due = False" in decision
+    assert "should_scan = bool(st.session_state[SCAN_REQUESTED_KEY])" in decision
 
 
 def test_autoscan_success_wait_is_measured_from_scan_start():
@@ -170,7 +175,7 @@ def test_autoscan_success_request_does_not_fire_before_start_deadline():
     ) is True
 
 
-def test_live_clock_fragment_queues_scan_at_start_to_start_deadline():
+def test_live_clock_fragment_retains_only_legacy_fallback_scan_request_path():
     source = Path("app.py").read_text(encoding="utf-8")
     function_start = source.index("def arm_live_clock_engine(")
     function_end = source.index("\ndef _run_live_pipeline(", function_start)
@@ -185,3 +190,4 @@ def test_live_clock_fragment_queues_scan_at_start_to_start_deadline():
     assert "if not autoscan_request_due(" in scheduler
     assert "if st.session_state.get(request_latch_key) == request_baseline:" in scheduler
     assert "st.session_state[request_latch_key] = request_baseline" in scheduler
+    assert "if not process_autoscan_owned:" in scheduler
