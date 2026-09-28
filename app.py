@@ -1609,6 +1609,7 @@ def _run_live_pipeline(
     scan_started = perf_counter()
     repair_mide_module_links()
     runtime_state = st.session_state if runtime_state is None else runtime_state
+    explicit_runtime_secrets = runtime_secrets is not None
     runtime_secrets = secrets_mapping() if runtime_secrets is None else runtime_secrets
     if provider_name.upper() == "WEBULL":
         log_startup("initializing Webull provider")
@@ -1720,8 +1721,11 @@ def _run_live_pipeline(
             "Walter quote/bars/stream provider: WEBULL SDK; symbol master: ALPACA /v2/assets"
         )
     else:
-        api_key = str(runtime_secrets.get("ALPACA_API_KEY") or "")
-        secret = str(runtime_secrets.get("ALPACA_SECRET_KEY") or "")
+        api_key = get_secret("ALPACA_API_KEY")
+        secret = get_secret("ALPACA_SECRET_KEY")
+        if explicit_runtime_secrets:
+            api_key = str(runtime_secrets.get("ALPACA_API_KEY") or "")
+            secret = str(runtime_secrets.get("ALPACA_SECRET_KEY") or "")
         if not api_key or not secret:
             raise RuntimeError("Alpaca credentials are not configured in Streamlit Secrets.")
         # Legacy mode is isolated behind lazy imports so selecting Live Webull
