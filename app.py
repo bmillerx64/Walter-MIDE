@@ -1396,6 +1396,14 @@ def arm_live_clock_engine(
             # snapshot into this session. Rerun only to repaint the dashboard;
             # this path never sets SCAN_REQUESTED_KEY and therefore cannot create
             # a competing automatic or manual scan.
+            #
+            # GS586: remember the exact adopted process scan for one browser-audio
+            # registration on the ensuing full app render. The scan now completes
+            # outside Streamlit, so audio delivery must cross the same explicit
+            # process -> observer handoff as the visual evidence.
+            st.session_state["_walter_process_scan_audio_pending_token"] = (
+                observed.completed_at.isoformat()
+            )
             st.rerun(scope="app")
 
         @st.fragment(run_every=timedelta(seconds=scheduler_poll_seconds))
@@ -3269,6 +3277,35 @@ elif alerts and alert_phrase:
     if alert_delivery_key != st.session_state.last_escalation_alert:
         play_alert("assets/alert.wav", alert_phrase, alert_voice_for_session())
         st.session_state.last_escalation_alert = alert_delivery_key
+
+# GS586: process-owned scans finish outside Streamlit. The observer fragment marks
+# the exact scan token before its repaint rerun; consume that token only after all
+# semantic alert registrations above so GS367 can still choose the highest tier for
+# this completed scan. This is transport/presentation only: it neither creates an
+# alert state nor changes any trading/evidence authority.
+_process_audio_pending = str(
+    st.session_state.get("_walter_process_scan_audio_pending_token") or ""
+)
+_process_audio_current = (
+    completed_scan.completed_at.isoformat() if completed_scan is not None else ""
+)
+if _process_audio_pending and _process_audio_pending == _process_audio_current:
+    if alerts:
+        from mide.gs419_completed_scan_heartbeat import heartbeat_markup
+
+        _process_audio_markup = heartbeat_markup(st.session_state)
+        if _process_audio_markup:
+            st.components.v1.html(
+                _process_audio_markup,
+                height=0,
+                scrolling=False,
+            )
+            print(
+                "[WALTER AUDIO] process scan browser registration "
+                f"token={_process_audio_current}",
+                flush=True,
+            )
+    st.session_state.pop("_walter_process_scan_audio_pending_token", None)
 
 tab_names = [
         "Radar",
