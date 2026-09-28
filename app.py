@@ -1352,10 +1352,20 @@ def arm_live_clock_engine(
     process_autoscan_owned: bool = False,
 ) -> None:
     """Keep dashboard clocks live and observe process-owned scan publication."""
-    # The normal cadence still uses Streamlit's timed fragment over the session
-    # websocket. GS576 adds only a bounded recovery path for the observed failure
-    # where that websocket closes while the Streamlit app process remains healthy.
-    # It never starts a scan itself and does not touch any trading decision logic.
+    # GS588: once process AutoScan owns cadence, read that process truth directly
+    # for the browser countdown. Completion/session timestamps can lag while a
+    # Streamlit rerun is rendering and must not manufacture hundreds of seconds of
+    # false "SCAN OVERDUE" time.
+    process_snapshot = None
+    if process_autoscan_owned:
+        try:
+            process_snapshot = importlib.import_module(
+                "mide.gs585_process_autoscan_service"
+            ).snapshot()
+        except Exception:
+            process_snapshot = None
+    # The browser remains presentation/recovery only. It never starts process-owned
+    # automatic scans and does not touch any trading decision logic.
     if enabled:
         interval = autoscan_wait_seconds(
             refresh_seconds,
@@ -1431,6 +1441,14 @@ def arm_live_clock_engine(
     updated_ms = int(last_updated.timestamp() * 1000) if last_updated else 0
     attempt_ms = int(last_scan_attempt.timestamp() * 1000) if last_scan_attempt else 0
     baseline_ms = max(updated_ms, attempt_ms)
+    process_started_ms = (
+        int(process_snapshot.last_started_at.timestamp() * 1000)
+        if process_snapshot is not None and process_snapshot.last_started_at is not None
+        else 0
+    )
+    process_running = bool(
+        process_snapshot is not None and process_snapshot.running
+    )
     refresh_ms = max(1, int(refresh_seconds)) * 1000
     retry_ms = max(1, int(retry_seconds)) * 1000
     # GS576: weekend HAR evidence captured "WebSocket onclose" followed by
@@ -1448,6 +1466,9 @@ def arm_live_clock_engine(
           const updatedAt = {updated_ms};
           const attemptedAt = {attempt_ms};
           const baselineAt = {baseline_ms};
+          const processOwned = {str(process_autoscan_owned).lower()};
+          const processStartedAt = {process_started_ms};
+          const processRunning = {str(process_running).lower()};
           const refreshMs = {refresh_ms};
           const retryMs = {retry_ms};
           const transportRecoveryMs = {transport_recovery_ms};
@@ -1535,15 +1556,23 @@ def arm_live_clock_engine(
               root.sessionStorage.removeItem(recoveryKey);
               recoveryState = null;
             }}
-            // GS579: a reconnect may inherit the latest process-wide completed
-            // scan while this fresh Streamlit session still has an older
-            // session-scoped last_scan_attempt. A successful completed scan is
-            // the cadence truth; only a newer failed/in-flight attempt should
-            // own the short retry deadline.
-            const deadline = attemptedAt > updatedAt
-              ? attemptedAt + retryMs
-              : (updatedAt ? updatedAt + refreshMs : now);
+            // GS588: process start is the production cadence truth. The older
+            // completion/attempt projection remains only as a legacy fallback.
+            const deadline = processOwned && processStartedAt > 0
+              ? processStartedAt + refreshMs
+              : (
+                  attemptedAt > updatedAt
+                    ? attemptedAt + retryMs
+                    : (updatedAt ? updatedAt + refreshMs : now)
+                );
             const remainingMs = deadline - now;
+            if (processOwned && processRunning && processStartedAt > 0) {{
+              const elapsedSeconds = Math.max(
+                0, Math.floor((now - processStartedAt) / 1000)
+              );
+              setAutoScan(`● SCANNING ${{elapsedSeconds}}s`, '#facc15');
+              return;
+            }}
             if (remainingMs > 0) {{
               const remainingSeconds = Math.max(1, Math.ceil(remainingMs / 1000));
               setAutoScan(`Next ${{remainingSeconds}}s`, '#e2e8f0');
@@ -1551,8 +1580,6 @@ def arm_live_clock_engine(
             }}
             const overdueSeconds = Math.max(0, Math.floor((-remainingMs) / 1000));
             if (overdueSeconds <= 15) {{
-              // Browser-owned continuity: this keeps visibly animating while the
-              // synchronous Streamlit scan blocks the server-side script.
               setAutoScan(`● SCANNING ${{overdueSeconds}}s`, '#facc15');
             }} else {{
               setAutoScan(`SCAN OVERDUE +${{overdueSeconds}}s`, '#f87171');
@@ -2929,6 +2956,19 @@ if current_rejections:
 updated_text = format_eastern_time(updated)
 clock = market_clock()
 
+# GS588: arm the process observer and browser clock immediately after adopting the
+# current CompletedScan. With cadence now process-owned, delaying this observer until
+# the tail of a heavy Streamlit render only makes the browser stale; it no longer
+# protects scan cadence.
+arm_live_clock_engine(
+    mode.startswith("Live ") and auto_refresh and live_possible,
+    settings.refresh_seconds,
+    updated,
+    st.session_state.last_scan_attempt,
+    retry_seconds=min(60, 5 * (2 ** min(st.session_state.scan_failure_count, 3))),
+    process_autoscan_owned=True,
+)
+
 if records:
     with st.expander("Decision Funnel audit trails", expanded=False):
         for record in records:
@@ -4157,16 +4197,7 @@ if active_tab == "Webull Debug":
                 st.write("**Raw Webull response** (credentials redacted):")
                 st.json(_entry.get("raw_response") or {})
 
-# GS577: arm the next browser/fragment cadence only after the selected dashboard
-# view and all always-visible presentation have finished rendering. Computing the
-# wait at the true tail prevents render time from being added on top of the
-# intended 60-second start-to-start deadline.
-arm_live_clock_engine(
-    mode.startswith("Live ") and auto_refresh and live_possible,
-    settings.refresh_seconds,
-    updated,
-    st.session_state.last_scan_attempt,
-    retry_seconds=min(60, 5 * (2 ** min(st.session_state.scan_failure_count, 3))),
-    process_autoscan_owned=True,
-)
+# GS588: process-owned cadence no longer depends on render completion. The live
+# clock/observer is armed immediately after CompletedScan adoption above so a heavy
+# dashboard render cannot leave Last Scan and Auto Scan presentation minutes stale.
 
