@@ -38,6 +38,7 @@ def test_gs574_does_not_change_scan_scheduler_or_trading_logic():
     source = _app_source()
     scheduler = source[source.index("def arm_live_clock_engine("):source.index("\ndef _run_live_pipeline(", source.index("def arm_live_clock_engine("))]
 
-    assert "@st.fragment(run_every=timedelta(seconds=interval))" in scheduler
+    assert "scheduler_poll_seconds = min(max(1, int(interval)), 5)" in scheduler
+    assert "@st.fragment(run_every=timedelta(seconds=scheduler_poll_seconds))" in scheduler
     assert 'st.rerun(scope="app")' in scheduler
     assert "autoscan_request_due(" in scheduler
