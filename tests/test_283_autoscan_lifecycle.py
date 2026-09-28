@@ -99,19 +99,17 @@ def test_autoscan_uses_session_preserving_streamlit_fragment_not_browser_reload(
     assert ".location.reload(" not in scheduler
 
 
-def test_autoscan_full_app_path_is_manual_or_first_bootstrap_only():
+def test_autoscan_scheduler_requires_live_enabled_idle_and_due_state():
     source = Path("app.py").read_text(encoding="utf-8")
-    start = source.index("    bootstrap_scan = (")
-    end = source.index("\ndef execute_live_scan_attempt", start)
-    block = source[start:end]
+    start = source.index("    due = (")
+    end = source.index("    should_scan =", start)
+    due_block = source[start:end]
 
-    assert 'mode.startswith("Live ")' in block
-    assert "and auto_refresh" in block
-    assert "and live_possible" in block
-    assert 'completed_scan_for_view(st.session_state, "scheduler") is None' in block
-    assert "and st.session_state.last_scan_attempt is None" in block
-    assert ">= settings.refresh_seconds" not in block
-    assert "should_scan = st.session_state[SCAN_REQUESTED_KEY] or bootstrap_scan" in block
+    assert 'mode.startswith("Live ")' in due_block
+    assert "and auto_refresh" in due_block
+    assert "and live_possible" in due_block
+    assert "and not st.session_state.scan_in_progress" in due_block
+    assert ">= settings.refresh_seconds" in due_block
 
 
 def test_autoscan_success_wait_is_measured_from_scan_start():
@@ -172,7 +170,7 @@ def test_autoscan_success_request_does_not_fire_before_start_deadline():
     ) is True
 
 
-def test_live_clock_fragment_runs_scan_at_start_to_start_deadline():
+def test_live_clock_fragment_queues_scan_at_start_to_start_deadline():
     source = Path("app.py").read_text(encoding="utf-8")
     function_start = source.index("def arm_live_clock_engine(")
     function_end = source.index("\ndef _run_live_pipeline(", function_start)
@@ -180,8 +178,7 @@ def test_live_clock_fragment_runs_scan_at_start_to_start_deadline():
 
     assert "interval = autoscan_wait_seconds(" in scheduler
     assert "autoscan_request_due(" in scheduler
-    assert "scheduled_scan()" in scheduler
-    assert "st.session_state[SCAN_REQUESTED_KEY] = True" not in scheduler
+    assert "st.session_state[SCAN_REQUESTED_KEY] = True" in scheduler
     assert 'request_latch_key = "_walter_live_scan_requested_for"' in scheduler
     assert "request_baseline = (" in scheduler
     assert "scheduler_poll_seconds = min(max(1, int(interval)), 5)" in scheduler
@@ -189,7 +186,7 @@ def test_live_clock_fragment_runs_scan_at_start_to_start_deadline():
     assert "st.session_state[request_latch_key] = request_baseline" in scheduler
 
 
-def test_gs573_latch_prevents_duplicate_fragment_scans_for_same_baseline():
+def test_gs568_latch_prevents_duplicate_full_app_reruns_for_same_scan_baseline():
     source = Path("app.py").read_text(encoding="utf-8")
     start = source.index("def arm_live_clock_engine(")
     end = source.index("\ndef _run_live_pipeline(", start)
@@ -200,10 +197,10 @@ def test_gs573_latch_prevents_duplicate_fragment_scans_for_same_baseline():
         "if st.session_state.get(request_latch_key) == request_baseline:"
     )
     latch = scheduler.index("st.session_state[request_latch_key] = request_baseline")
-    scan = scheduler.index("scheduled_scan()")
+    request = scheduler.index("st.session_state[SCAN_REQUESTED_KEY] = True")
     rerun = scheduler.index('st.rerun(scope="app")')
 
-    assert due < duplicate_guard < latch < scan < rerun
+    assert due < duplicate_guard < latch < request < rerun
 
 
 def test_gs568_scheduler_fix_remains_orchestration_only():
@@ -284,36 +281,3 @@ def test_gs572_prescan_header_is_presentation_only():
     assert "SCAN_REQUESTED_KEY" not in block
     assert "begin_scheduled_scan(" not in block
     assert "run_live(" not in block
-
-
-def test_gs573_recurring_scan_executes_before_full_app_refresh():
-    source = Path("app.py").read_text(encoding="utf-8")
-    start = source.index("def arm_live_clock_engine(")
-    end = source.index("\ndef render_mission_header_component(", start)
-    scheduler = source[start:end]
-
-    scan = scheduler.index("scheduled_scan()")
-    rerun = scheduler.index('st.rerun(scope="app")')
-    assert scan < rerun
-    assert "st.session_state[SCAN_REQUESTED_KEY] = True" not in scheduler
-
-
-def test_gs573_scheduled_scan_uses_quiet_presentation_path():
-    source = Path("app.py").read_text(encoding="utf-8")
-
-    assert "class _QuietScanStatus:" in source
-    assert "class _QuietScanProgress:" in source
-    assert "quiet: bool = False" in source
-    assert "scheduled_scan=lambda: execute_live_scan_attempt(" in source
-    assert "quiet=True" in source
-
-
-def test_gs573_manual_scan_path_remains_full_ui_path():
-    source = Path("app.py").read_text(encoding="utf-8")
-    marker = (
-        'if mode.startswith("Live ") and should_scan '
-        'and not st.session_state[STOP_REQUESTED_KEY]:'
-    )
-    start = source.index(marker)
-    block = source[start:start + 400]
-    assert "execute_live_scan_attempt(selected_provider, quiet=False)" in block
