@@ -1344,9 +1344,9 @@ def arm_live_clock_engine(
     last_scan_attempt: datetime | None = None,
     retry_seconds: int = 5,
 ) -> None:
-    """Trigger scheduled scans without coupling presentation clock updates."""
+    """Keep dashboard clocks live and trigger scheduled scans without showing a timer."""
     # A timed fragment requests a rerun over the existing websocket.
-    # A browser location.reload() creates a new Streamlit session and loses
+    # A browser ``location.reload()`` creates a new Streamlit session and loses
     # the completed scan and persistent controls along with its session_state.
     if enabled:
         interval = autoscan_wait_seconds(
@@ -1355,8 +1355,12 @@ def arm_live_clock_engine(
             last_scan_attempt,
             retry_seconds=retry_seconds,
         )
-        # GS568: bounded lightweight polling with one full-app rerun permitted
-        # per scan-attempt baseline.
+        # GS568: retain GS567's one-request-per-scan safety while restoring a
+        # bounded lightweight heartbeat. Weekend evidence showed the long-sleep
+        # fragment waking 14-25 seconds after a nominal 60-second deadline even
+        # though scan execution itself remained fast. Poll at most every five
+        # seconds, but latch each request to the current scan-attempt baseline so
+        # stale/nested fragments cannot multiply full-app reruns.
         scheduler_poll_seconds = min(max(1, int(interval)), 5)
         request_latch_key = "_walter_live_scan_requested_for"
         request_baseline = (
@@ -1385,71 +1389,83 @@ def arm_live_clock_engine(
         request_session_preserving_rerun()
     else:
         st.session_state.pop("_walter_live_scan_requested_for", None)
+    updated_ms = int(last_updated.timestamp() * 1000) if last_updated else 0
+    attempt_ms = int(last_scan_attempt.timestamp() * 1000) if last_scan_attempt else 0
+    baseline_ms = max(updated_ms, attempt_ms)
+    refresh_ms = max(1, int(refresh_seconds)) * 1000
+    retry_ms = max(1, int(retry_seconds)) * 1000
+    st.components.v1.html(
+        f"""<script>
+        (() => {{
+          const root = window.parent;
+          const enabled = {str(enabled).lower()};
+          const updatedAt = {updated_ms};
+          const attemptedAt = {attempt_ms};
+          const baselineAt = {baseline_ms};
+          const refreshMs = {refresh_ms};
+          const retryMs = {retry_ms};
+          // Keep an in-flight marker in this browser tab to prevent repeated
+          // reloads while Streamlit performs its blocking scan rerun. Store the
+          // scan baseline as well because server and browser clocks can skew.
+          const scanKey = 'walterScanState';
+          if (root.__walterLiveClockInterval) root.clearInterval(root.__walterLiveClockInterval);
 
-
-def render_mission_header_component(markup: str) -> None:
-    """Render the mission header in one self-contained iframe with its own clock."""
-    component_html = """
-    <style>
-      html,body{margin:0;padding:0;background:transparent;color:#e2e8f0;
-        font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
-      .control-header{background:linear-gradient(145deg,#0b1722,#0a1018);
-        border:1px solid #334155;border-top:4px solid #38bdf8;border-radius:14px;
-        padding:15px 18px;margin:0;box-shadow:0 12px 30px rgba(0,0,0,.22)}
-      .control-heading{display:flex;align-items:flex-end;justify-content:space-between;
-        gap:14px;flex-wrap:wrap}
-      .control-title{font-size:1.55rem;line-height:1.15;font-weight:950;color:#f8fafc}
-      .control-version{font-size:.84rem;color:#7dd3fc;font-weight:900;margin-top:3px}
-      .control-engine{font-size:.78rem;letter-spacing:.08em;text-transform:uppercase;
-        color:#94a3b8;font-weight:850}
-      .control-strip{display:grid;grid-template-columns:repeat(auto-fit,minmax(128px,1fr));
-        gap:7px;margin-top:13px}
-      .control-stat{background:#0c121a;border:1px solid #253244;border-radius:8px;
-        padding:8px 9px;min-width:0}
-      .control-stat-label{font-size:.62rem;letter-spacing:.08em;text-transform:uppercase;
-        color:#8291a5;font-weight:900;white-space:nowrap}
-      .control-stat-value{font-size:.96rem;color:#f8fafc;font-weight:950;margin-top:3px;
-        white-space:normal;overflow-wrap:anywhere;line-height:1.2;
-        font-variant-numeric:tabular-nums}
-      .control-live{color:#4ade80}.control-demo{color:#facc15}
-      .small{font-size:.8rem;color:#cbd5e1;line-height:1.45;margin-top:9px}
-    </style>
-    """ + markup + """
-    <script>
-      (() => {
-        const update = () => {
-          const parts = new Intl.DateTimeFormat('en-US', {
-            timeZone: 'America/New_York', weekday: 'short', hour: 'numeric', minute: '2-digit',
-            second: '2-digit', hour12: true, timeZoneName: 'short'
-          }).formatToParts(Date.now());
-          const value = type => parts.find(part => part.type === type)?.value || '';
-          const hour = Number(value('hour')) % 12;
-          const minute = Number(value('minute'));
-          const isPm = value('dayPeriod') === 'PM';
-          const hour24 = hour + (isPm ? 12 : 0);
-          const weekday = value('weekday');
-          const isWeekend = weekday === 'Sat' || weekday === 'Sun';
-          const clockMinutes = hour24 * 60 + minute;
-          let phase = 'Market Closed';
-          if (!isWeekend && clockMinutes >= 240 && clockMinutes < 570) phase = 'Pre-Market';
-          else if (!isWeekend && clockMinutes >= 570 && clockMinutes < 960) phase = 'Live Market';
-          else if (!isWeekend && clockMinutes >= 960 && clockMinutes < 1200) phase = 'After-Hours';
-
-          const timeNode = document.getElementById('walter-market-time');
-          const phaseNode = document.getElementById('walter-market-phase');
-          if (timeNode) {
-            timeNode.textContent =
-              value('hour') + ':' + value('minute') + ':' + value('second') + ' ' +
-              value('dayPeriod') + ' ' + value('timeZoneName');
-          }
-          if (phaseNode) phaseNode.textContent = phase;
-        };
-        update();
-        window.setInterval(update, 1000);
-      })();
-    </script>
-    """
-    st.components.v1.html(component_html, height=300, scrolling=False)
+          const node = id => root.document.getElementById(id);
+          const setText = (id, value) => {{ const el = node(id); if (el) el.textContent = value; }};
+          const marketNow = now => {{
+            const parts = new Intl.DateTimeFormat('en-US', {{
+              timeZone: 'America/New_York', weekday: 'short', hour: 'numeric', minute: '2-digit',
+              second: '2-digit', hour12: true, timeZoneName: 'short'
+            }}).formatToParts(now);
+            const value = type => parts.find(part => part.type === type)?.value || '';
+            const hour = Number(value('hour')) % 12;
+            const minute = Number(value('minute'));
+            const isPm = value('dayPeriod') === 'PM';
+            const hour24 = hour + (isPm ? 12 : 0);
+            const weekday = value('weekday');
+            const isWeekend = weekday === 'Sat' || weekday === 'Sun';
+            let phase = 'Market Closed';
+            const clockMinutes = hour24 * 60 + minute;
+            if (!isWeekend && clockMinutes >= 240 && clockMinutes < 570) phase = 'Pre-Market';
+            else if (!isWeekend && clockMinutes >= 570 && clockMinutes < 960) phase = 'Live Market';
+            else if (!isWeekend && clockMinutes >= 960 && clockMinutes < 1200) phase = 'After-Hours';
+            return {{
+              text: `${{value('hour')}}:${{value('minute')}}:${{value('second')}} ${{value('dayPeriod')}} ${{value('timeZoneName')}}`,
+              phase
+            }};
+          }};
+          const tick = () => {{
+            const now = Date.now();
+            const market = marketNow(now);
+            setText('walter-market-time', market.text);
+            setText('walter-market-phase', market.phase);
+            if (!enabled) {{
+              root.sessionStorage.removeItem(scanKey);
+              return;
+            }}
+            let scanState = null;
+            try {{
+              scanState = JSON.parse(root.sessionStorage.getItem(scanKey) || 'null');
+            }} catch (_) {{
+              root.sessionStorage.removeItem(scanKey);
+            }}
+            if (scanState && scanState.baselineUpdatedAt !== baselineAt) {{
+              root.sessionStorage.removeItem(scanKey);
+              scanState = null;
+            }}
+            const deadline = attemptedAt > updatedAt
+              ? attemptedAt + retryMs
+              : (attemptedAt ? attemptedAt + refreshMs : now);
+            if (!scanState && now < deadline) return;
+            // The timed Streamlit fragment above owns reruns. Never use
+            // location.reload here: that starts a new server session.
+          }};
+          tick();
+          root.__walterLiveClockInterval = root.setInterval(tick, 1000);
+        }})();
+        </script>""",
+        height=0,
+    )
 
 
 def _run_live_pipeline(
@@ -2460,51 +2476,6 @@ def run_live(
         return [], 0, 0, [f"Recovered live scan failure: {exc}"], diagnostics
 
 
-
-def render_prescan_header() -> None:
-    """Keep the live clock mounted while a blocking scan executes."""
-    prior_scan = completed_scan_for_view(st.session_state, "pre-scan header")
-    prior_records = prior_scan.records if prior_scan else []
-    prior_actionable = actionable_candidate_records(prior_records)
-    prior_mission = walter_mission_control(prior_actionable)
-    prior_focus_count = int(prior_mission["primary"] is not None) + int(
-        prior_mission["secondary"] is not None
-    )
-    prior_escalation_count = sum(
-        escalation_snapshot(record)["state"] in {"Watch Closely", "Entry Window Open"}
-        for record in prior_actionable
-    )
-    prior_clock = market_clock()
-    prior_auto_scan = (
-        f"Every {settings.refresh_seconds} sec"
-        if mode.startswith("Live ") and auto_refresh
-        else "Disabled"
-    )
-    with mission_header_slot:
-        render_mission_header_component(
-            mission_control_header_markup(
-                live=mode.startswith("Live "),
-                market_phase=prior_clock.phase,
-                market_time=prior_clock.time_text,
-                symbols_sampled=prior_scan.symbols_sampled if prior_scan else 0,
-                prefilter_count=prior_scan.prefilter_count if prior_scan else 0,
-                candidate_count=len(prior_actionable),
-                focus_count=prior_focus_count,
-                escalation_count=prior_escalation_count,
-                auto_scan=prior_auto_scan,
-                funnel_counts=(
-                    prior_scan.diagnostics.get("funnel_counts", {})
-                    if prior_scan else {}
-                ),
-            )
-        )
-
-
-# GS572: mount the mission header before any potentially blocking scan work so
-# its self-contained one-second clock keeps running throughout AutoScan.
-render_prescan_header()
-
-
 should_scan = False
 
 if use_demo or mode == "Demo":
@@ -2666,7 +2637,7 @@ auto_scan = (
     else "Disabled"
 )
 with mission_header_slot:
-    render_mission_header_component(
+    st.markdown(
         mission_control_header_markup(
             live=mode.startswith("Live "),
             market_phase=clock.phase,
@@ -2678,7 +2649,8 @@ with mission_header_slot:
             escalation_count=escalation_count,
             auto_scan=auto_scan,
             funnel_counts=scan_diagnostics.get("funnel_counts", {}),
-        )
+        ),
+        unsafe_allow_html=True,
     )
 integrity_report = scan_integrity_report(
     records,
