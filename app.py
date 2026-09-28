@@ -1409,6 +1409,13 @@ def arm_live_clock_engine(
     # arrives. Cross-session completed-scan handoff preserves backend evidence.
     transport_recovery_ms = 45_000
     transport_recovery_cooldown_ms = 90_000
+    # GS582: Monday live validation on GS581 proved the browser remained alive
+    # while Streamlit's timed fragment stopped delivering app reruns for more
+    # than three minutes. Keep transport recovery separate from scheduler
+    # starvation recovery: a connected page may self-recycle only after one full
+    # cadence is at least 30 seconds overdue and Walter is not visibly scanning.
+    scheduler_starvation_recovery_ms = 30_000
+    scheduler_starvation_recovery_cooldown_ms = 120_000
     st.components.v1.html(
         f"""<script>
         (() => {{
@@ -1421,11 +1428,14 @@ def arm_live_clock_engine(
           const retryMs = {retry_ms};
           const transportRecoveryMs = {transport_recovery_ms};
           const transportRecoveryCooldownMs = {transport_recovery_cooldown_ms};
+          const schedulerStarvationRecoveryMs = {scheduler_starvation_recovery_ms};
+          const schedulerStarvationRecoveryCooldownMs = {scheduler_starvation_recovery_cooldown_ms};
           // Browser state is presentation/recovery only. The Streamlit fragment
           // remains the normal scheduler owner; this key merely prevents a dead
           // websocket from leaving one browser tab permanently stranded.
           const scanKey = 'walterScanState';
           const recoveryKey = 'walterTransportRecovery';
+          const schedulerRecoveryKey = 'walterSchedulerStarvationRecovery';
           if (root.__walterLiveClockInterval) root.clearInterval(root.__walterLiveClockInterval);
 
           const node = id => root.document.getElementById(id);
@@ -1445,6 +1455,15 @@ def arm_live_clock_engine(
             try {{
               const text = (root.document.body?.innerText || '').toUpperCase();
               return /\\bCONNECTING\\b/.test(text);
+            }} catch (_) {{
+              return false;
+            }}
+          }};
+          const visibleWalterScanActive = () => {{
+            try {{
+              const text = (root.document.body?.innerText || '').toUpperCase();
+              return text.includes('WALTER IS SCANNING')
+                || text.includes('STARTING WALTER ARCHITECTURE');
             }} catch (_) {{
               return false;
             }}
@@ -1479,6 +1498,7 @@ def arm_live_clock_engine(
             if (!enabled) {{
               root.sessionStorage.removeItem(scanKey);
               root.sessionStorage.removeItem(recoveryKey);
+              root.sessionStorage.removeItem(schedulerRecoveryKey);
               setAutoScan('Disabled', '');
               return;
             }}
@@ -1503,6 +1523,21 @@ def arm_live_clock_engine(
             if (recoveryState && recoveryState.baselineAt !== baselineAt) {{
               root.sessionStorage.removeItem(recoveryKey);
               recoveryState = null;
+            }}
+            let schedulerRecoveryState = null;
+            try {{
+              schedulerRecoveryState = JSON.parse(
+                root.sessionStorage.getItem(schedulerRecoveryKey) || 'null'
+              );
+            }} catch (_) {{
+              root.sessionStorage.removeItem(schedulerRecoveryKey);
+            }}
+            if (
+              schedulerRecoveryState
+              && schedulerRecoveryState.baselineAt !== baselineAt
+            ) {{
+              root.sessionStorage.removeItem(schedulerRecoveryKey);
+              schedulerRecoveryState = null;
             }}
             // GS579: a reconnect may inherit the latest process-wide completed
             // scan while this fresh Streamlit session still has an older
@@ -1546,6 +1581,30 @@ def arm_live_clock_engine(
                 JSON.stringify({{baselineAt, recoveredAt: now}})
               );
               setAutoScan('RECONNECTING STREAMLIT…', '#f87171');
+              root.location.replace(root.location.href);
+              return;
+            }}
+
+            // GS582 scheduler-starvation fail-safe. The browser-side clock is
+            // independent of Streamlit fragment delivery, so it can detect the
+            // exact failure observed live on GS581: the page remains responsive
+            // while no server rerun arrives. Never recycle while Walter is
+            // visibly scanning, and keep this path separate from CONNECTING
+            // transport recovery.
+            const schedulerRecoveryDue = attemptedAt > 0
+              && !nativeStreamlitConnecting()
+              && !visibleWalterScanActive()
+              && overdueSeconds * 1000 >= schedulerStarvationRecoveryMs;
+            const schedulerRecoveryAllowed = !schedulerRecoveryState
+              || schedulerRecoveryState.baselineAt !== baselineAt
+              || now - Number(schedulerRecoveryState.recoveredAt || 0)
+                 >= schedulerStarvationRecoveryCooldownMs;
+            if (schedulerRecoveryDue && schedulerRecoveryAllowed) {{
+              root.sessionStorage.setItem(
+                schedulerRecoveryKey,
+                JSON.stringify({{baselineAt, recoveredAt: now}})
+              );
+              setAutoScan('RECOVERING AUTOSCAN…', '#f87171');
               root.location.replace(root.location.href);
               return;
             }}
