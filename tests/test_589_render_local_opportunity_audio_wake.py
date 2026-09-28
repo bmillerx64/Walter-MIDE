@@ -9,8 +9,9 @@ def test_gs589_health_rearm_recovers_browser_speech_after_sleep():
     end = source.index("      const rearm = () => {", start)
     block = source[start:end]
 
-    assert "window.speechSynthesis || root.speechSynthesis" in block
-    assert "if (synth.cancel) synth.cancel();" in block
+    assert "root.speechSynthesis || window.speechSynthesis" in block
+    assert "window.speechSynthesis || parentSynth" in block
+    assert "synth.cancel" not in block
     assert "if (synth.paused && synth.resume) synth.resume();" in block
     assert "if (synth.resume) synth.resume();" in block
     assert "synth.speak(utterance);" in block
