@@ -42,6 +42,12 @@ _LAST_FINISHED_AT: datetime | None = None
 _NEXT_DUE_MONOTONIC: float | None = None
 _LAST_ERROR: str | None = None
 _GENERATION = 0
+_PROCESS_STATE: dict[str, object] = {}
+
+
+def process_state() -> dict[str, object]:
+    """Return process-owned scanner state, never Streamlit session state."""
+    return _PROCESS_STATE
 
 
 def snapshot() -> ProcessAutoScanSnapshot:
@@ -202,5 +208,6 @@ def _reset_for_tests() -> None:
         _NEXT_DUE_MONOTONIC = None
         _LAST_ERROR = None
         _GENERATION = 0
+        _PROCESS_STATE.clear()
         _THREAD = None
     _WAKE.set()
