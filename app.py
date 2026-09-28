@@ -1349,8 +1349,9 @@ def arm_live_clock_engine(
     last_updated: datetime | None,
     last_scan_attempt: datetime | None = None,
     retry_seconds: int = 5,
+    process_autoscan_owned: bool = False,
 ) -> None:
-    """Keep dashboard clocks live and trigger scheduled scans without showing a timer."""
+    """Keep dashboard clocks live and observe process-owned scan publication."""
     # The normal cadence still uses Streamlit's timed fragment over the session
     # websocket. GS576 adds only a bounded recovery path for the observed failure
     # where that websocket closes while the Streamlit app process remains healthy.
@@ -1415,7 +1416,8 @@ def arm_live_clock_engine(
             st.rerun(scope="app")
 
         adopt_newer_process_scan()
-        request_session_preserving_rerun()
+        if not process_autoscan_owned:
+            request_session_preserving_rerun()
     else:
         st.session_state.pop("_walter_live_scan_requested_for", None)
     updated_ms = int(last_updated.timestamp() * 1000) if last_updated else 0
@@ -4124,5 +4126,6 @@ arm_live_clock_engine(
     updated,
     st.session_state.last_scan_attempt,
     retry_seconds=min(60, 5 * (2 ** min(st.session_state.scan_failure_count, 3))),
+    process_autoscan_owned=True,
 )
 
