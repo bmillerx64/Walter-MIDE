@@ -257,3 +257,27 @@ def test_gs571_scheduler_remains_gs568_only():
     assert "@st.fragment(run_every=timedelta(seconds=scheduler_poll_seconds))" in scheduler
     assert "@st.fragment(run_every=timedelta(seconds=1))" not in scheduler
     assert "window.setInterval(" not in scheduler
+
+
+def test_gs572_header_mounts_before_blocking_live_scan():
+    source = Path("app.py").read_text(encoding="utf-8")
+
+    render_call = source.index("render_prescan_header()")
+    scan_gate = source.index(
+        'if mode.startswith("Live ") and should_scan and not st.session_state[STOP_REQUESTED_KEY]:'
+    )
+    assert render_call < scan_gate
+
+
+def test_gs572_prescan_header_is_presentation_only():
+    source = Path("app.py").read_text(encoding="utf-8")
+    start = source.index("def render_prescan_header() -> None:")
+    end = source.index("\n\n# GS572:", start)
+    block = source[start:end]
+
+    assert "render_mission_header_component(" in block
+    assert "mission_control_header_markup(" in block
+    assert "st.rerun(" not in block
+    assert "SCAN_REQUESTED_KEY" not in block
+    assert "begin_scheduled_scan(" not in block
+    assert "run_live(" not in block
