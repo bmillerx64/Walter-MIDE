@@ -1362,38 +1362,42 @@ def arm_live_clock_engine(
             last_scan_attempt,
             retry_seconds=retry_seconds,
         )
-        # GS567 emergency stabilization: live Sept. 25 evidence showed that
-        # GS565's 5-second nested fragment heartbeat could keep the Streamlit app
-        # in near-continuous reruns/scans, freezing the rendered market clock and
-        # making Walter appear to scan perpetually. Restore the previously proven
-        # one-shot interval fragment. This may observe a due deadline late under
-        # Streamlit scheduling pressure, but it cannot multiply full-app reruns
-        # every five seconds while a live session is trying to settle.
-        tick_key = "_walter_live_scan_fragment_tick"
+        # GS581: Monday premarket Flight Recorder evidence proved the scan body
+        # remained ~5-7 seconds while this long-sleep fragment observed nominal
+        # 60-second deadlines 13-41 seconds late after a session handoff. Poll
+        # cadence cheaply at no more than five seconds, but perform a full-app
+        # rerun only after the existing due authority says the scan is due.
+        # A per-scan baseline latch prevents stale/nested fragments from issuing
+        # duplicate full-app reruns. This restores scheduler responsiveness
+        # without reintroducing GS565's near-continuous app-rerun regression.
+        scheduler_poll_seconds = min(max(1, int(interval)), 5)
+        request_latch_key = "_walter_live_scan_requested_for"
+        request_baseline = (
+            int(last_scan_attempt.timestamp() * 1000)
+            if last_scan_attempt is not None
+            else 0
+        )
 
-        @st.fragment(run_every=timedelta(seconds=interval))
+        @st.fragment(run_every=timedelta(seconds=scheduler_poll_seconds))
         def request_session_preserving_rerun() -> None:
             now = datetime.now().astimezone()
-            previous = st.session_state.get(tick_key)
-            if previous is not None and last_scan_attempt and previous < last_scan_attempt:
-                previous = None
-            if previous is None:
-                st.session_state[tick_key] = now
-            elif (now - previous).total_seconds() >= interval * 0.9:
-                if autoscan_request_due(
-                    refresh_seconds,
-                    last_updated,
-                    last_scan_attempt,
-                    retry_seconds=retry_seconds,
-                    now=now,
-                ):
-                    st.session_state[SCAN_REQUESTED_KEY] = True
-                st.session_state[tick_key] = now
-                st.rerun(scope="app")
+            if not autoscan_request_due(
+                refresh_seconds,
+                last_updated,
+                last_scan_attempt,
+                retry_seconds=retry_seconds,
+                now=now,
+            ):
+                return
+            if st.session_state.get(request_latch_key) == request_baseline:
+                return
+            st.session_state[request_latch_key] = request_baseline
+            st.session_state[SCAN_REQUESTED_KEY] = True
+            st.rerun(scope="app")
 
         request_session_preserving_rerun()
     else:
-        st.session_state.pop("_walter_live_scan_fragment_tick", None)
+        st.session_state.pop("_walter_live_scan_requested_for", None)
     updated_ms = int(last_updated.timestamp() * 1000) if last_updated else 0
     attempt_ms = int(last_scan_attempt.timestamp() * 1000) if last_scan_attempt else 0
     baseline_ms = max(updated_ms, attempt_ms)
