@@ -1415,6 +1415,13 @@ def arm_live_clock_engine(
 
           const node = id => root.document.getElementById(id);
           const setText = (id, value) => {{ const el = node(id); if (el) el.textContent = value; }};
+          const setAutoScan = (value, color='') => {{
+            const el = node('walter-auto-scan');
+            if (!el) return;
+            el.textContent = value;
+            el.style.color = color;
+            el.style.fontWeight = '950';
+          }};
           const marketNow = now => {{
             const parts = new Intl.DateTimeFormat('en-US', {{
               timeZone: 'America/New_York', weekday: 'short', hour: 'numeric', minute: '2-digit',
@@ -1444,6 +1451,7 @@ def arm_live_clock_engine(
             setText('walter-market-phase', market.phase);
             if (!enabled) {{
               root.sessionStorage.removeItem(scanKey);
+              setAutoScan('Disabled', '');
               return;
             }}
             let scanState = null;
@@ -1459,7 +1467,20 @@ def arm_live_clock_engine(
             const deadline = attemptedAt > updatedAt
               ? attemptedAt + retryMs
               : (attemptedAt ? attemptedAt + refreshMs : now);
-            if (!scanState && now < deadline) return;
+            const remainingMs = deadline - now;
+            if (remainingMs > 0) {{
+              const remainingSeconds = Math.max(1, Math.ceil(remainingMs / 1000));
+              setAutoScan(`Next ${{remainingSeconds}}s`, '#e2e8f0');
+              return;
+            }}
+            const overdueSeconds = Math.max(0, Math.floor((-remainingMs) / 1000));
+            if (overdueSeconds <= 15) {{
+              // Browser-owned continuity: this keeps visibly animating while the
+              // synchronous Streamlit scan blocks the server-side script.
+              setAutoScan(`● SCANNING ${{overdueSeconds}}s`, '#facc15');
+            }} else {{
+              setAutoScan(`SCAN OVERDUE +${{overdueSeconds}}s`, '#f87171');
+            }}
             // The timed Streamlit fragment above owns reruns. Never use
             // location.reload here: that starts a new server session.
           }};
