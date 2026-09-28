@@ -15,6 +15,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
+import builtins
 import threading
 import time
 from typing import Callable, Any
@@ -22,7 +23,17 @@ from typing import Callable, Any
 
 Worker = Callable[[], bool]
 _RUNTIME_ATTR = "_walter_gs585_process_autoscan_runtime"
-_RUNTIME_SCHEMA = 2
+_RUNTIME_SCHEMA = 3
+_RUNTIME_KEY = "_walter_gs591_process_autoscan_runtime"
+_RUNTIME_INIT_LOCK_KEY = "_walter_gs591_process_autoscan_runtime_init_lock"
+
+
+def _runtime_init_lock() -> threading.Lock:
+    """Return one process-stable init lock even across module generations."""
+    return builtins.__dict__.setdefault(
+        _RUNTIME_INIT_LOCK_KEY,
+        threading.Lock(),
+    )
 
 
 @dataclass(frozen=True)
@@ -58,21 +69,29 @@ def _new_runtime() -> dict[str, Any]:
 
 
 def _runtime() -> dict[str, Any]:
-    """Return one scheduler runtime anchored to the process-wide watchdog.
+    """Return one scheduler runtime for the entire Python process.
 
-    The watchdog singleton already survives Streamlit warm reruns and is the
-    authority that serialized the duplicate GS585 generations observed live.
-    Attaching scheduler state to that same object prevents a re-imported module
-    from manufacturing another cadence thread.
+    GS588 anchored runtime to the watchdog object but live Monday evidence exposed
+    one remaining race: two Streamlit script threads can reach first initialization
+    together, both observe no runtime, and each start its own daemon scheduler.
+    GS591 serializes first creation with a process-stable lock kept on builtins.
+    The runtime itself is also process-stable there so retained module generations
+    cannot manufacture a second cadence owner.
     """
     from .watchdog import PROCESS_SCAN_WATCHDOG
 
-    runtime = getattr(PROCESS_SCAN_WATCHDOG, _RUNTIME_ATTR, None)
-    if not isinstance(runtime, dict) or runtime.get("schema") != _RUNTIME_SCHEMA:
-        runtime = _new_runtime()
+    runtime = builtins.__dict__.get(_RUNTIME_KEY)
+    if isinstance(runtime, dict) and runtime.get("schema") == _RUNTIME_SCHEMA:
         setattr(PROCESS_SCAN_WATCHDOG, _RUNTIME_ATTR, runtime)
-    return runtime
+        return runtime
 
+    with _runtime_init_lock():
+        runtime = builtins.__dict__.get(_RUNTIME_KEY)
+        if not isinstance(runtime, dict) or runtime.get("schema") != _RUNTIME_SCHEMA:
+            runtime = _new_runtime()
+            builtins.__dict__[_RUNTIME_KEY] = runtime
+        setattr(PROCESS_SCAN_WATCHDOG, _RUNTIME_ATTR, runtime)
+        return runtime
 
 def process_state() -> dict[str, object]:
     """Return process-owned scanner state, never Streamlit session state."""
