@@ -42,6 +42,7 @@ def test_gs577_autoscan_is_armed_at_true_app_tail():
     assert source.index(call) > source.index('if active_tab == "Webull Debug":')
     assert source.rstrip().endswith(
         """retry_seconds=min(60, 5 * (2 ** min(st.session_state.scan_failure_count, 3))),
+    process_autoscan_owned=True,
 )"""
     )
 

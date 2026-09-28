@@ -1349,8 +1349,9 @@ def arm_live_clock_engine(
     last_updated: datetime | None,
     last_scan_attempt: datetime | None = None,
     retry_seconds: int = 5,
+    process_autoscan_owned: bool = False,
 ) -> None:
-    """Keep dashboard clocks live and trigger scheduled scans without showing a timer."""
+    """Keep dashboard clocks live and observe process-owned scan publication."""
     # The normal cadence still uses Streamlit's timed fragment over the session
     # websocket. GS576 adds only a bounded recovery path for the observed failure
     # where that websocket closes while the Streamlit app process remains healthy.
@@ -1415,7 +1416,8 @@ def arm_live_clock_engine(
             st.rerun(scope="app")
 
         adopt_newer_process_scan()
-        request_session_preserving_rerun()
+        if not process_autoscan_owned:
+            request_session_preserving_rerun()
     else:
         st.session_state.pop("_walter_live_scan_requested_for", None)
     updated_ms = int(last_updated.timestamp() * 1000) if last_updated else 0
@@ -1591,23 +1593,37 @@ def _run_live_pipeline(
     client_factory=None,
     credential_checker=None,
     provider_name: str = "ALPACA",
+    runtime_state=None,
+    runtime_secrets: dict | None = None,
+    history_store=None,
+    flight_recorder=None,
+    ui_enabled: bool = True,
 ):
-    """Execute the live scan through the single Walter Architecture pipeline."""
+    """Execute the live scan through the single Walter Architecture pipeline.
+
+    GS585 can run the same authoritative pipeline from the process AutoScan
+    service without a Streamlit ScriptRunContext. In that mode all mutable
+    runtime state, secrets, cached stores and UI side effects are supplied
+    explicitly; market/trading logic is unchanged.
+    """
     scan_started = perf_counter()
     repair_mide_module_links()
+    runtime_state = st.session_state if runtime_state is None else runtime_state
+    explicit_runtime_secrets = runtime_secrets is not None
+    runtime_secrets = secrets_mapping() if runtime_secrets is None else runtime_secrets
     if provider_name.upper() == "WEBULL":
         log_startup("initializing Webull provider")
-        resolved = load_credentials(WEBULL_CREDENTIAL_NAMES, secrets=secrets_mapping())
+        resolved = load_credentials(WEBULL_CREDENTIAL_NAMES, secrets=runtime_secrets)
         app_key = resolved["WEBULL_APP_KEY"].value
         app_secret = resolved["WEBULL_APP_SECRET"].value
         if not app_key or not app_secret:
             raise RuntimeError("Webull credentials are not configured in Streamlit Secrets/environment.")
-        context = scan_context(st.session_state)
+        context = scan_context(runtime_state)
         session_client = context.provider_instance
 
         def build_webull_process_provider():
-            alpaca_key = get_secret("ALPACA_API_KEY")
-            alpaca_secret = get_secret("ALPACA_SECRET_KEY")
+            alpaca_key = str(runtime_secrets.get("ALPACA_API_KEY") or "")
+            alpaca_secret = str(runtime_secrets.get("ALPACA_SECRET_KEY") or "")
             if not alpaca_key or not alpaca_secret:
                 raise RuntimeError("Alpaca credentials are required for the temporary /v2/assets symbol master.")
             provider_module = importlib.import_module("mide.market_data_providers")
@@ -1707,6 +1723,9 @@ def _run_live_pipeline(
     else:
         api_key = get_secret("ALPACA_API_KEY")
         secret = get_secret("ALPACA_SECRET_KEY")
+        if explicit_runtime_secrets:
+            api_key = str(runtime_secrets.get("ALPACA_API_KEY") or "")
+            secret = str(runtime_secrets.get("ALPACA_SECRET_KEY") or "")
         if not api_key or not secret:
             raise RuntimeError("Alpaca credentials are not configured in Streamlit Secrets.")
         # Legacy mode is isolated behind lazy imports so selecting Live Webull
@@ -1718,7 +1737,8 @@ def _run_live_pipeline(
         client: MarketDataProvider = client_factory(api_key, secret, feed=settings.feed, timeout=8)
         try:
             environment = credential_checker(client)
-            status.write(f"Alpaca credentials accepted ({environment} environment)")
+            if status is not None:
+                status.write(f"Alpaca credentials accepted ({environment} environment)")
         except Exception as exc:
             record_provider_failure(client.diagnostics, provider="Alpaca",
                 operation="credential check", exception=exc,
@@ -1726,8 +1746,14 @@ def _run_live_pipeline(
             client.warnings.append(f"Alpaca credential check unavailable: {exc}")
         client.diagnostics["selected_provider"] = "ALPACA"
         logging.getLogger(__name__).warning("Walter live market-data provider: ALPACA")
-    with scan_progress_slot:
-        progress = st.progress(0, text="Starting Walter Architecture")
+    if ui_enabled:
+        with scan_progress_slot:
+            progress = st.progress(0, text="Starting Walter Architecture")
+    else:
+        class _HeadlessProgress:
+            def progress(self, *args, **kwargs):
+                return self
+        progress = _HeadlessProgress()
 
     state = {"seeds": [], "reasons": {}, "snapshots": {}, "news": [],
              "candidates": [], "analyzed": [], "ranked": [],
@@ -1737,7 +1763,7 @@ def _run_live_pipeline(
     universe_verification = UniverseVerification(
         client, feed=settings.feed, market_session=market_phase()
     )
-    history = get_store()
+    history = history_store or get_store()
     previous = history.latest_by_symbol()
     policy = ArchitecturePolicy(
         settings.min_price, settings.max_price, settings.max_free_float,
@@ -1748,7 +1774,8 @@ def _run_live_pipeline(
         name = WALTER_STAGES[number - 1]
         message = f"{number}/8 {name}" + (f": {detail}" if detail else "")
         log(message)
-        status.write(message)
+        if status is not None:
+            status.write(message)
         progress.progress((number - 1) / 8, text=message)
 
     @instrument_startup("loading universe")
@@ -1786,7 +1813,7 @@ def _run_live_pipeline(
                 return build_seed_symbols(client, settings, [])
 
             seeds, reasons = resolve_scan_universe(
-                st.session_state, cache_key, provider_name, fresh_discovery
+                runtime_state, cache_key, provider_name, fresh_discovery
             )
         except Exception as exc:
             record_provider_failure(
@@ -1948,7 +1975,7 @@ def _run_live_pipeline(
             list(refreshed.values())
         )
         state["scan_stage_counts"]["snapshot_records_normalized"] = len(refreshed)
-        inspect_session_state_dataframes(st.session_state)
+        inspect_session_state_dataframes(runtime_state)
         # ``state["snapshots"]`` is the application cache consumed by every
         # subsequent stage, regardless of which provider filled it.
         state["scan_stage_counts"]["snapshot_cache_populated"] = len(state["snapshots"])
@@ -2360,7 +2387,7 @@ def _run_live_pipeline(
             client.diagnostics, 'state["ranked"]', state["ranked"],
             statement='state["ranked"] = records',
         )
-        st.session_state.records = records
+        runtime_state["records"] = records
 
     architecture = WalterArchitectureV1(
         policy=policy,
@@ -2380,10 +2407,10 @@ def _run_live_pipeline(
             operation=stage, exception=exc, affected_symbols=[symbol],
             recovery_action="mark only the affected candidate Technical Failure and continue",
         ),
-        ledger=st.session_state.walter_candidate_ledger,
+        ledger=runtime_state.setdefault("walter_candidate_ledger", WalterCandidateLedger()),
         after_price_gate=retrieve_market_data,
     )
-    scan_context(st.session_state).pipeline = architecture
+    scan_context(runtime_state).pipeline = architecture
     ledger = architecture.run()
     ranked = state["ranked"]
     state["stage_diagnostics"].append(stage_diagnostic(
@@ -2523,7 +2550,7 @@ def _run_live_pipeline(
         )
         client.diagnostics["production_webull_runtime_report_pending"] = True
         client.diagnostics["active_pipeline_sources"] = client.pipeline_sources()
-    runtime_recorder = get_flight_recorder()
+    runtime_recorder = flight_recorder or get_flight_recorder()
     recorder_runtime_diagnostics = {}
     flight_scan = record_scan_safely(
         runtime_recorder, seeds=state["seeds"],
@@ -2543,9 +2570,11 @@ def _run_live_pipeline(
         client.diagnostics["flight_recorder"] = flight_scan
     log("Timing summary: " + json.dumps(timing_summary, separators=(",", ":")))
     progress.progress(1.0, text="Walter Architecture complete")
-    scan_progress_slot.empty()
-    status.update(label=f"Scan complete: {len(ranked)} ranked records",
-                  state="complete", expanded=False)
+    if ui_enabled:
+        scan_progress_slot.empty()
+    if status is not None:
+        status.update(label=f"Scan complete: {len(ranked)} ranked records",
+                      state="complete", expanded=False)
     return (ranked, len(state["seeds"]), len(state["candidates"]),
             list(client.warnings), dict(client.diagnostics))
 
@@ -2611,6 +2640,176 @@ def run_live(
         return [], 0, 0, [f"Recovered live scan failure: {exc}"], diagnostics
 
 
+def _run_process_autoscan(
+    scanner_version: str,
+    provider_name: str,
+    *,
+    runtime_secrets: dict,
+    history_store,
+    flight_recorder,
+) -> bool:
+    """Run one automatic scan entirely under process-owned cadence.
+
+    GS585 deliberately keeps this worker free of Streamlit UI/session APIs. The
+    existing watchdog still serializes all scans, the existing process-wide
+    Webull provider remains the sole provider owner, and CompletedScan publication
+    uses the existing process handoff consumed by every browser session.
+    """
+    service = importlib.import_module("mide.gs585_process_autoscan_service")
+    gs413 = importlib.import_module("mide.gs413_single_process_autoscan_authority")
+    runtime_state = service.process_state()
+    runtime_state.setdefault("walter_candidate_ledger", WalterCandidateLedger())
+    runtime_state.setdefault("scan_failure_count", 0)
+    runtime_state[DATA_MODE_KEY] = f"Live {provider_name.title()}"
+    runtime_state[PROVIDER_KEY] = provider_name
+    runtime_state[AUTO_SCAN_KEY] = True
+
+    watchdog = importlib.import_module("mide.watchdog").PROCESS_SCAN_WATCHDOG
+
+    def acquired() -> None:
+        started_at = datetime.now().astimezone()
+        runtime_state["last_scan_attempt"] = started_at
+        # Keep the older cross-session baseline truthful for any retained
+        # Streamlit session that still consults GS413 during the transition.
+        gs413._record_actual_scan_start(
+            runtime_state,
+            automatic=True,
+            started_at=started_at,
+        )
+        service.note_scan_started(started_at)
+        print(
+            f"[WALTER AUTOSCAN] process start "
+            f"{started_at.isoformat()} provider={provider_name}",
+            flush=True,
+        )
+
+    def finished() -> None:
+        finished_at = datetime.now().astimezone()
+        service.note_scan_finished(finished_at)
+        print(
+            f"[WALTER AUTOSCAN] process finish {finished_at.isoformat()}",
+            flush=True,
+        )
+
+    try:
+        repair_mide_module_links()
+        records, universe_count, prefiltered, warnings, diagnostics = watchdog.run(
+            lambda: scanner_implementation(scanner_version).for_runtime(
+                lambda: _run_live_pipeline(
+                    scanner_version,
+                    status=None,
+                    provider_name=provider_name,
+                    runtime_state=runtime_state,
+                    runtime_secrets=runtime_secrets,
+                    history_store=history_store,
+                    flight_recorder=flight_recorder,
+                    ui_enabled=False,
+                )
+            ).run(),
+            before_retry=repair_mide_module_links,
+            on_acquired=acquired,
+            on_finished=finished,
+        )
+    except ScanAlreadyRunning as exc:
+        print(f"[WALTER AUTOSCAN] deferred: {exc}", flush=True)
+        return False
+    except Exception as exc:
+        logging.getLogger(__name__).exception("Process AutoScan failed")
+        print(
+            f"[WALTER AUTOSCAN] failed {type(exc).__name__}: {exc}",
+            flush=True,
+        )
+        return False
+
+    if diagnostics.get("scan_completed", True) is False or universe_count <= 0:
+        runtime_state["scan_failure_count"] = int(
+            runtime_state.get("scan_failure_count", 0)
+        ) + 1
+        actual_failure = warnings[-1] if warnings else "Unknown provider failure"
+        record_scan_failure(
+            runtime_state,
+            message=actual_failure,
+            attempted_at=runtime_state.get("last_scan_attempt"),
+            diagnostics=diagnostics,
+        )
+        return False
+
+    completed_at = datetime.now().astimezone()
+    scan = CompletedScan(
+        provider=provider_name,
+        records=records,
+        diagnostics=diagnostics,
+        warnings=warnings,
+        symbols_sampled=universe_count,
+        prefilter_count=prefiltered,
+        completed_at=completed_at,
+        source_label=(
+            f"Live {provider_name} · {universe_count} symbols sampled · "
+            f"{prefiltered} prefiltered"
+        ),
+    )
+    observe_runtime_collection_count(
+        diagnostics,
+        "CompletedScan.records",
+        scan.records,
+        statement="GS585 process scan = CompletedScan(records=records, ...)",
+    )
+    publish_scan_result(runtime_state, scan)
+    runtime_state["scan_failure_count"] = 0
+    print(
+        f"[WALTER AUTOSCAN] published {completed_at.isoformat()} "
+        f"records={len(records)}",
+        flush=True,
+    )
+    return True
+
+
+# GS585: Streamlit/browser timers no longer own production AutoScan cadence.
+# Capture every dependency while a valid Streamlit ScriptRunContext exists, then
+# let the process service run the unchanged scanner independently of browser
+# reruns/websocket health.
+_gs585 = importlib.import_module("mide.gs585_process_autoscan_service")
+_gs585_enabled = (
+    mode.startswith("Live ")
+    and auto_refresh
+    and live_possible
+    and not st.session_state[STOP_REQUESTED_KEY]
+)
+_gs585_baseline = completed_scan_for_view(st.session_state, "process scheduler seed")
+if mode.startswith("Live ") and live_possible:
+    _gs585_secrets = secrets_mapping()
+    _gs585_history = get_store()
+    _gs585_recorder = get_flight_recorder()
+
+    def _gs585_worker(
+        scanner_version=scanner_version,
+        provider_name=selected_provider,
+        runtime_secrets=_gs585_secrets,
+        history_store=_gs585_history,
+        flight_recorder=_gs585_recorder,
+    ) -> bool:
+        return _run_process_autoscan(
+            scanner_version,
+            provider_name,
+            runtime_secrets=runtime_secrets,
+            history_store=history_store,
+            flight_recorder=flight_recorder,
+        )
+else:
+    _gs585_worker = None
+
+_gs585_snapshot = _gs585.configure(
+    enabled=_gs585_enabled,
+    refresh_seconds=settings.refresh_seconds,
+    worker=_gs585_worker,
+    initial_completed_at=(
+        _gs585_baseline.completed_at if _gs585_baseline is not None else None
+    ),
+)
+if _gs585_snapshot.last_started_at is not None:
+    st.session_state.last_scan_attempt = _gs585_snapshot.last_started_at
+
+
 should_scan = False
 
 if use_demo or mode == "Demo":
@@ -2621,32 +2820,30 @@ if use_demo or mode == "Demo":
         completed_at=datetime.now().astimezone(), source_label="Demonstration data",
     ))
 else:
-    due = (
-        mode.startswith("Live ")
-        and auto_refresh
-        and live_possible
-        and not st.session_state.scan_in_progress
-        and (
-            completed_scan_for_view(st.session_state, "scheduler") is None
-            or (
-                datetime.now().astimezone()
-                - completed_scan_for_view(st.session_state, "scheduler").completed_at
-            ).total_seconds()
-            >= settings.refresh_seconds
-        )
-    )
-    should_scan = st.session_state[SCAN_REQUESTED_KEY] or due
+    # GS585: automatic cadence is process-owned. A Streamlit script run may still
+    # honor an explicit operator scan request, but it never decides an automatic
+    # scan is due from browser/session timing.
+    due = False
+    should_scan = bool(st.session_state[SCAN_REQUESTED_KEY])
 
 if mode.startswith("Live ") and should_scan and not st.session_state[STOP_REQUESTED_KEY]:
     st.session_state.last_scan_attempt = datetime.now().astimezone()
     try:
         repair_mide_module_links()
         watchdog = importlib.import_module("mide.watchdog").PROCESS_SCAN_WATCHDOG
+        def _begin_browser_scan() -> None:
+            begin_scheduled_scan(st.session_state)
+            _gs585.note_scan_started(st.session_state.last_scan_attempt)
+
+        def _finish_browser_scan() -> None:
+            finish_scan(st.session_state)
+            _gs585.note_scan_finished(datetime.now().astimezone())
+
         records, universe_count, prefiltered, warnings, diagnostics = watchdog.run(
             lambda: run_live(scanner_version, provider_name=selected_provider),
             before_retry=repair_mide_module_links,
-            on_acquired=lambda: begin_scheduled_scan(st.session_state),
-            on_finished=lambda: finish_scan(st.session_state),
+            on_acquired=_begin_browser_scan,
+            on_finished=_finish_browser_scan,
         )
         if diagnostics.get("scan_completed", True):
             completed_at = datetime.now().astimezone()
@@ -3933,5 +4130,6 @@ arm_live_clock_engine(
     updated,
     st.session_state.last_scan_attempt,
     retry_seconds=min(60, 5 * (2 ** min(st.session_state.scan_failure_count, 3))),
+    process_autoscan_owned=True,
 )
 
