@@ -12,16 +12,16 @@ def test_gs575_auto_scan_tile_counts_down_without_server_reruns():
     scheduler = _scheduler_source()
 
     assert "const remainingMs = deadline - now;" in scheduler
-    assert "setAutoScan(\`Next \${remainingSeconds}s\`" in scheduler
+    assert "setAutoScan(`Next ${{remainingSeconds}}s`" in scheduler
     assert "root.__walterLiveClockInterval = root.setInterval(tick, 1000);" in scheduler
 
 
 def test_gs575_auto_scan_tile_shows_running_while_blocking_scan_is_due():
     scheduler = _scheduler_source()
 
-    assert "setAutoScan(\`● SCANNING \${overdueSeconds}s\`" in scheduler
+    assert "setAutoScan(`● SCANNING ${{overdueSeconds}}s`" in scheduler
     assert "overdueSeconds <= 15" in scheduler
-    assert "setAutoScan(\`SCAN OVERDUE +\${overdueSeconds}s\`" in scheduler
+    assert "setAutoScan(`SCAN OVERDUE +${{overdueSeconds}}s`" in scheduler
 
 
 def test_gs575_browser_indicator_does_not_own_scan_reruns():
