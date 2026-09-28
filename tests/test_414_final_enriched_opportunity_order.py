@@ -1,4 +1,5 @@
 from pathlib import Path
+import threading
 
 import pytest
 
@@ -68,7 +69,7 @@ def test_gs414_freezes_order_across_nested_actionable_calls(monkeypatch):
     assert rendered == ["READY", "LOOK", "DEV", "CHASE"]
 
 
-def test_gs414_restores_public_actionable_callable_on_render_error(monkeypatch):
+def test_gs589_keeps_public_actionable_guard_stable_on_render_error(monkeypatch):
     _force_state(monkeypatch)
     original_actionable = lambda records: list(records)
     monkeypatch.setattr(ui, "actionable_candidate_records", original_actionable)
@@ -78,11 +79,52 @@ def test_gs414_restores_public_actionable_callable_on_render_error(monkeypatch):
 
     monkeypatch.setattr(ui, "render_escalation_engine", failing_renderer)
     install()
+    installed_actionable = ui.actionable_candidate_records
 
     with pytest.raises(RuntimeError, match="render failed"):
         ui.render_escalation_engine([_record("DEV", unified.DEVELOPING)])
 
-    assert ui.actionable_candidate_records is original_actionable
+    assert ui.actionable_candidate_records is installed_actionable
+    assert ui.actionable_candidate_records([_record("A", unified.DEVELOPING)])[0]["symbol"] == "A"
+
+
+def test_gs589_concurrent_renders_do_not_leak_frozen_records(monkeypatch):
+    from mide.authorities import presentation_audio
+
+    _force_state(monkeypatch)
+    monkeypatch.setattr(ui, "actionable_candidate_records", lambda records: list(records))
+
+    barrier = threading.Barrier(2)
+    seen = {}
+    seen_lock = threading.Lock()
+
+    def nested_renderer(records):
+        own = records[0]["symbol"]
+        barrier.wait(timeout=5)
+        nested = ui.actionable_candidate_records(records)
+        with seen_lock:
+            seen[own] = [record["symbol"] for record in nested]
+
+    monkeypatch.setattr(ui, "render_escalation_engine", nested_renderer)
+    presentation_audio.bind_final_enriched_opportunity_order("render_escalation_engine")
+
+    errors = []
+
+    def run(symbol):
+        try:
+            ui.render_escalation_engine([_record(symbol, unified.DEVELOPING)])
+        except Exception as exc:
+            errors.append(exc)
+
+    first = threading.Thread(target=run, args=("ALPHA",))
+    second = threading.Thread(target=run, args=("BRAVO",))
+    first.start()
+    second.start()
+    first.join(timeout=10)
+    second.join(timeout=10)
+
+    assert not errors
+    assert seen == {"ALPHA": ["ALPHA"], "BRAVO": ["BRAVO"]}
 
 
 def test_gs414_installs_last_after_gs413_inflight_guard():
@@ -90,15 +132,20 @@ def test_gs414_installs_last_after_gs413_inflight_guard():
     assert source.index("install_gs413_inflight()") < source.index("install_gs414()")
 
 
-def test_gs414_scope_is_presentation_only():
+def test_gs589_scope_is_presentation_only_and_no_process_global_swap():
     source = Path("mide/gs414_final_enriched_opportunity_order.py").read_text(
+        encoding="utf-8"
+    )
+    authority = Path("mide/authorities/presentation_audio.py").read_text(
         encoding="utf-8"
     )
     assert 'bind_final_order("render_escalation_engine")' in source
     assert 'bind_final_order("render_walter_mission_control", show_legend=True)' in source
-    assert "ui.actionable_candidate_records = frozen_actionable" in source
-    assert "finally:" in source
-    assert "ui.actionable_candidate_records = public_actionable" in source
+    final_boundary = authority[authority.index("# GS414/GS436 final enriched Opportunity render boundary"):]
+    assert "context.set(tuple(ordered))" in final_boundary
+    assert "context.reset(token)" in final_boundary
+    assert "ui.actionable_candidate_records = frozen_actionable" not in final_boundary
+    assert "ui.actionable_candidate_records = public_actionable" not in final_boundary
 
 
 
