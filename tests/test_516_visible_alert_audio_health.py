@@ -44,10 +44,13 @@ def test_gs590_voice_test_stays_inside_direct_button_activation():
     listener = markup.index("button.addEventListener('click', () => {")
     voice_call = markup.index("testVoice();", listener)
     rearm_call = markup.index("rearm();", listener)
-    promise_boundary = markup.index("resumed.then(play)", markup.index("const rearm = () => {"))
+    rearm_start = markup.index("const rearm = () => {")
+    play_start = markup.index("const play = () => {", rearm_start)
+    play_end = markup.index("          };", play_start)
 
     assert listener < voice_call < rearm_call
-    assert voice_call < promise_boundary
+    assert "testVoice();" not in markup[play_start:play_end]
+    assert "resumed.then(play)" in markup[rearm_start:listener]
     assert "root.speechSynthesis || window.speechSynthesis" in markup
     assert "root.SpeechSynthesisUtterance || window.SpeechSynthesisUtterance" in markup
 
