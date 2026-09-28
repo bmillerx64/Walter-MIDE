@@ -1591,23 +1591,36 @@ def _run_live_pipeline(
     client_factory=None,
     credential_checker=None,
     provider_name: str = "ALPACA",
+    runtime_state=None,
+    runtime_secrets: dict | None = None,
+    history_store=None,
+    flight_recorder=None,
+    ui_enabled: bool = True,
 ):
-    """Execute the live scan through the single Walter Architecture pipeline."""
+    """Execute the live scan through the single Walter Architecture pipeline.
+
+    GS585 can run the same authoritative pipeline from the process AutoScan
+    service without a Streamlit ScriptRunContext. In that mode all mutable
+    runtime state, secrets, cached stores and UI side effects are supplied
+    explicitly; market/trading logic is unchanged.
+    """
     scan_started = perf_counter()
     repair_mide_module_links()
+    runtime_state = st.session_state if runtime_state is None else runtime_state
+    runtime_secrets = secrets_mapping() if runtime_secrets is None else runtime_secrets
     if provider_name.upper() == "WEBULL":
         log_startup("initializing Webull provider")
-        resolved = load_credentials(WEBULL_CREDENTIAL_NAMES, secrets=secrets_mapping())
+        resolved = load_credentials(WEBULL_CREDENTIAL_NAMES, secrets=runtime_secrets)
         app_key = resolved["WEBULL_APP_KEY"].value
         app_secret = resolved["WEBULL_APP_SECRET"].value
         if not app_key or not app_secret:
             raise RuntimeError("Webull credentials are not configured in Streamlit Secrets/environment.")
-        context = scan_context(st.session_state)
+        context = scan_context(runtime_state)
         session_client = context.provider_instance
 
         def build_webull_process_provider():
-            alpaca_key = get_secret("ALPACA_API_KEY")
-            alpaca_secret = get_secret("ALPACA_SECRET_KEY")
+            alpaca_key = str(runtime_secrets.get("ALPACA_API_KEY") or "")
+            alpaca_secret = str(runtime_secrets.get("ALPACA_SECRET_KEY") or "")
             if not alpaca_key or not alpaca_secret:
                 raise RuntimeError("Alpaca credentials are required for the temporary /v2/assets symbol master.")
             provider_module = importlib.import_module("mide.market_data_providers")
@@ -1705,8 +1718,8 @@ def _run_live_pipeline(
             "Walter quote/bars/stream provider: WEBULL SDK; symbol master: ALPACA /v2/assets"
         )
     else:
-        api_key = get_secret("ALPACA_API_KEY")
-        secret = get_secret("ALPACA_SECRET_KEY")
+        api_key = str(runtime_secrets.get("ALPACA_API_KEY") or "")
+        secret = str(runtime_secrets.get("ALPACA_SECRET_KEY") or "")
         if not api_key or not secret:
             raise RuntimeError("Alpaca credentials are not configured in Streamlit Secrets.")
         # Legacy mode is isolated behind lazy imports so selecting Live Webull
@@ -1726,8 +1739,14 @@ def _run_live_pipeline(
             client.warnings.append(f"Alpaca credential check unavailable: {exc}")
         client.diagnostics["selected_provider"] = "ALPACA"
         logging.getLogger(__name__).warning("Walter live market-data provider: ALPACA")
-    with scan_progress_slot:
-        progress = st.progress(0, text="Starting Walter Architecture")
+    if ui_enabled:
+        with scan_progress_slot:
+            progress = st.progress(0, text="Starting Walter Architecture")
+    else:
+        class _HeadlessProgress:
+            def progress(self, *args, **kwargs):
+                return self
+        progress = _HeadlessProgress()
 
     state = {"seeds": [], "reasons": {}, "snapshots": {}, "news": [],
              "candidates": [], "analyzed": [], "ranked": [],
@@ -1737,7 +1756,7 @@ def _run_live_pipeline(
     universe_verification = UniverseVerification(
         client, feed=settings.feed, market_session=market_phase()
     )
-    history = get_store()
+    history = history_store or get_store()
     previous = history.latest_by_symbol()
     policy = ArchitecturePolicy(
         settings.min_price, settings.max_price, settings.max_free_float,
@@ -1748,7 +1767,8 @@ def _run_live_pipeline(
         name = WALTER_STAGES[number - 1]
         message = f"{number}/8 {name}" + (f": {detail}" if detail else "")
         log(message)
-        status.write(message)
+        if status is not None:
+            status.write(message)
         progress.progress((number - 1) / 8, text=message)
 
     @instrument_startup("loading universe")
@@ -1786,7 +1806,7 @@ def _run_live_pipeline(
                 return build_seed_symbols(client, settings, [])
 
             seeds, reasons = resolve_scan_universe(
-                st.session_state, cache_key, provider_name, fresh_discovery
+                runtime_state, cache_key, provider_name, fresh_discovery
             )
         except Exception as exc:
             record_provider_failure(
@@ -1948,7 +1968,7 @@ def _run_live_pipeline(
             list(refreshed.values())
         )
         state["scan_stage_counts"]["snapshot_records_normalized"] = len(refreshed)
-        inspect_session_state_dataframes(st.session_state)
+        inspect_session_state_dataframes(runtime_state)
         # ``state["snapshots"]`` is the application cache consumed by every
         # subsequent stage, regardless of which provider filled it.
         state["scan_stage_counts"]["snapshot_cache_populated"] = len(state["snapshots"])
@@ -2360,7 +2380,7 @@ def _run_live_pipeline(
             client.diagnostics, 'state["ranked"]', state["ranked"],
             statement='state["ranked"] = records',
         )
-        st.session_state.records = records
+        runtime_state["records"] = records
 
     architecture = WalterArchitectureV1(
         policy=policy,
@@ -2380,10 +2400,10 @@ def _run_live_pipeline(
             operation=stage, exception=exc, affected_symbols=[symbol],
             recovery_action="mark only the affected candidate Technical Failure and continue",
         ),
-        ledger=st.session_state.walter_candidate_ledger,
+        ledger=runtime_state.setdefault("walter_candidate_ledger", WalterCandidateLedger()),
         after_price_gate=retrieve_market_data,
     )
-    scan_context(st.session_state).pipeline = architecture
+    scan_context(runtime_state).pipeline = architecture
     ledger = architecture.run()
     ranked = state["ranked"]
     state["stage_diagnostics"].append(stage_diagnostic(
@@ -2523,7 +2543,7 @@ def _run_live_pipeline(
         )
         client.diagnostics["production_webull_runtime_report_pending"] = True
         client.diagnostics["active_pipeline_sources"] = client.pipeline_sources()
-    runtime_recorder = get_flight_recorder()
+    runtime_recorder = flight_recorder or get_flight_recorder()
     recorder_runtime_diagnostics = {}
     flight_scan = record_scan_safely(
         runtime_recorder, seeds=state["seeds"],
@@ -2543,9 +2563,11 @@ def _run_live_pipeline(
         client.diagnostics["flight_recorder"] = flight_scan
     log("Timing summary: " + json.dumps(timing_summary, separators=(",", ":")))
     progress.progress(1.0, text="Walter Architecture complete")
-    scan_progress_slot.empty()
-    status.update(label=f"Scan complete: {len(ranked)} ranked records",
-                  state="complete", expanded=False)
+    if ui_enabled:
+        scan_progress_slot.empty()
+    if status is not None:
+        status.update(label=f"Scan complete: {len(ranked)} ranked records",
+                      state="complete", expanded=False)
     return (ranked, len(state["seeds"]), len(state["candidates"]),
             list(client.warnings), dict(client.diagnostics))
 
