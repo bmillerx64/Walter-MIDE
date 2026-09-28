@@ -199,6 +199,12 @@ def log_startup(component: str, message: str = "starting") -> None:
     # parent package import lock. Keep ordinary provider/startup logging side-effect
     # free so background workers can never trigger the late import chain.
     if component == "entering app.py":
+        # GS587: none of Walter's presentation installers may execute while this
+        # module is being imported from webull_live during mide package startup.
+        # At this boundary the parent package import is complete, so both the
+        # historical pre-app presentation wrappers and the late runtime chain can
+        # safely converge before app.py binds UI callables.
+        ensure_pre_app_runtime_installers()
         ensure_late_runtime_installers()
 
 
@@ -281,29 +287,30 @@ def ensure_reclaim_watch() -> None:
     install()
 
 
-# GS371: package-level installers can be correct while app.py still binds an older
-# renderer object during a complex Streamlit import/reload sequence. This module is
-# app.py's first MIDE import, so enforce the final presentation wrapper immediately
-# before app.py binds any renderer names.
-ensure_operator_card_order()
+def ensure_pre_app_runtime_installers() -> None:
+    """Converge historical UI wrappers only after the parent package import ends.
 
-# GS373: use the same early binding point so every app-level reference to
-# actionable_candidate_records receives the current operator visibility contract.
-ensure_operator_visibility()
+    GS587 fixes the live warm-deploy cycle captured on 2026-09-28:
+    contract_compat -> webull_live -> startup -> GS369 -> mide.__init__ ->
+    contract_compat. webull_live was still partially initialized at that point,
+    so contract_compat could not access WebullOpenAPIClient.
 
-# GS374: the control-header callable is also imported by name in app.py. Install
-# before that binding so the visible timestamp always comes from CompletedScan.
-ensure_header_scan_truth()
+    app.py already provides a safe post-package boundary through the entering-app.py
+    startup event. Preserve the established GS371/373/374/375/376 ordering there
+    instead of executing these imports at startup.py module import time.
+    """
+    ensure_operator_card_order()
+    ensure_operator_visibility()
+    ensure_header_scan_truth()
+    ensure_operator_awareness()
+    ensure_reclaim_watch()
 
-# GS375: install after GS373 so stale/far-below-VWAP suppression remains the outer
-# safety boundary while current-attention leaders can stay visible without gaining
-# entry or alert authorization.
-ensure_operator_awareness()
 
-# GS376: install after GS375.  This keeps the GS373 stale-data guard intact while
-# allowing only a strict, fresh reconstruction exception for current major leaders;
-# awareness-only copies remain denied entry/alert authority.
-ensure_reclaim_watch()
+# GS371/373/374/375/376 are deliberately deferred to the entering-app.py boundary.
+# webull_live imports this startup module while WebullOpenAPIClient is still being
+# defined; importing presentation modules here can re-enter mide.__init__ and expose
+# a partially initialized webull_live module. GS587 keeps module import side-effect
+# free while preserving the exact historical installer order before app.py binds UI.
 
 # GS377 is deliberately installed from mide.__init__ after GS340.  webull_live
 # imports this startup module while LiveWebullProvider is still being defined, so
