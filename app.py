@@ -1398,70 +1398,85 @@ def arm_live_clock_engine(
         f"""<script>
         (() => {{
           const root = window.parent;
-          const enabled = {str(enabled).lower()};
-          const updatedAt = {updated_ms};
-          const attemptedAt = {attempt_ms};
-          const baselineAt = {baseline_ms};
-          const refreshMs = {refresh_ms};
-          const retryMs = {retry_ms};
-          // Keep an in-flight marker in this browser tab to prevent repeated
-          // reloads while Streamlit performs its blocking scan rerun. Store the
-          // scan baseline as well because server and browser clocks can skew.
-          const scanKey = 'walterScanState';
-          if (root.__walterLiveClockInterval) root.clearInterval(root.__walterLiveClockInterval);
+          root.__walterLiveClockConfig = {{
+            enabled: {str(enabled).lower()},
+            updatedAt: {updated_ms},
+            attemptedAt: {attempt_ms},
+            baselineAt: {baseline_ms},
+            refreshMs: {refresh_ms},
+            retryMs: {retry_ms},
+          }};
+          if (root.__walterLiveClockInterval) return;
 
-          const node = id => root.document.getElementById(id);
-          const setText = (id, value) => {{ const el = node(id); if (el) el.textContent = value; }};
-          const marketNow = now => {{
-            const parts = new Intl.DateTimeFormat('en-US', {{
-              timeZone: 'America/New_York', weekday: 'short', hour: 'numeric', minute: '2-digit',
-              second: '2-digit', hour12: true, timeZoneName: 'short'
-            }}).formatToParts(now);
-            const value = type => parts.find(part => part.type === type)?.value || '';
-            const hour = Number(value('hour')) % 12;
-            const minute = Number(value('minute'));
-            const isPm = value('dayPeriod') === 'PM';
-            const hour24 = hour + (isPm ? 12 : 0);
-            const weekday = value('weekday');
-            const isWeekend = weekday === 'Sat' || weekday === 'Sun';
-            let phase = 'Market Closed';
-            const clockMinutes = hour24 * 60 + minute;
-            if (!isWeekend && clockMinutes >= 240 && clockMinutes < 570) phase = 'Pre-Market';
-            else if (!isWeekend && clockMinutes >= 570 && clockMinutes < 960) phase = 'Live Market';
-            else if (!isWeekend && clockMinutes >= 960 && clockMinutes < 1200) phase = 'After-Hours';
-            return {{
-              text: `${{value('hour')}}:${{value('minute')}}:${{value('second')}} ${{value('dayPeriod')}} ${{value('timeZoneName')}}`,
-              phase
-            }};
-          }};
-          const tick = () => {{
-            const now = Date.now();
-            const market = marketNow(now);
-            setText('walter-market-time', market.text);
-            setText('walter-market-phase', market.phase);
-            if (!enabled) {{
-              root.sessionStorage.removeItem(scanKey);
-              return;
-            }}
-            let scanState = null;
-            try {{
-              scanState = JSON.parse(root.sessionStorage.getItem(scanKey) || 'null');
-            }} catch (_) {{
-              root.sessionStorage.removeItem(scanKey);
-            }}
-            if (scanState && scanState.baselineUpdatedAt !== baselineAt) {{
-              root.sessionStorage.removeItem(scanKey);
-              scanState = null;
-            }}
-            const deadline = attemptedAt > updatedAt
-              ? attemptedAt + retryMs
-              : (attemptedAt ? attemptedAt + refreshMs : now);
-            if (!scanState && now < deadline) return;
-            // The timed Streamlit fragment above owns reruns. Never use
-            // location.reload here: that starts a new server session.
-          }};
-          tick();
-          root.__walterLiveClockInterval = root.setInterval(tick, 1000);
+          const install = root.document.createElement('script');
+          install.textContent = `
+            (() => {{
+              const scanKey = 'walterScanState';
+              const node = id => document.getElementById(id);
+              const setText = (id, value) => {{
+                const el = node(id);
+                if (el) el.textContent = value;
+              }};
+              const marketNow = now => {{
+                const parts = new Intl.DateTimeFormat('en-US', {{
+                  timeZone: 'America/New_York', weekday: 'short',
+                  hour: 'numeric',
+                  minute: '2-digit',
+                  second: '2-digit',
+                  hour12: true,
+                  timeZoneName: 'short'
+                }}).formatToParts(now);
+                const value = type => parts.find(part => part.type === type)?.value || '';
+                const hour = Number(value('hour')) % 12;
+                const minute = Number(value('minute'));
+                const isPm = value('dayPeriod') === 'PM';
+                const hour24 = hour + (isPm ? 12 : 0);
+                const weekday = value('weekday');
+                const isWeekend = weekday === 'Sat' || weekday === 'Sun';
+                let phase = 'Market Closed';
+                const clockMinutes = hour24 * 60 + minute;
+                if (!isWeekend && clockMinutes >= 240 && clockMinutes < 570) phase = 'Pre-Market';
+                else if (!isWeekend && clockMinutes >= 570 && clockMinutes < 960) phase = 'Live Market';
+                else if (!isWeekend && clockMinutes >= 960 && clockMinutes < 1200) phase = 'After-Hours';
+                return {{
+                  text: \`${{value('hour')}}:${{value('minute')}}:${{value('second')}} ${{value('dayPeriod')}} ${{value('timeZoneName')}}\`,
+                  phase
+                }};
+              }};
+              root.__walterLiveClockTick = () => {{
+                const config = root.__walterLiveClockConfig || {{}};
+                const now = Date.now();
+                const market = marketNow(now);
+                setText('walter-market-time', market.text);
+                setText('walter-market-phase', market.phase);
+                if (!config.enabled) {{
+                  root.sessionStorage.removeItem(scanKey);
+                  return;
+                }}
+                let scanState = null;
+                try {{
+                  scanState = JSON.parse(root.sessionStorage.getItem(scanKey) || 'null');
+                }} catch (_) {{
+                  root.sessionStorage.removeItem(scanKey);
+                }}
+                if (scanState && scanState.baselineUpdatedAt !== config.baselineAt) {{
+                  root.sessionStorage.removeItem(scanKey);
+                  scanState = null;
+                }}
+                const deadline = config.attemptedAt > config.updatedAt
+                  ? config.attemptedAt + config.retryMs
+                  : (config.attemptedAt ? config.attemptedAt + config.refreshMs : now);
+                if (!scanState && now < deadline) return;
+              }};
+              root.__walterLiveClockTick();
+              root.__walterLiveClockInterval = root.setInterval(
+                root.__walterLiveClockTick,
+                1000
+              );
+            }})();
+          `;
+          root.document.head.appendChild(install);
+          install.remove();
         }})();
         </script>""",
         height=0,
