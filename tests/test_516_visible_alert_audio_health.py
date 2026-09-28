@@ -17,7 +17,9 @@ def test_visible_audio_health_exposes_stale_reload_state_and_direct_rearm():
     assert "AUDIO NOT ARMED · RE-ARM" in markup
     assert "AUDIO READY · TEST PLAYING" in markup
     assert "Re-arm / test" in markup
-    assert "button.addEventListener('click', rearm)" in markup
+    assert "button.addEventListener('click', () => {" in markup
+    assert "testVoice();" in markup
+    assert "rearm();" in markup
     assert "ctx.resume" in markup
     assert "createOscillator" in markup
 
@@ -33,6 +35,32 @@ def test_rearm_preserves_voice_queue_and_tests_speech():
     assert "Walter alerts ready." in markup
     assert "synth.speak(utterance)" in markup
     assert "synth.cancel" not in markup
+
+
+
+
+def test_gs590_voice_test_stays_inside_direct_button_activation():
+    markup = alert_audio_health_markup()
+    listener = markup.index("button.addEventListener('click', () => {")
+    voice_call = markup.index("testVoice();", listener)
+    rearm_call = markup.index("rearm();", listener)
+    promise_boundary = markup.index("resumed.then(play)", markup.index("const rearm = () => {"))
+
+    assert listener < voice_call < rearm_call
+    assert voice_call < promise_boundary
+    assert "root.speechSynthesis || window.speechSynthesis" in markup
+    assert "root.SpeechSynthesisUtterance || window.SpeechSynthesisUtterance" in markup
+
+
+def test_gs590_audio_health_reports_voice_transport_outcome():
+    markup = alert_audio_health_markup()
+    assert "BELL READY · VOICE REQUESTED" in markup
+    assert "AUDIO + VOICE READY" in markup
+    assert "BELL READY · VOICE BLOCKED" in markup
+    assert "utterance.onstart" in markup
+    assert "utterance.onend" in markup
+    assert "utterance.onerror" in markup
+    assert "GS590 re-arm" in markup
 
 
 def test_scope_lock_is_alert_transport_presentation_only():
