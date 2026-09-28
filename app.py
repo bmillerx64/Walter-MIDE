@@ -1419,8 +1419,7 @@ def arm_live_clock_engine(
               }};
               const marketNow = now => {{
                 const parts = new Intl.DateTimeFormat('en-US', {{
-                  timeZone: 'America/New_York',
-                  weekday: 'short',
+                  timeZone: 'America/New_York', weekday: 'short',
                   hour: 'numeric',
                   minute: '2-digit',
                   second: '2-digit',
