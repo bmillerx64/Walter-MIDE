@@ -276,13 +276,21 @@ def scan_context(state: MutableMapping[str, Any]) -> ScanContext:
 def store_completed_scan(
     state: MutableMapping[str, Any], scan: CompletedScan
 ) -> CompletedScan:
-    """Atomically publish a completed scan and its compatibility aliases."""
+    """Atomically publish a completed scan and its compatibility aliases.
+
+    GS584 publishes the detached process-wide snapshot before exposing the same
+    completed object through mutable Streamlit session state. Monday live logs
+    captured a dictionary-size mutation error while overlapping Streamlit
+    sessions were adopting/presenting a newly completed scan. Taking the process
+    snapshot first removes that publication race without changing scan evidence
+    or trading authority.
+    """
     context = scan_context(state)
+    _publish_process_live_scan(scan)
     context.completed_scan = scan
     state[COMPLETED_SCAN_KEY] = scan
     state[LAST_SCAN_FAILURE_KEY] = None
     append_readiness_history(state, scan)
-    _publish_process_live_scan(scan)
     return scan
 
 
