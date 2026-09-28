@@ -8,31 +8,29 @@ def _scheduler_source() -> str:
     return source[start:end]
 
 
-def test_gs567_stability_invariant_survives_gs568_bounded_heartbeat():
+def test_gs567_restores_single_interval_fragment_not_five_second_heartbeat():
     scheduler = _scheduler_source()
 
-    assert "scheduler_poll_seconds = min(max(1, int(interval)), 5)" in scheduler
-    assert "@st.fragment(run_every=timedelta(seconds=scheduler_poll_seconds))" in scheduler
-    assert 'request_latch_key = "_walter_live_scan_requested_for"' in scheduler
+    assert "@st.fragment(run_every=timedelta(seconds=interval))" in scheduler
+    assert "scheduler_poll_seconds" not in scheduler
+    assert "min(max(1, int(interval)), 5)" not in scheduler
 
 
-def test_gs567_full_app_rerun_remains_due_guarded_and_latched():
+def test_gs567_fragment_has_one_local_tick_guard_before_full_app_rerun():
     scheduler = _scheduler_source()
 
-    due = scheduler.index("if not autoscan_request_due(")
-    duplicate_guard = scheduler.index(
-        "if st.session_state.get(request_latch_key) == request_baseline:"
+    assert 'tick_key = "_walter_live_scan_fragment_tick"' in scheduler
+    assert "interval * 0.9" in scheduler
+    assert "autoscan_request_due(" in scheduler
+    assert scheduler.index("autoscan_request_due(") < scheduler.index(
+        'st.rerun(scope="app")'
     )
-    latch = scheduler.index("st.session_state[request_latch_key] = request_baseline")
-    rerun = scheduler.index('st.rerun(scope="app")')
-
-    assert due < duplicate_guard < latch < rerun
 
 
-def test_gs567_stability_latch_clears_when_autoscan_is_disabled():
+def test_gs567_clears_fragment_tick_when_autoscan_is_disabled():
     scheduler = _scheduler_source()
 
-    assert 'st.session_state.pop("_walter_live_scan_requested_for", None)' in scheduler
+    assert 'st.session_state.pop("_walter_live_scan_fragment_tick", None)' in scheduler
 
 
 def test_gs567_scheduler_rollback_is_orchestration_only():
