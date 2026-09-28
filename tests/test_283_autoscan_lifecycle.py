@@ -222,3 +222,29 @@ def test_gs568_scheduler_fix_remains_orchestration_only():
         ".location.reload(",
     )
     assert not any(token in scheduler for token in forbidden)
+
+
+def test_gs570_clock_uses_isolated_one_second_fragment():
+    source = Path("app.py").read_text(encoding="utf-8")
+    start = source.index("def arm_live_clock_engine(")
+    end = source.index("\ndef _run_live_pipeline(", start)
+    block = source[start:end]
+
+    assert "@st.fragment(run_every=timedelta(seconds=1))" in block
+    assert "def refresh_market_clock() -> None:" in block
+    assert "refresh_market_clock()" in block
+    assert "root.__walterLiveClockInterval" not in block
+    assert "root.setInterval(" not in block
+
+
+def test_gs570_clock_fragment_is_presentation_only():
+    source = Path("app.py").read_text(encoding="utf-8")
+    start = source.index("def refresh_market_clock() -> None:")
+    end = source.index("    refresh_market_clock()", start)
+    clock = source[start:end]
+
+    assert "st.rerun(" not in clock
+    assert "SCAN_REQUESTED_KEY" not in clock
+    assert ".location.reload(" not in clock
+    assert "walter-market-time" in clock
+    assert "walter-market-phase" in clock
