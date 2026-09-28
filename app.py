@@ -1434,6 +1434,18 @@ def arm_live_clock_engine(
             el.style.color = color;
             el.style.fontWeight = '950';
           }};
+          // GS580: scan lateness is not transport failure. Streamlit's own
+          // CONNECTING surface is the browser-side proof that the websocket
+          // needs recovery; otherwise a slow fragment/rerun must not reload a
+          // healthy session.
+          const nativeStreamlitConnecting = () => {{
+            try {{
+              const text = (root.document.body?.innerText || '').toUpperCase();
+              return /\\bCONNECTING\\b/.test(text);
+            }} catch (_) {{
+              return false;
+            }}
+          }};
           const marketNow = now => {{
             const parts = new Intl.DateTimeFormat('en-US', {{
               timeZone: 'America/New_York', weekday: 'short', hour: 'numeric', minute: '2-digit',
@@ -1519,6 +1531,7 @@ def arm_live_clock_engine(
             // a fresh websocket/session. This does not execute scan logic; the
             // server-side watchdog and existing scheduler remain authoritative.
             const recoveryDue = attemptedAt > 0
+              && nativeStreamlitConnecting()
               && overdueSeconds * 1000 >= transportRecoveryMs;
             const recoveryAllowed = !recoveryState
               || recoveryState.baselineAt !== baselineAt
