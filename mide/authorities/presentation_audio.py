@@ -5169,9 +5169,23 @@ def alert_audio_health_markup() -> str:
         box.className = 'walter-audio-health ' + kind;
         status.textContent = text;
       };
+      let voiceTestState = 'idle';
+      let voiceTestDetail = '';
       const refresh = () => {
         if (audioReady()) {
-          paint('ready', 'AUDIO READY');
+          if (voiceTestState === 'error') {
+            paint(
+              'bad',
+              'BELL READY · VOICE BLOCKED' +
+                (voiceTestDetail ? ' · ' + voiceTestDetail : '')
+            );
+          } else if (voiceTestState === 'speaking' || voiceTestState === 'ended') {
+            paint('ready', 'AUDIO + VOICE READY');
+          } else if (voiceTestState === 'requested') {
+            paint('warn', 'BELL READY · VOICE REQUESTED');
+          } else {
+            paint('ready', 'AUDIO READY');
+          }
         } else if (readArmed()) {
           paint('bad', 'AUDIO DISARMED AFTER RELOAD · RE-ARM');
         } else {
@@ -5181,25 +5195,91 @@ def alert_audio_health_markup() -> str:
 
       const testVoice = () => {
         try {
-          // GS589: use the activated iframe speech engine first and explicitly
-          // clear/resume Chrome's speech queue after laptop sleep. The Web Audio
-          // bell can recover while speechSynthesis remains paused or wedged.
-          const parentSynth = root.speechSynthesis || window.speechSynthesis;
-          const synth = window.speechSynthesis || parentSynth;
+          // GS590: this function is invoked directly inside the Re-arm button's
+          // click handler, before any AudioContext.resume() Promise boundary.
+          // Chrome can discard transient user activation before a .then(play)
+          // callback runs, which explains "two bells, no voice" after reboot.
+          // Use the same parent speech engine preferred by automatic Walter voice
+          // so the explicit click activates the transport Walter will later use.
+          const synth = root.speechSynthesis || window.speechSynthesis;
           const Utterance =
-            window.SpeechSynthesisUtterance || root.SpeechSynthesisUtterance;
-          if (!synth || !Utterance) return;
+            root.SpeechSynthesisUtterance || window.SpeechSynthesisUtterance;
+          if (!synth || !Utterance) {
+            voiceTestState = 'error';
+            voiceTestDetail = 'speech unavailable';
+            refresh();
+            return false;
+          }
           const utterance = new Utterance('Walter alerts ready.');
           utterance.rate = 0.95;
           utterance.pitch = 0.9;
           utterance.volume = 1.0;
-          // Preserve the live speech queue: GS324 proved cancel() can turn a
-          // valid request into "interrupted". A user click is enough to resume
-          // the activated frame's speech engine after sleep.
+          utterance.onstart = () => {
+            voiceTestState = 'speaking';
+            voiceTestDetail = '';
+            markArmed();
+            try {
+              root.__walterVoiceTransport = {
+                phrase: 'Walter alerts ready.',
+                source: 'GS590 re-arm',
+                status: 'speaking',
+                armed: true,
+                startedAt: new Date().toISOString(),
+              };
+            } catch (_) {}
+            refresh();
+          };
+          utterance.onend = () => {
+            voiceTestState = 'ended';
+            voiceTestDetail = '';
+            try {
+              root.__walterVoiceTransport = {
+                ...(root.__walterVoiceTransport || {}),
+                status: 'ended',
+                completedAt: new Date().toISOString(),
+              };
+            } catch (_) {}
+            refresh();
+          };
+          utterance.onerror = (event) => {
+            voiceTestState = 'error';
+            voiceTestDetail =
+              event && event.error ? String(event.error) : 'speech error';
+            try {
+              root.__walterVoiceTransport = {
+                ...(root.__walterVoiceTransport || {}),
+                phrase: 'Walter alerts ready.',
+                source: 'GS590 re-arm',
+                status: 'error',
+                detail: voiceTestDetail,
+                completedAt: new Date().toISOString(),
+              };
+            } catch (_) {}
+            refresh();
+          };
+          voiceTestState = 'requested';
+          voiceTestDetail = '';
+          markArmed();
           if (synth.paused && synth.resume) synth.resume();
           if (synth.resume) synth.resume();
+          try {
+            root.__walterVoiceTransport = {
+              phrase: 'Walter alerts ready.',
+              source: 'GS590 re-arm',
+              status: 'requested',
+              armed: true,
+              requestedAt: new Date().toISOString(),
+            };
+          } catch (_) {}
           synth.speak(utterance);
-        } catch (_) {}
+          refresh();
+          return true;
+        } catch (error) {
+          voiceTestState = 'error';
+          voiceTestDetail = String(error || 'speech test failed');
+          refresh();
+          return false;
+        }
       };
 
       const rearm = () => {
@@ -5249,11 +5329,8 @@ def alert_audio_health_markup() -> str:
             strike(base, 523.25);
             strike(base + 0.42, 783.99);
             markArmed();
-            testVoice();
             paint('ready', 'AUDIO READY · TEST PLAYING');
-            window.setTimeout(() => {
-              if (audioReady()) paint('ready', 'AUDIO READY');
-            }, 1800);
+            window.setTimeout(refresh, 1800);
           };
           if (ctx.state === 'running') {
             play();
@@ -5273,7 +5350,12 @@ def alert_audio_health_markup() -> str:
         }
       };
 
-      if (button) button.addEventListener('click', rearm);
+      if (button) button.addEventListener('click', () => {
+        // Keep speech inside the actual user gesture. AudioContext recovery may
+        // continue asynchronously, but Walter voice must not wait for that Promise.
+        testVoice();
+        rearm();
+      });
       refresh();
       const timer = window.setInterval(refresh, 1000);
       window.addEventListener('beforeunload', () => window.clearInterval(timer));
