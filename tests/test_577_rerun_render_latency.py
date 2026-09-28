@@ -33,18 +33,17 @@ def test_gs577_heavy_system_status_sections_are_under_gate():
         assert panel.index(marker) > gate
 
 
-def test_gs577_autoscan_is_armed_at_true_app_tail():
+def test_gs588_process_observer_is_armed_before_heavy_render():
     source = _source()
     call = """arm_live_clock_engine(
     mode.startswith("Live ") and auto_refresh and live_possible,"""
 
     assert source.count(call) == 1
-    assert source.index(call) > source.index('if active_tab == "Webull Debug":')
-    assert source.rstrip().endswith(
-        """retry_seconds=min(60, 5 * (2 ** min(st.session_state.scan_failure_count, 3))),
-    process_autoscan_owned=True,
-)"""
-    )
+    call_index = source.index(call)
+    assert call_index > source.index("clock = market_clock()")
+    assert call_index < source.index("if records:", call_index)
+    assert call_index < source.index('if active_tab == "Webull Debug":')
+    assert "# GS588: process-owned cadence no longer depends on render completion." in source
 
 
 def test_gs577_does_not_change_scan_or_trading_authority():
