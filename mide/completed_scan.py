@@ -1,10 +1,10 @@
 """Authoritative evidence from the last completed scan.
 
-The primary contract remains session-scoped: every dashboard view in one Streamlit
-session consumes one atomic ``CompletedScan``.  GS412 adds a narrow process-wide
-handoff for *live* completed scans so a second/hot-reload Streamlit session does
-not immediately launch a duplicate provider scan simply because its local session
-has no completed result yet.
+The primary evidence contract remains session-scoped: every dashboard view in one
+Streamlit session consumes one atomic ``CompletedScan``. GS412 adds a narrow
+process-wide handoff for *live* completed scans. GS578 also gives the mutable live
+provider one process-wide owner so a single browser tab that reconnects into a new
+Streamlit session cannot create a second Webull runtime inside the same process.
 """
 
 from __future__ import annotations
@@ -13,7 +13,7 @@ import copy
 from dataclasses import dataclass
 from datetime import datetime
 import threading
-from typing import Any, MutableMapping
+from typing import Any, Callable, MutableMapping
 
 from mide.evidence_readiness import evidence_readiness_report
 from mide.evidence_readiness_history import append_readiness_history
@@ -106,6 +106,77 @@ class ScanContext:
 # scan and then ping-ponging the process watchdog a few seconds apart.
 _PROCESS_LIVE_SCAN_LOCK = threading.RLock()
 _PROCESS_LIVE_SCAN: CompletedScan | None = None
+
+# GS578: Streamlit can replace a session after a websocket reconnect while the
+# Python process remains alive. A session-owned provider then creates a second
+# Webull SDK/runtime object even though the operator has only one browser tab.
+# Keep exactly one mutable live provider per process and let each new
+# ScanContext hold only an alias to that process owner. The process watchdog
+# already serializes use of this provider, so sharing does not add concurrent
+# scanner authority.
+PROCESS_LIVE_PROVIDER_AUTHORITY = "PROCESS_WIDE_LIVE_PROVIDER_OWNER"
+_PROCESS_LIVE_PROVIDER_LOCK = threading.RLock()
+_PROCESS_LIVE_PROVIDER: Any = None
+_PROCESS_LIVE_PROVIDER_IDENTITY: str | None = None
+_PROCESS_LIVE_PROVIDER_CLAIMS = 0
+
+
+def claim_process_live_provider(
+    identity: str,
+    current_provider: Any,
+    factory: Callable[[], Any],
+) -> tuple[Any, bool]:
+    """Return the sole live provider for this Python process.
+
+    ``current_provider`` lets a retained Streamlit session seed the owner if this
+    module is refreshed independently. A genuinely fresh Streamlit session passes
+    ``None`` and adopts the existing process provider instead of constructing a
+    competing Webull SDK object. A changed identity intentionally creates a new
+    owner so credential/provider changes never reuse an incompatible runtime.
+
+    Returns ``(provider, created_now)``.
+    """
+    global _PROCESS_LIVE_PROVIDER
+    global _PROCESS_LIVE_PROVIDER_IDENTITY
+    global _PROCESS_LIVE_PROVIDER_CLAIMS
+
+    normalized = str(identity or "").strip()
+    if not normalized:
+        raise ValueError("live provider identity is required")
+
+    with _PROCESS_LIVE_PROVIDER_LOCK:
+        created_now = False
+        if (
+            _PROCESS_LIVE_PROVIDER is not None
+            and _PROCESS_LIVE_PROVIDER_IDENTITY == normalized
+        ):
+            provider = _PROCESS_LIVE_PROVIDER
+        elif _PROCESS_LIVE_PROVIDER is None and current_provider is not None:
+            provider = current_provider
+            _PROCESS_LIVE_PROVIDER = provider
+            _PROCESS_LIVE_PROVIDER_IDENTITY = normalized
+        else:
+            provider = factory()
+            if provider is None:
+                raise RuntimeError("live provider factory returned no provider")
+            _PROCESS_LIVE_PROVIDER = provider
+            _PROCESS_LIVE_PROVIDER_IDENTITY = normalized
+            created_now = True
+
+        _PROCESS_LIVE_PROVIDER_CLAIMS += 1
+        diagnostics = getattr(provider, "diagnostics", None)
+        if isinstance(diagnostics, dict):
+            diagnostics["runtime_provider_owner"] = {
+                "authority": PROCESS_LIVE_PROVIDER_AUTHORITY,
+                "process_singleton": True,
+                "identity": normalized,
+                "claim_count": _PROCESS_LIVE_PROVIDER_CLAIMS,
+                "created_on_this_claim": created_now,
+                "session_state_is_alias_only": True,
+                "scan_concurrency_authority_changed": False,
+                "trading_authority_changed": False,
+            }
+        return provider, created_now
 
 
 def _safe_copy_scan(scan: CompletedScan | None) -> CompletedScan | None:

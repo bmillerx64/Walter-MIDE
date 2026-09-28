@@ -187,6 +187,7 @@ from mide.completed_scan import (
     publish_scan_result,
     record_scan_failure,
     scan_context,
+    claim_process_live_provider,
     store_completed_scan,
 )
 from mide.authorities.discovery_news import (
@@ -1555,8 +1556,9 @@ def _run_live_pipeline(
         if not app_key or not app_secret:
             raise RuntimeError("Webull credentials are not configured in Streamlit Secrets/environment.")
         context = scan_context(st.session_state)
-        client = context.provider_instance
-        if not isinstance(client, LiveWebullProvider):
+        session_client = context.provider_instance
+
+        def build_webull_process_provider():
             alpaca_key = get_secret("ALPACA_API_KEY")
             alpaca_secret = get_secret("ALPACA_SECRET_KEY")
             if not alpaca_key or not alpaca_secret:
@@ -1564,9 +1566,25 @@ def _run_live_pipeline(
             provider_module = importlib.import_module("mide.market_data_providers")
             universe_client = provider_module.AlpacaProvider(
                 alpaca_key, alpaca_secret, feed=settings.feed, timeout=8)
-            client = LiveWebullProvider(
+            return LiveWebullProvider(
                 app_key, app_secret, universe_client=universe_client)
-            context.provider_instance = client
+
+        # GS578: Streamlit may replace a browser session after a websocket
+        # reconnect without replacing this Python process. Session-scoped provider
+        # construction would then create a second Webull SDK/runtime object from
+        # one visible Walter tab. Claim the process owner first and keep
+        # session_state as an alias only. The existing process watchdog remains
+        # the sole scan-concurrency authority.
+        client, _provider_created = claim_process_live_provider(
+            "WEBULL_OPENAPI_PRIMARY",
+            (
+                session_client
+                if isinstance(session_client, LiveWebullProvider)
+                else None
+            ),
+            build_webull_process_provider,
+        )
+        context.provider_instance = client
         # GS545: every Walter Next deployment uses one stable Webull MQTT
         # session identity. Webull replaces the prior connection when the same
         # session_id reconnects, preventing hot deployments from consuming another
