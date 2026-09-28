@@ -15,7 +15,66 @@ def test_gs588_process_runtime_survives_module_reload():
     second = reloaded._runtime()
 
     assert second is first
-    assert second["schema"] == 2
+    assert second["schema"] == 3
+
+
+
+def test_gs591_concurrent_first_runtime_creation_is_one_process_singleton():
+    import builtins
+    import threading
+
+    runtime_key = service._RUNTIME_KEY
+    lock_key = service._RUNTIME_INIT_LOCK_KEY
+    sentinel = object()
+    previous_runtime = builtins.__dict__.pop(runtime_key, sentinel)
+    previous_lock = builtins.__dict__.pop(lock_key, sentinel)
+
+    from mide.watchdog import PROCESS_SCAN_WATCHDOG
+
+    previous_attr = getattr(
+        PROCESS_SCAN_WATCHDOG,
+        service._RUNTIME_ATTR,
+        sentinel,
+    )
+    if previous_attr is not sentinel:
+        delattr(PROCESS_SCAN_WATCHDOG, service._RUNTIME_ATTR)
+
+    barrier = threading.Barrier(8)
+    ids = []
+    errors = []
+
+    def worker():
+        try:
+            barrier.wait(timeout=5)
+            ids.append(id(service._runtime()))
+        except Exception as exc:
+            errors.append(exc)
+
+    threads = [threading.Thread(target=worker) for _ in range(8)]
+    try:
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(timeout=10)
+
+        assert not errors
+        assert len(ids) == 8
+        assert len(set(ids)) == 1
+        assert getattr(PROCESS_SCAN_WATCHDOG, service._RUNTIME_ATTR) is service._runtime()
+    finally:
+        builtins.__dict__.pop(runtime_key, None)
+        builtins.__dict__.pop(lock_key, None)
+        if previous_runtime is not sentinel:
+            builtins.__dict__[runtime_key] = previous_runtime
+        if previous_lock is not sentinel:
+            builtins.__dict__[lock_key] = previous_lock
+        if previous_attr is sentinel:
+            try:
+                delattr(PROCESS_SCAN_WATCHDOG, service._RUNTIME_ATTR)
+            except AttributeError:
+                pass
+        else:
+            setattr(PROCESS_SCAN_WATCHDOG, service._RUNTIME_ATTR, previous_attr)
 
 
 def test_gs588_runtime_is_anchored_to_process_watchdog():

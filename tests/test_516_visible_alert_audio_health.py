@@ -30,11 +30,16 @@ def test_visible_audio_health_poll_detects_later_context_loss():
     assert "beforeunload" in markup
 
 
-def test_rearm_preserves_voice_queue_and_tests_speech():
+def test_gs591_explicit_rearm_resets_stale_voice_queue_and_tests_speech():
     markup = alert_audio_health_markup()
     assert "Walter alerts ready." in markup
+    assert "if (synth.cancel) synth.cancel();" in markup
     assert "synth.speak(utterance)" in markup
-    assert "synth.cancel" not in markup
+    assert "GS591 re-arm queue reset" in markup
+    assert "pending=" in markup
+    assert "speaking=" in markup
+    assert "paused=" in markup
+    assert "voices=" in markup
 
 
 
@@ -55,7 +60,7 @@ def test_gs590_voice_test_stays_inside_direct_button_activation():
     assert "root.SpeechSynthesisUtterance || window.SpeechSynthesisUtterance" in markup
 
 
-def test_gs590_audio_health_reports_voice_transport_outcome():
+def test_gs591_audio_health_reports_voice_transport_outcome():
     markup = alert_audio_health_markup()
     assert "BELL READY · VOICE REQUESTED" in markup
     assert "AUDIO + VOICE READY" in markup
@@ -63,7 +68,7 @@ def test_gs590_audio_health_reports_voice_transport_outcome():
     assert "utterance.onstart" in markup
     assert "utterance.onend" in markup
     assert "utterance.onerror" in markup
-    assert "GS590 re-arm" in markup
+    assert "GS591 re-arm queue reset" in markup
 
 
 def test_scope_lock_is_alert_transport_presentation_only():
