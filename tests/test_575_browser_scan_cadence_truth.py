@@ -27,7 +27,7 @@ def test_gs575_auto_scan_tile_shows_running_while_blocking_scan_is_due():
 def test_gs575_browser_indicator_does_not_own_normal_scan_reruns():
     scheduler = _scheduler_source()
 
-    assert "@st.fragment(run_every=timedelta(seconds=interval))" in scheduler
+    assert "scheduler_poll_seconds = min(max(1, int(interval)), 5)" in scheduler\n    assert "@st.fragment(run_every=timedelta(seconds=scheduler_poll_seconds))" in scheduler
     assert "autoscan_request_due(" in scheduler
     # GS575 remains display-only for ordinary cadence. GS576 may recycle a dead
     # browser transport, but that recovery path does not execute scan logic.
