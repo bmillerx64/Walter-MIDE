@@ -1,7 +1,7 @@
 from pathlib import Path
 
 
-def test_gs589_health_rearm_recovers_browser_speech_after_sleep():
+def test_gs591_health_rearm_recovers_browser_speech_after_sleep():
     source = Path("mide/authorities/presentation_audio.py").read_text(
         encoding="utf-8"
     )
@@ -10,7 +10,7 @@ def test_gs589_health_rearm_recovers_browser_speech_after_sleep():
     block = source[start:end]
 
     assert "root.speechSynthesis || window.speechSynthesis" in block
-    assert "synth.cancel" not in block
+    assert "if (synth.cancel) synth.cancel();" in block
     assert "if (synth.paused && synth.resume) synth.resume();" in block
     assert "if (synth.resume) synth.resume();" in block
     assert "synth.speak(utterance);" in block
