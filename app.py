@@ -1343,11 +1343,10 @@ def arm_live_clock_engine(
     last_updated: datetime | None,
     last_scan_attempt: datetime | None = None,
     retry_seconds: int = 5,
+    *,
+    scheduled_scan=None,
 ) -> None:
-    """Trigger scheduled scans without coupling presentation clock updates."""
-    # A timed fragment requests a rerun over the existing websocket.
-    # A browser location.reload() creates a new Streamlit session and loses
-    # the completed scan and persistent controls along with its session_state.
+    """Run scheduled scans in a fragment; refresh the full app only afterward."""
     if enabled:
         interval = autoscan_wait_seconds(
             refresh_seconds,
@@ -1355,8 +1354,6 @@ def arm_live_clock_engine(
             last_scan_attempt,
             retry_seconds=retry_seconds,
         )
-        # GS568: bounded lightweight polling with one full-app rerun permitted
-        # per scan-attempt baseline.
         scheduler_poll_seconds = min(max(1, int(interval)), 5)
         request_latch_key = "_walter_live_scan_requested_for"
         request_baseline = (
@@ -1366,7 +1363,7 @@ def arm_live_clock_engine(
         )
 
         @st.fragment(run_every=timedelta(seconds=scheduler_poll_seconds))
-        def request_session_preserving_rerun() -> None:
+        def run_scheduled_scan_fragment() -> None:
             now = datetime.now().astimezone()
             if not autoscan_request_due(
                 refresh_seconds,
@@ -1379,10 +1376,15 @@ def arm_live_clock_engine(
             if st.session_state.get(request_latch_key) == request_baseline:
                 return
             st.session_state[request_latch_key] = request_baseline
-            st.session_state[SCAN_REQUESTED_KEY] = True
+            if scheduled_scan is None:
+                return
+            # GS573: the blocking scan runs inside this fragment, so the main
+            # dashboard/header remains mounted. Refresh the app only after the
+            # new CompletedScan (or failure state) has been published.
+            scheduled_scan()
             st.rerun(scope="app")
 
-        request_session_preserving_rerun()
+        run_scheduled_scan_fragment()
     else:
         st.session_state.pop("_walter_live_scan_requested_for", None)
 
@@ -1452,6 +1454,19 @@ def render_mission_header_component(markup: str) -> None:
     st.components.v1.html(component_html, height=300, scrolling=False)
 
 
+class _QuietScanStatus:
+    def write(self, *_args, **_kwargs):
+        return None
+
+    def update(self, *_args, **_kwargs):
+        return None
+
+
+class _QuietScanProgress:
+    def progress(self, *_args, **_kwargs):
+        return None
+
+
 def _run_live_pipeline(
     scanner_version: str = "Walter Architecture v1.0",
     *,
@@ -1459,6 +1474,7 @@ def _run_live_pipeline(
     client_factory=None,
     credential_checker=None,
     provider_name: str = "ALPACA",
+    quiet: bool = False,
 ):
     """Execute the live scan through the single Walter Architecture pipeline."""
     scan_started = perf_counter()
@@ -1577,8 +1593,11 @@ def _run_live_pipeline(
             client.warnings.append(f"Alpaca credential check unavailable: {exc}")
         client.diagnostics["selected_provider"] = "ALPACA"
         logging.getLogger(__name__).warning("Walter live market-data provider: ALPACA")
-    with scan_runtime_slot:
-        progress = st.progress(0, text="Starting Walter Architecture")
+    if quiet:
+        progress = _QuietScanProgress()
+    else:
+        with scan_runtime_slot:
+            progress = st.progress(0, text="Starting Walter Architecture")
 
     state = {"seeds": [], "reasons": {}, "snapshots": {}, "news": [],
              "candidates": [], "analyzed": [], "ranked": [],
@@ -2406,6 +2425,7 @@ def run_live(
     client_factory=None,
     credential_checker=None,
     provider_name: str = "ALPACA",
+    quiet: bool = False,
 ):
     """Run and report the complete live pipeline without leaving a LIVE spinner.
 
@@ -2414,10 +2434,11 @@ def run_live(
     returns a completed degraded result so no unexpected exception can terminate
     the runtime.
     """
-    status = None
+    status = _QuietScanStatus() if quiet else None
     try:
-        with scan_runtime_slot:
-            status = st.status("Walter is scanning…", expanded=True)
+        if not quiet:
+            with scan_runtime_slot:
+                status = st.status("Walter is scanning…", expanded=True)
         architecture = scanner_implementation(scanner_version).for_runtime(
             lambda: _run_live_pipeline(
                 scanner_version,
@@ -2425,6 +2446,7 @@ def run_live(
                 client_factory=client_factory,
                 credential_checker=credential_checker,
                 provider_name=provider_name,
+                quiet=quiet,
             )
         )
         with startup_step("beginning scanner"):
@@ -2515,29 +2537,29 @@ if use_demo or mode == "Demo":
         completed_at=datetime.now().astimezone(), source_label="Demonstration data",
     ))
 else:
-    due = (
+    # GS573: recurring AutoScan is fragment-owned. The full app handles only an
+    # explicit/manual request or the very first live bootstrap scan.
+    bootstrap_scan = (
         mode.startswith("Live ")
         and auto_refresh
         and live_possible
-        and not st.session_state.scan_in_progress
-        and (
-            completed_scan_for_view(st.session_state, "scheduler") is None
-            or (
-                datetime.now().astimezone()
-                - completed_scan_for_view(st.session_state, "scheduler").completed_at
-            ).total_seconds()
-            >= settings.refresh_seconds
-        )
+        and completed_scan_for_view(st.session_state, "scheduler") is None
+        and st.session_state.last_scan_attempt is None
     )
-    should_scan = st.session_state[SCAN_REQUESTED_KEY] or due
+    should_scan = st.session_state[SCAN_REQUESTED_KEY] or bootstrap_scan
 
-if mode.startswith("Live ") and should_scan and not st.session_state[STOP_REQUESTED_KEY]:
+def execute_live_scan_attempt(provider_name: str, *, quiet: bool = False) -> None:
+    """Run one guarded live attempt and publish transactionally."""
     st.session_state.last_scan_attempt = datetime.now().astimezone()
     try:
         repair_mide_module_links()
         watchdog = importlib.import_module("mide.watchdog").PROCESS_SCAN_WATCHDOG
         records, universe_count, prefiltered, warnings, diagnostics = watchdog.run(
-            lambda: run_live(scanner_version, provider_name=selected_provider),
+            lambda: run_live(
+                scanner_version,
+                provider_name=provider_name,
+                quiet=quiet,
+            ),
             before_retry=repair_mide_module_links,
             on_acquired=lambda: begin_scheduled_scan(st.session_state),
             on_finished=lambda: finish_scan(st.session_state),
@@ -2545,7 +2567,7 @@ if mode.startswith("Live ") and should_scan and not st.session_state[STOP_REQUES
         if diagnostics.get("scan_completed", True):
             completed_at = datetime.now().astimezone()
             scan = CompletedScan(
-                provider=selected_provider,
+                provider=provider_name,
                 records=records,
                 diagnostics=diagnostics,
                 warnings=warnings,
@@ -2553,7 +2575,7 @@ if mode.startswith("Live ") and should_scan and not st.session_state[STOP_REQUES
                 prefilter_count=prefiltered,
                 completed_at=completed_at,
                 source_label=(
-                    f"Live {selected_provider} · {universe_count} symbols sampled · "
+                    f"Live {provider_name} · {universe_count} symbols sampled · "
                     f"{prefiltered} prefiltered"
                 ),
             )
@@ -2567,27 +2589,37 @@ if mode.startswith("Live ") and should_scan and not st.session_state[STOP_REQUES
             st.session_state.scan_failure_count += 1
             actual_failure = warnings[-1] if warnings else "Unknown provider failure"
             record_scan_failure(
-                st.session_state, message=actual_failure,
+                st.session_state,
+                message=actual_failure,
                 attempted_at=st.session_state.last_scan_attempt,
                 diagnostics=diagnostics,
             )
-            st.error(
-                f"Scan stopped; the last successful scan remains displayed. {actual_failure}"
-            )
+            if not quiet:
+                st.error(
+                    f"Scan stopped; the last successful scan remains displayed. {actual_failure}"
+                )
     except ScanAlreadyRunning as exc:
         log(f"Scan deferred: {exc}")
-        st.info("Another Walter session is scanning. This session will retry automatically.")
+        if not quiet:
+            st.info("Another Walter session is scanning. This session will retry automatically.")
     except Exception as exc:
         st.session_state.scan_failure_count += 1
         record_scan_failure(
-            st.session_state, message=f"{type(exc).__name__}: {exc}",
+            st.session_state,
+            message=f"{type(exc).__name__}: {exc}",
             attempted_at=st.session_state.last_scan_attempt,
         )
         log(f"Scan failed: {type(exc).__name__}: {exc}")
-        st.error(f"Live scan could not complete: {exc}")
-        st.info(
-            "Walter remains online and will retry automatically with backoff."
-        )
+        if not quiet:
+            st.error(f"Live scan could not complete: {exc}")
+            st.info(
+                "Walter remains online and will retry automatically with backoff."
+            )
+
+
+if mode.startswith("Live ") and should_scan and not st.session_state[STOP_REQUESTED_KEY]:
+    execute_live_scan_attempt(selected_provider, quiet=False)
+
 completed_scan = completed_scan_for_view(st.session_state, "Radar")
 last_scan_failure = st.session_state.get(LAST_SCAN_FAILURE_KEY)
 if completed_scan and completed_scan.diagnostics.get("webull_stock_data_cache", {}).get("active"):
@@ -2725,6 +2757,10 @@ arm_live_clock_engine(
     updated,
     st.session_state.last_scan_attempt,
     retry_seconds=min(60, 5 * (2 ** min(st.session_state.scan_failure_count, 3))),
+    scheduled_scan=lambda: execute_live_scan_attempt(
+        selected_provider,
+        quiet=True,
+    ),
 )
 
 with escalation_engine_slot:

@@ -16,7 +16,7 @@ def test_gs567_stability_invariant_survives_gs568_bounded_heartbeat():
     assert 'request_latch_key = "_walter_live_scan_requested_for"' in scheduler
 
 
-def test_gs567_full_app_rerun_remains_due_guarded_and_latched():
+def test_gs567_stability_latch_wraps_fragment_scan_before_app_refresh():
     scheduler = _scheduler_source()
 
     due = scheduler.index("if not autoscan_request_due(")
@@ -24,9 +24,10 @@ def test_gs567_full_app_rerun_remains_due_guarded_and_latched():
         "if st.session_state.get(request_latch_key) == request_baseline:"
     )
     latch = scheduler.index("st.session_state[request_latch_key] = request_baseline")
+    scan = scheduler.index("scheduled_scan()")
     rerun = scheduler.index('st.rerun(scope="app")')
 
-    assert due < duplicate_guard < latch < rerun
+    assert due < duplicate_guard < latch < scan < rerun
 
 
 def test_gs567_stability_latch_clears_when_autoscan_is_disabled():
