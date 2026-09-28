@@ -104,14 +104,15 @@ def test_watchdog_truth_is_required_for_post_scan_bypass():
     ) == "scan already requested"
 
 
-def test_live_scheduler_still_marks_due_autoscan_without_manual_timestamp():
+def test_live_scheduler_runs_due_autoscan_without_manual_timestamp():
     source = Path("app.py").read_text()
     start = source.index("def arm_live_clock_engine(")
     end = source.index("\ndef _run_live_pipeline(", start)
     scheduler = source[start:end]
 
     assert "autoscan_request_due(" in scheduler
-    assert "st.session_state[SCAN_REQUESTED_KEY] = True" in scheduler
+    assert "scheduled_scan()" in scheduler
+    assert "st.session_state[SCAN_REQUESTED_KEY] = True" not in scheduler
     assert "request_scan(st.session_state)" not in scheduler
 
 
