@@ -5184,7 +5184,8 @@ def alert_audio_health_markup() -> str:
           // GS589: use the activated iframe speech engine first and explicitly
           // clear/resume Chrome's speech queue after laptop sleep. The Web Audio
           // bell can recover while speechSynthesis remains paused or wedged.
-          const synth = window.speechSynthesis || root.speechSynthesis;
+          const parentSynth = root.speechSynthesis || window.speechSynthesis;
+          const synth = window.speechSynthesis || parentSynth;
           const Utterance =
             window.SpeechSynthesisUtterance || root.SpeechSynthesisUtterance;
           if (!synth || !Utterance) return;
@@ -5192,7 +5193,9 @@ def alert_audio_health_markup() -> str:
           utterance.rate = 0.95;
           utterance.pitch = 0.9;
           utterance.volume = 1.0;
-          if (synth.cancel) synth.cancel();
+          // Preserve the live speech queue: GS324 proved cancel() can turn a
+          // valid request into "interrupted". A user click is enough to resume
+          // the activated frame's speech engine after sleep.
           if (synth.paused && synth.resume) synth.resume();
           if (synth.resume) synth.resume();
           synth.speak(utterance);
