@@ -24,19 +24,18 @@ def test_gs575_auto_scan_tile_shows_running_while_blocking_scan_is_due():
     assert "setAutoScan(`SCAN OVERDUE +${{overdueSeconds}}s`" in scheduler
 
 
-def test_gs575_browser_indicator_does_not_own_scan_reruns():
+def test_gs575_browser_indicator_does_not_own_normal_scan_reruns():
     scheduler = _scheduler_source()
 
-    assert "location.reload" in scheduler
-    assert "Never use" in scheduler
     assert "@st.fragment(run_every=timedelta(seconds=interval))" in scheduler
     assert "autoscan_request_due(" in scheduler
-    # The browser interval paints operator truth only; the Streamlit fragment
-    # remains the sole owner of scheduled app reruns.
+    # GS575 remains display-only for ordinary cadence. GS576 may recycle a dead
+    # browser transport, but that recovery path does not execute scan logic.
     js_start = scheduler.index('st.components.v1.html(')
     js = scheduler[js_start:]
-    assert "location.reload(" not in js
     assert "st.rerun(" not in js
+    assert "scheduled_scan(" not in js
+    assert "run_live(" not in js
 
 
 def test_gs575_disabled_state_is_explicit():
