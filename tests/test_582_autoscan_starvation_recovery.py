@@ -8,44 +8,28 @@ def _scheduler_source() -> str:
     return source[start:end]
 
 
-def test_gs582_has_separate_connected_scheduler_starvation_recovery():
+def test_gs584_supersedes_browser_scheduler_recovery_without_touching_transport_recovery():
     scheduler = _scheduler_source()
 
-    assert "scheduler_starvation_recovery_ms = 15_000" in scheduler
-    assert "scheduler_starvation_recovery_cooldown_ms = 75_000" in scheduler
-    assert "const schedulerRecoveryKey = 'walterSchedulerStarvationRecovery';" in scheduler
-    recovery = scheduler[scheduler.index("const schedulerRecoveryDue = attemptedAt > 0"):]
-    assert "&& !nativeStreamlitConnecting()" in recovery
-    assert "&& !visibleWalterScanActive()" in recovery
-    assert ">= schedulerStarvationRecoveryMs" in recovery
-    assert "RECOVERING AUTOSCAN" in recovery
-    assert "requestRunLiveScanWidget()" in recovery
+    # GS580's CONNECTING-proven transport recovery remains.
+    assert "nativeStreamlitConnecting()" in scheduler
+    assert "RECONNECTING STREAMLIT" in scheduler
+
+    # GS582/583 browser-side scheduler actions are retired: live evidence showed
+    # they created/competed with a healthy process-wide cadence owner.
+    assert "scheduler_starvation_recovery_ms" not in scheduler
+    assert "walterSchedulerStarvationRecovery" not in scheduler
+    assert "requestRunLiveScanWidget" not in scheduler
+    assert "RECOVERING AUTOSCAN" not in scheduler
+    assert "AUTOSCAN RECOVERY WAITING" not in scheduler
 
 
-def test_gs582_gs583_recovery_never_requests_scan_while_visibly_active():
+def test_gs584_preserves_existing_scan_authority():
     scheduler = _scheduler_source()
 
-    assert "const visibleWalterScanActive = () =>" in scheduler
-    assert "text.includes('WALTER IS SCANNING')" in scheduler
-    assert "text.includes('STARTING WALTER ARCHITECTURE')" in scheduler
-    recovery = scheduler[scheduler.index("const schedulerRecoveryDue = attemptedAt > 0"):]
-    active_guard = recovery.index("!visibleWalterScanActive()")
-    request_pos = recovery.index("requestRunLiveScanWidget()")
-    assert active_guard < request_pos
-
-
-def test_gs582_recovery_is_per_baseline_and_cooldown_latched():
-    scheduler = _scheduler_source()
-
-    assert "schedulerRecoveryState.baselineAt !== baselineAt" in scheduler
-    assert ">= schedulerStarvationRecoveryCooldownMs" in scheduler
-    assert "JSON.stringify({{baselineAt, recoveredAt: now}})" in scheduler
-    assert "root.sessionStorage.removeItem(schedulerRecoveryKey);" in scheduler
-
-
-def test_gs582_preserves_trading_and_provider_authority():
-    scheduler = _scheduler_source()
-
+    assert "autoscan_request_due(" in scheduler
+    assert "st.session_state[SCAN_REQUESTED_KEY] = True" in scheduler
+    assert "@st.fragment(run_every=timedelta(seconds=scheduler_poll_seconds))" in scheduler
     forbidden = (
         "qualified_for_entry",
         "qualified_for_alert",
