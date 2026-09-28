@@ -1731,7 +1731,8 @@ def _run_live_pipeline(
         client: MarketDataProvider = client_factory(api_key, secret, feed=settings.feed, timeout=8)
         try:
             environment = credential_checker(client)
-            status.write(f"Alpaca credentials accepted ({environment} environment)")
+            if status is not None:
+                status.write(f"Alpaca credentials accepted ({environment} environment)")
         except Exception as exc:
             record_provider_failure(client.diagnostics, provider="Alpaca",
                 operation="credential check", exception=exc,
@@ -2633,6 +2634,176 @@ def run_live(
         return [], 0, 0, [f"Recovered live scan failure: {exc}"], diagnostics
 
 
+def _run_process_autoscan(
+    scanner_version: str,
+    provider_name: str,
+    *,
+    runtime_secrets: dict,
+    history_store,
+    flight_recorder,
+) -> bool:
+    """Run one automatic scan entirely under process-owned cadence.
+
+    GS585 deliberately keeps this worker free of Streamlit UI/session APIs. The
+    existing watchdog still serializes all scans, the existing process-wide
+    Webull provider remains the sole provider owner, and CompletedScan publication
+    uses the existing process handoff consumed by every browser session.
+    """
+    service = importlib.import_module("mide.gs585_process_autoscan_service")
+    gs413 = importlib.import_module("mide.gs413_single_process_autoscan_authority")
+    runtime_state = service.process_state()
+    runtime_state.setdefault("walter_candidate_ledger", WalterCandidateLedger())
+    runtime_state.setdefault("scan_failure_count", 0)
+    runtime_state[DATA_MODE_KEY] = f"Live {provider_name.title()}"
+    runtime_state[PROVIDER_KEY] = provider_name
+    runtime_state[AUTO_SCAN_KEY] = True
+
+    watchdog = importlib.import_module("mide.watchdog").PROCESS_SCAN_WATCHDOG
+
+    def acquired() -> None:
+        started_at = datetime.now().astimezone()
+        runtime_state["last_scan_attempt"] = started_at
+        # Keep the older cross-session baseline truthful for any retained
+        # Streamlit session that still consults GS413 during the transition.
+        gs413._record_actual_scan_start(
+            runtime_state,
+            automatic=True,
+            started_at=started_at,
+        )
+        service.note_scan_started(started_at)
+        print(
+            f"[WALTER AUTOSCAN] process start "
+            f"{started_at.isoformat()} provider={provider_name}",
+            flush=True,
+        )
+
+    def finished() -> None:
+        finished_at = datetime.now().astimezone()
+        service.note_scan_finished(finished_at)
+        print(
+            f"[WALTER AUTOSCAN] process finish {finished_at.isoformat()}",
+            flush=True,
+        )
+
+    try:
+        repair_mide_module_links()
+        records, universe_count, prefiltered, warnings, diagnostics = watchdog.run(
+            lambda: scanner_implementation(scanner_version).for_runtime(
+                lambda: _run_live_pipeline(
+                    scanner_version,
+                    status=None,
+                    provider_name=provider_name,
+                    runtime_state=runtime_state,
+                    runtime_secrets=runtime_secrets,
+                    history_store=history_store,
+                    flight_recorder=flight_recorder,
+                    ui_enabled=False,
+                )
+            ).run(),
+            before_retry=repair_mide_module_links,
+            on_acquired=acquired,
+            on_finished=finished,
+        )
+    except ScanAlreadyRunning as exc:
+        print(f"[WALTER AUTOSCAN] deferred: {exc}", flush=True)
+        return False
+    except Exception as exc:
+        logging.getLogger(__name__).exception("Process AutoScan failed")
+        print(
+            f"[WALTER AUTOSCAN] failed {type(exc).__name__}: {exc}",
+            flush=True,
+        )
+        return False
+
+    if diagnostics.get("scan_completed", True) is False or universe_count <= 0:
+        runtime_state["scan_failure_count"] = int(
+            runtime_state.get("scan_failure_count", 0)
+        ) + 1
+        actual_failure = warnings[-1] if warnings else "Unknown provider failure"
+        record_scan_failure(
+            runtime_state,
+            message=actual_failure,
+            attempted_at=runtime_state.get("last_scan_attempt"),
+            diagnostics=diagnostics,
+        )
+        return False
+
+    completed_at = datetime.now().astimezone()
+    scan = CompletedScan(
+        provider=provider_name,
+        records=records,
+        diagnostics=diagnostics,
+        warnings=warnings,
+        symbols_sampled=universe_count,
+        prefilter_count=prefiltered,
+        completed_at=completed_at,
+        source_label=(
+            f"Live {provider_name} · {universe_count} symbols sampled · "
+            f"{prefiltered} prefiltered"
+        ),
+    )
+    observe_runtime_collection_count(
+        diagnostics,
+        "CompletedScan.records",
+        scan.records,
+        statement="GS585 process scan = CompletedScan(records=records, ...)",
+    )
+    publish_scan_result(runtime_state, scan)
+    runtime_state["scan_failure_count"] = 0
+    print(
+        f"[WALTER AUTOSCAN] published {completed_at.isoformat()} "
+        f"records={len(records)}",
+        flush=True,
+    )
+    return True
+
+
+# GS585: Streamlit/browser timers no longer own production AutoScan cadence.
+# Capture every dependency while a valid Streamlit ScriptRunContext exists, then
+# let the process service run the unchanged scanner independently of browser
+# reruns/websocket health.
+_gs585 = importlib.import_module("mide.gs585_process_autoscan_service")
+_gs585_enabled = (
+    mode.startswith("Live ")
+    and auto_refresh
+    and live_possible
+    and not st.session_state[STOP_REQUESTED_KEY]
+)
+_gs585_baseline = completed_scan_for_view(st.session_state, "process scheduler seed")
+if mode.startswith("Live ") and live_possible:
+    _gs585_secrets = secrets_mapping()
+    _gs585_history = get_store()
+    _gs585_recorder = get_flight_recorder()
+
+    def _gs585_worker(
+        scanner_version=scanner_version,
+        provider_name=selected_provider,
+        runtime_secrets=_gs585_secrets,
+        history_store=_gs585_history,
+        flight_recorder=_gs585_recorder,
+    ) -> bool:
+        return _run_process_autoscan(
+            scanner_version,
+            provider_name,
+            runtime_secrets=runtime_secrets,
+            history_store=history_store,
+            flight_recorder=flight_recorder,
+        )
+else:
+    _gs585_worker = None
+
+_gs585_snapshot = _gs585.configure(
+    enabled=_gs585_enabled,
+    refresh_seconds=settings.refresh_seconds,
+    worker=_gs585_worker,
+    initial_completed_at=(
+        _gs585_baseline.completed_at if _gs585_baseline is not None else None
+    ),
+)
+if _gs585_snapshot.last_started_at is not None:
+    st.session_state.last_scan_attempt = _gs585_snapshot.last_started_at
+
+
 should_scan = False
 
 if use_demo or mode == "Demo":
@@ -2643,32 +2814,30 @@ if use_demo or mode == "Demo":
         completed_at=datetime.now().astimezone(), source_label="Demonstration data",
     ))
 else:
-    due = (
-        mode.startswith("Live ")
-        and auto_refresh
-        and live_possible
-        and not st.session_state.scan_in_progress
-        and (
-            completed_scan_for_view(st.session_state, "scheduler") is None
-            or (
-                datetime.now().astimezone()
-                - completed_scan_for_view(st.session_state, "scheduler").completed_at
-            ).total_seconds()
-            >= settings.refresh_seconds
-        )
-    )
-    should_scan = st.session_state[SCAN_REQUESTED_KEY] or due
+    # GS585: automatic cadence is process-owned. A Streamlit script run may still
+    # honor an explicit operator scan request, but it never decides an automatic
+    # scan is due from browser/session timing.
+    due = False
+    should_scan = bool(st.session_state[SCAN_REQUESTED_KEY])
 
 if mode.startswith("Live ") and should_scan and not st.session_state[STOP_REQUESTED_KEY]:
     st.session_state.last_scan_attempt = datetime.now().astimezone()
     try:
         repair_mide_module_links()
         watchdog = importlib.import_module("mide.watchdog").PROCESS_SCAN_WATCHDOG
+        def _begin_browser_scan() -> None:
+            begin_scheduled_scan(st.session_state)
+            _gs585.note_scan_started(st.session_state.last_scan_attempt)
+
+        def _finish_browser_scan() -> None:
+            finish_scan(st.session_state)
+            _gs585.note_scan_finished(datetime.now().astimezone())
+
         records, universe_count, prefiltered, warnings, diagnostics = watchdog.run(
             lambda: run_live(scanner_version, provider_name=selected_provider),
             before_retry=repair_mide_module_links,
-            on_acquired=lambda: begin_scheduled_scan(st.session_state),
-            on_finished=lambda: finish_scan(st.session_state),
+            on_acquired=_begin_browser_scan,
+            on_finished=_finish_browser_scan,
         )
         if diagnostics.get("scan_completed", True):
             completed_at = datetime.now().astimezone()
