@@ -8,48 +8,23 @@ def _scheduler_source() -> str:
     return source[start:end]
 
 
-def test_gs583_starvation_recovery_uses_native_streamlit_widget_event():
+def test_gs584_supersedes_browser_scheduler_recovery_without_touching_transport_recovery():
     scheduler = _scheduler_source()
 
-    assert "const requestRunLiveScanWidget = () =>" in scheduler
-    assert "root.document.querySelectorAll('button')" in scheduler
-    assert "label === 'Run live scan'" in scheduler
-    assert "button.click();" in scheduler
+    # GS580's CONNECTING-proven transport recovery remains.
+    assert "nativeStreamlitConnecting()" in scheduler
+    assert "RECONNECTING STREAMLIT" in scheduler
 
-    recovery = scheduler[scheduler.index("const schedulerRecoveryDue = attemptedAt > 0"):]
-    assert "const requested = requestRunLiveScanWidget();" in recovery
-    assert "if (requested)" in recovery
-
-
-def test_gs583_scheduler_recovery_does_not_try_top_level_navigation():
-    scheduler = _scheduler_source()
-    recovery = scheduler[scheduler.index("// GS583 scheduler-starvation fail-safe."):]
-    recovery = recovery[:recovery.index("          }};\n          tick();")]
-
-    assert "root.location.replace(root.location.href);" not in recovery
-    assert "window.location" not in recovery
+    # GS582/583 browser-side scheduler actions are retired: live evidence showed
+    # they created/competed with a healthy process-wide cadence owner.
+    assert "scheduler_starvation_recovery_ms" not in scheduler
+    assert "walterSchedulerStarvationRecovery" not in scheduler
+    assert "requestRunLiveScanWidget" not in scheduler
+    assert "RECOVERING AUTOSCAN" not in scheduler
+    assert "AUTOSCAN RECOVERY WAITING" not in scheduler
 
 
-def test_gs583_only_latches_after_widget_request_succeeds():
-    scheduler = _scheduler_source()
-    recovery = scheduler[scheduler.index("// GS583 scheduler-starvation fail-safe."):]
-
-    request = recovery.index("const requested = requestRunLiveScanWidget();")
-    success = recovery.index("if (requested)")
-    latch = recovery.index("root.sessionStorage.setItem(")
-    waiting = recovery.index("AUTOSCAN RECOVERY WAITING")
-
-    assert request < success < latch < waiting
-
-
-def test_gs583_recovery_threshold_limits_live_staleness():
-    scheduler = _scheduler_source()
-
-    assert "scheduler_starvation_recovery_ms = 15_000" in scheduler
-    assert "scheduler_starvation_recovery_cooldown_ms = 75_000" in scheduler
-
-
-def test_gs583_preserves_existing_scan_authority():
+def test_gs584_preserves_existing_scan_authority():
     scheduler = _scheduler_source()
 
     assert "autoscan_request_due(" in scheduler
