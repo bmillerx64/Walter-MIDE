@@ -43,7 +43,7 @@ def test_gs576_recovery_latch_resets_on_new_scan_baseline_or_disable():
 def test_gs576_normal_scheduler_remains_streamlit_fragment_owned():
     scheduler = _scheduler_source()
 
-    assert "@st.fragment(run_every=timedelta(seconds=interval))" in scheduler
+    assert "scheduler_poll_seconds = min(max(1, int(interval)), 5)" in scheduler\n    assert "@st.fragment(run_every=timedelta(seconds=scheduler_poll_seconds))" in scheduler
     assert "autoscan_request_due(" in scheduler
     assert "st.session_state[SCAN_REQUESTED_KEY] = True" in scheduler
     assert 'st.rerun(scope="app")' in scheduler
