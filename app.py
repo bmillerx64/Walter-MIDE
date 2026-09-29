@@ -1412,55 +1412,6 @@ def arm_live_clock_engine(
 
         @st.fragment(run_every=timedelta(seconds=observer_poll_seconds))
         def adopt_newer_process_scan() -> None:
-            # GS601: refresh in-flight process stage independently of the heavy
-            # full-app repaint. This is diagnostics/presentation only.
-            live_process_snapshot = None
-            if process_autoscan_owned:
-                try:
-                    live_process_snapshot = importlib.import_module(
-                        "mide.gs585_process_autoscan_service"
-                    ).snapshot()
-                except Exception:
-                    live_process_snapshot = None
-                if live_process_snapshot is not None and live_process_snapshot.running:
-                    live_stage = str(
-                        getattr(live_process_snapshot, "current_stage", None)
-                        or "Working"
-                    )
-                    live_started = getattr(
-                        live_process_snapshot, "last_started_at", None
-                    )
-                    live_elapsed = (
-                        max(
-                            0,
-                            int(
-                                (
-                                    datetime.now().astimezone()
-                                    - live_started.astimezone()
-                                ).total_seconds()
-                            ),
-                        )
-                        if live_started is not None
-                        else 0
-                    )
-                    live_label = json.dumps(
-                        f"● SCANNING {live_elapsed}s · {live_stage}"
-                    )
-                    st.components.v1.html(
-                        f"""<script>
-                        (() => {{
-                          const node = window.parent.document.getElementById(
-                            'walter-auto-scan'
-                          );
-                          if (node) {{
-                            node.textContent = {live_label};
-                            node.style.color = '#facc15';
-                          }}
-                        }})();
-                        </script>""",
-                        height=0,
-                    )
-
             observed = completed_scan_for_view(
                 st.session_state,
                 "process observer",
@@ -1479,12 +1430,9 @@ def arm_live_clock_engine(
             # this CompletedScan is still the newest process cycle. A succeeding
             # scan means the completed evidence is already stale for spoken output.
             try:
-                audio_snapshot = (
-                    live_process_snapshot
-                    or importlib.import_module(
-                        "mide.gs585_process_autoscan_service"
-                    ).snapshot()
-                )
+                audio_snapshot = importlib.import_module(
+                    "mide.gs585_process_autoscan_service"
+                ).snapshot()
                 newer_scan_started = bool(
                     audio_snapshot.last_started_at is not None
                     and audio_snapshot.last_started_at > observed.completed_at
@@ -1525,7 +1473,59 @@ def arm_live_clock_engine(
             st.session_state[SCAN_REQUESTED_KEY] = True
             st.rerun(scope="app")
 
+        @st.fragment(run_every=timedelta(seconds=observer_poll_seconds))
+        def refresh_process_stage_indicator() -> None:
+            # GS601: presentation-only stage refresh. Keep this fragment after
+            # every rerun-owning fragment so browser indicator code cannot become
+            # a scan/rerun authority.
+            if not process_autoscan_owned:
+                return
+            try:
+                live_process_snapshot = importlib.import_module(
+                    "mide.gs585_process_autoscan_service"
+                ).snapshot()
+            except Exception:
+                return
+            if not live_process_snapshot.running:
+                return
+            live_stage = str(
+                getattr(live_process_snapshot, "current_stage", None)
+                or "Working"
+            )
+            live_started = getattr(live_process_snapshot, "last_started_at", None)
+            live_elapsed = (
+                max(
+                    0,
+                    int(
+                        (
+                            datetime.now().astimezone()
+                            - live_started.astimezone()
+                        ).total_seconds()
+                    ),
+                )
+                if live_started is not None
+                else 0
+            )
+            live_label = json.dumps(
+                f"● SCANNING {live_elapsed}s · {live_stage}"
+            )
+            st.components.v1.html(
+                f"""<script>
+                (() => {{
+                  const node = window.parent.document.getElementById(
+                    'walter-auto-scan'
+                  );
+                  if (node) {{
+                    node.textContent = {live_label};
+                    node.style.color = '#facc15';
+                  }}
+                }})();
+                </script>""",
+                height=0,
+            )
+
         adopt_newer_process_scan()
+        refresh_process_stage_indicator()
         if not process_autoscan_owned:
             request_session_preserving_rerun()
     else:
