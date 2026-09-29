@@ -3149,8 +3149,30 @@ def progression_signal(record: dict) -> dict:
     ordered = bool(
         progression.get("ordered")
     )
+    ladder = list(progression.get("ladder") or gs455.CROSSOVER_LADDER)
+    highest_rung = progression.get("highest_rung")
+    try:
+        new_rank = ladder.index(new_rung) if new_rung else -1
+    except ValueError:
+        new_rank = -1
+    try:
+        highest_rank = ladder.index(highest_rung) if highest_rung else -1
+    except ValueError:
+        highest_rank = -1
+    # GS599: a fresh lower-timeframe line cross is useful continuation evidence,
+    # but it is not new maturation when higher rungs are already confirmed.
+    # QTEX on 2026-09-29 exposed the false urgency: a fresh 1m cross arrived while
+    # 3m/5m/10m/15m structure was already mature. Suppress only that regressive
+    # presentation signal; retain the underlying event in the evidence ladder.
+    regressive_refresh = bool(
+        new_rung
+        and highest_rung
+        and new_rank >= 0
+        and highest_rank > new_rank
+    )
     active = bool(
         new_rung
+        and not regressive_refresh
         and not gs455._halted(record)
         and above_vwap
         and supported
@@ -3166,6 +3188,8 @@ def progression_signal(record: dict) -> dict:
     return {
         "active": active,
         "new_rung": new_rung,
+        "highest_rung": highest_rung,
+        "regressive_refresh": regressive_refresh,
         "timestamp": event.get("timestamp"),
         "stage": progression.get("stage"),
         "sequence": (
