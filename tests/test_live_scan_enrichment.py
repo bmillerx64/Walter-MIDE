@@ -443,14 +443,15 @@ def test_run_live_scanner_v1_enrichment_path_accepts_previous_state(
     assert persisted[-1]["velocity"] == records[0]["velocity"]
 
 
-def test_selected_voice_persists_across_multiple_auto_scan_cycles():
+def test_named_voice_is_quarantined_across_manual_and_auto_scan_cycles():
     session_state = {ALERT_VOICE_SESSION_KEY: "Samantha"}
 
     manual_scan_voice = alert_voice_for_session(session_state)
     auto_scan_voices = [alert_voice_for_session(session_state) for _ in range(3)]
 
-    assert manual_scan_voice == "Samantha"
-    assert auto_scan_voices == ["Samantha", "Samantha", "Samantha"]
+    assert manual_scan_voice == ""
+    assert auto_scan_voices == ["", "", ""]
+    assert session_state[ALERT_VOICE_SESSION_KEY] == "__system_default__"
 
 
 def test_system_default_voice_normalizes_to_browser_default_across_auto_scans():
