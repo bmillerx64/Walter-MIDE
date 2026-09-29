@@ -2040,7 +2040,10 @@ def install_native_market_event_audio() -> None:
         # warm rerun and must never manufacture audio for the wrong scan.
         native = native_market_event_audio_phrase(
             rows,
-            _streamlit_completed_scan_market_events(),
+            operator_scoped_market_events(
+                rows,
+                _streamlit_completed_scan_market_events(),
+            ),
         )
         if not established:
             return native
@@ -5710,6 +5713,90 @@ def _install_final_render_actionable_guard() -> None:
     ui.actionable_candidate_records = render_local_actionable
 
 
+_RENDER_AUDIO_FOCUS_KEY = "_walter_canonical_render_audio_focus"
+
+
+def visual_audio_focus_record(records: list[dict]) -> tuple[dict | None, str]:
+    """Return the exact first operator surface from Walter's final ordered records.
+
+    A currently eligible extreme-mover banner renders ahead of the Opportunity
+    cards and therefore owns audio focus. Otherwise the first final ordered
+    Opportunity record owns focus. This is presentation/audio selection only.
+    """
+    rows = list(records or [])
+    if not rows:
+        return None, "none"
+    try:
+        extreme_record, event = prioritized_extreme_event(rows)
+    except Exception:
+        extreme_record, event = None, None
+    if extreme_record is not None and event is not None:
+        return extreme_record, "extreme_banner"
+    return rows[0], "opportunity_first"
+
+
+def _publish_render_audio_focus(records: list[dict]) -> None:
+    """Snapshot the rendered first operator record for same-scan audio delivery."""
+    from mide import ui
+    try:
+        from mide.gs366_rerun_alert_dedupe import completed_scan_token
+        token = completed_scan_token(ui.st.session_state)
+    except Exception:
+        token = "no-completed-scan"
+
+    record, surface = visual_audio_focus_record(records)
+    payload = {
+        "scan_token": token,
+        "surface": surface,
+        "symbol": str((record or {}).get("symbol") or "").strip().upper(),
+        "record": deepcopy(record) if record is not None else None,
+    }
+    ui.st.session_state[_RENDER_AUDIO_FOCUS_KEY] = payload
+
+
+def current_render_audio_focus(
+    state,
+    *,
+    expected_scan_token: str,
+) -> list[dict]:
+    """Return the one record actually occupying Walter's first operator surface.
+
+    Fail closed when the focus was not produced by the same CompletedScan. This
+    prevents a lower-ranked transition or retained browser state from becoming
+    the spoken subject.
+    """
+    payload = state.get(_RENDER_AUDIO_FOCUS_KEY) or {}
+    if str(payload.get("scan_token") or "") != str(expected_scan_token or ""):
+        return []
+    record = payload.get("record")
+    if not isinstance(record, dict):
+        return []
+    return [deepcopy(record)]
+
+
+def operator_scoped_market_events(
+    records: list[dict],
+    events: Iterable[dict],
+) -> list[dict]:
+    """Keep native mover audio on the same operator focus when one is supplied."""
+    rows = list(records or [])
+    source = list(events or [])
+    if not rows:
+        return source
+    allowed = {
+        str(record.get("symbol") or "").strip().upper()
+        for record in rows
+        if str(record.get("symbol") or "").strip()
+    }
+    if not allowed:
+        return []
+    return [
+        event
+        for event in source
+        if str(event.get("symbol") or "").strip().upper() in allowed
+    ]
+
+
 def final_enriched_opportunity_records(
     records: list[dict],
     *,
@@ -5756,6 +5843,8 @@ def bind_final_enriched_opportunity_order(
             records,
             actionable_function=public_actionable,
         )
+        if attr == "render_walter_mission_control":
+            _publish_render_audio_focus(ordered)
         context = _final_render_actionable_context()
         token = context.set(tuple(ordered))
         try:
@@ -5780,6 +5869,9 @@ def bind_final_enriched_opportunity_order(
 
 
 __all__ = [
+    "current_render_audio_focus",
+    "visual_audio_focus_record",
+    "operator_scoped_market_events",
     "reset_retest_awareness_copy",
     "augment_reset_retest_visible_records",
     "install_reset_retest_awareness",
