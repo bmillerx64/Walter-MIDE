@@ -5199,13 +5199,13 @@ def alert_audio_health_markup() -> str:
         }
       };
 
-      const voiceEngineDetail = (synth) => {
+      const voiceEngineDetail = (synth, scope = 'unknown') => {
         if (!synth) return 'speech unavailable';
         let voiceCount = -1;
         try {
           voiceCount = synth.getVoices ? synth.getVoices().length : -1;
         } catch (_) {}
-        return `scope=${speechScope} · pending=${Boolean(synth.pending)} · speaking=${Boolean(synth.speaking)} · paused=${Boolean(synth.paused)} · voices=${voiceCount}`;
+        return `scope=${scope} · pending=${Boolean(synth.pending)} · speaking=${Boolean(synth.speaking)} · paused=${Boolean(synth.paused)} · voices=${voiceCount}`;
       };
 
       const testVoice = () => {
@@ -5253,7 +5253,7 @@ def alert_audio_health_markup() -> str:
               settled = true;
               finishWatchdog();
               voiceTestState = 'speaking';
-              voiceTestDetail = voiceEngineDetail(synth);
+              voiceTestDetail = voiceEngineDetail(synth, speechScope);
               markArmed();
               try {
                 root.__walterVoiceTransport = {
@@ -5273,7 +5273,7 @@ def alert_audio_health_markup() -> str:
               settled = true;
               finishWatchdog();
               voiceTestState = 'ended';
-              voiceTestDetail = voiceEngineDetail(synth);
+              voiceTestDetail = voiceEngineDetail(synth, speechScope);
               try {
                 root.__walterVoiceTransport = {
                   ...(root.__walterVoiceTransport || {}),
@@ -5291,7 +5291,7 @@ def alert_audio_health_markup() -> str:
               const error = event && event.error ? String(event.error) : 'speech error';
               voiceTestState = 'error';
               voiceTestDetail =
-                `${error} · ${voiceEngineDetail(synth)} · click Re-arm / test again`;
+                `${error} · ${voiceEngineDetail(synth, speechScope)} · click Re-arm / test again`;
               try {
                 root.__walterVoiceTransport = {
                   ...(root.__walterVoiceTransport || {}),
@@ -5307,7 +5307,7 @@ def alert_audio_health_markup() -> str:
             };
 
             voiceTestState = 'requested';
-            voiceTestDetail = voiceEngineDetail(synth);
+            voiceTestDetail = voiceEngineDetail(synth, speechScope);
             markArmed();
             try {
               root.__walterVoiceTransport = {
@@ -5321,7 +5321,7 @@ def alert_audio_health_markup() -> str:
               };
             } catch (_) {}
             synth.speak(utterance);
-            voiceTestDetail = voiceEngineDetail(synth);
+            voiceTestDetail = voiceEngineDetail(synth, speechScope);
             refresh();
 
             // If Chrome accepts speak() but never starts it, surface the
@@ -5331,7 +5331,7 @@ def alert_audio_health_markup() -> str:
               if (settled) return;
               voiceTestState = 'error';
               voiceTestDetail =
-                `no start callback · ${voiceEngineDetail(synth)} · click Re-arm / test again`;
+                `no start callback · ${voiceEngineDetail(synth, speechScope)} · click Re-arm / test again`;
               try {
                 root.__walterVoiceTransport = {
                   ...(root.__walterVoiceTransport || {}),
@@ -5352,7 +5352,7 @@ def alert_audio_health_markup() -> str:
           if (queueBusy) {
             voiceTestState = 'resetting';
             voiceTestDetail =
-              `${voiceEngineDetail(synth)} · queue cleared · click Re-arm / test again`;
+              `${voiceEngineDetail(synth, speechScope)} · queue cleared · click Re-arm / test again`;
             markArmed();
             try {
               if (synth.cancel) synth.cancel();

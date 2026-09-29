@@ -81,7 +81,7 @@ def test_gs596_audio_health_reports_scope_and_outcome_without_timer_retry():
     assert "click Re-arm / test again" in markup
     assert "window.setTimeout(() => speakFresh(attempt + 1), 450);" not in markup
     assert "GS596 parent-sync re-arm" in markup
-    assert "scope=${speechScope}" in markup
+    assert "scope=${scope}" in markup
 
 
 def test_scope_lock_is_alert_transport_presentation_only():
@@ -141,3 +141,11 @@ def test_gs596_audio_health_keeps_bell_and_expands_visible_diagnostics():
     assert "strike(base, 523.25)" in markup
     assert "strike(base + 0.42, 783.99)" in markup
     assert "AUDIO READY · TEST PLAYING" in markup
+
+
+def test_gs597_voice_diagnostic_scope_is_explicit_not_free_variable():
+    markup = alert_audio_health_markup()
+    assert "const voiceEngineDetail = (synth, scope = 'unknown') => {" in markup
+    assert "scope=${scope}" in markup
+    assert "scope=${speechScope}" not in markup
+    assert markup.count("voiceEngineDetail(synth, speechScope)") >= 5
