@@ -3398,6 +3398,21 @@ with system_status_panel:
 
     st.caption(f"{clock.phase} — Rankings describe evidence only.")
 
+# GS602: semantic speech must be bound to the exact completed evidence the
+# operator can see. A process scan that started after this CompletedScan makes
+# the rendered evidence stale, even if the browser is still finishing a heavy
+# Streamlit rerun. Fail closed for speech/chimes until the visual handoff catches up.
+_audio_visible_scan_is_current = False
+if completed_scan is not None:
+    try:
+        _audio_process_snapshot = _gs585.snapshot()
+        _audio_visible_scan_is_current = not (
+            _audio_process_snapshot.last_started_at is not None
+            and _audio_process_snapshot.last_started_at > completed_scan.completed_at
+        )
+    except Exception:
+        _audio_visible_scan_is_current = False
+
 state_changes = escalation_state_changes(actionable_records)
 new_early_symbols, active_early_symbols = newly_entered_symbols(
     records, st.session_state.active_early_setup_symbols
@@ -3410,7 +3425,7 @@ alert_phrase = escalation_alert_phrase(actionable_records) or scan_alert_phrase(
     actionable_records
 )
 entry_alert_open = "Entry Window" in alert_phrase or "Entry Ready" in alert_phrase
-if alerts and new_early_symbols and not entry_alert_open:
+if alerts and _audio_visible_scan_is_current and new_early_symbols and not entry_alert_open:
     coiled = next(
         record
         for record in records
@@ -3433,7 +3448,7 @@ if alerts and new_early_symbols and not entry_alert_open:
         ),
         alert_voice_for_session(),
     )
-elif alerts and alert_phrase:
+elif alerts and _audio_visible_scan_is_current and alert_phrase:
     # GS566: the legacy cross-scan guard keyed only on candidate state changes.
     # That could suppress a different native-mover phrase (including a resume or
     # material advance) when an unrelated candidate transition signature happened
@@ -3448,6 +3463,12 @@ elif alerts and alert_phrase:
     if alert_delivery_key != st.session_state.last_escalation_alert:
         play_alert("assets/alert.wav", alert_phrase, alert_voice_for_session())
         st.session_state.last_escalation_alert = alert_delivery_key
+elif alerts and (new_early_symbols or alert_phrase) and not _audio_visible_scan_is_current:
+    print(
+        "[WALTER AUDIO] semantic alert suppressed for stale visible scan "
+        f"visible={completed_scan.completed_at.isoformat() if completed_scan else 'none'}",
+        flush=True,
+    )
 
 tab_names = [
         "Radar",
