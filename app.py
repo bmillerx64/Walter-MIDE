@@ -219,6 +219,7 @@ from mide.authorities.presentation_audio import (
     opportunity_card,
     play_alert,
     current_render_audio_focus,
+    canonical_opportunity_audio_phrase,
     radar_table,
     rejected_candidates_table,
     rejection_diagnostics,
@@ -3446,9 +3447,9 @@ new_early_symbols = [
 state_change_signature = "|".join(
     f"{item['symbol']}:{item['from']}->{item['to']}" for item in state_changes
 )
-alert_phrase = escalation_alert_phrase(_audio_focus_records) or scan_alert_phrase(
+alert_phrase = escalation_alert_phrase(
     _audio_focus_records
-)
+) or canonical_opportunity_audio_phrase(_audio_focus_records)
 entry_alert_open = "Entry Window" in alert_phrase or "Entry Ready" in alert_phrase
 if alerts and (new_early_symbols or alert_phrase) and not _audio_focus_records:
     print(
