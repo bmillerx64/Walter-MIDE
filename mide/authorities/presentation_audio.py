@@ -5206,15 +5206,13 @@ def alert_audio_health_markup() -> str:
 
       const testVoice = () => {
         try {
-          // GS592: GS591 proved the stale queue could be cleared, but speaking in
-          // the same synchronous turn can make Chrome classify the new utterance
-          // as canceled/interrupted. Reset now, then let the synthesis queue become
-          // idle before creating and speaking the test utterance. This path is only
-          // reachable from the explicit operator click; automatic alerts never cancel.
-          // GS593: this Re-arm/test click originates inside this Streamlit
-          // component iframe. Preserve the transient user activation by using the
-          // frame-local speech engine first, matching GS323's proven activation
-          // contract. Parent-window speech remains a fallback only.
+          // GS595: the speech request itself must remain inside the actual
+          // Re-arm/test click. GS592's cancel + 300ms setTimeout moved speak()
+          // outside transient user activation; live Chrome then accepted the
+          // utterance into pending=true but never started it. Use the frame-local
+          // engine first (GS593), speak synchronously when idle, and if the queue
+          // is stale/busy clear it and require a fresh click instead of scheduling
+          // an automatic delayed retry outside the user gesture.
           const synth = window.speechSynthesis || root.speechSynthesis;
           const Utterance =
             window.SpeechSynthesisUtterance || root.SpeechSynthesisUtterance;
@@ -5249,7 +5247,7 @@ def alert_audio_health_markup() -> str:
               try {
                 root.__walterVoiceTransport = {
                   phrase: 'Walter alerts ready.',
-                  source: 'GS592 settled re-arm',
+                  source: 'GS595 direct-activation re-arm',
                   status: 'speaking',
                   armed: true,
                   startedAt: new Date().toISOString(),
@@ -5279,23 +5277,14 @@ def alert_audio_health_markup() -> str:
               settled = true;
               finishWatchdog();
               const error = event && event.error ? String(event.error) : 'speech error';
-              // canceled/interrupted is exactly the cancel->speak race GS592 is
-              // eliminating. Give Chrome one longer idle window and retry once
-              // without another cancel.
-              if ((error === 'canceled' || error === 'interrupted') && attempt < 1) {
-                voiceTestState = 'resetting';
-                voiceTestDetail = `${error} · retrying after queue settle`;
-                refresh();
-                window.setTimeout(() => speakFresh(attempt + 1), 450);
-                return;
-              }
               voiceTestState = 'error';
-              voiceTestDetail = `${error} · ${voiceEngineDetail(synth)}`;
+              voiceTestDetail =
+                `${error} · ${voiceEngineDetail(synth)} · click Re-arm / test again`;
               try {
                 root.__walterVoiceTransport = {
                   ...(root.__walterVoiceTransport || {}),
                   phrase: 'Walter alerts ready.',
-                  source: 'GS592 settled re-arm',
+                  source: 'GS595 direct-activation re-arm',
                   status: 'error',
                   detail: voiceTestDetail,
                   completedAt: new Date().toISOString(),
@@ -5311,7 +5300,7 @@ def alert_audio_health_markup() -> str:
             try {
               root.__walterVoiceTransport = {
                 phrase: 'Walter alerts ready.',
-                source: 'GS592 settled re-arm',
+                source: 'GS595 direct-activation re-arm',
                 status: 'requested',
                 armed: true,
                 requestedAt: new Date().toISOString(),
@@ -5323,24 +5312,18 @@ def alert_audio_health_markup() -> str:
             voiceTestDetail = voiceEngineDetail(synth);
             refresh();
 
-            // Chrome has a failure mode where speak() returns but no lifecycle
-            // callback fires. Surface that instead of leaving VOICE REQUESTED
-            // indefinitely, and retry once after the engine has had time to settle.
+            // If Chrome accepts speak() but never starts it, surface the
+            // failure and require a new explicit click. Never auto-retry speech
+            // from a timer because that loses the user-activation boundary again.
             startWatchdog = window.setTimeout(() => {
               if (settled) return;
-              if (attempt < 1) {
-                voiceTestState = 'resetting';
-                voiceTestDetail = `no start callback · ${voiceEngineDetail(synth)} · retrying`;
-                refresh();
-                speakFresh(attempt + 1);
-                return;
-              }
               voiceTestState = 'error';
-              voiceTestDetail = `no start callback · ${voiceEngineDetail(synth)}`;
+              voiceTestDetail =
+                `no start callback · ${voiceEngineDetail(synth)} · click Re-arm / test again`;
               try {
                 root.__walterVoiceTransport = {
                   ...(root.__walterVoiceTransport || {}),
-                  source: 'GS592 settled re-arm',
+                  source: 'GS595 direct-activation re-arm',
                   status: 'error',
                   detail: voiceTestDetail,
                   completedAt: new Date().toISOString(),
@@ -5351,16 +5334,36 @@ def alert_audio_health_markup() -> str:
             }, 2200);
           };
 
-          voiceTestState = 'resetting';
-          voiceTestDetail = voiceEngineDetail(synth);
+          const queueBusy = Boolean(
+            synth.pending || synth.speaking || synth.paused
+          );
+          if (queueBusy) {
+            voiceTestState = 'resetting';
+            voiceTestDetail =
+              `${voiceEngineDetail(synth)} · queue cleared · click Re-arm / test again`;
+            markArmed();
+            try {
+              if (synth.cancel) synth.cancel();
+              if (synth.resume) synth.resume();
+            } catch (_) {}
+            try {
+              root.__walterVoiceTransport = {
+                ...(root.__walterVoiceTransport || {}),
+                phrase: 'Walter alerts ready.',
+                source: 'GS595 direct-activation re-arm',
+                status: 'reset_needs_click',
+                detail: voiceTestDetail,
+                completedAt: new Date().toISOString(),
+              };
+            } catch (_) {}
+            refresh();
+            return false;
+          }
+
+          // Critical GS595 invariant: speak() executes synchronously in the
+          // button click call stack. Do not insert a Promise or timer here.
           markArmed();
-          try {
-            if (synth.cancel) synth.cancel();
-            if (synth.paused && synth.resume) synth.resume();
-            if (synth.resume) synth.resume();
-          } catch (_) {}
-          refresh();
-          window.setTimeout(() => speakFresh(0), 300);
+          speakFresh(0);
           return true;
         } catch (error) {
           voiceTestState = 'error';
