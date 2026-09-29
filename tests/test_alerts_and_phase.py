@@ -146,20 +146,21 @@ def test_entry_ready_symbols_repeat_every_scan():
     assert scan_alert_phrase(records) == "Entry Ready: INLF and KUST."
 
 
-def test_voice_selection_persists_during_multiple_automatic_scan_cycles():
+def test_named_voice_session_is_quarantined_to_system_default_across_auto_scans():
     session = {ALERT_VOICE_SESSION_KEY: "David"}
     auto_cycle_voices = [alert_voice_for_session(session) for _ in range(3)]
-    assert auto_cycle_voices == ["David", "David", "David"]
+    assert auto_cycle_voices == ["", "", ""]
+    assert session[ALERT_VOICE_SESSION_KEY] == "__system_default__"
 
 
-def test_voice_selection_persists_after_page_refresh_from_query_state():
+def test_named_voice_query_is_quarantined_to_system_default_on_refresh():
     refreshed_session = {}
     assert (
         persisted_alert_voice({"alert_voice": "samantha-id"}, refreshed_session)
-        == "samantha-id"
+        == "__system_default__"
     )
-    assert refreshed_session[ALERT_VOICE_SESSION_KEY] == "samantha-id"
-    assert alert_voice_for_session(refreshed_session) == "samantha-id"
+    assert refreshed_session[ALERT_VOICE_SESSION_KEY] == "__system_default__"
+    assert alert_voice_for_session(refreshed_session) == ""
 
 
 def test_default_voice_normalizes_to_system_default_code_path():
@@ -167,25 +168,26 @@ def test_default_voice_normalizes_to_system_default_code_path():
     assert alert_voice_for_session(session) == ""
 
 
-def test_supported_voice_options_exclude_google():
-    assert VOICE_OPTIONS == [DEFAULT_VOICE, "Samantha"]
+def test_supported_voice_options_lock_to_system_default():
+    assert VOICE_OPTIONS == [DEFAULT_VOICE]
+    assert "Samantha" not in VOICE_OPTIONS
     assert "Google US English" not in VOICE_OPTIONS
     assert "David" not in VOICE_OPTIONS
 
 
-def test_david_selection_persists_during_multiple_scan_cycles():
+def test_david_selection_is_quarantined_during_multiple_scan_cycles():
     session = {ALERT_VOICE_SESSION_KEY: "David"}
     scan_voices = [alert_voice_for_session(session) for _ in range(3)]
-    assert scan_voices == ["David", "David", "David"]
+    assert scan_voices == ["", "", ""]
 
 
-def test_unsupported_query_voice_does_not_replace_existing_selection():
+def test_any_named_query_voice_is_forced_to_system_default():
     session = {ALERT_VOICE_SESSION_KEY: "Samantha"}
     assert (
         persisted_alert_voice({"alert_voice": "Google US English"}, session)
-        == "Google US English"
+        == "__system_default__"
     )
-    assert session[ALERT_VOICE_SESSION_KEY] == "Google US English"
+    assert session[ALERT_VOICE_SESSION_KEY] == "__system_default__"
 
 
 def test_watching_promotions_are_visually_identified_only_for_current_scan():
@@ -256,20 +258,21 @@ def test_market_phase_uses_local_time_against_us_equity_hours():
     assert market_phase(datetime(2026, 7, 22, 13, 5, tzinfo=pacific)) == "After-Hours"
 
 
-def test_stable_voice_options_keep_system_and_samantha_without_dynamic_voices():
+def test_stable_voice_options_expose_only_system_default_while_named_voices_quarantined():
     from app import SYSTEM_DEFAULT_VOICE_ID, stable_voice_options, voice_ids
 
     options = stable_voice_options(david_available=False)
 
-    assert voice_ids(options) == [SYSTEM_DEFAULT_VOICE_ID, "Samantha"]
-    assert [option["name"] for option in options] == ["System Default", "Samantha"]
+    assert voice_ids(options) == [SYSTEM_DEFAULT_VOICE_ID]
+    assert [option["name"] for option in options] == ["System Default"]
 
 
-def test_david_only_displays_when_available():
+def test_named_voices_stay_hidden_even_when_browser_reports_david_available():
     from app import stable_voice_options, voice_ids
 
     assert "David" not in voice_ids(stable_voice_options(david_available=False))
-    assert "David" in voice_ids(stable_voice_options(david_available=True))
+    assert "David" not in voice_ids(stable_voice_options(david_available=True))
+    assert "Samantha" not in voice_ids(stable_voice_options(david_available=True))
 
 
 def test_david_availability_comes_from_browser_probe():
@@ -292,7 +295,7 @@ def test_voice_preview_uses_selected_voice_identifier():
     )
 
 
-def test_unavailable_voice_keeps_preference_without_system_fallback():
+def test_unavailable_named_voice_falls_back_to_locked_system_default():
     from app import (
         ACTIVE_VOICE_SESSION_KEY,
         ALERT_VOICE_SESSION_KEY,
@@ -306,11 +309,10 @@ def test_unavailable_voice_keeps_preference_without_system_fallback():
         "missing-voice", stable_voice_options(False), session
     )
 
-    assert active == "missing-voice"
-    assert session[ALERT_VOICE_SESSION_KEY] == "missing-voice"
-    assert session[ACTIVE_VOICE_SESSION_KEY] == "missing-voice"
-    assert "not available" in session[VOICE_WARNING_SESSION_KEY]
-    assert "not fall back" in session[VOICE_WARNING_SESSION_KEY]
+    assert active == "__system_default__"
+    assert session[ALERT_VOICE_SESSION_KEY] == "__system_default__"
+    assert session[ACTIVE_VOICE_SESSION_KEY] == "__system_default__"
+    assert session[VOICE_WARNING_SESSION_KEY] == ""
 
 
 def test_state_sections_sort_timed_states_by_newest_promotion():
