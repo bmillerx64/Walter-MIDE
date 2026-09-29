@@ -45,6 +45,12 @@ PAYLOAD_SESSION_KEY = "_walter_gs552_analysis_bundle_payload"
 JOB_SESSION_KEY = "_walter_gs510_analysis_job_id"
 JOB_POLL_SECONDS = 2.0
 REVIEW_WINDOW_HOURS = 2.0
+# GS594: frontend-preloaded CAB bytes were safe while bundles were only a few MB,
+# but live Sept. 29 evidence showed a 36.3 MB prepared CAB repeatedly congesting
+# Streamlit full renders while process AutoScan stayed healthy. Keep only genuinely
+# small CABs inline; larger prepared archives stay disk-backed until the operator
+# clicks Download, matching the proven Session Backup deferred transport.
+INLINE_DOWNLOAD_MAX_BYTES = 8 * 1024 * 1024
 STRIPPED_CUMULATIVE_FIELDS = (
     "architecture_audit",
     "ranking_history",
@@ -543,27 +549,39 @@ def _render(candidate_path: Path, flight_path: Path) -> None:
         st.session_state.pop(SESSION_KEY, None)
         return
 
-    # GS552: the compact bundle is small enough to preload once. Passing bytes
-    # directly registers the browser-facing download payload during fragment render,
-    # so the click does not depend on a later Python callback or static-file route.
-    # Cache one payload per prepared filename to avoid rereading it every AutoScan.
-    payload = st.session_state.get(PAYLOAD_SESSION_KEY)
-    if not isinstance(payload, dict) or payload.get("filename") != filename:
-        payload = {
-            "filename": filename,
-            "bytes": archive_path.read_bytes(),
-        }
-        st.session_state[PAYLOAD_SESSION_KEY] = payload
+    archive_bytes = int(info.get("archive_bytes") or archive_path.stat().st_size)
+    if archive_bytes <= INLINE_DOWNLOAD_MAX_BYTES:
+        # Preserve GS552's frontend-owned fast path for genuinely small CABs.
+        payload = st.session_state.get(PAYLOAD_SESSION_KEY)
+        if not isinstance(payload, dict) or payload.get("filename") != filename:
+            payload = {
+                "filename": filename,
+                "bytes": archive_path.read_bytes(),
+            }
+            st.session_state[PAYLOAD_SESSION_KEY] = payload
+        download_data = payload["bytes"]
+        transport = "inline"
+    else:
+        # GS594: never keep a large CAB in Streamlit session state or resend the
+        # complete payload on every observer-driven app rerun. The callable is
+        # invoked only when the operator clicks Download.
+        st.session_state.pop(PAYLOAD_SESSION_KEY, None)
+
+        def materialize_compact_bundle() -> bytes:
+            return archive_path.read_bytes()
+
+        download_data = materialize_compact_bundle
+        transport = "deferred"
 
     st.download_button(
         label=(
             f"⬇ Download compact analysis bundle "
-            f"({float(info.get('archive_bytes') or 0) / (1024 * 1024):.1f} MB)"
+            f"({archive_bytes / (1024 * 1024):.1f} MB)"
         ),
-        data=payload["bytes"],
+        data=download_data,
         file_name=filename,
         mime="application/zip",
-        key=f"walter-gs552-download-{filename}",
+        key=f"walter-gs594-download-{transport}-{filename}",
         on_click="ignore",
         width="stretch",
     )
