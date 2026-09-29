@@ -608,7 +608,12 @@ SYSTEM_DEFAULT_VOICE_ID = "__system_default__"
 DEFAULT_VOICE = "System Default"
 SAMANTHA_VOICE = "Samantha"
 DAVID_VOICE = "David"
-VOICE_OPTIONS = [DEFAULT_VOICE, SAMANTHA_VOICE]
+# GS598: Sept. 29 live isolation proved named browser voices can wedge Chrome's
+# Web Speech engine while System Default remains recoverable after a clean Chrome
+# restart. Keep named voices quarantined from the production alert path until that
+# browser-level failure is understood.
+VOICE_OPTIONS = [DEFAULT_VOICE]
+NAMED_VOICE_QUARANTINE = True
 ALERT_VOICE_SESSION_KEY = "alert_voice_name"
 ALERT_VOICE_QUERY_KEY = "alert_voice"
 ALERT_VOICE_WIDGET_KEY = "alert_voice_selector"
@@ -629,7 +634,14 @@ def named_voice_option(name: str) -> dict:
 
 
 def stable_voice_options(david_available: bool = False) -> list[dict]:
-    """Return Walter's stable alert voice choices without unavailable entries."""
+    """Return production-safe alert voice choices.
+
+    GS598 quarantines named Web Speech voices after live Chrome wedging on
+    Samantha. System Default is the only production voice until the named-voice
+    transport is revalidated separately.
+    """
+    if NAMED_VOICE_QUARANTINE:
+        return [system_voice_option()]
     options = [system_voice_option(), named_voice_option(SAMANTHA_VOICE)]
     if david_available:
         options.append(named_voice_option(DAVID_VOICE))
@@ -667,12 +679,22 @@ def canonical_voice_identifier(voice_identifier: str) -> str:
     )
 
 
+def production_voice_identifier(voice_identifier: str) -> str:
+    """Return the only voice identifier allowed on the production alert path."""
+    canonical = canonical_voice_identifier(voice_identifier)
+    if NAMED_VOICE_QUARANTINE:
+        return SYSTEM_DEFAULT_VOICE_ID
+    return canonical
+
+
 def selected_alert_voice(session_state=None) -> str:
     """Read the current voice identifier from session state without mutating widgets."""
     state = st.session_state if session_state is None else session_state
-    return canonical_voice_identifier(
+    selected = production_voice_identifier(
         state.get(ALERT_VOICE_SESSION_KEY, SYSTEM_DEFAULT_VOICE_ID)
     )
+    state[ALERT_VOICE_SESSION_KEY] = selected
+    return selected
 
 
 def persisted_alert_voice(query_params=None, session_state=None) -> str:
@@ -683,7 +705,7 @@ def persisted_alert_voice(query_params=None, session_state=None) -> str:
     if isinstance(raw, list):
         raw = raw[0] if raw else ""
     if raw:
-        state[ALERT_VOICE_SESSION_KEY] = canonical_voice_identifier(raw)
+        state[ALERT_VOICE_SESSION_KEY] = production_voice_identifier(raw)
         return state[ALERT_VOICE_SESSION_KEY]
     return selected_alert_voice(state)
 
@@ -705,15 +727,10 @@ def active_voice_identifier(
 ) -> str:
     """Keep the requested voice active and warn when Walter cannot verify it."""
     state = st.session_state if session_state is None else session_state
-    selected = canonical_voice_identifier(selected)
+    selected = production_voice_identifier(selected)
+    state[ALERT_VOICE_SESSION_KEY] = selected
     state[ACTIVE_VOICE_SESSION_KEY] = selected
-    if selected == SYSTEM_DEFAULT_VOICE_ID or voice_by_identifier(options, selected):
-        state[VOICE_WARNING_SESSION_KEY] = ""
-    else:
-        state[VOICE_WARNING_SESSION_KEY] = (
-            "The selected voice is not available on this system. Walter kept your preference "
-            "and will not fall back to System Default."
-        )
+    state[VOICE_WARNING_SESSION_KEY] = ""
     return selected
 
 
@@ -752,7 +769,7 @@ def resolve_scan_universe(
 
 def persist_selected_alert_voice() -> None:
     """Persist the selected widget voice and queue its audible confirmation."""
-    selected = canonical_voice_identifier(
+    selected = production_voice_identifier(
         st.session_state.get(ALERT_VOICE_WIDGET_KEY, SYSTEM_DEFAULT_VOICE_ID)
     )
     st.session_state[ALERT_VOICE_SESSION_KEY] = selected
@@ -1194,6 +1211,8 @@ with st.sidebar:
         ),
         on_change=persist_selected_alert_voice,
     )
+    if NAMED_VOICE_QUARANTINE:
+        st.caption("System Default locked for stability; named voices are temporarily quarantined.")
     # GS520: keep browser audio transport status beside its controls. Rendering
     # here stays inside the sidebar context and cannot replace mission_plan_slot.
     render_sidebar_audio_health(st)
