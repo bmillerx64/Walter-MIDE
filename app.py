@@ -3425,50 +3425,58 @@ alert_phrase = escalation_alert_phrase(actionable_records) or scan_alert_phrase(
     actionable_records
 )
 entry_alert_open = "Entry Window" in alert_phrase or "Entry Ready" in alert_phrase
-if alerts and _audio_visible_scan_is_current and new_early_symbols and not entry_alert_open:
-    coiled = next(
-        record
-        for record in records
-        if str(record.get("symbol") or "").upper() == new_early_symbols[0]
-    )
-    structure = coiled.get("structure") or {}
-    float_millions = structure.get("float_millions")
-    float_phrase = (
-        f" Float {float(float_millions):.1f} million."
-        if float_millions is not None
-        else ""
-    )
-    play_alert(
-        "assets/alert.wav",
-        (
-            f"{new_early_symbols[0]}. Coiling. VWAP {structure.get('vwap_status', 'developing')}. "
-            f"SuperTrend {float(structure.get('supertrend_distance_pct') or 0):.2f} percent away. "
-            f"Participation {'accelerating' if structure.get('participation_accelerating') else 'steady'}."
-            f"{float_phrase} Probability of breakout {float(structure.get('probability_of_breakout') or 0):.0f} percent."
-        ),
-        alert_voice_for_session(),
-    )
-elif alerts and _audio_visible_scan_is_current and alert_phrase:
-    # GS566: the legacy cross-scan guard keyed only on candidate state changes.
-    # That could suppress a different native-mover phrase (including a resume or
-    # material advance) when an unrelated candidate transition signature happened
-    # to remain unchanged. Include the spoken phrase in the guard; GS366 still
-    # owns same-completed-scan delivery dedupe.
-    alert_delivery_key = "|".join(
-        (
-            state_change_signature,
-            " ".join(str(alert_phrase).split()),
+if alerts and new_early_symbols and not entry_alert_open:
+    if not _audio_visible_scan_is_current:
+        print(
+            "[WALTER AUDIO] semantic alert suppressed for stale visible scan "
+            f"visible={completed_scan.completed_at.isoformat() if completed_scan else 'none'}",
+            flush=True,
         )
-    )
-    if alert_delivery_key != st.session_state.last_escalation_alert:
-        play_alert("assets/alert.wav", alert_phrase, alert_voice_for_session())
-        st.session_state.last_escalation_alert = alert_delivery_key
-elif alerts and (new_early_symbols or alert_phrase) and not _audio_visible_scan_is_current:
-    print(
-        "[WALTER AUDIO] semantic alert suppressed for stale visible scan "
-        f"visible={completed_scan.completed_at.isoformat() if completed_scan else 'none'}",
-        flush=True,
-    )
+    else:
+        coiled = next(
+            record
+            for record in records
+            if str(record.get("symbol") or "").upper() == new_early_symbols[0]
+        )
+        structure = coiled.get("structure") or {}
+        float_millions = structure.get("float_millions")
+        float_phrase = (
+            f" Float {float(float_millions):.1f} million."
+            if float_millions is not None
+            else ""
+        )
+        play_alert(
+            "assets/alert.wav",
+            (
+                f"{new_early_symbols[0]}. Coiling. VWAP {structure.get('vwap_status', 'developing')}. "
+                f"SuperTrend {float(structure.get('supertrend_distance_pct') or 0):.2f} percent away. "
+                f"Participation {'accelerating' if structure.get('participation_accelerating') else 'steady'}."
+                f"{float_phrase} Probability of breakout {float(structure.get('probability_of_breakout') or 0):.0f} percent."
+            ),
+            alert_voice_for_session(),
+        )
+elif alerts and alert_phrase:
+    if not _audio_visible_scan_is_current:
+        print(
+            "[WALTER AUDIO] semantic alert suppressed for stale visible scan "
+            f"visible={completed_scan.completed_at.isoformat() if completed_scan else 'none'}",
+            flush=True,
+        )
+    else:
+        # GS566: the legacy cross-scan guard keyed only on candidate state changes.
+        # That could suppress a different native-mover phrase (including a resume or
+        # material advance) when an unrelated candidate transition signature happened
+        # to remain unchanged. Include the spoken phrase in the guard; GS366 still
+        # owns same-completed-scan delivery dedupe.
+        alert_delivery_key = "|".join(
+            (
+                state_change_signature,
+                " ".join(str(alert_phrase).split()),
+            )
+        )
+        if alert_delivery_key != st.session_state.last_escalation_alert:
+            play_alert("assets/alert.wav", alert_phrase, alert_voice_for_session())
+            st.session_state.last_escalation_alert = alert_delivery_key
 
 tab_names = [
         "Radar",
