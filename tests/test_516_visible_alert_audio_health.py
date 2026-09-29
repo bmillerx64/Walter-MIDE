@@ -49,7 +49,7 @@ def test_gs595_explicit_rearm_speaks_synchronously_when_queue_is_idle():
 
 
 
-def test_gs595_voice_test_preserves_direct_iframe_user_activation():
+def test_gs596_voice_test_prefers_parent_engine_inside_direct_activation():
     markup = alert_audio_health_markup()
     listener = markup.index("button.addEventListener('click', () => {")
     voice_call = markup.index("testVoice();", listener)
@@ -61,13 +61,14 @@ def test_gs595_voice_test_preserves_direct_iframe_user_activation():
     assert listener < voice_call < rearm_call
     assert "testVoice();" not in markup[play_start:play_end]
     assert "resumed.then(play)" in markup[rearm_start:listener]
-    assert "GS595: the speech request itself must remain inside the actual" in markup
-    assert "window.speechSynthesis || root.speechSynthesis" in markup
-    assert "window.SpeechSynthesisUtterance || root.SpeechSynthesisUtterance" in markup
-    assert "root.speechSynthesis || window.speechSynthesis" not in markup
+    assert "GS596: GS595 proved frame-local synchronous speech still reaches" in markup
+    assert "const parentSpeechAvailable = Boolean(" in markup
+    assert "? root.speechSynthesis" in markup
+    assert "? root.SpeechSynthesisUtterance" in markup
+    assert "const speechScope = parentSpeechAvailable ? 'parent' : 'frame';" in markup
 
 
-def test_gs595_audio_health_reports_outcome_without_timer_voice_retry():
+def test_gs596_audio_health_reports_scope_and_outcome_without_timer_retry():
     markup = alert_audio_health_markup()
     assert "BELL READY · VOICE RESETTING" in markup
     assert "BELL READY · VOICE REQUESTED" in markup
@@ -79,7 +80,8 @@ def test_gs595_audio_health_reports_outcome_without_timer_voice_retry():
     assert "no start callback" in markup
     assert "click Re-arm / test again" in markup
     assert "window.setTimeout(() => speakFresh(attempt + 1), 450);" not in markup
-    assert "GS595 direct-activation re-arm" in markup
+    assert "GS596 parent-sync re-arm" in markup
+    assert "scope=${speechScope}" in markup
 
 
 def test_scope_lock_is_alert_transport_presentation_only():
@@ -130,9 +132,10 @@ def test_gs520_preserves_single_child_mission_slot_contract():
     assert "mission_plan_slot" not in module_source
 
 
-def test_gs524_audio_health_uses_practical_parent_window_bell():
+def test_gs596_audio_health_keeps_bell_and_expands_visible_diagnostics():
     markup = alert_audio_health_markup()
-    assert "window.speechSynthesis || root.speechSynthesis" in markup
+    assert "grid-template-columns:minmax(0,1fr) auto" in markup
+    assert "overflow-wrap:anywhere" in markup
     assert "frequency * 1.5" in markup
     assert "exponentialRampToValueAtTime(0.30" in markup
     assert "strike(base, 523.25)" in markup
