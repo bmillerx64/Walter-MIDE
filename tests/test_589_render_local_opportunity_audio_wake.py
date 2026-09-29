@@ -1,7 +1,7 @@
 from pathlib import Path
 
 
-def test_gs593_health_rearm_preserves_iframe_activation_after_sleep():
+def test_gs595_health_rearm_preserves_click_activation_after_sleep():
     source = Path("mide/authorities/presentation_audio.py").read_text(
         encoding="utf-8"
     )
@@ -10,11 +10,13 @@ def test_gs593_health_rearm_preserves_iframe_activation_after_sleep():
     block = source[start:end]
 
     assert "window.speechSynthesis || root.speechSynthesis" in block
-    assert "GS593: this Re-arm/test click originates inside this Streamlit" in block
+    assert "GS595: the speech request itself must remain inside the actual" in block
+    assert "const queueBusy = Boolean(" in block
     assert "if (synth.cancel) synth.cancel();" in block
-    assert "if (synth.paused && synth.resume) synth.resume();" in block
     assert "if (synth.resume) synth.resume();" in block
     assert "synth.speak(utterance);" in block
+    assert "window.setTimeout(() => speakFresh(0), 300);" not in block
+    assert "window.setTimeout(() => speakFresh(attempt + 1), 450);" not in block
 
 
 def test_gs589_render_boundary_never_process_globally_freezes_actionable():
