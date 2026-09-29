@@ -73,7 +73,7 @@ def test_state_wrapper_explains_strength_without_changing_color_or_state():
     assert view["state"] == unified.WATCH_FOR_ENTRY
     assert view["color"] == "#4ade80"
     assert view["pe_strength_score"] == 73.5
-    assert view["reason"].startswith("P/E Strength 74/100 ·")
+    assert view["reason"] == "VWAP, trend, participation, and expansion are aligned now."
 
 
 def test_scope_lock_is_presentation_only():

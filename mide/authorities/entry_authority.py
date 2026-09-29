@@ -182,17 +182,19 @@ def canonical_candidate_status(record: dict, default: str = "Strengthening") -> 
 
 
 def state_with_entry_contract(original, record: dict) -> dict:
-    """Expose canonical entry truth without changing executable authority."""
+    """Expose canonical entry truth without rewriting Walter's current-state sentence.
+
+    GS599 removes the old voice-development prefixes (ENTRY READY / SETTING UP) from
+    the explanatory sentence. The card title and entry_contract already carry that
+    vocabulary; repeating it in the reason created nested stale copy after multiple
+    late-runtime wrappers. Exact blockers remain in next_step.
+    """
     view = original(record)
     contract = entry_contract(record)
     result = deepcopy(view)
     result["entry_contract"] = contract
 
     if contract["qualified_for_entry"]:
-        prefix = "ENTRY READY: Walter's executable entry contract is satisfied."
-        reason = str(result.get("reason") or "").strip()
-        if not reason.startswith("ENTRY READY:"):
-            result["reason"] = f"{prefix} {reason}".strip()
         return result
 
     blockers = contract["blockers"]
@@ -201,13 +203,6 @@ def state_with_entry_contract(original, record: dict) -> dict:
         if blockers
         else "Entry qualification is not yet satisfied"
     )
-    if contract["legacy_false_entry_ready"]:
-        prefix = "SETTING UP · NOT ENTRY READY:"
-    else:
-        prefix = contract["label"] + ":"
-    reason = str(result.get("reason") or "").strip()
-    if not reason.startswith("SETTING UP"):
-        result["reason"] = f"{prefix} {reason}".strip()
     next_step = str(result.get("next_step") or "").strip()
     exact = f"Entry blocker: {blocker_text}"
     if exact not in next_step:

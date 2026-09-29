@@ -87,6 +87,82 @@ def test_one_minute_numeric_below_is_enough_to_veto_stale_top_level_category():
     assert gs468.vwap_truth_state(_look_now, record)["state"] == unified.DEVELOPING
 
 
+def test_cyab_like_rth_above_but_webull_extended_below_vetoes_look_now():
+    record = {
+        "symbol": "CYAB",
+        "price": 0.2015,
+        "vwap_value": 0.19973,
+        "vwap_relation": "above",
+        "vwap_distance_pct": 0.886,
+        "timeframes": {
+            "1m": {"current_close": 0.2015, "current_vwap": 0.19973},
+        },
+        "st_webull_parity_observation": {
+            "primary_vwap_policy": "WEBULL_EXTENDED_04:00_ET",
+            "one_minute": {
+                "close": 0.2015,
+                "vwap_value": 0.2324,
+                "above_vwap": False,
+            },
+            "three_minute": {
+                "close": 0.2015,
+                "vwap_value": 0.2324,
+                "above_vwap": False,
+            },
+        },
+    }
+
+    truth = gs468.current_vwap_truth(record)
+    assert truth["anchor_conflict"] is True
+    assert truth["extended_below_consensus"] is True
+    assert set(truth["below_sources"]) == {
+        "webull_extended_1m_vwap",
+        "webull_extended_3m_vwap",
+    }
+
+    view = gs468.vwap_truth_state(_look_now, record)
+    assert view["state"] == unified.DEVELOPING
+    assert "session anchors disagree" in view["reason"].lower()
+
+    corrected = gs468._numeric_below_record(record, truth)
+    assert corrected["vwap_relation"] == "below"
+    assert corrected["vwap_distance_pct"] < -10.0
+
+
+def test_extended_anchor_conflict_requires_1m_and_3m_below_consensus():
+    record = {
+        "symbol": "MIXED",
+        "price": 1.01,
+        "vwap_value": 1.00,
+        "vwap_relation": "above",
+        "vwap_distance_pct": 1.0,
+        "timeframes": {
+            "1m": {"current_close": 1.01, "current_vwap": 1.00},
+        },
+        "st_webull_parity_observation": {
+            "primary_vwap_policy": "WEBULL_EXTENDED_04:00_ET",
+            "one_minute": {
+                "close": 1.01,
+                "vwap_value": 1.10,
+                "above_vwap": False,
+            },
+            "three_minute": {
+                "close": 1.01,
+                "vwap_value": 0.99,
+                "above_vwap": True,
+            },
+        },
+    }
+
+    truth = gs468.current_vwap_truth(record)
+    assert truth["extended_below_consensus"] is False
+    assert truth["anchor_conflict"] is False
+    assert truth["numeric_below"] is False
+
+    original = _look_now(record)
+    assert gs468.vwap_truth_state(lambda _record: original, record) is original
+
+
 def test_current_numeric_above_preserves_existing_look_now_semantics():
     record = {
         "symbol": "ABOVE",

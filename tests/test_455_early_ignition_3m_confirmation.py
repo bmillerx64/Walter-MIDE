@@ -226,6 +226,18 @@ def test_every_new_rung_can_create_operator_attention_without_becoming_entry_aut
         assert signal["new_rung"] == rung
 
 
+def test_fresh_lower_rung_does_not_relabel_already_mature_structure():
+    record = progression_record(newest="1m")
+    progression = gs455.crossover_progression(record)
+    signal = gs455.progression_signal(record)
+
+    assert progression["highest_rung"] == "15m"
+    assert progression["latest_new_rung"] == "1m"
+    assert signal["active"] is False
+    assert signal["regressive_refresh"] is True
+    assert signal["highest_rung"] == "15m"
+
+
 def test_out_of_order_crosses_are_not_promoted_as_propagation():
     record = _trim_after(progression_record(newest="3m"), "3m")
     record["st_vwap_cross_events"]["3m"]["timestamp"] = "2026-09-15T10:20:00-04:00"

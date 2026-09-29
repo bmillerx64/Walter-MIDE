@@ -1186,17 +1186,17 @@ _PE_STRENGTH_STATE_OWNER = "_walter_gs539_pe_strength_state_owner"
 
 
 def state_with_pe_strength(original, record: dict) -> dict:
-    """Explain visible P/E Strength without changing Opportunity State/color."""
+    """Attach P/E Strength as ordering metadata without polluting operator copy."""
     view = original(record)
     score = pe_strength_score(record)
     if score is None:
         return view
     result = deepcopy(view)
     result["pe_strength_score"] = round(score, 1)
-    reason = str(result.get("reason") or "").strip()
-    prefix = f"P/E Strength {score:.0f}/100"
-    if not reason.startswith("P/E Strength "):
-        result["reason"] = f"{prefix} · {reason}".strip(" ·")
+    # GS599: P/E Strength remains the established sort signal, but the card already
+    # exposes Participation and Expansion separately. Repeating the synthetic score
+    # inside the reason was legacy voice-development copy and could nest across warm
+    # wrapper generations.
     return result
 
 

@@ -1310,7 +1310,14 @@ def _vwap_pair(close: Any, vwap: Any, source: str) -> dict:
 
 
 def current_vwap_truth(record: dict) -> dict:
-    """Return already-computed current numeric VWAP evidence without new data calls."""
+    """Return already-computed current numeric VWAP evidence without new data calls.
+
+    GS599 keeps GS464's 09:30 RTH decision anchor intact, but refuses an optimistic
+    trader-facing VWAP interpretation when Walter's own Webull extended-session
+    parity observation simultaneously shows both 1m and 3m below VWAP. This avoids
+    oscillating the canonical anchor policy again while making an anchor disagreement
+    explicit and fail-closed for presentation.
+    """
     top = _vwap_pair(
         record.get("price"),
         record.get("vwap_value"),
@@ -1324,13 +1331,53 @@ def current_vwap_truth(record: dict) -> dict:
         one_vwap = dict(one.get("st_vwap_line_cross") or {}).get("latest_vwap_value")
     one_pair = _vwap_pair(one_close, one_vwap, "1m_close_vs_primary_vwap")
 
-    pairs = [item for item in (top, one_pair) if item.get("available")]
+    primary_pairs = [item for item in (top, one_pair) if item.get("available")]
+
+    parity = record.get("st_webull_parity_observation") or {}
+    extended_pairs = []
+    if isinstance(parity, dict) and str(
+        parity.get("primary_vwap_policy") or ""
+    ) == "WEBULL_EXTENDED_04:00_ET":
+        for key, source in (
+            ("one_minute", "webull_extended_1m_vwap"),
+            ("three_minute", "webull_extended_3m_vwap"),
+        ):
+            detail = parity.get(key) or {}
+            if not isinstance(detail, dict):
+                continue
+            pair = _vwap_pair(
+                detail.get("close"),
+                detail.get("vwap_value"),
+                source,
+            )
+            if pair.get("available"):
+                extended_pairs.append(pair)
+
+    extended_below_consensus = bool(
+        len(extended_pairs) >= 2
+        and all(item.get("above") is False for item in extended_pairs)
+    )
+    primary_above = bool(
+        primary_pairs
+        and all(item.get("above") is not False for item in primary_pairs)
+        and any(item.get("above") is True for item in primary_pairs)
+    )
+    anchor_conflict = bool(primary_above and extended_below_consensus)
+
+    pairs = list(primary_pairs)
+    if anchor_conflict:
+        pairs.extend(extended_pairs)
+
     below = [item for item in pairs if item.get("above") is False]
     above = [item for item in pairs if item.get("above") is True]
     return {
         "pairs": pairs,
+        "primary_pairs": primary_pairs,
+        "extended_pairs": extended_pairs,
         "numeric_below": bool(below),
         "numeric_above": bool(above),
+        "anchor_conflict": anchor_conflict,
+        "extended_below_consensus": extended_below_consensus,
         "below_sources": [item["source"] for item in below],
         "authority": "PRESENTATION_TRUTH_VETO_ONLY",
         "additional_market_data_requests": 0,
@@ -1345,10 +1392,20 @@ def _numeric_below_record(record: dict, truth: dict) -> dict:
     if not below:
         return view_record
 
-    chosen = next(
-        (item for item in below if item.get("source") == "snapshot_vs_primary_vwap"),
-        below[0],
-    )
+    if truth.get("anchor_conflict"):
+        chosen = next(
+            (
+                item
+                for item in below
+                if str(item.get("source") or "").startswith("webull_extended_")
+            ),
+            below[0],
+        )
+    else:
+        chosen = next(
+            (item for item in below if item.get("source") == "snapshot_vs_primary_vwap"),
+            below[0],
+        )
     view_record["vwap_relation"] = "below"
     distance = _finite(chosen.get("distance_pct"))
     if distance is not None:
@@ -1368,14 +1425,25 @@ def vwap_truth_state(original, record: dict) -> dict:
     if str(view.get("state") or "") in {LOOK_NOW, WATCH_FOR_ENTRY}:
         view["state"] = DEVELOPING
         view["color"] = STATE_COLORS[DEVELOPING]
-        view["reason"] = (
-            "Current numeric price/VWAP evidence is below VWAP; Walter will not elevate "
-            "this setup until VWAP is reclaimed."
-        )
-        view["next_step"] = (
-            "Keep it on background watch. Reassess only after current price and 1m "
-            "structure reclaim VWAP."
-        )
+        if truth.get("anchor_conflict"):
+            view["reason"] = (
+                "VWAP session anchors disagree: price is below Webull's extended-session "
+                "VWAP even though the 09:30 RTH reset reads above. Walter will not elevate "
+                "a setup on conflicting VWAP truth."
+            )
+            view["next_step"] = (
+                "Treat it as below VWAP for operator review until the session anchors "
+                "converge or price reclaims the Webull extended-session VWAP."
+            )
+        else:
+            view["reason"] = (
+                "Current numeric price/VWAP evidence is below VWAP; Walter will not elevate "
+                "this setup until VWAP is reclaimed."
+            )
+            view["next_step"] = (
+                "Keep it on background watch. Reassess only after current price and 1m "
+                "structure reclaim VWAP."
+            )
 
     provenance = list(view.get("attention_provenance") or [])
     if _VWAP_TRUTH_PROVENANCE not in provenance:
