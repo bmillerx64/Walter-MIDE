@@ -8,8 +8,8 @@ def _source() -> str:
 def test_gs577_raw_scan_diagnostics_are_opt_in():
     source = _source()
     panel_start = source.index("with system_status_panel:")
-    state_changes = source.index("\nstate_changes =", panel_start)
-    panel = source[panel_start:state_changes]
+    audio_boundary = source.index("\n_audio_scan_token = (", panel_start)
+    panel = source[panel_start:audio_boundary]
 
     gate = panel.index('key="_walter_load_deep_system_status"')
     raw_json = panel.index("st.json(scan_diagnostics)")
@@ -20,8 +20,8 @@ def test_gs577_raw_scan_diagnostics_are_opt_in():
 def test_gs577_heavy_system_status_sections_are_under_gate():
     source = _source()
     panel_start = source.index("with system_status_panel:")
-    state_changes = source.index("\nstate_changes =", panel_start)
-    panel = source[panel_start:state_changes]
+    audio_boundary = source.index("\n_audio_scan_token = (", panel_start)
+    panel = source[panel_start:audio_boundary]
 
     gate = panel.index("if load_deep_system_status:")
     for marker in (
