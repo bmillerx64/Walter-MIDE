@@ -5211,9 +5211,13 @@ def alert_audio_health_markup() -> str:
           // as canceled/interrupted. Reset now, then let the synthesis queue become
           // idle before creating and speaking the test utterance. This path is only
           // reachable from the explicit operator click; automatic alerts never cancel.
-          const synth = root.speechSynthesis || window.speechSynthesis;
+          // GS593: this Re-arm/test click originates inside this Streamlit
+          // component iframe. Preserve the transient user activation by using the
+          // frame-local speech engine first, matching GS323's proven activation
+          // contract. Parent-window speech remains a fallback only.
+          const synth = window.speechSynthesis || root.speechSynthesis;
           const Utterance =
-            root.SpeechSynthesisUtterance || window.SpeechSynthesisUtterance;
+            window.SpeechSynthesisUtterance || root.SpeechSynthesisUtterance;
           if (!synth || !Utterance) {
             voiceTestState = 'error';
             voiceTestDetail = 'speech unavailable';
