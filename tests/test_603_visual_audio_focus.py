@@ -81,8 +81,10 @@ def test_gs603_app_drives_semantic_audio_from_rendered_focus():
 
     assert "current_render_audio_focus(" in block
     assert "state_changes = escalation_state_changes(_audio_focus_records)" in block
-    assert "escalation_alert_phrase(_audio_focus_records)" in block
-    assert "scan_alert_phrase(\n    _audio_focus_records\n)" in block
+    assert "escalation_alert_phrase(" in block
+    assert "_audio_focus_records" in block
+    assert "canonical_opportunity_audio_phrase(_audio_focus_records)" in block
+    assert "scan_alert_phrase(" not in block
     assert "coiled = _audio_focus_records[0]" in block
     assert "[WALTER AUDIO] canonical visual focus" in block
 
