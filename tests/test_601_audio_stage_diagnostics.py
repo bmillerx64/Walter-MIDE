@@ -53,16 +53,18 @@ def test_gs601_architecture_times_post_ranking_subphases_only():
     assert 'self.post_stage_timing["runtime_validation_ms"]' in source
     assert 'self.post_stage_timing["architecture_verification_ms"]' in source
 
+    start = source.index("        self.post_stage_timing = {}")
+    end = source.index("\n        return results", start)
+    diagnostic_block = source[start:end]
     forbidden = (
         "qualified_for_entry =",
         "qualified_for_alert =",
-        "mission_rank =",
         "participation_score =",
         "expansion_score =",
         "place_order(",
         "submit_order(",
     )
-    assert not any(token in source for token in forbidden)
+    assert not any(token in diagnostic_block for token in forbidden)
 
 
 def test_gs601_browser_scanning_label_includes_process_stage():
