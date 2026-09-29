@@ -218,6 +218,7 @@ from mide.authorities.presentation_audio import (
     mission_control_header_markup,
     opportunity_card,
     play_alert,
+    current_render_audio_focus,
     radar_table,
     rejected_candidates_table,
     rejection_diagnostics,
@@ -3413,19 +3414,49 @@ if completed_scan is not None:
     except Exception:
         _audio_visible_scan_is_current = False
 
-state_changes = escalation_state_changes(actionable_records)
-new_early_symbols, active_early_symbols = newly_entered_symbols(
-    records, st.session_state.active_early_setup_symbols
+_audio_scan_token = (
+    completed_scan.completed_at.isoformat() if completed_scan is not None else ""
+)
+_audio_focus_records = current_render_audio_focus(
+    st.session_state,
+    expected_scan_token=_audio_scan_token,
+)
+_audio_focus_symbol = (
+    str(_audio_focus_records[0].get("symbol") or "").strip().upper()
+    if _audio_focus_records
+    else ""
+)
+if _audio_focus_symbol:
+    print(
+        "[WALTER AUDIO] canonical visual focus "
+        f"token={_audio_scan_token} symbol={_audio_focus_symbol}",
+        flush=True,
+    )
+
+state_changes = escalation_state_changes(_audio_focus_records)
+all_new_early_symbols, active_early_symbols = newly_entered_symbols(
+    actionable_records, st.session_state.active_early_setup_symbols
 )
 st.session_state.active_early_setup_symbols = active_early_symbols
+new_early_symbols = [
+    symbol
+    for symbol in all_new_early_symbols
+    if str(symbol or "").strip().upper() == _audio_focus_symbol
+]
 state_change_signature = "|".join(
     f"{item['symbol']}:{item['from']}->{item['to']}" for item in state_changes
 )
-alert_phrase = escalation_alert_phrase(actionable_records) or scan_alert_phrase(
-    actionable_records
+alert_phrase = escalation_alert_phrase(_audio_focus_records) or scan_alert_phrase(
+    _audio_focus_records
 )
 entry_alert_open = "Entry Window" in alert_phrase or "Entry Ready" in alert_phrase
-if alerts and new_early_symbols and not entry_alert_open:
+if alerts and (new_early_symbols or alert_phrase) and not _audio_focus_records:
+    print(
+        "[WALTER AUDIO] semantic alert suppressed because canonical visual focus "
+        f"is unavailable token={_audio_scan_token}",
+        flush=True,
+    )
+elif alerts and new_early_symbols and not entry_alert_open:
     if not _audio_visible_scan_is_current:
         print(
             "[WALTER AUDIO] semantic alert suppressed for stale visible scan "
@@ -3433,11 +3464,7 @@ if alerts and new_early_symbols and not entry_alert_open:
             flush=True,
         )
     else:
-        coiled = next(
-            record
-            for record in records
-            if str(record.get("symbol") or "").upper() == new_early_symbols[0]
-        )
+        coiled = _audio_focus_records[0]
         structure = coiled.get("structure") or {}
         float_millions = structure.get("float_millions")
         float_phrase = (
