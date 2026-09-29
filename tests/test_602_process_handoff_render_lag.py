@@ -28,8 +28,9 @@ def test_gs602_semantic_audio_fails_closed_when_visible_scan_is_stale():
     block = source[start:end]
 
     assert "_audio_process_snapshot.last_started_at > completed_scan.completed_at" in block
-    assert "if alerts and _audio_visible_scan_is_current and new_early_symbols" in block
-    assert "elif alerts and _audio_visible_scan_is_current and alert_phrase" in block
+    assert "if alerts and new_early_symbols and not entry_alert_open:" in block
+    assert "elif alerts and alert_phrase:" in block
+    assert "if not _audio_visible_scan_is_current:" in block
     assert "[WALTER AUDIO] semantic alert suppressed for stale visible scan" in block
 
 
