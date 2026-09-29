@@ -5774,6 +5774,43 @@ def current_render_audio_focus(
     return [deepcopy(record)]
 
 
+def canonical_opportunity_audio_phrase(records: list[dict]) -> str:
+    """Speak the same current Opportunity State shown on the operator card.
+
+    GS604 removes the legacy live fallback that announced quality grade/score or
+    generic "Watching N" language. The record itself remains authoritative; this
+    function only translates the already-rendered state/reason into speech.
+    """
+    rows = list(records or [])
+    if not rows:
+        return ""
+
+    record = rows[0]
+    symbol = str(record.get("symbol") or "").strip().upper()
+    if not symbol:
+        return ""
+
+    try:
+        from mide import gs310_unified_opportunity_state as unified
+
+        view = unified.opportunity_state(record)
+        state = str(view.get("state") or "").strip()
+        reason = " ".join(str(view.get("reason") or "").split())
+        context = " ".join(unified.look_now_context(record, view).split())
+    except Exception:
+        return ""
+
+    if not state:
+        return ""
+
+    parts = [f"{symbol}.", f"{state}."]
+    if context and context.casefold() not in state.casefold():
+        parts.append(f"{context}.")
+    if reason:
+        parts.append(reason if reason.endswith((".", "!", "?")) else f"{reason}.")
+    return " ".join(parts)
+
+
 def operator_scoped_market_events(
     records: list[dict],
     events: Iterable[dict],
@@ -5870,6 +5907,7 @@ def bind_final_enriched_opportunity_order(
 
 __all__ = [
     "current_render_audio_focus",
+    "canonical_opportunity_audio_phrase",
     "visual_audio_focus_record",
     "operator_scoped_market_events",
     "reset_retest_awareness_copy",
