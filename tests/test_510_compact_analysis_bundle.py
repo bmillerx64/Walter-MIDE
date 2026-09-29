@@ -105,14 +105,17 @@ def test_live_app_renders_compact_analysis_controls():
     assert "render_compact_analysis_bundle_controls" in source
 
 
-def test_gs552_compact_download_preloads_bytes_once_per_prepared_filename():
+def test_gs594_compact_download_keeps_small_inline_and_large_disk_backed():
     source = Path("mide/gs510_compact_analysis_bundle.py").read_text(encoding="utf-8")
-    assert "PAYLOAD_SESSION_KEY" in source
+    assert "INLINE_DOWNLOAD_MAX_BYTES = 8 * 1024 * 1024" in source
     assert '"bytes": archive_path.read_bytes()' in source
-    assert 'data=payload["bytes"]' in source
-    assert 'key=f"walter-gs552-download-{filename}"' in source
+    assert "def materialize_compact_bundle() -> bytes:" in source
+    assert "return archive_path.read_bytes()" in source
+    assert 'download_data = payload["bytes"]' in source
+    assert "download_data = materialize_compact_bundle" in source
+    assert "st.session_state.pop(PAYLOAD_SESSION_KEY, None)" in source
+    assert 'key=f"walter-gs594-download-{transport}-{filename}"' in source
     assert 'on_click="ignore"' in source
-    assert "data=materialize_compact_bundle" not in source
 
 
 
@@ -232,10 +235,10 @@ def test_gs551_compact_bundle_uses_streamlit_static_root_and_href(tmp_path):
     assert gs510.STATIC_DIR == Path("static")
 
 
-def test_gs552_invalid_static_link_fallback_is_removed():
+def test_gs594_invalid_static_link_fallback_remains_removed():
     source = Path("mide/gs510_compact_analysis_bundle.py").read_text(encoding="utf-8")
     assert "analysis_bundle_link_markup" not in source
     assert "Direct compact-bundle download" not in source
-    assert 'data=payload["bytes"]' in source
+    assert "download_data = materialize_compact_bundle" in source
     assert 'STATIC_DIR = Path("static")' in source
 
