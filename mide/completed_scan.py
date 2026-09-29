@@ -206,6 +206,26 @@ def _process_live_scan_snapshot() -> CompletedScan | None:
         return _safe_copy_scan(_PROCESS_LIVE_SCAN)
 
 
+def _newer_process_live_scan_snapshot(
+    local_epoch: float | None,
+) -> CompletedScan | None:
+    """Copy process evidence only when it can actually replace local evidence.
+
+    GS602: completed_scan_for_view is called by several presentation wrappers on
+    every Streamlit render. Deep-copying the complete process scan before checking
+    its timestamp made every read pay for records + diagnostics even when the
+    browser already held that exact scan. Hold the publication lock, compare the
+    immutable completed_at first, and detach only a genuinely newer snapshot.
+    """
+    with _PROCESS_LIVE_SCAN_LOCK:
+        process_epoch = _completed_epoch(_PROCESS_LIVE_SCAN)
+        if process_epoch is None:
+            return None
+        if local_epoch is not None and local_epoch >= process_epoch:
+            return None
+        return _safe_copy_scan(_PROCESS_LIVE_SCAN)
+
+
 def _state_wants_live_scan(state: MutableMapping[str, Any]) -> bool:
     mode = str(state.get("selected_data_mode") or "")
     provider = str(state.get("selected_live_provider") or "")
@@ -234,15 +254,9 @@ def _adopt_newer_process_live_scan(
     if not _state_wants_live_scan(state):
         return context.completed_scan
 
-    process_scan = _process_live_scan_snapshot()
-    if process_scan is None:
-        return context.completed_scan
-
     local_epoch = _completed_epoch(context.completed_scan)
-    process_epoch = _completed_epoch(process_scan)
-    if process_epoch is None:
-        return context.completed_scan
-    if local_epoch is not None and local_epoch >= process_epoch:
+    process_scan = _newer_process_live_scan_snapshot(local_epoch)
+    if process_scan is None:
         return context.completed_scan
 
     context.completed_scan = process_scan

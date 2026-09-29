@@ -125,3 +125,63 @@ def test_adopted_result_is_detached_from_process_snapshot(monkeypatch):
     second = completed_scan_for_view(second_state, "Radar")
 
     assert second.diagnostics["marker"] == "SAFE"
+
+def test_current_local_scan_avoids_redundant_process_deepcopy(monkeypatch):
+    monkeypatch.setattr(completed_scan_module, "_PROCESS_LIVE_SCAN", None)
+    now = datetime.now(timezone.utc)
+    owner_state = _live_state()
+    store_completed_scan(owner_state, _scan("CURRENT", completed_at=now))
+
+    local_state = _live_state()
+    adopted = completed_scan_for_view(local_state, "initial")
+    assert adopted is not None
+
+    original_deepcopy = completed_scan_module.copy.deepcopy
+    copies = {"count": 0}
+
+    def counted_deepcopy(value):
+        copies["count"] += 1
+        return original_deepcopy(value)
+
+    monkeypatch.setattr(completed_scan_module.copy, "deepcopy", counted_deepcopy)
+
+    for view in ("Radar", "header", "runtime health", "GS312 scan timing"):
+        observed = completed_scan_for_view(local_state, view)
+        assert observed is adopted
+
+    assert copies["count"] == 0
+
+
+def test_newer_process_scan_is_detached_exactly_once_when_adopted(monkeypatch):
+    monkeypatch.setattr(completed_scan_module, "_PROCESS_LIVE_SCAN", None)
+    now = datetime.now(timezone.utc)
+
+    local_state = _live_state()
+    local_context = completed_scan_module.scan_context(local_state)
+    local = _scan("OLD", completed_at=now)
+    local_context.completed_scan = local
+    local_state["completed_scan"] = local
+
+    owner_state = _live_state()
+    store_completed_scan(
+        owner_state,
+        _scan("NEW", completed_at=now + timedelta(seconds=60)),
+    )
+
+    original_deepcopy = completed_scan_module.copy.deepcopy
+    copies = {"count": 0}
+
+    def counted_deepcopy(value):
+        copies["count"] += 1
+        return original_deepcopy(value)
+
+    monkeypatch.setattr(completed_scan_module.copy, "deepcopy", counted_deepcopy)
+
+    adopted = completed_scan_for_view(local_state, "process observer")
+    assert adopted.records[0]["symbol"] == "NEW"
+    assert copies["count"] == 1
+
+    again = completed_scan_for_view(local_state, "Radar")
+    assert again is adopted
+    assert copies["count"] == 1
+
