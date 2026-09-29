@@ -48,7 +48,7 @@ def test_gs592_explicit_rearm_resets_then_settles_before_speech():
 
 
 
-def test_gs590_voice_test_stays_inside_direct_button_activation():
+def test_gs593_voice_test_preserves_direct_iframe_user_activation():
     markup = alert_audio_health_markup()
     listener = markup.index("button.addEventListener('click', () => {")
     voice_call = markup.index("testVoice();", listener)
@@ -60,8 +60,10 @@ def test_gs590_voice_test_stays_inside_direct_button_activation():
     assert listener < voice_call < rearm_call
     assert "testVoice();" not in markup[play_start:play_end]
     assert "resumed.then(play)" in markup[rearm_start:listener]
-    assert "root.speechSynthesis || window.speechSynthesis" in markup
-    assert "root.SpeechSynthesisUtterance || window.SpeechSynthesisUtterance" in markup
+    assert "GS593: this Re-arm/test click originates inside this Streamlit" in markup
+    assert "window.speechSynthesis || root.speechSynthesis" in markup
+    assert "window.SpeechSynthesisUtterance || root.SpeechSynthesisUtterance" in markup
+    assert "root.speechSynthesis || window.speechSynthesis" not in markup
 
 
 def test_gs592_audio_health_reports_voice_transport_outcome_and_retry():
