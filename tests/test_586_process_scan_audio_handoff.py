@@ -14,7 +14,7 @@ def test_gs601_observer_arms_audio_only_when_completed_scan_is_still_current():
     )
     observer = source[start:end]
 
-    assert "live_process_snapshot" in observer
+    assert "audio_snapshot" in observer
     assert "audio_snapshot.last_started_at > observed.completed_at" in observer
     assert "skipped stale completed scan before repaint" in observer
     marker = 'st.session_state["_walter_process_scan_audio_pending_token"] = ('
