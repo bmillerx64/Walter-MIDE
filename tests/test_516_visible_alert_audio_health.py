@@ -30,7 +30,7 @@ def test_visible_audio_health_poll_detects_later_context_loss():
     assert "beforeunload" in markup
 
 
-def test_gs595_explicit_rearm_speaks_synchronously_when_queue_is_idle():
+def test_gs596_explicit_rearm_speaks_synchronously_when_queue_is_idle():
     markup = alert_audio_health_markup()
     listener = markup.index("button.addEventListener('click', () => {")
     test_start = markup.index("const testVoice = () => {")
@@ -44,7 +44,7 @@ def test_gs595_explicit_rearm_speaks_synchronously_when_queue_is_idle():
     assert "speakFresh(0);" in block
     assert "window.setTimeout(() => speakFresh(0), 300);" not in block
     assert "window.setTimeout(() => speakFresh(attempt + 1), 450);" not in block
-    assert "GS595 direct-activation re-arm" in block
+    assert "GS596 parent-sync re-arm" in block
     assert markup.index("testVoice();", listener) < markup.index("rearm();", listener)
 
 
