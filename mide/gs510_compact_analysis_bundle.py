@@ -31,7 +31,7 @@ import json
 from pathlib import Path
 import secrets
 import threading
-from time import monotonic
+from time import monotonic, sleep
 from typing import Any
 from zipfile import ZIP_DEFLATED, ZipFile
 
@@ -51,6 +51,13 @@ REVIEW_WINDOW_HOURS = 2.0
 # small CABs inline; larger prepared archives stay disk-backed until the operator
 # clicks Download, matching the proven Session Backup deferred transport.
 INLINE_DOWNLOAD_MAX_BYTES = 8 * 1024 * 1024
+# GS600: the CAB is forensic background work, never a live-scan priority. Sept. 29
+# evidence showed a ~467 MB source bundle could consume enough same-process CPU/I/O
+# to stretch live scans beyond 100 seconds. Favor fast compression and yield the
+# worker cooperatively while walking large Candidate History files.
+CAB_COMPRESSION_LEVEL = 1
+CAB_YIELD_EVERY_ROWS = 25
+CAB_YIELD_SECONDS = 0.01
 STRIPPED_CUMULATIVE_FIELDS = (
     "architecture_audit",
     "ranking_history",
@@ -205,6 +212,8 @@ def _compact_candidate_rows(
                 if not line.endswith(b"\n") and remaining == 0:
                     break
                 rows_seen += 1
+                if rows_seen % CAB_YIELD_EVERY_ROWS == 0:
+                    sleep(CAB_YIELD_SECONDS)
                 try:
                     record = json.loads(line)
                 except Exception:
@@ -290,7 +299,7 @@ def build_analysis_bundle(
             temporary_path,
             mode="w",
             compression=ZIP_DEFLATED,
-            compresslevel=6,
+            compresslevel=CAB_COMPRESSION_LEVEL,
             allowZip64=True,
         ) as archive:
             candidate_stats = _compact_candidate_rows(
@@ -345,6 +354,9 @@ def build_analysis_bundle(
                     else None
                 ),
                 "stripped_cumulative_fields": list(STRIPPED_CUMULATIVE_FIELDS),
+                "compression_level": CAB_COMPRESSION_LEVEL,
+                "cooperative_yield_every_rows": CAB_YIELD_EVERY_ROWS,
+                "cooperative_yield_seconds": CAB_YIELD_SECONDS,
                 "candidate_history_semantics": (
                     "recent review-window point-in-time rows retained; only repeated "
                     "cumulative history arrays removed"
@@ -521,7 +533,8 @@ def _render(candidate_path: Path, flight_path: Path) -> None:
         elapsed = float(job.get("elapsed_seconds") or 0)
         st.info(
             f"Compacting {source_mb:.1f} MB in the background "
-            f"({elapsed:.0f}s elapsed). AutoScan can keep running."
+            f"({elapsed:.0f}s elapsed). AutoScan stays enabled; CAB work is "
+            "throttled to yield back to live scans."
         )
         return
 
