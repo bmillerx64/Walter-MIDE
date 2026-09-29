@@ -30,21 +30,22 @@ def test_visible_audio_health_poll_detects_later_context_loss():
     assert "beforeunload" in markup
 
 
-def test_gs592_explicit_rearm_resets_then_settles_before_speech():
+def test_gs595_explicit_rearm_speaks_synchronously_when_queue_is_idle():
     markup = alert_audio_health_markup()
-    assert "Walter alerts ready." in markup
-    assert "if (synth.cancel) synth.cancel();" in markup
-    assert "window.setTimeout(() => speakFresh(0), 300);" in markup
-    assert "synth.speak(utterance)" in markup
-    assert markup.index("if (synth.cancel) synth.cancel();") < markup.index(
-        "window.setTimeout(() => speakFresh(0), 300);"
-    )
-    assert "GS592 settled re-arm" in markup
-    assert "pending=" in markup
-    assert "speaking=" in markup
-    assert "paused=" in markup
-    assert "voices=" in markup
+    listener = markup.index("button.addEventListener('click', () => {")
+    test_start = markup.index("const testVoice = () => {")
+    rearm_start = markup.index("const rearm = () => {", test_start)
+    block = markup[test_start:rearm_start]
 
+    assert "Walter alerts ready." in block
+    assert "const queueBusy = Boolean(" in block
+    assert "synth.pending || synth.speaking || synth.paused" in block
+    assert "queue cleared · click Re-arm / test again" in block
+    assert "speakFresh(0);" in block
+    assert "window.setTimeout(() => speakFresh(0), 300);" not in block
+    assert "window.setTimeout(() => speakFresh(attempt + 1), 450);" not in block
+    assert "GS595 direct-activation re-arm" in block
+    assert markup.index("testVoice();", listener) < markup.index("rearm();", listener)
 
 
 
@@ -66,7 +67,7 @@ def test_gs593_voice_test_preserves_direct_iframe_user_activation():
     assert "root.speechSynthesis || window.speechSynthesis" not in markup
 
 
-def test_gs592_audio_health_reports_voice_transport_outcome_and_retry():
+def test_gs595_audio_health_reports_outcome_without_timer_voice_retry():
     markup = alert_audio_health_markup()
     assert "BELL READY · VOICE RESETTING" in markup
     assert "BELL READY · VOICE REQUESTED" in markup
@@ -75,10 +76,10 @@ def test_gs592_audio_health_reports_voice_transport_outcome_and_retry():
     assert "utterance.onstart" in markup
     assert "utterance.onend" in markup
     assert "utterance.onerror" in markup
-    assert "error === 'canceled' || error === 'interrupted'" in markup
-    assert "window.setTimeout(() => speakFresh(attempt + 1), 450);" in markup
     assert "no start callback" in markup
-    assert "GS592 settled re-arm" in markup
+    assert "click Re-arm / test again" in markup
+    assert "window.setTimeout(() => speakFresh(attempt + 1), 450);" not in markup
+    assert "GS595 direct-activation re-arm" in markup
 
 
 def test_scope_lock_is_alert_transport_presentation_only():
