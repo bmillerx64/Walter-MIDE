@@ -219,6 +219,7 @@ from mide.authorities.presentation_audio import (
     opportunity_card,
     play_alert,
     current_render_audio_focus,
+    current_render_audio_event,
     canonical_opportunity_audio_phrase,
     radar_table,
     rejected_candidates_table,
@@ -3422,87 +3423,52 @@ _audio_focus_records = current_render_audio_focus(
     st.session_state,
     expected_scan_token=_audio_scan_token,
 )
-_audio_focus_symbol = (
-    str(_audio_focus_records[0].get("symbol") or "").strip().upper()
-    if _audio_focus_records
-    else ""
+_audio_event = current_render_audio_event(
+    st.session_state,
+    expected_scan_token=_audio_scan_token,
 )
+_audio_focus_symbol = str(_audio_event.get("symbol") or "")
 if _audio_focus_symbol:
     print(
         "[WALTER AUDIO] canonical visual focus "
-        f"token={_audio_scan_token} symbol={_audio_focus_symbol}",
+        f"token={_audio_scan_token} symbol={_audio_focus_symbol} "
+        f"surface={_audio_event.get('surface')} state={_audio_event.get('state_label')}",
         flush=True,
     )
 
-state_changes = escalation_state_changes(_audio_focus_records)
-all_new_early_symbols, active_early_symbols = newly_entered_symbols(
-    actionable_records, st.session_state.active_early_setup_symbols
-)
-st.session_state.active_early_setup_symbols = active_early_symbols
-new_early_symbols = [
-    symbol
-    for symbol in all_new_early_symbols
-    if str(symbol or "").strip().upper() == _audio_focus_symbol
-]
-state_change_signature = "|".join(
-    f"{item['symbol']}:{item['from']}->{item['to']}" for item in state_changes
-)
-alert_phrase = escalation_alert_phrase(
-    _audio_focus_records
-) or canonical_opportunity_audio_phrase(_audio_focus_records)
-entry_alert_open = "Entry Window" in alert_phrase or "Entry Ready" in alert_phrase
-if alerts and (new_early_symbols or alert_phrase) and not _audio_focus_records:
-    print(
-        "[WALTER AUDIO] semantic alert suppressed because canonical visual focus "
-        f"is unavailable token={_audio_scan_token}",
-        flush=True,
-    )
-elif alerts and new_early_symbols and not entry_alert_open:
-    if not _audio_visible_scan_is_current:
+# GS605: the live browser has one semantic voice authority. Historical escalation,
+# coiling, maturation, native-mover and WATCH NOW wrappers may remain installed for
+# compatibility/replay, but they do not choose the live spoken phrase. The phrase
+# and trigger both come from the exact first rendered operator surface.
+alert_phrase = str(_audio_event.get("phrase") or "")
+audio_triggered = bool(_audio_event.get("triggered"))
+
+if alerts and audio_triggered and alert_phrase:
+    if not _audio_focus_records:
+        print(
+            "[WALTER AUDIO] semantic alert suppressed because canonical visual focus "
+            f"is unavailable token={_audio_scan_token}",
+            flush=True,
+        )
+    elif not _audio_visible_scan_is_current:
         print(
             "[WALTER AUDIO] semantic alert suppressed for stale visible scan "
             f"visible={completed_scan.completed_at.isoformat() if completed_scan else 'none'}",
             flush=True,
         )
     else:
-        coiled = _audio_focus_records[0]
-        structure = coiled.get("structure") or {}
-        float_millions = structure.get("float_millions")
-        float_phrase = (
-            f" Float {float(float_millions):.1f} million."
-            if float_millions is not None
-            else ""
-        )
-        play_alert(
-            "assets/alert.wav",
-            (
-                f"{new_early_symbols[0]}. Coiling. VWAP {structure.get('vwap_status', 'developing')}. "
-                f"SuperTrend {float(structure.get('supertrend_distance_pct') or 0):.2f} percent away. "
-                f"Participation {'accelerating' if structure.get('participation_accelerating') else 'steady'}."
-                f"{float_phrase} Probability of breakout {float(structure.get('probability_of_breakout') or 0):.0f} percent."
-            ),
-            alert_voice_for_session(),
-        )
-elif alerts and alert_phrase:
-    if not _audio_visible_scan_is_current:
-        print(
-            "[WALTER AUDIO] semantic alert suppressed for stale visible scan "
-            f"visible={completed_scan.completed_at.isoformat() if completed_scan else 'none'}",
-            flush=True,
-        )
-    else:
-        # GS566: the legacy cross-scan guard keyed only on candidate state changes.
-        # That could suppress a different native-mover phrase (including a resume or
-        # material advance) when an unrelated candidate transition signature happened
-        # to remain unchanged. Include the spoken phrase in the guard; GS366 still
-        # owns same-completed-scan delivery dedupe.
         alert_delivery_key = "|".join(
             (
-                state_change_signature,
-                " ".join(str(alert_phrase).split()),
+                str(_audio_event.get("signature") or ""),
+                " ".join(alert_phrase.split()),
             )
         )
         if alert_delivery_key != st.session_state.last_escalation_alert:
+            print(
+                "[WALTER AUDIO] canonical live phrase "
+                f"token={_audio_scan_token} phrase={alert_phrase}",
+                flush=True,
+            )
             play_alert("assets/alert.wav", alert_phrase, alert_voice_for_session())
             st.session_state.last_escalation_alert = alert_delivery_key
 

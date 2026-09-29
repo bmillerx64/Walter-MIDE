@@ -5714,6 +5714,23 @@ def _install_final_render_actionable_guard() -> None:
 
 
 _RENDER_AUDIO_FOCUS_KEY = "_walter_canonical_render_audio_focus"
+_RENDER_AUDIO_PREVIOUS_FOCUS_KEY = "_walter_previous_render_audio_focus"
+
+
+def _visual_audio_focus_details(
+    records: list[dict],
+) -> tuple[dict | None, str, dict | None]:
+    """Return the exact first rendered operator surface plus its banner event."""
+    rows = list(records or [])
+    if not rows:
+        return None, "none", None
+    try:
+        extreme_record, event = prioritized_extreme_event(rows)
+    except Exception:
+        extreme_record, event = None, None
+    if extreme_record is not None and event is not None:
+        return extreme_record, "extreme_banner", dict(event)
+    return rows[0], "opportunity_first", None
 
 
 def visual_audio_focus_record(records: list[dict]) -> tuple[dict | None, str]:
@@ -5723,20 +5740,28 @@ def visual_audio_focus_record(records: list[dict]) -> tuple[dict | None, str]:
     cards and therefore owns audio focus. Otherwise the first final ordered
     Opportunity record owns focus. This is presentation/audio selection only.
     """
-    rows = list(records or [])
-    if not rows:
-        return None, "none"
+    record, surface, _event = _visual_audio_focus_details(records)
+    return record, surface
+
+
+def _render_audio_state_label(
+    record: dict | None,
+    surface: str,
+    event: dict | None,
+) -> str:
+    if record is None:
+        return ""
+    if surface == "extreme_banner" and isinstance(event, dict):
+        return str(event.get("label") or "").strip()
     try:
-        extreme_record, event = prioritized_extreme_event(rows)
+        from mide import gs310_unified_opportunity_state as unified
+        return str(unified.opportunity_state(record).get("state") or "").strip()
     except Exception:
-        extreme_record, event = None, None
-    if extreme_record is not None and event is not None:
-        return extreme_record, "extreme_banner"
-    return rows[0], "opportunity_first"
+        return ""
 
 
 def _publish_render_audio_focus(records: list[dict]) -> None:
-    """Snapshot the rendered first operator record for same-scan audio delivery."""
+    """Snapshot the exact rendered first surface for same-scan audio delivery."""
     from mide import ui
     try:
         from mide.gs366_rerun_alert_dedupe import completed_scan_token
@@ -5744,13 +5769,22 @@ def _publish_render_audio_focus(records: list[dict]) -> None:
     except Exception:
         token = "no-completed-scan"
 
-    record, surface = visual_audio_focus_record(records)
+    record, surface, event = _visual_audio_focus_details(records)
     payload = {
         "scan_token": token,
         "surface": surface,
         "symbol": str((record or {}).get("symbol") or "").strip().upper(),
+        "state_label": _render_audio_state_label(record, surface, event),
+        "event": deepcopy(event) if event is not None else None,
         "record": deepcopy(record) if record is not None else None,
     }
+
+    previous = ui.st.session_state.get(_RENDER_AUDIO_FOCUS_KEY)
+    if (
+        isinstance(previous, dict)
+        and str(previous.get("scan_token") or "") != str(token or "")
+    ):
+        ui.st.session_state[_RENDER_AUDIO_PREVIOUS_FOCUS_KEY] = deepcopy(previous)
     ui.st.session_state[_RENDER_AUDIO_FOCUS_KEY] = payload
 
 
@@ -5809,6 +5843,102 @@ def canonical_opportunity_audio_phrase(records: list[dict]) -> str:
     if reason:
         parts.append(reason if reason.endswith((".", "!", "?")) else f"{reason}.")
     return " ".join(parts)
+
+
+def _canonical_extreme_audio_phrase(event: dict) -> str:
+    symbol = str(event.get("symbol") or "").strip().upper()
+    label = " ".join(str(event.get("label") or "").split())
+    guidance = " ".join(str(event.get("guidance") or "").split())
+    try:
+        pct_change = float(event.get("pct_change") or 0.0)
+    except (TypeError, ValueError):
+        pct_change = 0.0
+    if not symbol or not label:
+        return ""
+    parts = [f"{symbol}.", f"{label}."]
+    if pct_change:
+        parts.append(f"Current move plus {pct_change:.1f} percent.")
+    if guidance:
+        parts.append(
+            guidance if guidance.endswith((".", "!", "?")) else f"{guidance}."
+        )
+    return " ".join(parts)
+
+
+def current_render_audio_event(
+    state,
+    *,
+    expected_scan_token: str,
+) -> dict:
+    """Return the single canonical live voice event for the rendered scan.
+
+    GS605 collapses live speech onto the exact first operator surface. Historical
+    escalation/audio wrappers remain available for compatibility and tests, but
+    they no longer decide what the live browser says.
+    """
+    payload = state.get(_RENDER_AUDIO_FOCUS_KEY) or {}
+    if str(payload.get("scan_token") or "") != str(expected_scan_token or ""):
+        return {
+            "triggered": False,
+            "phrase": "",
+            "symbol": "",
+            "surface": "none",
+            "state_label": "",
+            "signature": "",
+            "reason": "focus_token_mismatch",
+        }
+
+    record = payload.get("record")
+    if not isinstance(record, dict):
+        return {
+            "triggered": False,
+            "phrase": "",
+            "symbol": "",
+            "surface": "none",
+            "state_label": "",
+            "signature": "",
+            "reason": "no_rendered_focus",
+        }
+
+    surface = str(payload.get("surface") or "opportunity_first")
+    symbol = str(payload.get("symbol") or "").strip().upper()
+    state_label = str(payload.get("state_label") or "").strip()
+    event = payload.get("event")
+
+    if surface == "extreme_banner" and isinstance(event, dict):
+        phrase = _canonical_extreme_audio_phrase(event)
+    else:
+        phrase = canonical_opportunity_audio_phrase([record])
+
+    signature = "|".join((surface, symbol, state_label))
+    previous = state.get(_RENDER_AUDIO_PREVIOUS_FOCUS_KEY) or {}
+    previous_signature = "|".join(
+        (
+            str(previous.get("surface") or ""),
+            str(previous.get("symbol") or "").strip().upper(),
+            str(previous.get("state_label") or "").strip(),
+        )
+    )
+
+    # Speak only when the rendered operator focus or its state changes. The first
+    # completed surface after a reboot is also a real operator-context change.
+    triggered = bool(phrase and signature and signature != previous_signature)
+    reason = (
+        "first_rendered_focus"
+        if triggered and not previous_signature.strip("|")
+        else "rendered_focus_or_state_changed"
+        if triggered
+        else "rendered_focus_unchanged"
+    )
+    return {
+        "triggered": triggered,
+        "phrase": phrase,
+        "symbol": symbol,
+        "surface": surface,
+        "state_label": state_label,
+        "signature": signature,
+        "reason": reason,
+    }
 
 
 def operator_scoped_market_events(
@@ -5907,6 +6037,7 @@ def bind_final_enriched_opportunity_order(
 
 __all__ = [
     "current_render_audio_focus",
+    "current_render_audio_event",
     "canonical_opportunity_audio_phrase",
     "visual_audio_focus_record",
     "operator_scoped_market_events",

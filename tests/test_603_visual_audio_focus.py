@@ -80,13 +80,14 @@ def test_gs603_app_drives_semantic_audio_from_rendered_focus():
     block = source[start:end]
 
     assert "current_render_audio_focus(" in block
-    assert "state_changes = escalation_state_changes(_audio_focus_records)" in block
-    assert "escalation_alert_phrase(" in block
+    assert "current_render_audio_event(" in block
     assert "_audio_focus_records" in block
-    assert "canonical_opportunity_audio_phrase(_audio_focus_records)" in block
+    assert "escalation_alert_phrase(" not in block
     assert "scan_alert_phrase(" not in block
-    assert "coiled = _audio_focus_records[0]" in block
+    assert "newly_entered_symbols(" not in block
+    assert "Coiling." not in block
     assert "[WALTER AUDIO] canonical visual focus" in block
+    assert "[WALTER AUDIO] canonical live phrase" in block
 
 
 def test_gs603_authority_publishes_focus_only_from_primary_operator_renderer():

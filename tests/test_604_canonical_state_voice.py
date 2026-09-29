@@ -69,8 +69,9 @@ def test_gs604_live_audio_path_no_longer_uses_legacy_scan_alert_phrase():
     end = source.index("\ntab_names = [", start)
     block = source[start:end]
 
-    assert "canonical_opportunity_audio_phrase(_audio_focus_records)" in block
+    assert "current_render_audio_event(" in block
     assert "scan_alert_phrase(" not in block
+    assert "escalation_alert_phrase(" not in block
 
 
 def test_gs604_legacy_scan_phrase_may_remain_for_non_live_compatibility():
