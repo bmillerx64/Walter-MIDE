@@ -5,7 +5,7 @@ def _app_source() -> str:
     return Path("app.py").read_text(encoding="utf-8")
 
 
-def test_gs586_observer_marks_exact_adopted_process_scan_for_audio():
+def test_gs601_observer_arms_audio_only_when_completed_scan_is_still_current():
     source = _app_source()
     start = source.index("def adopt_newer_process_scan() -> None:")
     end = source.index(
@@ -14,37 +14,58 @@ def test_gs586_observer_marks_exact_adopted_process_scan_for_audio():
     )
     observer = source[start:end]
 
+    assert "audio_snapshot" in observer
+    assert "audio_snapshot.last_started_at > observed.completed_at" in observer
+    assert "skipped stale completed scan before repaint" in observer
     marker = 'st.session_state["_walter_process_scan_audio_pending_token"] = ('
     assert marker in observer
-    assert "observed.completed_at.isoformat()" in observer
+    assert observer.index("newer_scan_started = bool(") < observer.index(marker)
     assert observer.index(marker) < observer.index('st.rerun(scope="app")')
 
 
-def test_gs586_registers_heartbeat_after_semantic_alert_selection():
+def test_gs601_registers_process_audio_after_complete_dashboard_render():
     source = _app_source()
     semantic = source.index(
         'play_alert("assets/alert.wav", alert_phrase, alert_voice_for_session())'
     )
-    marker = source.index("# GS586: process-owned scans finish outside Streamlit.")
-    tabs = source.index("tab_names = [", marker)
-    handoff = source[marker:tabs]
+    debug_view = source.index('if active_tab == "Webull Debug":')
+    marker = source.index(
+        "# GS601: consume process-scan audio only after the entire dashboard render"
+    )
+    handoff = source[marker:]
 
-    assert semantic < marker
+    assert semantic < debug_view < marker
+    assert "_process_audio_snapshot = _gs585.snapshot()" in handoff
+    assert "_process_audio_pending == _process_audio_current" in handoff
+    assert (
+        "_process_audio_snapshot.last_started_at > completed_scan.completed_at"
+        in handoff
+    )
     assert 'from mide.gs419_completed_scan_heartbeat import heartbeat_markup' in handoff
     assert "heartbeat_markup(st.session_state)" in handoff
     assert "st.components.v1.html(" in handoff
-    assert (
-        'st.session_state.pop("_walter_process_scan_audio_pending_token", None)'
-        in handoff
-    )
     assert "[WALTER AUDIO] process scan browser registration" in handoff
 
 
-def test_gs586_audio_handoff_is_presentation_only():
+def test_gs601_stale_process_audio_token_is_always_consumed():
     source = _app_source()
-    marker = source.index("# GS586: process-owned scans finish outside Streamlit.")
-    end = source.index("tab_names = [", marker)
-    handoff = source[marker:end]
+    marker = source.index(
+        "# GS601: consume process-scan audio only after the entire dashboard render"
+    )
+    handoff = source[marker:]
+
+    assert "[WALTER AUDIO] dropped stale process scan token" in handoff
+    pop = 'st.session_state.pop("_walter_process_scan_audio_pending_token", None)'
+    assert pop in handoff
+    assert handoff.rindex(pop) > handoff.index("_process_audio_matches_visible")
+
+
+def test_gs601_audio_handoff_is_presentation_only():
+    source = _app_source()
+    marker = source.index(
+        "# GS601: consume process-scan audio only after the entire dashboard render"
+    )
+    handoff = source[marker:]
 
     forbidden = (
         "participation_score",

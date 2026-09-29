@@ -1426,13 +1426,34 @@ def arm_live_clock_engine(
             # this path never sets SCAN_REQUESTED_KEY and therefore cannot create
             # a competing automatic or manual scan.
             #
-            # GS586: remember the exact adopted process scan for one browser-audio
-            # registration on the ensuing full app render. The scan now completes
-            # outside Streamlit, so audio delivery must cross the same explicit
-            # process -> observer handoff as the visual evidence.
-            st.session_state["_walter_process_scan_audio_pending_token"] = (
-                observed.completed_at.isoformat()
-            )
+            # GS601: adopt the visual evidence regardless, but arm audio only if
+            # this CompletedScan is still the newest process cycle. A succeeding
+            # scan means the completed evidence is already stale for spoken output.
+            try:
+                audio_snapshot = importlib.import_module(
+                    "mide.gs585_process_autoscan_service"
+                ).snapshot()
+                newer_scan_started = bool(
+                    audio_snapshot.last_started_at is not None
+                    and audio_snapshot.last_started_at > observed.completed_at
+                )
+            except Exception:
+                # Fail closed for audio synchronization; visual adoption remains.
+                newer_scan_started = True
+
+            if newer_scan_started:
+                st.session_state.pop(
+                    "_walter_process_scan_audio_pending_token", None
+                )
+                print(
+                    "[WALTER AUDIO] skipped stale completed scan before repaint "
+                    f"token={observed.completed_at.isoformat()}",
+                    flush=True,
+                )
+            else:
+                st.session_state["_walter_process_scan_audio_pending_token"] = (
+                    observed.completed_at.isoformat()
+                )
             st.rerun(scope="app")
 
         @st.fragment(run_every=timedelta(seconds=scheduler_poll_seconds))
@@ -1452,7 +1473,59 @@ def arm_live_clock_engine(
             st.session_state[SCAN_REQUESTED_KEY] = True
             st.rerun(scope="app")
 
+        @st.fragment(run_every=timedelta(seconds=observer_poll_seconds))
+        def refresh_process_stage_indicator() -> None:
+            # GS601: presentation-only stage refresh. Keep this fragment after
+            # every rerun-owning fragment so browser indicator code cannot become
+            # a scan/rerun authority.
+            if not process_autoscan_owned:
+                return
+            try:
+                live_process_snapshot = importlib.import_module(
+                    "mide.gs585_process_autoscan_service"
+                ).snapshot()
+            except Exception:
+                return
+            if not live_process_snapshot.running:
+                return
+            live_stage = str(
+                getattr(live_process_snapshot, "current_stage", None)
+                or "Working"
+            )
+            live_started = getattr(live_process_snapshot, "last_started_at", None)
+            live_elapsed = (
+                max(
+                    0,
+                    int(
+                        (
+                            datetime.now().astimezone()
+                            - live_started.astimezone()
+                        ).total_seconds()
+                    ),
+                )
+                if live_started is not None
+                else 0
+            )
+            live_label = json.dumps(
+                f"● SCANNING {live_elapsed}s · {live_stage}"
+            )
+            st.components.v1.html(
+                f"""<script>
+                (() => {{
+                  const node = window.parent.document.getElementById(
+                    'walter-auto-scan'
+                  );
+                  if (node) {{
+                    node.textContent = {live_label};
+                    node.style.color = '#facc15';
+                  }}
+                }})();
+                </script>""",
+                height=0,
+            )
+
         adopt_newer_process_scan()
+        refresh_process_stage_indicator()
         if not process_autoscan_owned:
             request_session_preserving_rerun()
     else:
@@ -1467,6 +1540,11 @@ def arm_live_clock_engine(
     )
     process_running = bool(
         process_snapshot is not None and process_snapshot.running
+    )
+    process_stage = (
+        str(getattr(process_snapshot, "current_stage", None) or "Working")
+        if process_snapshot is not None
+        else "Working"
     )
     refresh_ms = max(1, int(refresh_seconds)) * 1000
     retry_ms = max(1, int(retry_seconds)) * 1000
@@ -1488,6 +1566,7 @@ def arm_live_clock_engine(
           const processOwned = {str(process_autoscan_owned).lower()};
           const processStartedAt = {process_started_ms};
           const processRunning = {str(process_running).lower()};
+          const processStage = {json.dumps(process_stage)};
           const refreshMs = {refresh_ms};
           const retryMs = {retry_ms};
           const transportRecoveryMs = {transport_recovery_ms};
@@ -1589,7 +1668,7 @@ def arm_live_clock_engine(
               const elapsedSeconds = Math.max(
                 0, Math.floor((now - processStartedAt) / 1000)
               );
-              setAutoScan(`● SCANNING ${{elapsedSeconds}}s`, '#facc15');
+              setAutoScan(`● SCANNING ${{elapsedSeconds}}s · ${{processStage}}`, '#facc15');
               return;
             }}
             if (remainingMs > 0) {{
@@ -1824,10 +1903,22 @@ def _run_live_pipeline(
         settings.include_etfs,
     )
 
+    def note_process_stage(detail: str) -> None:
+        if ui_enabled:
+            return
+        try:
+            importlib.import_module(
+                "mide.gs585_process_autoscan_service"
+            ).note_scan_stage(detail)
+        except Exception:
+            # Stage telemetry must never alter scan execution.
+            pass
+
     def announce(number, detail=""):
         name = WALTER_STAGES[number - 1]
         message = f"{number}/8 {name}" + (f": {detail}" if detail else "")
         log(message)
+        note_process_stage(message)
         if status is not None:
             status.write(message)
         progress.progress((number - 1) / 8, text=message)
@@ -2289,12 +2380,16 @@ def _run_live_pipeline(
             len(records), len(candidates), history_symbols,
             (history_symbols + 19) // 20,
         )
+        note_process_stage(
+            "6/8 Participation · Webull history and structure analysis"
+        )
         analyze_started = perf_counter()
         analyzed = analyze_candidates(
             client, candidates, index_news(state["news"]), state["reasons"]
         )
         analyze_finished = perf_counter()
 
+        note_process_stage("6/8 Participation · velocity enrichment")
         velocity_started = perf_counter()
         analyzed = history.enrich_velocity(analyzed, previous=previous)
         velocity_finished = perf_counter()
@@ -2304,6 +2399,7 @@ def _run_live_pipeline(
         # function dynamically so retained Streamlit modules receive the latest
         # GS396+ patches and GS529 shadow instrumentation.
         scanner_module = importlib.import_module("mide.scanner_v2")
+        note_process_stage("6/8 Participation · Scanner V2 enrichment")
         scanner_started = perf_counter()
         analyzed = scanner_module.apply_scanner_v2(
             analyzed,
@@ -2322,6 +2418,7 @@ def _run_live_pipeline(
             client.diagnostics, "analyzed", state["analyzed"],
             statement="analyzed = apply_scanner_v2(history.enrich_velocity(analyze_candidates(...)))",
         )
+        note_process_stage("6/8 Participation · decision materialization")
         decision_started = perf_counter()
         result = {}
         for item in records:
@@ -2365,7 +2462,7 @@ def _run_live_pipeline(
             fields=("volume", "dollar_volume", "prev_volume", "spread_pct"),
         ))
         participation_finished = perf_counter()
-        gs554.record_breakdown(
+        participation_breakdown = gs554.record_breakdown(
             client,
             stage_input_count=len(records),
             prefilter_output_count=len(candidates),
@@ -2379,6 +2476,10 @@ def _run_live_pipeline(
                 participation_finished - decision_started
             ) * 1000.0,
             total_ms=(participation_finished - participation_started) * 1000.0,
+        )
+        logging.getLogger(__name__).warning(
+            "PARTICIPATION subphase timing %s",
+            json.dumps(participation_breakdown, separators=(",", ":"), default=str),
         )
         return result
 
@@ -2463,9 +2564,19 @@ def _run_live_pipeline(
         ),
         ledger=runtime_state.setdefault("walter_candidate_ledger", WalterCandidateLedger()),
         after_price_gate=retrieve_market_data,
+        post_stage_observer=note_process_stage,
     )
     scan_context(runtime_state).pipeline = architecture
     ledger = architecture.run()
+    post_ranking_timing = dict(
+        getattr(architecture, "post_stage_timing", {}) or {}
+    )
+    client.diagnostics["post_ranking_timing"] = post_ranking_timing
+    logging.getLogger(__name__).warning(
+        "POST-RANKING subphase timing %s",
+        json.dumps(post_ranking_timing, separators=(",", ":"), default=str),
+    )
+    note_process_stage("Finalizing scan diagnostics")
     ranked = state["ranked"]
     state["stage_diagnostics"].append(stage_diagnostic(
         "Entry readiness", ranked, ranked,
@@ -2606,6 +2717,7 @@ def _run_live_pipeline(
         client.diagnostics["active_pipeline_sources"] = client.pipeline_sources()
     runtime_recorder = flight_recorder or get_flight_recorder()
     recorder_runtime_diagnostics = {}
+    note_process_stage("Finalizing Flight Recorder evidence")
     flight_scan = record_scan_safely(
         runtime_recorder, seeds=state["seeds"],
         discovery_reasons=state["reasons"], snapshots=state["snapshots"],
@@ -3336,35 +3448,6 @@ elif alerts and alert_phrase:
     if alert_delivery_key != st.session_state.last_escalation_alert:
         play_alert("assets/alert.wav", alert_phrase, alert_voice_for_session())
         st.session_state.last_escalation_alert = alert_delivery_key
-
-# GS586: process-owned scans finish outside Streamlit. The observer fragment marks
-# the exact scan token before its repaint rerun; consume that token only after all
-# semantic alert registrations above so GS367 can still choose the highest tier for
-# this completed scan. This is transport/presentation only: it neither creates an
-# alert state nor changes any trading/evidence authority.
-_process_audio_pending = str(
-    st.session_state.get("_walter_process_scan_audio_pending_token") or ""
-)
-_process_audio_current = (
-    completed_scan.completed_at.isoformat() if completed_scan is not None else ""
-)
-if _process_audio_pending and _process_audio_pending == _process_audio_current:
-    if alerts:
-        from mide.gs419_completed_scan_heartbeat import heartbeat_markup
-
-        _process_audio_markup = heartbeat_markup(st.session_state)
-        if _process_audio_markup:
-            st.components.v1.html(
-                _process_audio_markup,
-                height=0,
-                scrolling=False,
-            )
-            print(
-                "[WALTER AUDIO] process scan browser registration "
-                f"token={_process_audio_current}",
-                flush=True,
-            )
-    st.session_state.pop("_walter_process_scan_audio_pending_token", None)
 
 tab_names = [
         "Radar",
@@ -4220,3 +4303,54 @@ if active_tab == "Webull Debug":
 # clock/observer is armed immediately after CompletedScan adoption above so a heavy
 # dashboard render cannot leave Last Scan and Auto Scan presentation minutes stale.
 
+
+
+# GS601: consume process-scan audio only after the entire dashboard render has
+# completed. The token must exactly match the visible CompletedScan and no newer
+# process scan may have started. Mismatches are discarded, not carried across
+# future reruns, so old evidence can never speak during a succeeding scan/repaint.
+_process_audio_pending = str(
+    st.session_state.get("_walter_process_scan_audio_pending_token") or ""
+)
+_process_audio_current = (
+    completed_scan.completed_at.isoformat() if completed_scan is not None else ""
+)
+if _process_audio_pending:
+    try:
+        _process_audio_snapshot = _gs585.snapshot()
+        _newer_process_scan_started = bool(
+            completed_scan is not None
+            and _process_audio_snapshot.last_started_at is not None
+            and _process_audio_snapshot.last_started_at > completed_scan.completed_at
+        )
+    except Exception:
+        _newer_process_scan_started = True
+
+    _process_audio_matches_visible = (
+        bool(_process_audio_current)
+        and _process_audio_pending == _process_audio_current
+    )
+    if _process_audio_matches_visible and not _newer_process_scan_started:
+        if alerts:
+            from mide.gs419_completed_scan_heartbeat import heartbeat_markup
+
+            _process_audio_markup = heartbeat_markup(st.session_state)
+            if _process_audio_markup:
+                st.components.v1.html(
+                    _process_audio_markup,
+                    height=0,
+                    scrolling=False,
+                )
+                print(
+                    "[WALTER AUDIO] process scan browser registration "
+                    f"token={_process_audio_current}",
+                    flush=True,
+                )
+    else:
+        print(
+            "[WALTER AUDIO] dropped stale process scan token "
+            f"pending={_process_audio_pending} visible={_process_audio_current} "
+            f"newer_scan_started={_newer_process_scan_started}",
+            flush=True,
+        )
+    st.session_state.pop("_walter_process_scan_audio_pending_token", None)

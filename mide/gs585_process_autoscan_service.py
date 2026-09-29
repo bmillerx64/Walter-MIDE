@@ -47,6 +47,8 @@ class ProcessAutoScanSnapshot:
     last_error: str | None
     generation: int
     thread_ident: int | None
+    current_stage: str | None
+    current_stage_started_at: datetime | None
 
 
 def _new_runtime() -> dict[str, Any]:
@@ -64,6 +66,8 @@ def _new_runtime() -> dict[str, Any]:
         "next_due_monotonic": None,
         "last_error": None,
         "generation": 0,
+        "current_stage": None,
+        "current_stage_started_at": None,
         "process_state": {},
     }
 
@@ -116,6 +120,12 @@ def snapshot() -> ProcessAutoScanSnapshot:
                 if thread is not None and thread.ident is not None
                 else None
             ),
+            current_stage=(
+                str(runtime["current_stage"])
+                if runtime.get("current_stage")
+                else None
+            ),
+            current_stage_started_at=runtime.get("current_stage_started_at"),
         )
 
 
@@ -195,6 +205,8 @@ def note_scan_started(started_at: datetime | None = None) -> None:
     now_mono = time.monotonic()
     with runtime["lock"]:
         runtime["last_started_at"] = started_at or datetime.now().astimezone()
+        runtime["current_stage"] = "Starting Walter Architecture"
+        runtime["current_stage_started_at"] = runtime["last_started_at"]
         runtime["next_due_monotonic"] = (
             now_mono + float(runtime["refresh_seconds"])
         )
@@ -202,12 +214,27 @@ def note_scan_started(started_at: datetime | None = None) -> None:
     runtime["wake"].set()
 
 
+def note_scan_stage(stage: str, started_at: datetime | None = None) -> None:
+    """Publish diagnostic-only in-flight stage truth for browser observers."""
+    runtime = _runtime()
+    with runtime["lock"]:
+        if not runtime.get("running"):
+            return
+        runtime["current_stage"] = str(stage or "Working")
+        runtime["current_stage_started_at"] = (
+            started_at or datetime.now().astimezone()
+        )
+
+
 def note_scan_finished(finished_at: datetime | None = None) -> None:
     runtime = _runtime()
     with runtime["lock"]:
-        runtime["last_finished_at"] = (
-            finished_at or datetime.now().astimezone()
-        )
+        finished = finished_at or datetime.now().astimezone()
+        runtime["last_finished_at"] = finished
+        # The watchdog has released the scan body, but the worker still needs to
+        # create and publish the immutable CompletedScan before returning.
+        runtime["current_stage"] = "Publishing completed scan"
+        runtime["current_stage_started_at"] = finished
 
 
 def _schedule_retry(
@@ -257,6 +284,8 @@ def _scheduler_loop(runtime: dict[str, Any]) -> None:
         finally:
             with runtime["lock"]:
                 runtime["running"] = False
+                runtime["current_stage"] = None
+                runtime["current_stage_started_at"] = None
                 if runtime["enabled"] and runtime["next_due_monotonic"] is None:
                     # Watchdog collision/transient failure: retry soon. A normal
                     # successful worker calls note_scan_started() and already has
@@ -282,6 +311,8 @@ def _reset_for_tests() -> None:
         runtime["next_due_monotonic"] = None
         runtime["last_error"] = None
         runtime["generation"] = 0
+        runtime["current_stage"] = None
+        runtime["current_stage_started_at"] = None
         runtime["process_state"].clear()
         thread = runtime.get("thread")
         if thread is None or not thread.is_alive():

@@ -134,6 +134,7 @@ class WalterArchitectureV1:
         timer: Callable[[], float] | None = None,
         after_price_gate: Callable[[list[dict]], None] | None = None,
         ledger: WalterCandidateLedger | None = None,
+        post_stage_observer: Callable[[str], None] | None = None,
     ) -> None:
         self._runtime_dispatch = runtime_dispatch
         if runtime_dispatch is not None:
@@ -164,6 +165,8 @@ class WalterArchitectureV1:
         self.clock = clock or (lambda: datetime.now(timezone.utc))
         self.timer = timer or perf_counter
         self.after_price_gate = after_price_gate
+        self.post_stage_observer = post_stage_observer
+        self.post_stage_timing: dict[str, float] = {}
         self.trace: list[dict] = []
         self.purity_observations: list[dict] = []
         self.candidate_ledger = ledger or WalterCandidateLedger()
@@ -571,6 +574,10 @@ class WalterArchitectureV1:
         self._record_trace(
             STAGES[7], len(candidates), len(ranked), started_at=ranking_started,
         )
+        self.post_stage_timing = {}
+        post_step_started = self.timer()
+        if self.post_stage_observer:
+            self.post_stage_observer("Post-ranking · ledger audit completion")
         results = list(self._ledger.values())
         for record in (self._ledger[symbol] for symbol in current_order):
             audited = {
@@ -584,12 +591,27 @@ class WalterArchitectureV1:
                         decision="Not evaluated",
                         reason=f"Candidate already terminated at {record['terminal_stage']}",
                     )
+        self.post_stage_timing["ledger_audit_completion_ms"] = round(
+            (self.timer() - post_step_started) * 1000, 3
+        )
         from mide.decision_narrative import attach_decision_narratives
 
+        if self.post_stage_observer:
+            self.post_stage_observer("Post-ranking · decision narratives")
+        post_step_started = self.timer()
         attach_decision_narratives(results)
+        self.post_stage_timing["decision_narratives_ms"] = round(
+            (self.timer() - post_step_started) * 1000, 3
+        )
         if any(item.get("terminal_outcome") not in TERMINAL_OUTCOMES for item in results):
             raise ArchitectureViolation("Every discovered candidate requires a terminal outcome")
+        if self.post_stage_observer:
+            self.post_stage_observer("Post-ranking · Candidate History persistence")
+        post_step_started = self.timer()
         self.store.persist(results)
+        self.post_stage_timing["candidate_history_persistence_ms"] = round(
+            (self.timer() - post_step_started) * 1000, 3
+        )
         # Publish the authoritative ledger objects in ranking order so the UI
         # receives the terminal outcome, complete audit, and mission rank that
         # were persisted—not the ranker's detached working copies.
@@ -597,18 +619,36 @@ class WalterArchitectureV1:
             (item for item in results if item["terminal_outcome"] == "Qualified and Ranked"),
             key=lambda item: item["mission_rank"],
         )
+        if self.post_stage_observer:
+            self.post_stage_observer("Post-ranking · completed-result publication")
+        post_step_started = self.timer()
         self.publish(published)
+        self.post_stage_timing["completed_result_publication_ms"] = round(
+            (self.timer() - post_step_started) * 1000, 3
+        )
         from mide.operational_validation import validate_runtime
 
+        if self.post_stage_observer:
+            self.post_stage_observer("Post-ranking · runtime validation")
+        post_step_started = self.timer()
         self.operational_summary = validate_runtime(
             ledger=results, published=published, stages=self.trace,
             persistence_completed=True,
         )
+        self.post_stage_timing["runtime_validation_ms"] = round(
+            (self.timer() - post_step_started) * 1000, 3
+        )
         from mide.architecture_verification import verify_architecture
 
+        if self.post_stage_observer:
+            self.post_stage_observer("Post-ranking · architecture verification")
+        post_step_started = self.timer()
         self.verification_report = verify_architecture(
             results, self.trace, purity_observations=self.purity_observations,
         ).as_dict()
+        self.post_stage_timing["architecture_verification_ms"] = round(
+            (self.timer() - post_step_started) * 1000, 3
+        )
         return results
 
 
