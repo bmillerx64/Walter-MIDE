@@ -81,7 +81,7 @@ def test_gs596_audio_health_reports_scope_and_outcome_without_timer_retry():
     assert "click Re-arm / test again" in markup
     assert "window.setTimeout(() => speakFresh(attempt + 1), 450);" not in markup
     assert "GS596 parent-sync re-arm" in markup
-    assert "scope=${speechScope}" in markup
+    assert "scope=${scope}" in markup
 
 
 def test_scope_lock_is_alert_transport_presentation_only():
