@@ -55,7 +55,8 @@ def test_exact_blocker_is_exposed_on_opportunity_state():
         "attention_provenance": [],
     }
     result = gs528.state_with_entry_contract(lambda _record: base, record)
-    assert result["reason"].startswith("SETTING UP · 3/4 TRIGGER LOCKS:")
+    assert result["reason"] == "Constructive setup."
+    assert result["entry_contract"]["label"] == "SETTING UP · 3/4 TRIGGER LOCKS"
     assert "Entry blocker: supertrend_flip failed" in result["next_step"]
 
 
