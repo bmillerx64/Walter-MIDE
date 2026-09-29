@@ -131,7 +131,7 @@ def test_gs520_preserves_single_child_mission_slot_contract():
 
 def test_gs524_audio_health_uses_practical_parent_window_bell():
     markup = alert_audio_health_markup()
-    assert "root.speechSynthesis || window.speechSynthesis" in markup
+    assert "window.speechSynthesis || root.speechSynthesis" in markup
     assert "frequency * 1.5" in markup
     assert "exponentialRampToValueAtTime(0.30" in markup
     assert "strike(base, 523.25)" in markup
