@@ -49,7 +49,7 @@ def test_gs595_explicit_rearm_speaks_synchronously_when_queue_is_idle():
 
 
 
-def test_gs593_voice_test_preserves_direct_iframe_user_activation():
+def test_gs595_voice_test_preserves_direct_iframe_user_activation():
     markup = alert_audio_health_markup()
     listener = markup.index("button.addEventListener('click', () => {")
     voice_call = markup.index("testVoice();", listener)
@@ -61,7 +61,7 @@ def test_gs593_voice_test_preserves_direct_iframe_user_activation():
     assert listener < voice_call < rearm_call
     assert "testVoice();" not in markup[play_start:play_end]
     assert "resumed.then(play)" in markup[rearm_start:listener]
-    assert "GS593: this Re-arm/test click originates inside this Streamlit" in markup
+    assert "GS595: the speech request itself must remain inside the actual" in markup
     assert "window.speechSynthesis || root.speechSynthesis" in markup
     assert "window.SpeechSynthesisUtterance || root.SpeechSynthesisUtterance" in markup
     assert "root.speechSynthesis || window.speechSynthesis" not in markup
