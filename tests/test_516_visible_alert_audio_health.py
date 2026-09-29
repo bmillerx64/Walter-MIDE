@@ -141,3 +141,11 @@ def test_gs596_audio_health_keeps_bell_and_expands_visible_diagnostics():
     assert "strike(base, 523.25)" in markup
     assert "strike(base + 0.42, 783.99)" in markup
     assert "AUDIO READY · TEST PLAYING" in markup
+
+
+def test_gs597_voice_diagnostic_scope_is_explicit_not_free_variable():
+    markup = alert_audio_health_markup()
+    assert "const voiceEngineDetail = (synth, scope = 'unknown') => {" in markup
+    assert "scope=${scope}" in markup
+    assert "scope=${speechScope}" not in markup
+    assert markup.count("voiceEngineDetail(synth, speechScope)") >= 5
