@@ -196,6 +196,52 @@ def test_gs560_ui_describes_bounded_review_bundle():
     assert "Full Session Backup remains the complete archive" in source
     assert "review_window_start_utc" in source
 
+def test_gs600_cab_yields_to_live_scans_and_uses_fast_compression(tmp_path):
+    candidate = tmp_path / "candidate_history.jsonl"
+    flight = tmp_path / "flight_recorder.jsonl"
+    candidate.write_text(
+        "".join(
+            json.dumps(
+                {
+                    "symbol": f"T{i}",
+                    "timestamp": "2026-09-29T17:55:00Z",
+                    "price": 1.0,
+                }
+            )
+            + "\n"
+            for i in range(30)
+        ),
+        encoding="utf-8",
+    )
+    flight.write_text(
+        '{"scan_id":"one","timestamp":"2026-09-29T17:55:00+00:00"}\n',
+        encoding="utf-8",
+    )
+
+    info = gs510.build_analysis_bundle(
+        candidate,
+        flight,
+        output_dir=tmp_path / "static",
+        now=datetime(2026, 9, 29, 17, 56, tzinfo=UTC),
+        token="gs600",
+    )
+
+    with ZipFile(tmp_path / "static" / info["filename"]) as zipped:
+        manifest = json.loads(zipped.read("manifest.json"))
+
+    assert gs510.CAB_COMPRESSION_LEVEL == 1
+    assert gs510.CAB_YIELD_EVERY_ROWS == 25
+    assert gs510.CAB_YIELD_SECONDS > 0
+    assert manifest["compression_level"] == gs510.CAB_COMPRESSION_LEVEL
+    assert manifest["cooperative_yield_every_rows"] == gs510.CAB_YIELD_EVERY_ROWS
+    assert manifest["cooperative_yield_seconds"] == gs510.CAB_YIELD_SECONDS
+
+    source = Path("mide/gs510_compact_analysis_bundle.py").read_text(encoding="utf-8")
+    assert "sleep(CAB_YIELD_SECONDS)" in source
+    assert "CAB work is " in source
+    assert '"throttled to yield back to live scans."' in source
+
+
 def test_scope_lock_is_forensics_only():
     source = Path("mide/gs510_compact_analysis_bundle.py").read_text(encoding="utf-8")
     forbidden = (
