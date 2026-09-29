@@ -5106,7 +5106,8 @@ def alert_audio_health_markup() -> str:
     return r"""
     <style>
       .walter-audio-health {
-        display:flex; align-items:center; justify-content:space-between; gap:8px;
+        display:grid; grid-template-columns:minmax(0,1fr) auto;
+        align-items:start; gap:8px;
         border:1px solid #475569; border-radius:8px; padding:7px 8px;
         font:12px -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
         background:#111827; color:#f8fafc;
@@ -5119,7 +5120,10 @@ def alert_audio_health_markup() -> str:
         background:#172033; color:#f8fafc; cursor:pointer; font-weight:800;
         white-space:nowrap;
       }
-      #walter-audio-health-status { font-weight:900; line-height:1.25; }
+      #walter-audio-health-status {
+        font-weight:900; line-height:1.25; white-space:normal;
+        overflow-wrap:anywhere; min-width:0;
+      }
     </style>
     <div id="walter-audio-health" class="walter-audio-health warn">
       <span id="walter-audio-health-status">AUDIO STATUS CHECKING…</span>
@@ -5201,21 +5205,28 @@ def alert_audio_health_markup() -> str:
         try {
           voiceCount = synth.getVoices ? synth.getVoices().length : -1;
         } catch (_) {}
-        return `pending=${Boolean(synth.pending)} · speaking=${Boolean(synth.speaking)} · paused=${Boolean(synth.paused)} · voices=${voiceCount}`;
+        return `scope=${speechScope} · pending=${Boolean(synth.pending)} · speaking=${Boolean(synth.speaking)} · paused=${Boolean(synth.paused)} · voices=${voiceCount}`;
       };
 
       const testVoice = () => {
         try {
-          // GS595: the speech request itself must remain inside the actual
-          // Re-arm/test click. GS592's cancel + 300ms setTimeout moved speak()
-          // outside transient user activation; live Chrome then accepted the
-          // utterance into pending=true but never started it. Use the frame-local
-          // engine first (GS593), speak synchronously when idle, and if the queue
-          // is stale/busy clear it and require a fresh click instead of scheduling
-          // an automatic delayed retry outside the user gesture.
-          const synth = window.speechSynthesis || root.speechSynthesis;
-          const Utterance =
-            window.SpeechSynthesisUtterance || root.SpeechSynthesisUtterance;
+          // GS596: GS595 proved frame-local synchronous speech still reaches
+          // pending=true without ever starting in deployed Chrome. Walter's older
+          // working GS311 transport prefers the parent browser speech engine.
+          // Keep speak() synchronous in this click, but use the parent synth and
+          // matching parent utterance constructor when accessible; frame remains
+          // the fallback.
+          const parentSpeechAvailable = Boolean(
+            root && root !== window &&
+            root.speechSynthesis && root.SpeechSynthesisUtterance
+          );
+          const synth = parentSpeechAvailable
+            ? root.speechSynthesis
+            : window.speechSynthesis;
+          const Utterance = parentSpeechAvailable
+            ? root.SpeechSynthesisUtterance
+            : window.SpeechSynthesisUtterance;
+          const speechScope = parentSpeechAvailable ? 'parent' : 'frame';
           if (!synth || !Utterance) {
             voiceTestState = 'error';
             voiceTestDetail = 'speech unavailable';
@@ -5247,7 +5258,8 @@ def alert_audio_health_markup() -> str:
               try {
                 root.__walterVoiceTransport = {
                   phrase: 'Walter alerts ready.',
-                  source: 'GS595 direct-activation re-arm',
+                  source: 'GS596 parent-sync re-arm',
+                  scope: speechScope,
                   status: 'speaking',
                   armed: true,
                   startedAt: new Date().toISOString(),
@@ -5284,7 +5296,7 @@ def alert_audio_health_markup() -> str:
                 root.__walterVoiceTransport = {
                   ...(root.__walterVoiceTransport || {}),
                   phrase: 'Walter alerts ready.',
-                  source: 'GS595 direct-activation re-arm',
+                  source: 'GS596 parent-sync re-arm',
                   status: 'error',
                   detail: voiceTestDetail,
                   completedAt: new Date().toISOString(),
@@ -5300,7 +5312,7 @@ def alert_audio_health_markup() -> str:
             try {
               root.__walterVoiceTransport = {
                 phrase: 'Walter alerts ready.',
-                source: 'GS595 direct-activation re-arm',
+                source: 'GS596 parent-sync re-arm',
                 status: 'requested',
                 armed: true,
                 requestedAt: new Date().toISOString(),
@@ -5323,7 +5335,7 @@ def alert_audio_health_markup() -> str:
               try {
                 root.__walterVoiceTransport = {
                   ...(root.__walterVoiceTransport || {}),
-                  source: 'GS595 direct-activation re-arm',
+                  source: 'GS596 parent-sync re-arm',
                   status: 'error',
                   detail: voiceTestDetail,
                   completedAt: new Date().toISOString(),
@@ -5350,7 +5362,7 @@ def alert_audio_health_markup() -> str:
               root.__walterVoiceTransport = {
                 ...(root.__walterVoiceTransport || {}),
                 phrase: 'Walter alerts ready.',
-                source: 'GS595 direct-activation re-arm',
+                source: 'GS596 parent-sync re-arm',
                 status: 'reset_needs_click',
                 detail: voiceTestDetail,
                 completedAt: new Date().toISOString(),
@@ -5360,8 +5372,8 @@ def alert_audio_health_markup() -> str:
             return false;
           }
 
-          // Critical GS595 invariant: speak() executes synchronously in the
-          // button click call stack. Do not insert a Promise or timer here.
+          // Critical GS596 invariant: parent-preferred speak() still executes
+          // synchronously in the button click call stack. No Promise or timer.
           markArmed();
           speakFresh(0);
           return true;
@@ -5460,7 +5472,7 @@ def render_sidebar_audio_health(st_module) -> None:
     try:
         st_module.components.v1.html(
             alert_audio_health_markup(),
-            height=58,
+            height=118,
             scrolling=False,
         )
     except Exception:

@@ -1,7 +1,7 @@
 from pathlib import Path
 
 
-def test_gs595_health_rearm_preserves_click_activation_after_sleep():
+def test_gs596_health_rearm_uses_parent_sync_click_activation_after_sleep():
     source = Path("mide/authorities/presentation_audio.py").read_text(
         encoding="utf-8"
     )
@@ -9,8 +9,9 @@ def test_gs595_health_rearm_preserves_click_activation_after_sleep():
     end = source.index("      const rearm = () => {", start)
     block = source[start:end]
 
-    assert "window.speechSynthesis || root.speechSynthesis" in block
-    assert "GS595: the speech request itself must remain inside the actual" in block
+    assert "const parentSpeechAvailable = Boolean(" in block
+    assert "? root.speechSynthesis" in block
+    assert "GS596: GS595 proved frame-local synchronous speech still reaches" in block
     assert "const queueBusy = Boolean(" in block
     assert "if (synth.cancel) synth.cancel();" in block
     assert "if (synth.resume) synth.resume();" in block
