@@ -145,10 +145,10 @@ def test_gs566_senior_candidate_alert_does_not_consume_waiting_mover(monkeypatch
 
 def test_gs566_app_dedupe_key_includes_actual_spoken_phrase():
     source = Path("app.py").read_text(encoding="utf-8")
-    start = source.index("elif alerts and alert_phrase:")
-    block = source[start : start + 1400]
+    start = source.index("if alerts and audio_triggered and alert_phrase:")
+    block = source[start : start + 1800]
 
     assert "alert_delivery_key" in block
-    assert '" ".join(str(alert_phrase).split())' in block
-    assert "state_change_signature" in block
+    assert '" ".join(alert_phrase.split())' in block
+    assert '_audio_event.get("signature")' in block
     assert "alert_delivery_key != st.session_state.last_escalation_alert" in block
