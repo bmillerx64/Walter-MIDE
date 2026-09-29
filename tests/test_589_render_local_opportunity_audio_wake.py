@@ -1,7 +1,7 @@
 from pathlib import Path
 
 
-def test_gs591_health_rearm_recovers_browser_speech_after_sleep():
+def test_gs593_health_rearm_preserves_iframe_activation_after_sleep():
     source = Path("mide/authorities/presentation_audio.py").read_text(
         encoding="utf-8"
     )
@@ -9,7 +9,8 @@ def test_gs591_health_rearm_recovers_browser_speech_after_sleep():
     end = source.index("      const rearm = () => {", start)
     block = source[start:end]
 
-    assert "root.speechSynthesis || window.speechSynthesis" in block
+    assert "window.speechSynthesis || root.speechSynthesis" in block
+    assert "GS593: this Re-arm/test click originates inside this Streamlit" in block
     assert "if (synth.cancel) synth.cancel();" in block
     assert "if (synth.paused && synth.resume) synth.resume();" in block
     assert "if (synth.resume) synth.resume();" in block
