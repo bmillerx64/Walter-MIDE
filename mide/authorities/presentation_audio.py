@@ -2184,6 +2184,8 @@ MAJOR_MOVER_PCT = 20.0
 MIN_DOLLAR_VOLUME = 250_000.0
 LEADER_DOMINANCE = 78.0
 _MARKET_LEADER_CONTINUITY_OWNER = "_walter_gs443_market_leader_radar_continuity"
+_MARKET_LEADER_AUDIO_KEY = "_walter_render_market_leader_audio"
+_MARKET_LEADER_LAST_SPOKEN_KEY = "_walter_last_spoken_market_leader_signature"
 
 
 def _market_leader_number(
@@ -2303,6 +2305,8 @@ def market_leader_candidate(
             "dominance": round(dominance, 1),
             "vwap_distance_pct": None if distance is None else round(distance, 1),
             "alignment_score": alignment,
+            "pe_strength": pe_strength_display_value(record),
+            "headline": _extreme_headline(record),
             "guidance": guidance,
             "provenance": provenance,
         }
@@ -2322,6 +2326,15 @@ def market_leader_markup(event: dict) -> str:
         if distance is None
         else f"{abs(float(distance)):.1f}% {'above' if float(distance) >= 0 else 'below'} VWAP"
     )
+    pe = event.get("pe_strength")
+    pe_text = f" · P/E Strength {int(pe)}/100" if pe is not None else ""
+    headline = " ".join(str(event.get("headline") or "").split())
+    catalyst = (
+        f"<div style='color:#c7d7e5;font-size:.82rem;margin-top:5px'><b>Catalyst:</b> "
+        f"{html.escape(headline)}</div>"
+        if headline
+        else ""
+    )
     return (
         "<div style='background:#0b1119;border:1px solid #36566f;border-radius:12px;"
         "margin:8px 0 14px;padding:10px 12px'>"
@@ -2330,12 +2343,29 @@ def market_leader_markup(event: dict) -> str:
         f"<div style='margin-top:5px;font-weight:900;color:#e6f4ff'>{html.escape(str(event['symbol']))}"
         f" · {html.escape(str(event['state']))}</div>"
         f"<div style='color:#c7d7e5;font-size:.86rem;margin-top:3px'>"
-        f"Move +{float(event['pct_change']):.1f}% · Dominance {float(event['dominance']):.1f}/100 · "
-        f"Alignment {int(event['alignment_score'])}/3 · {html.escape(vwap_text)}</div>"
+        f"Move +{float(event['pct_change']):.1f}% · Dominance {float(event['dominance']):.1f}/100"
+        f"{pe_text} · Alignment {int(event['alignment_score'])}/3 · {html.escape(vwap_text)}</div>"
+        f"{catalyst}"
         f"<div style='color:#93a4b8;font-size:.81rem;margin-top:5px'>{html.escape(str(event['guidance']))}</div>"
         "</div>"
     )
 
+
+def _publish_market_leader_audio_event(event: dict | None) -> None:
+    """Publish the visible leader strip into the same canonical live voice authority."""
+    from mide import ui
+
+    try:
+        from mide.gs366_rerun_alert_dedupe import completed_scan_token
+
+        token = completed_scan_token(ui.st.session_state)
+    except Exception:
+        token = "no-completed-scan"
+
+    ui.st.session_state[_MARKET_LEADER_AUDIO_KEY] = {
+        "scan_token": token,
+        "event": deepcopy(event) if isinstance(event, dict) else None,
+    }
 
 def install_market_leader_continuity() -> None:
     """Bind GS443 at its historical presentation position."""
@@ -2351,6 +2381,7 @@ def install_market_leader_continuity() -> None:
             return result
         mission = ui.walter_mission_control(records)
         _record, event = market_leader_candidate(records, mission=mission)
+        _publish_market_leader_audio_event(event)
         if event is not None:
             ui.st.markdown(market_leader_markup(event), unsafe_allow_html=True)
         return result
@@ -5906,6 +5937,90 @@ def _canonical_extreme_audio_phrase(event: dict) -> str:
     return " ".join(parts)
 
 
+def _canonical_market_leader_audio_phrase(event: dict) -> str:
+    symbol = str(event.get("symbol") or "").strip().upper()
+    state_label = " ".join(str(event.get("state") or "").split())
+    headline = " ".join(str(event.get("headline") or "").split())
+    guidance = " ".join(str(event.get("guidance") or "").split())
+    if not symbol or not state_label:
+        return ""
+
+    parts = [f"{symbol}.", "Market leader radar.", f"{state_label}."]
+    try:
+        parts.append(f"Move plus {float(event.get('pct_change') or 0.0):.1f} percent.")
+    except (TypeError, ValueError):
+        pass
+    try:
+        parts.append(f"Dominance {float(event.get('dominance') or 0.0):.0f}.")
+    except (TypeError, ValueError):
+        pass
+    if event.get("pe_strength") is not None:
+        parts.append(f"P E strength {int(event['pe_strength'])}.")
+    if headline:
+        parts.append(f"Catalyst. {headline}.")
+    if guidance:
+        parts.append(guidance if guidance.endswith((".", "!", "?")) else f"{guidance}.")
+    return " ".join(parts)
+
+
+def _current_market_leader_audio_event(
+    state,
+    *,
+    expected_scan_token: str,
+) -> dict:
+    payload = state.get(_MARKET_LEADER_AUDIO_KEY) or {}
+    if str(payload.get("scan_token") or "") != str(expected_scan_token or ""):
+        return {
+            "triggered": False,
+            "phrase": "",
+            "symbol": "",
+            "surface": "market_leader_radar",
+            "state_label": "",
+            "signature": "",
+            "reason": "leader_token_mismatch",
+        }
+
+    event = payload.get("event")
+    if not isinstance(event, dict):
+        return {
+            "triggered": False,
+            "phrase": "",
+            "symbol": "",
+            "surface": "market_leader_radar",
+            "state_label": "",
+            "signature": "",
+            "reason": "no_market_leader",
+        }
+
+    symbol = str(event.get("symbol") or "").strip().upper()
+    state_label = str(event.get("state") or "").strip()
+    headline = " ".join(str(event.get("headline") or "").split())
+    signature = "|".join(("market_leader_radar", symbol, state_label, headline))
+    phrase = _canonical_market_leader_audio_phrase(event)
+    last_spoken = str(state.get(_MARKET_LEADER_LAST_SPOKEN_KEY) or "")
+    return {
+        "triggered": bool(phrase and signature and signature != last_spoken),
+        "phrase": phrase,
+        "symbol": symbol,
+        "surface": "market_leader_radar",
+        "state_label": state_label,
+        "signature": signature,
+        "reason": (
+            "new_market_leader_attention"
+            if signature != last_spoken
+            else "market_leader_already_spoken"
+        ),
+    }
+
+
+def mark_render_audio_event_spoken(state, event: dict) -> None:
+    """Persist delivery memory for secondary canonical attention surfaces."""
+    if str(event.get("surface") or "") == "market_leader_radar":
+        signature = str(event.get("signature") or "")
+        if signature:
+            state[_MARKET_LEADER_LAST_SPOKEN_KEY] = signature
+
+
 def current_render_audio_event(
     state,
     *,
@@ -5913,12 +6028,18 @@ def current_render_audio_event(
 ) -> dict:
     """Return the single canonical live voice event for the rendered scan.
 
-    GS605 collapses live speech onto the exact first operator surface. Historical
-    escalation/audio wrappers remain available for compatibility and tests, but
-    they no longer decide what the live browser says.
+    GS605 keeps one live semantic authority. GS608 allows one secondary visible
+    attention surface -- Market Leader Radar -- to speak only when the primary
+    rendered Opportunity surface has no new state to announce.
     """
+    leader_audio = _current_market_leader_audio_event(
+        state,
+        expected_scan_token=expected_scan_token,
+    )
     payload = state.get(_RENDER_AUDIO_FOCUS_KEY) or {}
     if str(payload.get("scan_token") or "") != str(expected_scan_token or ""):
+        if leader_audio.get("triggered"):
+            return leader_audio
         return {
             "triggered": False,
             "phrase": "",
@@ -5931,6 +6052,8 @@ def current_render_audio_event(
 
     record = payload.get("record")
     if not isinstance(record, dict):
+        if leader_audio.get("triggered"):
+            return leader_audio
         return {
             "triggered": False,
             "phrase": "",
@@ -5961,25 +6084,28 @@ def current_render_audio_event(
         )
     )
 
-    # Speak only when the rendered operator focus or its state changes. The first
-    # completed surface after a reboot is also a real operator-context change.
     triggered = bool(phrase and signature and signature != previous_signature)
-    reason = (
-        "first_rendered_focus"
-        if triggered and not previous_signature.strip("|")
-        else "rendered_focus_or_state_changed"
-        if triggered
-        else "rendered_focus_unchanged"
-    )
-    return {
+    primary = {
         "triggered": triggered,
         "phrase": phrase,
         "symbol": symbol,
         "surface": surface,
         "state_label": state_label,
         "signature": signature,
-        "reason": reason,
+        "reason": (
+            "first_rendered_focus"
+            if triggered and not previous_signature.strip("|")
+            else "rendered_focus_or_state_changed"
+            if triggered
+            else "rendered_focus_unchanged"
+        ),
     }
+    if triggered:
+        return primary
+    if leader_audio.get("triggered"):
+        return leader_audio
+    return primary
+
 
 
 def operator_scoped_market_events(
@@ -6079,6 +6205,7 @@ def bind_final_enriched_opportunity_order(
 __all__ = [
     "current_render_audio_focus",
     "current_render_audio_event",
+    "mark_render_audio_event_spoken",
     "canonical_opportunity_audio_phrase",
     "opportunity_description_line",
     "pe_strength_display_value",
