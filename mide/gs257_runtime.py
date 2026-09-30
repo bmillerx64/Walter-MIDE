@@ -155,11 +155,20 @@ def install() -> None:
                         "relative_volume_10d": row.get("relative_volume_10d"),
                         "sources": [],
                         "ranks": {},
+                        "feed_metrics": {},
                     },
                 )
                 if feed.key not in entry["sources"]:
                     entry["sources"].append(feed.key)
                 entry["ranks"][feed.key] = row["rank"]
+                entry["feed_metrics"][feed.key] = {
+                    "rank": row.get("rank"),
+                    "price": row.get("price"),
+                    "change_ratio": row.get("change_ratio"),
+                    "volume": row.get("volume"),
+                    "relative_volume_10d": row.get("relative_volume_10d"),
+                    "market_value": row.get("market_value"),
+                }
                 for field in (
                     "name",
                     "price",
