@@ -81,6 +81,13 @@ _EVENT_PATTERNS: dict[str, tuple[str, ...]] = {
     "NON_DILUTIVE_FUNDING": (
         r"\b(?:non[- ]dilutive|grant award|government grant|research grant)\b",
     ),
+    # A tender/proposal is not an awarded contract. GS618 treats it as an
+    # attention-only company event so Walter can put the ticker on radar early
+    # without awarding catalyst points or bypassing any market-data gate.
+    "TENDER_PROPOSAL": (
+        r"\b(?:tender(?:s|ed|ing)?|submit(?:s|ted)?\s+(?:\w+\s+){0,3}proposals?)\b"
+        r".{0,100}\b(?:project|contract|engineering|infrastructure|hvac|million|billion)\b",
+    ),
     "DILUTION_RISK": (
         r"\b(?:public offering|registered direct|at[- ]the[- ]market|atm offering|warrant inducement|shelf registration|equity line)\b",
     ),
@@ -94,6 +101,7 @@ _POSITIVE_ATTENTION_CATEGORIES = frozenset({
     "REGULATORY_CLINICAL", "FINANCIAL_GROWTH", "IP_LICENSE",
     "NON_DILUTIVE_FUNDING",
 })
+_ATTENTION_ONLY_CATEGORIES = frozenset({"TENDER_PROPOSAL"})
 _RISK_CATEGORIES = frozenset({"DILUTION_RISK", "DISTRESS_RISK"})
 
 _NUMBER_RE = re.compile(
@@ -114,6 +122,17 @@ _MARKETWIDE_BY_SYMBOL: dict[str, Any] = {}
 _LAST_SELECTED: list[dict] = []
 _LATEST_MARKETWIDE_TRACE: list[dict] = []
 _LATEST_TARGETED_TRACE: dict[str, dict] = {}
+
+# GS618: continuous FMP latest-news discovery cache. This is identity/awareness
+# state only; it never carries market-data or trading authority between scans.
+FMP_LATEST_DISCOVERY_ENDPOINT = "news/stock-latest"
+FMP_LATEST_DISCOVERY_LOOKBACK = timedelta(hours=6)
+FMP_LATEST_DISCOVERY_BOOTSTRAP_PAGES = 2
+FMP_LATEST_DISCOVERY_STEADY_PAGES = 1
+FMP_LATEST_DISCOVERY_CACHE_LIMIT = 500
+_FMP_LATEST_DISCOVERY_CACHE: dict[str, Any] = {}
+_FMP_LATEST_DISCOVERY_TRACE: dict[str, Any] = {}
+_FMP_LATEST_DISCOVERY_OWNER = "_walter_gs618_fmp_latest_discovery_owner"
 
 
 def _inherit(wrapper, wrapped) -> None:
@@ -223,12 +242,14 @@ def story_intelligence(headline: str, text: str = "") -> dict:
     categories = _event_categories(combined)
     quantities = _quantities(combined)
     positive = [category for category in categories if category in _POSITIVE_ATTENTION_CATEGORIES]
+    attention_only = [category for category in categories if category in _ATTENTION_ONLY_CATEGORIES]
     risks = [category for category in categories if category in _RISK_CATEGORIES]
-    material_attention = bool(positive) and not bool(risks)
+    material_attention = bool(positive or attention_only) and not bool(risks)
     return {
         "authority": AUTHORITY,
         "categories": categories,
         "positive_attention_categories": positive,
+        "attention_only_categories": attention_only,
         "risk_categories": risks,
         "quantities": quantities,
         "material_attention": material_attention,
@@ -464,6 +485,11 @@ def _install_discovery_diagnostics() -> None:
         _LATEST_MARKETWIDE_TRACE.clear()
         _LATEST_MARKETWIDE_TRACE.extend(deepcopy(trace))
         if isinstance(news_diag, dict):
+            if _FMP_LATEST_DISCOVERY_TRACE:
+                news_diag["endpoint"] = _FMP_LATEST_DISCOVERY_TRACE.get(
+                    "endpoint", FMP_LATEST_DISCOVERY_ENDPOINT
+                )
+                news_diag["latest_feed"] = deepcopy(_FMP_LATEST_DISCOVERY_TRACE)
             news_diag["selected_evidence"] = deepcopy(trace)
             news_diag["selected_symbols"] = [item["symbol"] for item in trace]
             news_diag["already_native_symbols"] = [
@@ -1727,6 +1753,120 @@ def install_news_corroborated_shadow_rvol() -> None:
 
 
 # ---------------------------------------------------------------------------
+# GS618 continuous FMP latest-news discovery
+# ---------------------------------------------------------------------------
+
+def fetch_fmp_latest_discovery_news(
+    api_key: str,
+    *,
+    now=None,
+    session=None,
+    timeout: int = 4,
+    limit: int = 100,
+):
+    """Return a rolling six-hour cache seeded from FMP's official latest feed.
+
+    First use requests at most two pages to recover premarket context after a cold
+    start. Warm scans request page 0 only, merge/dedupe into a bounded process cache,
+    and keep the normal GS298 identity-only downstream contract.
+    """
+    current = _utc(now() if callable(now) else now) or datetime.now(UTC)
+    cutoff = current - FMP_LATEST_DISCOVERY_LOOKBACK
+    bootstrap = not bool(_FMP_LATEST_DISCOVERY_CACHE)
+    max_pages = (
+        FMP_LATEST_DISCOVERY_BOOTSTRAP_PAGES
+        if bootstrap
+        else FMP_LATEST_DISCOVERY_STEADY_PAGES
+    )
+    articles, trace = fetch_fmp_marketwide_latest_for_brief(
+        api_key,
+        cutoff=cutoff,
+        now=current,
+        session=session,
+        timeout=timeout,
+        page_size=max(1, min(int(limit), 100)),
+        max_pages=max_pages,
+    )
+
+    for article in articles:
+        stamp = _utc(getattr(article, "created_at", None))
+        if stamp is None or stamp < cutoff:
+            continue
+        key = str(getattr(article, "id", "") or "")
+        if not key:
+            key = f"{stamp.isoformat()}:{getattr(article, 'headline', '')}"
+        _FMP_LATEST_DISCOVERY_CACHE[key] = article
+
+    stale = [
+        key
+        for key, article in _FMP_LATEST_DISCOVERY_CACHE.items()
+        if (_utc(getattr(article, "created_at", None)) or datetime.min.replace(tzinfo=UTC)) < cutoff
+    ]
+    for key in stale:
+        _FMP_LATEST_DISCOVERY_CACHE.pop(key, None)
+
+    ordered = sorted(
+        _FMP_LATEST_DISCOVERY_CACHE.values(),
+        key=lambda article: _utc(getattr(article, "created_at", None))
+        or datetime.min.replace(tzinfo=UTC),
+        reverse=True,
+    )
+    if len(ordered) > FMP_LATEST_DISCOVERY_CACHE_LIMIT:
+        keep = {
+            str(getattr(article, "id", "") or "")
+            for article in ordered[:FMP_LATEST_DISCOVERY_CACHE_LIMIT]
+        }
+        for key in list(_FMP_LATEST_DISCOVERY_CACHE):
+            if key not in keep:
+                _FMP_LATEST_DISCOVERY_CACHE.pop(key, None)
+        ordered = ordered[:FMP_LATEST_DISCOVERY_CACHE_LIMIT]
+
+    _FMP_LATEST_DISCOVERY_TRACE.clear()
+    _FMP_LATEST_DISCOVERY_TRACE.update({
+        **trace,
+        "authority": AUTHORITY,
+        "endpoint": FMP_LATEST_DISCOVERY_ENDPOINT,
+        "bootstrap": bootstrap,
+        "cached_articles": len(ordered),
+        "returned_articles": len(ordered),
+        "lookback_hours": int(FMP_LATEST_DISCOVERY_LOOKBACK.total_seconds() // 3600),
+        "trading_authority_changed": False,
+    })
+    return ordered
+
+
+def install_fmp_latest_news_discovery() -> None:
+    """Promote FMP stock-latest into GS298's marketwide identity-seed seam."""
+    from mide import gs298_news_seeded_discovery as gs298
+
+    current = gs298.fetch_marketwide_stock_news
+    if getattr(current, _FMP_LATEST_DISCOVERY_OWNER, False):
+        return
+
+    @wraps(current)
+    def fetch_marketwide_stock_news(
+        api_key: str,
+        *,
+        now=None,
+        session=None,
+        timeout: int = 4,
+        limit: int = 100,
+    ):
+        return fetch_fmp_latest_discovery_news(
+            api_key,
+            now=now,
+            session=session,
+            timeout=timeout,
+            limit=limit,
+        )
+
+    _inherit(fetch_marketwide_stock_news, current)
+    setattr(fetch_marketwide_stock_news, _FMP_LATEST_DISCOVERY_OWNER, True)
+    fetch_marketwide_stock_news._gs618_original = current
+    gs298.fetch_marketwide_stock_news = fetch_marketwide_stock_news
+
+
+# ---------------------------------------------------------------------------
 # GS609 on-demand Catalyst Brief
 # ---------------------------------------------------------------------------
 
@@ -2251,4 +2391,7 @@ __all__ = [
     "CATALYST_BRIEF_FMP_PAGE_SIZE",
     "CATALYST_BRIEF_FMP_MAX_PAGES",
     "fetch_fmp_marketwide_latest_for_brief",
+    "fetch_fmp_latest_discovery_news",
+    "install_fmp_latest_news_discovery",
+    "FMP_LATEST_DISCOVERY_ENDPOINT",
 ]
