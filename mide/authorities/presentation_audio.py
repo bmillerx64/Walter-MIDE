@@ -5829,6 +5829,18 @@ def _render_audio_state_label(
         return ""
 
 
+def prepare_completed_scan_audio_focus(records: list[dict]) -> None:
+    """Publish the exact final ordered visual focus before semantic audio evaluates.
+
+    GS612 is presentation/audio lifecycle only. It computes the same enriched,
+    P/E-ordered collection used by the delayed Opportunity State renderer, then
+    snapshots only its first visible surface. No Streamlit element is emitted and
+    no candidate, ranking, qualification, readiness, or trading authority changes.
+    """
+    ordered = final_enriched_opportunity_records(list(records or []))
+    _publish_render_audio_focus(ordered)
+
+
 def _publish_render_audio_focus(records: list[dict]) -> None:
     """Snapshot the exact rendered first surface for same-scan audio delivery."""
     from mide import ui
