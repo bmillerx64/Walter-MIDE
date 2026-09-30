@@ -76,7 +76,7 @@ def test_gs603_native_market_event_audio_cannot_hijack_lower_symbol():
 def test_gs603_app_drives_semantic_audio_from_rendered_focus():
     source = (ROOT / "app.py").read_text(encoding="utf-8")
     start = source.index("_audio_scan_token = (")
-    end = source.index("\ntab_names = [", start)
+    end = source.index("\n# GS601: consume process-scan audio only after the entire dashboard render", start)
     block = source[start:end]
 
     assert "current_render_audio_focus(" in block
