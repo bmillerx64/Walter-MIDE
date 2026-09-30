@@ -166,3 +166,44 @@ def test_live_webull_systemic_refresh_outage_retains_known_primary_values(monkey
     for i, symbol in enumerate(symbols):
         assert snapshots[symbol]["float_shares"] == 2_000_000 + i
         assert snapshots[symbol]["free_float_verification_status"] == "provider-outage-primary-retained"
+
+
+
+def test_live_webull_does_not_treat_fail_closed_infinity_as_measured_float(monkeypatch):
+    symbols = [f"P{i}" for i in range(1, 7)]
+
+    class FakeYahoo:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def lookup_many(self, requested):
+            requested = list(requested)
+            assert requested == symbols
+            return {}, {symbol: "rate limited" for symbol in requested}
+
+    monkeypatch.setattr(free_float_inspector, "YahooFinanceFloatProvider", FakeYahoo)
+    provider = _provider()
+    snapshots = {
+        symbol: {
+            "float_shares": float("inf"),
+            "shares_float": float("inf"),
+            "free_float": float("inf"),
+            "free_float_verified": False,
+            "free_float_verification_status": "unavailable-reject",
+            "free_float_source": "primary and secondary float unresolved; fail closed",
+        }
+        for symbol in symbols
+    }
+
+    provider.enrich_free_float(snapshots, symbols)
+
+    assert provider.diagnostics["free_float_provider_outage"] is True
+    assert provider.diagnostics["free_float_snapshot_normalized"] == 0
+    assert provider.diagnostics["free_float_fail_closed"] == 0
+    assert provider.diagnostics["free_float_degraded_unverified"] == len(symbols)
+    for symbol in symbols:
+        assert "float_shares" not in snapshots[symbol]
+        assert "shares_float" not in snapshots[symbol]
+        assert "free_float" not in snapshots[symbol]
+        assert snapshots[symbol]["free_float_verified"] is False
+        assert snapshots[symbol]["free_float_verification_status"] == "provider-outage-unverified"
