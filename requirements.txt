@@ -1,6 +1,9 @@
 # GS445 deployment marker: force one clean Streamlit Community Cloud runtime so
 # append-only Candidate History / Flight Recorder exports reuse incremental gzip state.
 # No dependency versions change in this deployment-only activation.
+# GS614 deployment marker: force one completely clean Streamlit Community Cloud runtime
+# after Sept. 30 cold-start spinner/session-handshake failure on f130985.
+# Deployment-only activation: no dependency versions or Walter logic change.
 # GS540 deployment marker: preserve Webull market value, keep M&A projections out
 # of transaction-scale math, and corroborate shadow RVOL with targeted material news.
 # Discovery identity/context only; all downstream trading safeguards remain unchanged.
