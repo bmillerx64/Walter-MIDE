@@ -3496,6 +3496,16 @@ if alerts and audio_triggered and alert_phrase:
             mark_render_audio_event_spoken(st.session_state, _audio_event)
             st.session_state.last_escalation_alert = alert_delivery_key
 
+# GS617: the authoritative completed-scan decision surfaces are the primary
+# operator output. Resolve the GS408 lazy placeholders here, after completed-scan
+# adoption and semantic-audio validation but before any Radar sections, feed,
+# navigation, sort, or news controls. The previous completed surface remains
+# mounted until this point on each rerun; no scan/trading authority changes.
+with mission_plan_slot:
+    render_walter_mission_control(actionable_records)
+with escalation_engine_slot:
+    render_escalation_engine(actionable_records)
+
 tab_names = [
         "Radar",
         "Diagnostics",
@@ -4460,17 +4470,6 @@ if active_tab == "Webull Debug":
 # clock/observer is armed immediately after CompletedScan adoption above so a heavy
 # dashboard render cannot leave Last Scan and Auto Scan presentation minutes stale.
 
-
-
-# GS611: commit the two authoritative completed-scan operator surfaces only after
-# the rest of the full-app rerun has finished its heavy work. GS408 keeps these
-# st.empty() placeholders lazy, so the prior completed Opportunity State and
-# recommendation remain mounted throughout the rerun instead of being cleared or
-# briefly replaced while a background process scan is still running.
-with mission_plan_slot:
-    render_walter_mission_control(actionable_records)
-with escalation_engine_slot:
-    render_escalation_engine(actionable_records)
 
 
 # GS601: consume process-scan audio only after the entire dashboard render has
