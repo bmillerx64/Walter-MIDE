@@ -6260,8 +6260,13 @@ def catalyst_brief_provider_caption(report: dict) -> str:
         count = int(info.get("articles_received") or 0)
         if disposition == "SUCCESS":
             detail = f"{count} articles"
+            pages = int(info.get("pages_requested") or 0)
+            if pages:
+                detail += f" / {pages} page{'s' if pages != 1 else ''}"
             if info.get("page_cap_reached"):
-                detail += ", page cap reached"
+                detail += " / PAGE CAP — coverage may be incomplete"
+            elif info.get("coverage_complete") is True:
+                detail += " / full requested window covered"
             parts.append(f"{label}: {detail}")
         elif disposition == "UNAVAILABLE":
             parts.append(f"{label}: unavailable")
