@@ -35,8 +35,8 @@ def test_rdgt_like_five_minute_mover_enters_attention_lane_without_trade_authori
     )
     rows = [
         _native("RDGT", 36.93, 2, price=1.24),
-        _native("QUIET", 14.99, 1, price=1.10),
-        _native("RANK11", 40.0, 11, price=1.00),
+        _native("QUIET", 2.99, 1, price=1.10),
+        _native("RANK6", 40.0, 6, price=1.00),
     ]
 
     events = market_evidence.market_event_rows(rows)
@@ -49,6 +49,44 @@ def test_rdgt_like_five_minute_mover_enters_attention_lane_without_trade_authori
     assert "qualified_for_entry" not in rdgt
     assert "qualified_for_alert" not in rdgt
     assert {event["symbol"] for event in events} == {"RDGT"}
+
+
+def test_fast_mover_uses_min5_measurement_not_deduped_day_change():
+    row = _native(
+        "ENLV",
+        15.0,
+        2,
+        price=0.52,
+        sources=["day_gainers", "five_minute_movers"],
+    )
+    row["ranks"]["day_gainers"] = 8
+    row["feed_metrics"] = {
+        "day_gainers": {"rank": 8, "change_ratio": 15.0, "price": 0.52},
+        "five_minute_movers": {"rank": 2, "change_ratio": 4.1, "price": 0.52},
+    }
+
+    events = market_evidence.fast_mover_rows([row])
+
+    assert [event["symbol"] for event in events] == ["ENLV"]
+    assert events[0]["pct_change"] == 4.1
+    assert events[0]["rank"] == 2
+
+
+def test_day_gain_does_not_fake_a_fast_mover_when_min5_change_is_below_floor():
+    row = _native(
+        "SLOW",
+        22.0,
+        1,
+        price=0.80,
+        sources=["day_gainers", "five_minute_movers"],
+    )
+    row["ranks"]["day_gainers"] = 3
+    row["feed_metrics"] = {
+        "day_gainers": {"rank": 3, "change_ratio": 22.0, "price": 0.80},
+        "five_minute_movers": {"rank": 1, "change_ratio": 2.5, "price": 0.80},
+    }
+
+    assert market_evidence.fast_mover_rows([row]) == []
 
 
 def test_fast_mover_above_five_is_kept_when_it_launched_from_strategy_range():
