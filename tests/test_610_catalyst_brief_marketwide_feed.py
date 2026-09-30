@@ -1,9 +1,11 @@
 from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 
 from mide.authorities import discovery_news
 
 
 UTC = timezone.utc
+EASTERN = ZoneInfo("America/New_York")
 NOW = datetime(2026, 9, 30, 12, 55, tzinfo=UTC)
 CUTOFF = NOW - timedelta(hours=4)
 
@@ -30,10 +32,11 @@ class FakeSession:
 
 
 def row(symbol, title, created, publisher="Reuters"):
+    fmp_wall_clock = created.astimezone(EASTERN).replace(tzinfo=None)
     return {
         "symbol": symbol,
         "title": title,
-        "publishedDate": created.strftime("%Y-%m-%d %H:%M:%S"),
+        "publishedDate": fmp_wall_clock.strftime("%Y-%m-%d %H:%M:%S"),
         "publisher": publisher,
         "url": f"https://example.com/{symbol}/{int(created.timestamp())}",
     }
