@@ -66,7 +66,7 @@ def test_gs604_look_now_voice_includes_same_context(monkeypatch):
 def test_gs604_live_audio_path_no_longer_uses_legacy_scan_alert_phrase():
     source = (ROOT / "app.py").read_text(encoding="utf-8")
     start = source.index("_audio_scan_token = (")
-    end = source.index("\ntab_names = [", start)
+    end = source.index("\n# GS601: consume process-scan audio only after the entire dashboard render", start)
     block = source[start:end]
 
     assert "current_render_audio_event(" in block
