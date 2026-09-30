@@ -131,7 +131,7 @@ def test_gs608_unchanged_primary_allows_new_visible_market_leader_voice(monkeypa
     assert "Market leader radar" in event["phrase"]
     assert "WAIT FOR RESET" in event["phrase"]
     assert "P E strength 58" in event["phrase"]
-    assert "Positive Phase 2 COPD results" in event["phrase"]
+    assert "reports positive Phase 2 COPD results" in event["phrase"]
     assert "ENTRY READY" not in event["phrase"]
 
 
