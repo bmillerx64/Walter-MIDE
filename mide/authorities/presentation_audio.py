@@ -6223,6 +6223,7 @@ _CATALYST_CATEGORY_LABELS = {
 
 def catalyst_brief_table(report: dict) -> list[dict]:
     """Return compact trader-facing rows from the read-only Catalyst Brief."""
+    from datetime import datetime
     from zoneinfo import ZoneInfo
 
     eastern = ZoneInfo("America/New_York")
