@@ -643,8 +643,25 @@ class WalterArchitectureV1:
         if self.post_stage_observer:
             self.post_stage_observer("Post-ranking · architecture verification")
         post_step_started = self.timer()
+        verification_ledger = []
+        for symbol in current_order:
+            record = self._ledger[symbol]
+            verification_ledger.append({
+                "candidate_id": record.get("candidate_id"),
+                "symbol": record.get("symbol"),
+                "architecture_audit": list(
+                    record.get("architecture_audit", [])[audit_starts[symbol]:]
+                ),
+                "terminal_outcome": record.get("terminal_outcome"),
+                "terminal_stage": record.get("terminal_stage"),
+                "terminal_category": record.get("terminal_category"),
+                "terminal_reason": record.get("terminal_reason"),
+                "mission_rank": record.get("mission_rank"),
+            })
         self.verification_report = verify_architecture(
-            results, self.trace, purity_observations=self.purity_observations,
+            verification_ledger,
+            self.trace,
+            purity_observations=self.purity_observations,
         ).as_dict()
         self.post_stage_timing["architecture_verification_ms"] = round(
             (self.timer() - post_step_started) * 1000, 3
