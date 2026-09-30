@@ -1733,6 +1733,148 @@ def install_news_corroborated_shadow_rvol() -> None:
 CATALYST_BRIEF_DEFAULT_HOURS = 4
 CATALYST_BRIEF_MAX_HOURS = 12
 CATALYST_BRIEF_MAX_ROWS = 30
+CATALYST_BRIEF_FMP_PAGE_SIZE = 100
+CATALYST_BRIEF_FMP_MAX_PAGES = 8
+CATALYST_BRIEF_FMP_ENDPOINT = "news/stock-latest"
+
+
+
+def fetch_fmp_marketwide_latest_for_brief(
+    api_key: str,
+    *,
+    cutoff: datetime,
+    now: datetime,
+    session=None,
+    timeout: int = 4,
+    page_size: int = CATALYST_BRIEF_FMP_PAGE_SIZE,
+    max_pages: int = CATALYST_BRIEF_FMP_MAX_PAGES,
+) -> tuple[list, dict]:
+    """Fetch FMP's actual marketwide latest-stock-news feed for GS610.
+
+    This endpoint is intentionally isolated from Walter's existing symbol-search
+    news path. It is called only by the operator-triggered Catalyst Brief.
+    """
+    import requests
+    from mide.news_provider import FMPNewsProvider
+
+    key = str(api_key or "").strip()
+    trace = {
+        "endpoint": CATALYST_BRIEF_FMP_ENDPOINT,
+        "configured": bool(key),
+        "request_made": False,
+        "pages_requested": 0,
+        "raw_rows_seen": 0,
+        "articles_received": 0,
+        "page_failures": 0,
+        "page_cap_reached": False,
+        "coverage_complete": False,
+        "oldest_article_at": None,
+        "newest_article_at": None,
+        "transport_disposition": "UNAVAILABLE" if not key else "NOT_STARTED",
+    }
+    if not key:
+        return [], trace
+
+    client = session or requests.Session()
+    size = max(1, min(int(page_size), CATALYST_BRIEF_FMP_PAGE_SIZE))
+    cap = max(1, min(int(max_pages), CATALYST_BRIEF_FMP_MAX_PAGES))
+    articles = []
+    seen = set()
+    reached_cutoff = False
+    exhausted = False
+
+    for page in range(cap):
+        trace["request_made"] = True
+        trace["pages_requested"] += 1
+        params = {
+            "page": page,
+            "limit": size,
+            "apikey": key,
+        }
+        try:
+            response = client.get(
+                f"{FMPNewsProvider.BASE_URL}/{CATALYST_BRIEF_FMP_ENDPOINT}",
+                params=params,
+                timeout=timeout,
+            )
+            response.raise_for_status()
+            payload = response.json()
+        except Exception as exc:
+            trace["page_failures"] += 1
+            trace["transport_disposition"] = "PROVIDER_FAILURE"
+            trace["exception_type"] = type(exc).__name__
+            # Preserve earlier successful pages rather than discarding useful news.
+            break
+
+        rows = payload if isinstance(payload, list) else (
+            payload.get("data", []) if isinstance(payload, dict) else []
+        )
+        if not rows:
+            exhausted = True
+            break
+        trace["raw_rows_seen"] += len(rows)
+
+        page_times = []
+        for row in rows:
+            article = FMPNewsProvider._normalize(
+                row,
+                endpoint=CATALYST_BRIEF_FMP_ENDPOINT,
+            )
+            if article is None:
+                continue
+            created = _utc(article.created_at)
+            if created is None:
+                continue
+            page_times.append(created)
+            if created > now + timedelta(minutes=5):
+                continue
+            identity = (
+                str(article.id),
+                str(article.headline).casefold(),
+                created.isoformat(),
+            )
+            if identity in seen:
+                continue
+            seen.add(identity)
+            if created >= cutoff:
+                articles.append(article)
+
+        if len(rows) < size:
+            exhausted = True
+            break
+
+        # FMP documents this as its latest-stock-news feed, so pages are expected
+        # newest-first. Once the oldest timestamp on a full page is past the
+        # requested cutoff, the next page cannot add in-window news.
+        if page_times and min(page_times) < cutoff:
+            reached_cutoff = True
+            break
+
+    ordered = sorted(
+        articles,
+        key=lambda article: _utc(article.created_at)
+        or datetime.min.replace(tzinfo=UTC),
+        reverse=True,
+    )
+    trace["articles_received"] = len(ordered)
+    if ordered:
+        trace["newest_article_at"] = _utc(ordered[0].created_at).isoformat()
+        trace["oldest_article_at"] = _utc(ordered[-1].created_at).isoformat()
+
+    cap_reached = (
+        trace["pages_requested"] >= cap
+        and not reached_cutoff
+        and not exhausted
+        and trace["page_failures"] == 0
+    )
+    trace["page_cap_reached"] = cap_reached
+    trace["coverage_complete"] = bool(
+        (reached_cutoff or exhausted)
+        and trace["page_failures"] == 0
+    )
+    if trace["transport_disposition"] != "PROVIDER_FAILURE":
+        trace["transport_disposition"] = "SUCCESS"
+    return ordered, trace
 
 
 def _brief_article_rows(articles, *, cutoff: datetime, now: datetime) -> list[dict]:
@@ -1976,51 +2118,22 @@ def build_on_demand_catalyst_brief(
     else:
         try:
             from mide import news_provider
-            from mide.gs300_fmp_news_pagination import (
-                fetch_marketwide_stock_news_paginated,
-            )
 
             key = str(news_provider._configured_fmp_api_key() or "").strip()
-            if not key:
-                diagnostics["fmp"] = {
-                    "configured": False,
-                    "request_made": False,
-                    "articles_received": 0,
-                    "transport_disposition": "UNAVAILABLE",
-                }
-            else:
-                rows = list(
-                    fetch_marketwide_stock_news_paginated(
-                        key,
-                        now=current,
-                    ) or []
-                )
-                articles.extend(rows)
-                diagnostics["fmp"] = {
-                    "configured": True,
-                    "request_made": True,
-                    "articles_received": len(rows),
-                    "pages_requested": int(
-                        getattr(
-                            fetch_marketwide_stock_news_paginated,
-                            "last_pages_requested",
-                            0,
-                        ) or 0
-                    ),
-                    "page_failures": int(
-                        getattr(
-                            fetch_marketwide_stock_news_paginated,
-                            "last_page_failures",
-                            0,
-                        ) or 0
-                    ),
-                    "transport_disposition": "SUCCESS",
-                }
+            rows, fmp_trace = fetch_fmp_marketwide_latest_for_brief(
+                key,
+                cutoff=cutoff,
+                now=current,
+            )
+            articles.extend(rows)
+            diagnostics["fmp"] = fmp_trace
         except Exception as exc:
             diagnostics["fmp"] = {
+                "endpoint": CATALYST_BRIEF_FMP_ENDPOINT,
                 "configured": True,
                 "request_made": True,
                 "articles_received": 0,
+                "coverage_complete": False,
                 "transport_disposition": "PROVIDER_FAILURE",
                 "exception_type": type(exc).__name__,
             }
@@ -2134,4 +2247,8 @@ __all__ = [
     "CATALYST_BRIEF_DEFAULT_HOURS",
     "CATALYST_BRIEF_MAX_HOURS",
     "CATALYST_BRIEF_MAX_ROWS",
+    "CATALYST_BRIEF_FMP_ENDPOINT",
+    "CATALYST_BRIEF_FMP_PAGE_SIZE",
+    "CATALYST_BRIEF_FMP_MAX_PAGES",
+    "fetch_fmp_marketwide_latest_for_brief",
 ]
