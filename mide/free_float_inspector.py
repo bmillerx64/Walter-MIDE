@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
+import math
 from typing import Any
 
 from .discovery import is_valid_us_symbol
@@ -48,7 +49,7 @@ def _normalize_snapshot_float(snapshot: dict) -> float | None:
                 value = float(raw)
             except (TypeError, ValueError):
                 continue
-            if value > 0:
+            if math.isfinite(value) and value > 0:
                 values.append(value)
     raw_millions = snapshot.get("float_millions")
     if raw_millions is None and isinstance(reference, dict):
@@ -58,7 +59,7 @@ def _normalize_snapshot_float(snapshot: dict) -> float | None:
             value = float(raw_millions) * 1_000_000
         except (TypeError, ValueError):
             value = 0
-        if value > 0:
+        if math.isfinite(value) and value > 0:
             values.append(value)
     return max(values) if values else None
 
