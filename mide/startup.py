@@ -48,6 +48,7 @@ def ensure_late_runtime_installers() -> None:
     from .gs478_sparse_history_warm_seed import install as install_gs478
     from .gs479_headline_catalyst_magnitude import install as install_gs479
     from .gs480_catalyst_story_intelligence import install as install_gs480
+    from .gs618_fmp_latest_discovery import install as install_gs618
     from .gs502_benzinga_breaking_news import install as install_gs502
     from .gs503_catalyst_company_scale import install as install_gs503
     from .gs540_news_corroborated_shadow_rvol import install as install_gs540
@@ -130,7 +131,12 @@ def ensure_late_runtime_installers() -> None:
     # request, and writes publication/awareness truth into the active recorder graph.
     # This is awareness/observability only; all trading authority remains downstream.
     install_gs480()
-    # GS502 sits immediately outside GS480. It adds an optional direct Benzinga
+    # GS618 promotes FMP's official marketwide latest-stock-news feed into the
+    # existing GS298 identity-only discovery seam. A cold process may backfill two
+    # pages; warm scans poll only page 0 and reuse a bounded six-hour news cache.
+    # News never bypasses Webull/downstream market-data or trading gates.
+    install_gs618()
+    # GS502 sits immediately outside GS480/GS618. It adds an optional direct Benzinga
     # updatedSince delta lane for breaking-news discovery, then feeds those already-
     # fetched articles through GS298/315/480. Without a Benzinga API credential it
     # performs zero network calls and leaves the established FMP path unchanged.
