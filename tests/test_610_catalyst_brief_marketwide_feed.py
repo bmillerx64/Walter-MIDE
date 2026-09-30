@@ -60,7 +60,7 @@ def test_gs610_uses_fmp_stock_latest_not_symbol_search_endpoint():
     assert [article.symbols for article in articles] == [["CNTB"]]
     assert session.calls
     assert session.calls[0][0].endswith("/stable/news/stock-latest")
-    assert "/stable/news/stock" not in session.calls[0][0].removesuffix("-latest")
+    assert not session.calls[0][0].endswith("/stable/news/stock")
     assert trace["endpoint"] == "news/stock-latest"
     assert trace["articles_received"] == 1
 
