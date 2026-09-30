@@ -24,7 +24,7 @@ def test_gs602_semantic_audio_fails_closed_when_visible_scan_is_stale():
     start = source.index(
         "# GS602: semantic speech must be bound to the exact completed evidence"
     )
-    end = source.index("\ntab_names = [", start)
+    end = source.index("\n# GS601: consume process-scan audio only after the entire dashboard render", start)
     block = source[start:end]
 
     assert "_audio_process_snapshot.last_started_at > completed_scan.completed_at" in block
@@ -51,7 +51,7 @@ def test_gs602_scope_preserves_scanner_and_trading_authority():
     audio_start = app_source.index(
         "# GS602: semantic speech must be bound to the exact completed evidence"
     )
-    audio_end = app_source.index("\ntab_names = [", audio_start)
+    audio_end = app_source.index("\n# GS601: consume process-scan audio only after the entire dashboard render", audio_start)
     audio = app_source[audio_start:audio_end]
 
     forbidden = (
