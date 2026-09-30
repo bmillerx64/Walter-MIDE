@@ -34,7 +34,9 @@ def test_gs601_registers_process_audio_after_complete_dashboard_render():
     )
     handoff = source[marker:]
 
-    assert semantic < debug_view < marker
+    # GS612: semantic voice follows the completed surface at the end of the
+    # heavy render, while GS601's process heartbeat remains the final handoff.
+    assert debug_view < semantic < marker
     assert "_process_audio_snapshot = _gs585.snapshot()" in handoff
     assert "_process_audio_pending == _process_audio_current" in handoff
     assert (
