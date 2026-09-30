@@ -3417,78 +3417,6 @@ with system_status_panel:
 
     st.caption(f"{clock.phase} — Rankings describe evidence only.")
 
-# GS602: semantic speech must be bound to the exact completed evidence the
-# operator can see. A process scan that started after this CompletedScan makes
-# the rendered evidence stale, even if the browser is still finishing a heavy
-# Streamlit rerun. Fail closed for speech/chimes until the visual handoff catches up.
-_audio_visible_scan_is_current = False
-if completed_scan is not None:
-    try:
-        _audio_process_snapshot = _gs585.snapshot()
-        _audio_visible_scan_is_current = not (
-            _audio_process_snapshot.last_started_at is not None
-            and _audio_process_snapshot.last_started_at > completed_scan.completed_at
-        )
-    except Exception:
-        _audio_visible_scan_is_current = False
-
-_audio_scan_token = (
-    completed_scan.completed_at.isoformat() if completed_scan is not None else ""
-)
-_audio_focus_records = current_render_audio_focus(
-    st.session_state,
-    expected_scan_token=_audio_scan_token,
-)
-_audio_event = current_render_audio_event(
-    st.session_state,
-    expected_scan_token=_audio_scan_token,
-)
-_audio_focus_symbol = str(_audio_event.get("symbol") or "")
-if _audio_focus_symbol:
-    print(
-        "[WALTER AUDIO] canonical visual focus "
-        f"token={_audio_scan_token} symbol={_audio_focus_symbol} "
-        f"surface={_audio_event.get('surface')} state={_audio_event.get('state_label')}",
-        flush=True,
-    )
-
-# GS605: the live browser has one semantic voice authority. Historical escalation,
-# coiling, maturation, native-mover and WATCH NOW wrappers may remain installed for
-# compatibility/replay, but they do not choose the live spoken phrase. The phrase
-# and trigger both come from the exact first rendered operator surface.
-alert_phrase = str(_audio_event.get("phrase") or "")
-audio_triggered = bool(_audio_event.get("triggered"))
-
-if alerts and audio_triggered and alert_phrase:
-    if not _audio_focus_records:
-        print(
-            "[WALTER AUDIO] semantic alert suppressed because canonical visual focus "
-            f"is unavailable token={_audio_scan_token}",
-            flush=True,
-        )
-    elif not _audio_visible_scan_is_current:
-        print(
-            "[WALTER AUDIO] semantic alert suppressed for stale visible scan "
-            f"visible={completed_scan.completed_at.isoformat() if completed_scan else 'none'}",
-            flush=True,
-        )
-    else:
-        alert_delivery_key = "|".join(
-            (
-                str(_audio_event.get("signature") or ""),
-                " ".join(alert_phrase.split()),
-            )
-        )
-        if alert_delivery_key != st.session_state.last_escalation_alert:
-            print(
-                "[WALTER AUDIO] canonical live phrase "
-                f"token={_audio_scan_token} phrase={alert_phrase}",
-                flush=True,
-            )
-            play_alert("assets/alert.wav", alert_phrase, alert_voice_for_session())
-            mark_render_audio_event_spoken(st.session_state, _audio_event)
-            st.session_state.last_escalation_alert = alert_delivery_key
-
 tab_names = [
         "Radar",
         "Diagnostics",
@@ -4437,6 +4365,82 @@ with mission_plan_slot:
 with escalation_engine_slot:
     render_escalation_engine(actionable_records)
 
+
+# GS612: semantic voice must execute only after GS611 has committed the exact
+# completed Opportunity State that current_render_audio_focus/current_render_audio_event
+# consume. This preserves GS602-GS608 stale-scan/audio authority while preventing a
+# focus-token mismatch caused purely by presentation ordering.
+# GS602: semantic speech must be bound to the exact completed evidence the
+# operator can see. A process scan that started after this CompletedScan makes
+# the rendered evidence stale, even if the browser is still finishing a heavy
+# Streamlit rerun. Fail closed for speech/chimes until the visual handoff catches up.
+_audio_visible_scan_is_current = False
+if completed_scan is not None:
+    try:
+        _audio_process_snapshot = _gs585.snapshot()
+        _audio_visible_scan_is_current = not (
+            _audio_process_snapshot.last_started_at is not None
+            and _audio_process_snapshot.last_started_at > completed_scan.completed_at
+        )
+    except Exception:
+        _audio_visible_scan_is_current = False
+
+_audio_scan_token = (
+    completed_scan.completed_at.isoformat() if completed_scan is not None else ""
+)
+_audio_focus_records = current_render_audio_focus(
+    st.session_state,
+    expected_scan_token=_audio_scan_token,
+)
+_audio_event = current_render_audio_event(
+    st.session_state,
+    expected_scan_token=_audio_scan_token,
+)
+_audio_focus_symbol = str(_audio_event.get("symbol") or "")
+if _audio_focus_symbol:
+    print(
+        "[WALTER AUDIO] canonical visual focus "
+        f"token={_audio_scan_token} symbol={_audio_focus_symbol} "
+        f"surface={_audio_event.get('surface')} state={_audio_event.get('state_label')}",
+        flush=True,
+    )
+
+# GS605: the live browser has one semantic voice authority. Historical escalation,
+# coiling, maturation, native-mover and WATCH NOW wrappers may remain installed for
+# compatibility/replay, but they do not choose the live spoken phrase. The phrase
+# and trigger both come from the exact first rendered operator surface.
+alert_phrase = str(_audio_event.get("phrase") or "")
+audio_triggered = bool(_audio_event.get("triggered"))
+
+if alerts and audio_triggered and alert_phrase:
+    if not _audio_focus_records:
+        print(
+            "[WALTER AUDIO] semantic alert suppressed because canonical visual focus "
+            f"is unavailable token={_audio_scan_token}",
+            flush=True,
+        )
+    elif not _audio_visible_scan_is_current:
+        print(
+            "[WALTER AUDIO] semantic alert suppressed for stale visible scan "
+            f"visible={completed_scan.completed_at.isoformat() if completed_scan else 'none'}",
+            flush=True,
+        )
+    else:
+        alert_delivery_key = "|".join(
+            (
+                str(_audio_event.get("signature") or ""),
+                " ".join(alert_phrase.split()),
+            )
+        )
+        if alert_delivery_key != st.session_state.last_escalation_alert:
+            print(
+                "[WALTER AUDIO] canonical live phrase "
+                f"token={_audio_scan_token} phrase={alert_phrase}",
+                flush=True,
+            )
+            play_alert("assets/alert.wav", alert_phrase, alert_voice_for_session())
+            mark_render_audio_event_spoken(st.session_state, _audio_event)
+            st.session_state.last_escalation_alert = alert_delivery_key
 
 # GS601: consume process-scan audio only after the entire dashboard render has
 # completed. The token must exactly match the visible CompletedScan and no newer
