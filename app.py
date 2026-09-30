@@ -218,6 +218,7 @@ from mide.authorities.presentation_audio import (
     mission_control_header_markup,
     opportunity_card,
     play_alert,
+    prepare_completed_scan_audio_focus,
     current_render_audio_focus,
     current_render_audio_event,
     mark_render_audio_event_spoken,
@@ -3416,6 +3417,13 @@ with system_status_panel:
             st.caption("No diagnostics recorded for this scan yet.")
 
     st.caption(f"{clock.phase} — Rankings describe evidence only.")
+
+# GS612: GS611 intentionally delays the actual Opportunity State DOM replacement
+# until the heavy rerun is finished. Publish the exact same final P/E-ordered focus
+# now, without rendering anything, so canonical audio can evaluate the new completed
+# scan before the delayed visual commit. This restores the pre-GS611 lifecycle
+# ordering while preserving GS611 surface persistence and every stale-scan guard.
+prepare_completed_scan_audio_focus(actionable_records)
 
 # GS602: semantic speech must be bound to the exact completed evidence the
 # operator can see. A process scan that started after this CompletedScan makes
