@@ -61,7 +61,7 @@ def test_gs612_preserves_stale_scan_audio_guard():
         prepare,
     )
     semantic_delivery = source.index(
-        "play_alert("assets/alert.wav", alert_phrase",
+        'play_alert("assets/alert.wav", alert_phrase',
         stale_guard,
     )
 
