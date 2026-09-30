@@ -1,22 +1,23 @@
 from pathlib import Path
 
 
-def test_gs611_completed_scan_surfaces_commit_once_at_end_of_full_rerun():
+def test_gs611_completed_scan_surfaces_commit_once_after_completed_scan_handoff():
     source = Path("app.py").read_text(encoding="utf-8")
 
-    marker = source.index(
-        "# GS611: commit the two authoritative completed-scan operator surfaces"
+    prepare = source.index(
+        "prepare_completed_scan_audio_focus(actionable_records)"
     )
-    audio_boundary = source.index(
+    mission = source.index("with mission_plan_slot:")
+    escalation = source.index("with escalation_engine_slot:")
+    radar = source.index("tab_names = [")
+    process_audio_boundary = source.index(
         "# GS601: consume process-scan audio only after the entire dashboard render"
     )
 
     assert source.count("with mission_plan_slot:") == 1
     assert source.count("with escalation_engine_slot:") == 1
-    assert source.index("with mission_plan_slot:") > marker
-    assert source.index("with escalation_engine_slot:") > marker
-    assert source.index("with mission_plan_slot:") < audio_boundary
-    assert source.index("with escalation_engine_slot:") < audio_boundary
+    assert prepare < mission < radar < process_audio_boundary
+    assert prepare < escalation < radar < process_audio_boundary
 
 
 def test_gs611_process_clock_uses_live_fragment_not_static_full_render_overdue():
