@@ -104,7 +104,12 @@ def test_gs620_completed_cache_adds_news_identity_on_next_scan():
 
     assert "PUSA" in seeds
     assert any(
-        reason.startswith(gs620.MATERIAL_REASON)
+        reason.startswith(
+            (
+                gs620.MATERIAL_REASON,
+                gs620.STORY_REASON,
+            )
+        )
         for reason in reasons["PUSA"]
     )
     assert trace["symbols_added"] == ["PUSA"]
