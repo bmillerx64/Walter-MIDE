@@ -6216,6 +6216,337 @@ def bind_final_enriched_opportunity_order(
 
 
 # ---------------------------------------------------------------------------
+# GS619 early fast-mover priority + news/tape confirmation
+# ---------------------------------------------------------------------------
+
+GS619_FAST_MOVER_AWARENESS_KEY = "early_fast_mover_awareness"
+GS619_NEWS_WEAK_TAPE_KEY = "news_weak_tape_display"
+GS619_FIVE_MINUTE_REASON = "Webull native: five_minute_movers"
+_GS619_ACTIONABLE_OWNER = "_walter_gs619_early_mover_actionable_owner"
+_GS619_STATE_OWNER = "_walter_gs619_tape_priority_state_owner"
+
+GS619_MIN_5M_PATH_PCT = 2.0
+GS619_MIN_3M_CHANGE_PCT = 1.0
+GS619_MIN_ACCELERATION_PCT_PER_MIN = 0.20
+GS619_MIN_POSITIVE_CLOSE_RATIO = 0.60
+GS619_MAX_GIVEBACK_PCT = 1.50
+GS619_MIN_FLOW_ACCELERATION = 1.20
+GS619_NEWS_SUSTAINED_FLOW_MIN = 1.60
+
+
+def _gs619_number(record: dict, *keys: str, default: float = 0.0) -> float:
+    for key in keys:
+        value = record.get(key)
+        if value is None or value == "":
+            continue
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            continue
+    return float(default)
+
+
+def _gs619_reasons(record: dict) -> set[str]:
+    return {
+        str(value or "").strip()
+        for value in record.get("discovery_reasons") or []
+        if str(value or "").strip()
+    }
+
+
+def _gs619_flow_windows(record: dict) -> dict:
+    volume_3m = _gs619_number(
+        record,
+        "volume_acceleration_3m",
+        "volume_acceleration",
+        default=0.0,
+    )
+    volume_5m = _gs619_number(
+        record,
+        "volume_acceleration_5m",
+        "acceleration_ratio",
+        default=0.0,
+    )
+    dollar_3m = _gs619_number(
+        record,
+        "dollar_flow_acceleration_3m",
+        default=0.0,
+    )
+    dollar_5m = _gs619_number(
+        record,
+        "dollar_flow_acceleration_5m",
+        "dollar_flow_acceleration",
+        default=0.0,
+    )
+    return {
+        "three_minute": max(volume_3m, dollar_3m),
+        "five_minute": max(volume_5m, dollar_5m),
+        "volume_3m": volume_3m,
+        "volume_5m": volume_5m,
+        "dollar_3m": dollar_3m,
+        "dollar_5m": dollar_5m,
+    }
+
+
+def early_fast_mover_attention(record: dict) -> dict:
+    """Identify an ENLV-style current MIN_5 ignition before full maturation.
+
+    This is presentation/attention evidence only. It uses the existing 1-minute
+    trajectory metrics and already-owned flow facts; it performs no provider call
+    and grants no watch/readiness/entry authority.
+    """
+    from mide.gs373_operator_visibility_freshness import operator_visible
+
+    reasons = _gs619_reasons(record)
+    current_fast_mover = GS619_FIVE_MINUTE_REASON in reasons
+    available = bool(record.get("price_trajectory_available"))
+    change_3m = _gs619_number(record, "price_change_3m_pct")
+    change_5m = _gs619_number(record, "price_change_5m_path_pct")
+    acceleration = _gs619_number(
+        record,
+        "price_path_acceleration_pct_per_min",
+    )
+    persistence = _gs619_number(record, "positive_close_ratio_5m")
+    giveback = _gs619_number(
+        record,
+        "giveback_from_5m_high_pct",
+        default=999.0,
+    )
+    relation = str(record.get("vwap_relation") or "").strip().lower()
+    distance = _gs619_number(record, "vwap_distance_pct", default=999.0)
+    structure = bool(record.get("higher_lows") or record.get("near_hod"))
+    flows = _gs619_flow_windows(record)
+    flow = bool(
+        max(flows["three_minute"], flows["five_minute"])
+        >= GS619_MIN_FLOW_ACCELERATION
+        or record.get("volume_above_preceding_15m_pace")
+        or record.get("broke_previous_15m_high_with_volume")
+    )
+    fresh = bool(operator_visible(record))
+
+    active = bool(
+        current_fast_mover
+        and fresh
+        and available
+        and relation == "above"
+        and 0.0 <= distance <= 2.0
+        and change_3m >= GS619_MIN_3M_CHANGE_PCT
+        and change_5m >= GS619_MIN_5M_PATH_PCT
+        and acceleration >= GS619_MIN_ACCELERATION_PCT_PER_MIN
+        and persistence >= GS619_MIN_POSITIVE_CLOSE_RATIO
+        and giveback <= GS619_MAX_GIVEBACK_PCT
+        and flow
+        and structure
+    )
+    return {
+        "active": active,
+        "current_fast_mover": current_fast_mover,
+        "fresh": fresh,
+        "change_3m_pct": change_3m,
+        "change_5m_pct": change_5m,
+        "acceleration_pct_per_min": acceleration,
+        "positive_close_ratio_5m": persistence,
+        "giveback_pct": giveback,
+        "supporting_flow": flow,
+        "structure_support": structure,
+        "vwap_distance_pct": distance,
+        "trading_authority_changed": False,
+    }
+
+
+def news_tape_confirmation(record: dict) -> dict:
+    """Separate fresh catalyst awareness from sustained market confirmation."""
+    from mide.gs309_current_attention_mission import current_attention_provenance
+    from mide.scanner_v2 import session_volume_diagnostics
+
+    provenance = tuple(current_attention_provenance(record))
+    news_only = bool(provenance) and set(provenance) == {"FRESH_NEWS_SEED"}
+    session = record.get("volume_session_diagnostics")
+    if not isinstance(session, dict):
+        session = session_volume_diagnostics(record)
+    flows = _gs619_flow_windows(record)
+    sustained_flow = bool(
+        min(flows["three_minute"], flows["five_minute"])
+        >= GS619_NEWS_SUSTAINED_FLOW_MIN
+        or (
+            record.get("volume_above_preceding_15m_pace")
+            and record.get("broke_previous_15m_high_with_volume")
+        )
+    )
+    broad_tape = bool(
+        session.get("rvol_passed")
+        and (
+            session.get("volume_passed")
+            or session.get("dollar_volume_passed")
+        )
+    )
+    confirmed = bool(not news_only or broad_tape or sustained_flow)
+    return {
+        "news_only": news_only,
+        "confirmed": confirmed,
+        "broad_tape": broad_tape,
+        "sustained_flow": sustained_flow,
+        "session_volume_passed": bool(session.get("volume_passed")),
+        "session_rvol_passed": bool(session.get("rvol_passed")),
+        "session_dollar_volume_passed": bool(
+            session.get("dollar_volume_passed")
+        ),
+        "three_minute_flow": round(flows["three_minute"], 2),
+        "five_minute_flow": round(flows["five_minute"], 2),
+        "trading_authority_changed": False,
+    }
+
+
+def augment_gs619_visible_records(
+    records: list[dict],
+    baseline: list[dict],
+) -> list[dict]:
+    """Add only current, trajectory-confirmed fast movers missing from the cards."""
+    from mide.gs375_operator_awareness import awareness_record
+
+    output = list(baseline or [])
+    present = {
+        str(record.get("symbol") or "").strip().upper()
+        for record in output
+        if str(record.get("symbol") or "").strip()
+    }
+    for record in records or []:
+        symbol = str(record.get("symbol") or "").strip().upper()
+        if not symbol or symbol in present:
+            continue
+        detail = early_fast_mover_attention(record)
+        if not detail.get("active"):
+            continue
+        row = awareness_record(record)
+        row[GS619_FAST_MOVER_AWARENESS_KEY] = True
+        row["early_fast_mover_evidence"] = detail
+        output.append(row)
+        present.add(symbol)
+    return output
+
+
+def gs619_opportunity_state(
+    record: dict,
+    state_function,
+) -> dict:
+    """Refine operator urgency while preserving all scanner/trading authority."""
+    from mide import gs310_unified_opportunity_state as unified
+
+    view = deepcopy(state_function(record))
+    state = str(view.get("state") or "")
+
+    # A news-only name with no broad tape and no sustained 3m+5m flow should not
+    # visually outrank genuine live price action simply because a short burst made
+    # participation/pace look temporarily strong.
+    news = news_tape_confirmation(record)
+    if (
+        state == unified.WATCH_FOR_ENTRY
+        and news.get("news_only")
+        and not news.get("confirmed")
+    ):
+        view["state"] = unified.DEVELOPING
+        view["color"] = unified.STATE_COLORS[unified.DEVELOPING]
+        view["reason"] = (
+            "Fresh news is known, but the live tape has not confirmed it with "
+            "session RVOL/volume or sustained 3m and 5m flow."
+        )
+        view["next_step"] = (
+            "Keep it developing until broad tape or sustained flow confirms the "
+            "headline reaction; news alone does not create urgency."
+        )
+        evidence = list(view.get("evidence") or [])
+        evidence.append({
+            "label": "News / Tape",
+            "passed": False,
+            "detail": (
+                f"RVOL {'pass' if news['session_rvol_passed'] else 'low'} · "
+                f"3m flow {news['three_minute_flow']:.2f}x · "
+                f"5m flow {news['five_minute_flow']:.2f}x"
+            ),
+        })
+        view["evidence"] = evidence
+        return view
+
+    fast = early_fast_mover_attention(record)
+    if (
+        fast.get("active")
+        and state in {unified.DEVELOPING, unified.LOOK_NOW}
+    ):
+        view["state"] = unified.LOOK_NOW
+        view["color"] = unified.STATE_COLORS[unified.LOOK_NOW]
+        view["reason"] = (
+            "Current Webull 5-minute mover with an accelerating 1-minute price "
+            "path, supporting flow, and constructive structure."
+        )
+        view["next_step"] = (
+            "Open the chart now. This is early market attention only; normal "
+            "participation, expansion, anti-chase, readiness, and entry rules remain."
+        )
+        evidence = list(view.get("evidence") or [])
+        evidence.append({
+            "label": "Fast Mover",
+            "passed": True,
+            "detail": (
+                f"5m path +{fast['change_5m_pct']:.1f}% · "
+                f"3m +{fast['change_3m_pct']:.1f}% · "
+                f"accel {fast['acceleration_pct_per_min']:+.2f}%/min"
+            ),
+        })
+        view["evidence"] = evidence
+    return view
+
+
+def install_early_mover_tape_priority() -> None:
+    """Install GS619 outside the final render/audio chain."""
+    from mide import ui
+    from mide import gs310_unified_opportunity_state as unified
+
+    current_records = ui.actionable_candidate_records
+    if not getattr(current_records, _GS619_ACTIONABLE_OWNER, False):
+        @wraps(current_records)
+        def actionable_with_early_movers(records: list[dict]) -> list[dict]:
+            baseline = current_records(records)
+            return augment_gs619_visible_records(records, baseline)
+
+        _inherit_audio_wrapper(actionable_with_early_movers, current_records)
+        actionable_with_early_movers._gs619_original = current_records
+        setattr(
+            actionable_with_early_movers,
+            _GS619_ACTIONABLE_OWNER,
+            True,
+        )
+        ui.actionable_candidate_records = actionable_with_early_movers
+
+    current_state = unified.opportunity_state
+    if not getattr(current_state, _GS619_STATE_OWNER, False):
+        @wraps(current_state)
+        def state_with_tape_priority(record: dict) -> dict:
+            return gs619_opportunity_state(record, current_state)
+
+        _inherit_audio_wrapper(state_with_tape_priority, current_state)
+        state_with_tape_priority._gs619_original = current_state
+        setattr(state_with_tape_priority, _GS619_STATE_OWNER, True)
+        unified.opportunity_state = state_with_tape_priority
+
+        # Keep older modules that captured GS310's function object aligned with
+        # the current canonical state. This mirrors GS375's warm-runtime safety.
+        for module_name in (
+            "gs311_unified_voice",
+            "gs314_state_consistency",
+            "gs363_operator_attention_hierarchy",
+        ):
+            try:
+                module = __import__(
+                    f"mide.{module_name}",
+                    fromlist=[module_name],
+                )
+                if getattr(module, "opportunity_state", None) is current_state:
+                    module.opportunity_state = state_with_tape_priority
+            except Exception:
+                continue
+
+
+# ---------------------------------------------------------------------------
 # GS609 on-demand Catalyst Brief presentation
 # ---------------------------------------------------------------------------
 
