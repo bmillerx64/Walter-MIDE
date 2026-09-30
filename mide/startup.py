@@ -60,6 +60,7 @@ def ensure_late_runtime_installers() -> None:
     from .gs483_resource_containment import install as install_gs483
     from .gs563_native_fast_mover_attention import install as install_gs563
     from .gs619_early_mover_tape_priority import install as install_gs619
+    from .gs620_live_news_stream import install as install_gs620
 
     install_late_chain()
     # GS453 is deliberately outside the established GS392->GS404 presentation chain.
@@ -195,6 +196,11 @@ def ensure_late_runtime_installers() -> None:
     # news-only short burst from visually becoming WATCH FOR ENTRY without broad
     # tape or sustained 3m+5m confirmation. Trading authority remains unchanged.
     install_gs619()
+    # GS620 promotes the already-authenticated Alpaca/Benzinga news transport from
+    # forensic shadow use into a process-owned, nonblocking marketwide discovery
+    # cache. Completed polls may add symbol identity only; AutoScan never waits for
+    # news I/O and all Webull/downstream gates remain authoritative.
+    install_gs620()
 
 
 def log_startup(component: str, message: str = "starting") -> None:
