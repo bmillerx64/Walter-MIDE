@@ -7,6 +7,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from time import perf_counter
 from typing import Iterable
+from zoneinfo import ZoneInfo
 import json
 import os
 import re
@@ -144,6 +145,24 @@ class FMPNewsProvider(NewsProvider):
     BASE_URL = "https://financialmodelingprep.com/stable"
     BATCH_SIZE = 20
     FRESHNESS = timedelta(hours=6)
+    # FMP stable news payloads use US/Eastern wall-clock time when
+    # publishedDate / updatedDate omit an offset. Keep that provider contract
+    # local to this adapter; provider-neutral _utc() semantics remain unchanged.
+    SOURCE_TIMEZONE = ZoneInfo("America/New_York")
+
+    @classmethod
+    def _timestamp_utc(cls, value, default=None) -> datetime | None:
+        """Normalize one FMP timestamp without changing other providers semantics."""
+        if isinstance(value, datetime):
+            result = value
+        else:
+            try:
+                result = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+            except (TypeError, ValueError):
+                return default
+        if result.tzinfo is None:
+            result = result.replace(tzinfo=cls.SOURCE_TIMEZONE)
+        return result.astimezone(UTC)
 
     def __init__(self, api_key: str, *, timeout: int = 12, session=None, now=None):
         self.api_key = str(api_key or "").strip()
@@ -173,7 +192,7 @@ class FMPNewsProvider(NewsProvider):
         if not isinstance(item, dict):
             return None
         headline = str(item.get("title") or item.get("headline") or "").strip()
-        created = _utc(
+        created = cls._timestamp_utc(
             item.get("publishedDate") or item.get("published_date")
             or item.get("date") or item.get("created_at")
         )
@@ -188,7 +207,9 @@ class FMPNewsProvider(NewsProvider):
         stable_id = item.get("id") or url or f"{endpoint}:{created.isoformat()}:{_headline_key(headline)}"
         return NewsArticle(
             id=str(stable_id), headline=headline, created_at=created,
-            updated_at=_utc(item.get("updated_at") or item.get("updatedDate")),
+            updated_at=cls._timestamp_utc(
+                item.get("updated_at") or item.get("updatedDate")
+            ),
             symbols=symbols, source=source or "FMP", url=str(url) if url else None,
             provider="Financial Modeling Prep",
         )
