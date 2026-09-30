@@ -3512,10 +3512,14 @@ tab_names = [
 _debug_mode = str(st.query_params.get("debug", "")).strip() == "1"
 if _debug_mode:
     tab_names = tab_names + ["Webull Debug"]
-active_tab = st.radio(
-    "View", tab_names, horizontal=True, key="active_dashboard_tab",
-    help="Diagnostic views are loaded only when selected to keep memory bounded.",
-)
+
+# GS615: the trading Radar is results-first. Read the persisted View state before
+# instantiating the navigation widget so the viable opportunity sections can render
+# before View / Sort / News controls. Widget changes still trigger a normal rerun.
+active_tab = str(st.session_state.get("active_dashboard_tab") or "Radar")
+if active_tab not in tab_names:
+    active_tab = "Radar"
+
 if active_tab == "Radar":
     view_scan = completed_scan_for_view(st.session_state, "Radar")
 
@@ -3598,16 +3602,15 @@ if active_tab == "Radar":
 
         st.caption(catalyst_brief_provider_caption(report))
 
-    render_on_demand_catalyst_brief()
-    st.divider()
+    _radar_sort_options = ("Walter Priority", "RS Score")
+    radar_sort = str(st.session_state.get("radar_sort_mode") or "Walter Priority")
+    if radar_sort not in _radar_sort_options:
+        radar_sort = "Walter Priority"
+
+    # Critical viable opportunity data renders before every secondary operator control.
     if not display_records:
         st.success("No stock currently deserves elevated attention.")
     else:
-        radar_sort = st.selectbox(
-            "Sort candidates by",
-            ("Walter Priority", "RS Score"),
-            help="RS Score sorting is presentation-only and never changes qualification.",
-        )
         for section_name, section_records, expanded in scanner_v2_display_sections(
             display_records
         ):
@@ -3627,6 +3630,23 @@ if active_tab == "Radar":
                 st.dataframe(
                     radar_table(sorted_records), width="stretch", hide_index=True
                 )
+
+# Secondary navigation and research controls live below viable Radar data.
+active_tab = st.radio(
+    "View", tab_names, horizontal=True, key="active_dashboard_tab",
+    help="Diagnostic views are loaded only when selected to keep memory bounded.",
+)
+if active_tab == "Radar":
+    st.divider()
+    st.selectbox(
+        "Sort candidates by",
+        _radar_sort_options,
+        key="radar_sort_mode",
+        help="RS Score sorting is presentation-only and never changes qualification.",
+    )
+    render_on_demand_catalyst_brief()
+    st.divider()
+
 if active_tab == "Diagnostics":
     view_scan = completed_scan_for_view(st.session_state, "Diagnostics")
     evidence_report = (
