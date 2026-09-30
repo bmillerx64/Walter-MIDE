@@ -220,6 +220,7 @@ from mide.authorities.presentation_audio import (
     play_alert,
     current_render_audio_focus,
     current_render_audio_event,
+    mark_render_audio_event_spoken,
     canonical_opportunity_audio_phrase,
     radar_table,
     rejected_candidates_table,
@@ -3470,6 +3471,7 @@ if alerts and audio_triggered and alert_phrase:
                 flush=True,
             )
             play_alert("assets/alert.wav", alert_phrase, alert_voice_for_session())
+            mark_render_audio_event_spoken(st.session_state, _audio_event)
             st.session_state.last_escalation_alert = alert_delivery_key
 
 tab_names = [
