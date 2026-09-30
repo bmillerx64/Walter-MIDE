@@ -1,7 +1,7 @@
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
-from mide.authorities import discovery_news
+from mide.authorities import discovery_news, presentation_audio
 
 
 UTC = timezone.utc
@@ -66,6 +66,12 @@ def test_gs610_uses_fmp_stock_latest_not_symbol_search_endpoint():
     assert not session.calls[0][0].endswith("/stable/news/stock")
     assert trace["endpoint"] == "news/stock-latest"
     assert trace["articles_received"] == 1
+    assert trace["source_counts"] == {"Reuters": 1}
+    assert trace["priority_source_counts"] == {
+        "Reuters": 1,
+        "TipRanks": 0,
+        "Benzinga": 0,
+    }
 
 
 def test_gs610_paginates_until_four_hour_cutoff_and_recovers_cntb():
@@ -103,6 +109,8 @@ def test_gs610_paginates_until_four_hour_cutoff_and_recovers_cntb():
     assert trace["pages_requested"] == 3
     assert trace["coverage_complete"] is True
     assert trace["page_cap_reached"] is False
+    assert trace["priority_source_counts"]["Reuters"] == 3
+    assert trace["priority_source_counts"]["TipRanks"] == 1
 
 
 def test_gs610_reports_incomplete_coverage_when_page_cap_is_hit():
@@ -156,3 +164,65 @@ def test_gs610_full_brief_classifies_recovered_cntb_as_clinical_catalyst(monkeyp
     assert cluster["symbol"] == "CNTB"
     assert cluster["event_category"] == "REGULATORY_CLINICAL"
     assert cluster["news_class"] == "MATERIAL CATALYST"
+
+
+def test_gs622_prefers_trusted_wire_as_cluster_representative_only():
+    rows = [
+        {
+            "symbol": "WIRE",
+            "category": "CONTRACT_ORDER",
+            "news_class": "MATERIAL CATALYST",
+            "created_at": NOW - timedelta(minutes=1),
+            "headline": "WIRE contract analysis with stronger keyword score",
+            "source": "Seeking Alpha",
+            "provider": "Financial Modeling Prep",
+            "catalyst_score": 30.0,
+            "trusted_source": False,
+        },
+        {
+            "symbol": "WIRE",
+            "category": "CONTRACT_ORDER",
+            "news_class": "MATERIAL CATALYST",
+            "created_at": NOW - timedelta(minutes=2),
+            "headline": "WIRE wins customer contract",
+            "source": "Reuters",
+            "provider": "Financial Modeling Prep",
+            "catalyst_score": 12.0,
+            "trusted_source": True,
+        },
+    ]
+
+    cluster = discovery_news._cluster_brief_rows(rows, max_rows=1)[0]
+
+    assert cluster["headline"] == "WIRE wins customer contract"
+    assert cluster["confirmations"] == 2
+    assert cluster["trusted_confirmation_count"] == 1
+    assert cluster["trading_authority_changed"] is False
+
+
+def test_gs622_provider_caption_exposes_priority_wire_coverage():
+    report = {
+        "providers": {
+            "benzinga": {
+                "transport_disposition": "UNAVAILABLE",
+                "articles_received": 0,
+            },
+            "fmp": {
+                "transport_disposition": "SUCCESS",
+                "articles_received": 551,
+                "pages_requested": 6,
+                "coverage_complete": True,
+                "priority_source_counts": {
+                    "Reuters": 14,
+                    "TipRanks": 9,
+                    "Benzinga": 21,
+                },
+            },
+        },
+        "elapsed_ms": 1400,
+    }
+
+    caption = presentation_audio.catalyst_brief_provider_caption(report)
+
+    assert "FMP: 551 articles / 6 pages / full requested window covered" in caption
+    assert "wires Reuters 14, TipRanks 9, Benzinga 21" in caption
