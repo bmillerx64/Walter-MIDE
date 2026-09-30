@@ -21,7 +21,7 @@ def test_gs617_authoritative_surfaces_precede_all_radar_secondary_content():
     assert scanner_sections < feed < view < sort_control < news
 
 
-def test_gs617_surface_commit_occurs_after_audio_validation():
+def test_gs621_surface_commit_occurs_before_audio_validation_and_delivery():
     source = Path("app.py").read_text(encoding="utf-8")
 
     prepare = source.index(
@@ -35,15 +35,16 @@ def test_gs617_surface_commit_occurs_after_audio_validation():
         'play_alert("assets/alert.wav", alert_phrase',
         stale_guard,
     )
-    mission = source.index("with mission_plan_slot:", semantic_delivery)
+    mission = source.index("with mission_plan_slot:")
+    escalation = source.index("with escalation_engine_slot:", mission)
 
-    assert prepare < stale_guard < semantic_delivery < mission
+    assert mission < escalation < prepare < stale_guard < semantic_delivery
 
 
 def test_gs617_is_presentation_lifecycle_only():
     source = Path("app.py").read_text(encoding="utf-8")
     marker = source.index(
-        "# GS617: the authoritative completed-scan decision surfaces are the primary"
+        "# GS621: commit the authoritative completed-scan State surfaces before any"
     )
     boundary = source.index("tab_names = [", marker)
     block = source[marker:boundary]
