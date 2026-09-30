@@ -11,10 +11,16 @@ def test_radar_walter_priority_sort_key_is_explicitly_bound():
 
 def test_radar_sort_binding_is_presentation_only():
     source = Path("app.py").read_text(encoding="utf-8")
-    needle = 'radar_sort = st.selectbox('
-    start = source.index(needle)
+    start = source.index(
+        'radar_sort = str(st.session_state.get("radar_sort_mode") or "Walter Priority")'
+    )
     end = source.index('if active_tab == "Diagnostics":', start)
     block = source[start:end]
+
+    assert 'key="radar_sort_mode"' in block
+    assert block.index("scanner_v2_display_sections(") < block.index(
+        '"Sort candidates by"'
+    )
 
     forbidden = (
         "qualified_for_entry =",
