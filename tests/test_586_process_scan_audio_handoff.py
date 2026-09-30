@@ -23,18 +23,19 @@ def test_gs601_observer_arms_audio_only_when_completed_scan_is_still_current():
     assert observer.index(marker) < observer.index('st.rerun(scope="app")')
 
 
-def test_gs601_registers_process_audio_after_complete_dashboard_render():
+def test_gs621_registers_process_audio_after_critical_surface_before_heavy_dashboard():
     source = _app_source()
     semantic = source.index(
         'play_alert("assets/alert.wav", alert_phrase, alert_voice_for_session())'
     )
-    debug_view = source.index('if active_tab == "Webull Debug":')
+    mission = source.index("with mission_plan_slot:")
     marker = source.index(
-        "# GS601: consume process-scan audio only after the entire dashboard render"
+        "# GS621: register routine completed-scan browser audio immediately"
     )
-    handoff = source[marker:]
+    radar = source.index("tab_names = [")
+    handoff = source[marker:radar]
 
-    assert semantic < debug_view < marker
+    assert mission < semantic < marker < radar
     assert "_process_audio_snapshot = _gs585.snapshot()" in handoff
     assert "_process_audio_pending == _process_audio_current" in handoff
     assert (
@@ -50,9 +51,10 @@ def test_gs601_registers_process_audio_after_complete_dashboard_render():
 def test_gs601_stale_process_audio_token_is_always_consumed():
     source = _app_source()
     marker = source.index(
-        "# GS601: consume process-scan audio only after the entire dashboard render"
+        "# GS621: register routine completed-scan browser audio immediately"
     )
-    handoff = source[marker:]
+    boundary = source.index("tab_names = [", marker)
+    handoff = source[marker:boundary]
 
     assert "[WALTER AUDIO] dropped stale process scan token" in handoff
     pop = 'st.session_state.pop("_walter_process_scan_audio_pending_token", None)'
@@ -63,9 +65,10 @@ def test_gs601_stale_process_audio_token_is_always_consumed():
 def test_gs601_audio_handoff_is_presentation_only():
     source = _app_source()
     marker = source.index(
-        "# GS601: consume process-scan audio only after the entire dashboard render"
+        "# GS621: register routine completed-scan browser audio immediately"
     )
-    handoff = source[marker:]
+    boundary = source.index("tab_names = [", marker)
+    handoff = source[marker:boundary]
 
     forbidden = (
         "participation_score",
