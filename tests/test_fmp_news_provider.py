@@ -68,3 +68,52 @@ def test_live_webull_unavailable_seam_upgrades_to_fmp_when_key_exists(monkeypatc
     )
     assert isinstance(service.providers[0], FMPNewsProvider)
     assert isinstance(service.providers[-1], UnavailableNewsProvider)
+
+
+
+def test_fmp_naive_published_date_uses_eastern_dst_in_summer():
+    article = FMPNewsProvider._normalize(
+        {
+            "symbol": "CNTB",
+            "publishedDate": "2026-09-30 07:00:00",
+            "updatedDate": "2026-09-30 07:15:00",
+            "publisher": "GlobeNewswire",
+            "title": "Connect Biopharma reports positive Phase 2 results",
+            "url": "https://example.test/cntb",
+        },
+        endpoint="news/stock",
+    )
+
+    assert article is not None
+    assert article.created_at == datetime(2026, 9, 30, 11, 0, tzinfo=UTC)
+    assert article.updated_at == datetime(2026, 9, 30, 11, 15, tzinfo=UTC)
+
+
+def test_fmp_naive_published_date_uses_eastern_standard_time_in_winter():
+    article = FMPNewsProvider._normalize(
+        {
+            "symbol": "WINR",
+            "publishedDate": "2026-01-15 07:00:00",
+            "publisher": "Reuters",
+            "title": "WINR announces strategic agreement",
+        },
+        endpoint="news/stock",
+    )
+
+    assert article is not None
+    assert article.created_at == datetime(2026, 1, 15, 12, 0, tzinfo=UTC)
+
+
+def test_fmp_offset_aware_timestamp_keeps_explicit_instant():
+    article = FMPNewsProvider._normalize(
+        {
+            "symbol": "UTCX",
+            "publishedDate": "2026-09-30T11:00:00Z",
+            "publisher": "Reuters",
+            "title": "UTCX announces contract award",
+        },
+        endpoint="news/stock",
+    )
+
+    assert article is not None
+    assert article.created_at == datetime(2026, 9, 30, 11, 0, tzinfo=UTC)
