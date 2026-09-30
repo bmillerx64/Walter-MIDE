@@ -13,7 +13,10 @@ def test_gs580_transport_recovery_requires_native_streamlit_connecting():
 
     assert "const nativeStreamlitConnecting = () =>" in scheduler
     assert "return /\\\\bCONNECTING\\\\b/.test(text);" in scheduler
-    recovery = scheduler[scheduler.index("const recoveryDue = attemptedAt > 0"):]
+    recovery = scheduler[scheduler.index("const recoveryBaselinePresent = processOwned"):]
+    assert "? processStartedAt > 0" in recovery
+    assert ": attemptedAt > 0" in recovery
+    assert "const recoveryDue = recoveryBaselinePresent" in recovery
     assert "&& nativeStreamlitConnecting()" in recovery
     assert "&& overdueSeconds * 1000 >= transportRecoveryMs" in recovery
 
@@ -21,7 +24,7 @@ def test_gs580_transport_recovery_requires_native_streamlit_connecting():
 def test_gs580_scan_lateness_alone_cannot_reload_healthy_session():
     scheduler = _scheduler_source()
 
-    recovery = scheduler[scheduler.index("const recoveryDue = attemptedAt > 0"):]
+    recovery = scheduler[scheduler.index("const recoveryBaselinePresent = processOwned"):]
     connecting_pos = recovery.index("nativeStreamlitConnecting()")
     overdue_pos = recovery.index("overdueSeconds * 1000 >= transportRecoveryMs")
     replace_pos = recovery.index("root.location.replace(root.location.href);")
