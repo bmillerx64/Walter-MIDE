@@ -32,7 +32,7 @@ def test_gs612_prepares_focus_from_same_final_order(monkeypatch):
     assert calls["published"] == [{"symbol": "FNGR"}, {"symbol": "BIYA"}]
 
 
-def test_gs612_audio_focus_precedes_semantic_delivery_but_visual_commit_stays_late():
+def test_gs612_audio_focus_precedes_semantic_delivery_and_visual_commit():
     source = Path("app.py").read_text(encoding="utf-8")
 
     prepare = source.index(
@@ -41,13 +41,14 @@ def test_gs612_audio_focus_precedes_semantic_delivery_but_visual_commit_stays_la
     consume = source.index(
         "_audio_focus_records = current_render_audio_focus("
     )
-    delayed_visual = source.index(
-        "# GS611: commit the two authoritative completed-scan operator surfaces"
+    delivery = source.index(
+        'play_alert("assets/alert.wav", alert_phrase',
+        consume,
     )
+    visual = source.index("with mission_plan_slot:", delivery)
 
-    assert prepare < consume < delayed_visual
+    assert prepare < consume < delivery < visual
     assert source.count("with mission_plan_slot:") == 1
-    assert source.index("with mission_plan_slot:") > delayed_visual
 
 
 def test_gs612_preserves_stale_scan_audio_guard():
