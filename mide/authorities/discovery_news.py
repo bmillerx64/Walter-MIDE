@@ -1725,6 +1725,333 @@ def install_news_corroborated_shadow_rvol() -> None:
     discovery.build_seed_symbols = build_seed_symbols
 
 
+
+# ---------------------------------------------------------------------------
+# GS609 on-demand Catalyst Brief
+# ---------------------------------------------------------------------------
+
+CATALYST_BRIEF_DEFAULT_HOURS = 4
+CATALYST_BRIEF_MAX_HOURS = 12
+CATALYST_BRIEF_MAX_ROWS = 30
+
+
+def _brief_article_rows(articles, *, cutoff: datetime, now: datetime) -> list[dict]:
+    """Normalize significant article facts without changing discovery state."""
+    from mide import discovery
+    from mide.news import (
+        MATERIAL_CATALYST_SCORE,
+        classify_headline,
+        trusted_catalyst_source,
+    )
+
+    rows: list[dict] = []
+    seen: set[tuple[str, str, str]] = set()
+    for article in articles or []:
+        created = _utc(getattr(article, "created_at", None))
+        if created is None or created < cutoff or created > now + timedelta(minutes=5):
+            continue
+        headline = " ".join(str(getattr(article, "headline", "") or "").split())
+        if not headline:
+            continue
+        source = " ".join(str(getattr(article, "source", "") or "").split())
+        provider = " ".join(str(getattr(article, "provider", "") or "").split())
+        text = str(getattr(article, "_walter_story_text", "") or "")
+        context = story_intelligence(headline, text)
+        score, flags = classify_headline(headline)
+        positives = list(context.get("positive_attention_categories") or [])
+        risks = list(context.get("risk_categories") or [])
+        significant = bool(positives or risks) or abs(float(score or 0)) >= MATERIAL_CATALYST_SCORE
+        if not significant:
+            continue
+        category = (
+            risks[0]
+            if risks
+            else positives[0]
+            if positives
+            else "MATERIAL_CATALYST"
+        )
+        news_class = "RISK EVENT" if risks else "MATERIAL CATALYST"
+        trusted = bool(trusted_catalyst_source(source)) or "benzinga" in provider.casefold()
+
+        for raw_symbol in getattr(article, "symbols", []) or []:
+            symbol = str(raw_symbol or "").strip().upper()
+            if not discovery.is_valid_us_symbol(symbol):
+                continue
+            identity = (symbol, headline.casefold(), created.isoformat())
+            if identity in seen:
+                continue
+            seen.add(identity)
+            rows.append({
+                "symbol": symbol,
+                "headline": headline[:500],
+                "source": source or provider or "Unknown",
+                "provider": provider or "Unknown",
+                "created_at": created,
+                "age_minutes": round(max(0.0, (now - created).total_seconds()) / 60.0, 1),
+                "category": category,
+                "categories": list(context.get("categories") or []),
+                "news_class": news_class,
+                "catalyst_score": float(score or 0),
+                "catalyst_flags": list(flags),
+                "trusted_source": trusted,
+            })
+    return rows
+
+
+def _cluster_brief_rows(rows: list[dict], *, max_rows: int) -> list[dict]:
+    """Collapse corroborating headlines into one ticker/event cluster."""
+    grouped: dict[tuple[str, str], list[dict]] = {}
+    for row in rows:
+        key = (
+            str(row.get("symbol") or ""),
+            str(row.get("category") or "MATERIAL_CATALYST"),
+        )
+        grouped.setdefault(key, []).append(row)
+
+    clusters: list[dict] = []
+    for (symbol, category), items in grouped.items():
+        ordered = sorted(
+            items,
+            key=lambda item: item.get("created_at")
+            or datetime.min.replace(tzinfo=UTC),
+            reverse=True,
+        )
+        representative = max(
+            ordered,
+            key=lambda item: (
+                abs(float(item.get("catalyst_score") or 0.0)),
+                item.get("created_at") or datetime.min.replace(tzinfo=UTC),
+            ),
+        )
+        sources = sorted({
+            str(item.get("source") or "").strip()
+            for item in ordered
+            if str(item.get("source") or "").strip()
+        })
+        providers = sorted({
+            str(item.get("provider") or "").strip()
+            for item in ordered
+            if str(item.get("provider") or "").strip()
+        })
+        clusters.append({
+            "symbol": symbol,
+            "event_category": category,
+            "news_class": (
+                "RISK EVENT"
+                if any(item.get("news_class") == "RISK EVENT" for item in ordered)
+                else "MATERIAL CATALYST"
+            ),
+            "published_at": ordered[0]["created_at"],
+            "first_seen_at": ordered[-1]["created_at"],
+            "headline": representative["headline"],
+            "sources": sources,
+            "providers": providers,
+            "confirmations": len(ordered),
+            "trusted_confirmation_count": sum(
+                bool(item.get("trusted_source")) for item in ordered
+            ),
+            "max_abs_catalyst_score": max(
+                abs(float(item.get("catalyst_score") or 0.0))
+                for item in ordered
+            ),
+            "headlines": [
+                {
+                    "headline": item["headline"],
+                    "source": item["source"],
+                    "provider": item["provider"],
+                    "created_at": item["created_at"].isoformat(),
+                    "catalyst_score": item["catalyst_score"],
+                }
+                for item in ordered[:8]
+            ],
+            "trading_authority_changed": False,
+        })
+
+    clusters.sort(
+        key=lambda item: (
+            item.get("published_at")
+            or datetime.min.replace(tzinfo=UTC),
+            int(item.get("confirmations") or 0),
+            float(item.get("max_abs_catalyst_score") or 0.0),
+        ),
+        reverse=True,
+    )
+    return clusters[: max(1, int(max_rows))]
+
+
+def build_on_demand_catalyst_brief(
+    *,
+    hours: int = CATALYST_BRIEF_DEFAULT_HOURS,
+    now=None,
+    max_rows: int = CATALYST_BRIEF_MAX_ROWS,
+    benzinga_fetcher=None,
+    fmp_fetcher=None,
+) -> dict:
+    """Pull a bounded, read-only material-news brief only when explicitly called.
+
+    This function is outside AutoScan discovery wrappers. It never mutates Walter's
+    discovery cache, candidate membership, scores, ranking, readiness, audio,
+    execution or order state.
+    """
+    from time import perf_counter
+
+    current = benzinga_utc_now(now)
+    bounded_hours = max(1, min(int(hours), CATALYST_BRIEF_MAX_HOURS))
+    cutoff = current - timedelta(hours=bounded_hours)
+    diagnostics: dict[str, dict] = {}
+    articles = []
+    started = perf_counter()
+
+    if benzinga_fetcher is not None:
+        try:
+            rows = list(benzinga_fetcher(cutoff, current) or [])
+            articles.extend(rows)
+            diagnostics["benzinga"] = {
+                "configured": True,
+                "request_made": True,
+                "articles_received": len(rows),
+                "transport_disposition": "SUCCESS",
+            }
+        except Exception as exc:
+            diagnostics["benzinga"] = {
+                "configured": True,
+                "request_made": True,
+                "articles_received": 0,
+                "transport_disposition": "PROVIDER_FAILURE",
+                "exception_type": type(exc).__name__,
+            }
+    else:
+        token = benzinga_configured_token()
+        if not token:
+            diagnostics["benzinga"] = {
+                "configured": False,
+                "request_made": False,
+                "articles_received": 0,
+                "transport_disposition": "UNAVAILABLE",
+            }
+        else:
+            try:
+                rows = list(
+                    fetch_benzinga_delta(
+                        token,
+                        since=cutoff,
+                        now=current,
+                    ) or []
+                )
+                articles.extend(rows)
+                diagnostics["benzinga"] = {
+                    "configured": True,
+                    "request_made": True,
+                    "articles_received": len(rows),
+                    "page_cap_reached": len(rows) >= BENZINGA_PAGE_SIZE,
+                    "transport_disposition": "SUCCESS",
+                }
+            except Exception as exc:
+                diagnostics["benzinga"] = {
+                    "configured": True,
+                    "request_made": True,
+                    "articles_received": 0,
+                    "transport_disposition": "PROVIDER_FAILURE",
+                    "exception_type": type(exc).__name__,
+                }
+
+    if fmp_fetcher is not None:
+        try:
+            rows = list(fmp_fetcher(current) or [])
+            articles.extend(rows)
+            diagnostics["fmp"] = {
+                "configured": True,
+                "request_made": True,
+                "articles_received": len(rows),
+                "transport_disposition": "SUCCESS",
+            }
+        except Exception as exc:
+            diagnostics["fmp"] = {
+                "configured": True,
+                "request_made": True,
+                "articles_received": 0,
+                "transport_disposition": "PROVIDER_FAILURE",
+                "exception_type": type(exc).__name__,
+            }
+    else:
+        try:
+            from mide import news_provider
+            from mide.gs300_fmp_news_pagination import (
+                fetch_marketwide_stock_news_paginated,
+            )
+
+            key = str(news_provider._configured_fmp_api_key() or "").strip()
+            if not key:
+                diagnostics["fmp"] = {
+                    "configured": False,
+                    "request_made": False,
+                    "articles_received": 0,
+                    "transport_disposition": "UNAVAILABLE",
+                }
+            else:
+                rows = list(
+                    fetch_marketwide_stock_news_paginated(
+                        key,
+                        now=current,
+                    ) or []
+                )
+                articles.extend(rows)
+                diagnostics["fmp"] = {
+                    "configured": True,
+                    "request_made": True,
+                    "articles_received": len(rows),
+                    "pages_requested": int(
+                        getattr(
+                            fetch_marketwide_stock_news_paginated,
+                            "last_pages_requested",
+                            0,
+                        ) or 0
+                    ),
+                    "page_failures": int(
+                        getattr(
+                            fetch_marketwide_stock_news_paginated,
+                            "last_page_failures",
+                            0,
+                        ) or 0
+                    ),
+                    "transport_disposition": "SUCCESS",
+                }
+        except Exception as exc:
+            diagnostics["fmp"] = {
+                "configured": True,
+                "request_made": True,
+                "articles_received": 0,
+                "transport_disposition": "PROVIDER_FAILURE",
+                "exception_type": type(exc).__name__,
+            }
+
+    normalized = _brief_article_rows(
+        articles,
+        cutoff=cutoff,
+        now=current,
+    )
+    clusters = _cluster_brief_rows(
+        normalized,
+        max_rows=max_rows,
+    )
+    return {
+        "authority": AUTHORITY,
+        "generated_at": current,
+        "window_hours": bounded_hours,
+        "cutoff": cutoff,
+        "article_count": len(articles),
+        "significant_article_count": len(normalized),
+        "cluster_count": len(clusters),
+        "clusters": clusters,
+        "providers": diagnostics,
+        "elapsed_ms": round((perf_counter() - started) * 1000.0, 1),
+        "on_demand_only": True,
+        "autoscan_changed": False,
+        "candidate_membership_changed": False,
+        "trading_authority_changed": False,
+    }
+
+
 def build_seed_symbols(*args, **kwargs):
     from mide import discovery
     return discovery.build_seed_symbols(*args, **kwargs)
@@ -1803,4 +2130,8 @@ __all__ = [
     "snapshot_identity_records",
     "symbol_news_evidence",
     "ticker_inspection",
+    "build_on_demand_catalyst_brief",
+    "CATALYST_BRIEF_DEFAULT_HOURS",
+    "CATALYST_BRIEF_MAX_HOURS",
+    "CATALYST_BRIEF_MAX_ROWS",
 ]
