@@ -54,6 +54,13 @@ def look_now_context(record: dict, view: dict) -> str:
 
 
 
+def _description_line(record: dict, view: dict) -> str:
+    """Render the canonical P/E-aware operator description without mutating state."""
+    from .authorities.presentation_audio import opportunity_description_line
+
+    return opportunity_description_line(record, view)
+
+
 def _confidence_cue(item: dict) -> str:
     """Keep the familiar meter cue without creating a second opportunity state."""
     confidence = int(item.get("confidence", 0) or 0)
@@ -158,7 +165,7 @@ def _target_markup(item: dict, role: str, primary: dict | None = None) -> str:
         f"<div class='opportunity-meter-track' role='progressbar' aria-valuemin='0' "
         f"aria-valuemax='100' aria-valuenow='{confidence}'>"
         f"<div class='opportunity-meter-fill' style='--opportunity:{confidence}%'></div></div></div>"
-        f"<div class='small'>{html.escape(view['reason'])}</div>"
+        f"<div class='small'>{html.escape(_description_line(record, view))}</div>"
         f"{context_markup}"
         f"{priority_markup}"
         f"<div class='mission-section-title'>ENTRY PATH</div>"
@@ -258,7 +265,8 @@ def install() -> None:
                 f"<div class='recommendation-label'>"
                 f"{html.escape(str(record.get('symbol') or '').upper())} · "
                 f"{html.escape(view['state'] + context_suffix)}</div>"
-                f"<div class='recommendation-message'>{html.escape(view['reason'])}</div>"
+                f"<div class='recommendation-message'>"
+                f"{html.escape(_description_line(record, view))}</div>"
                 f"<ul class='escalation-list'>{evidence}</ul>"
                 f"<div class='small'>Next: {html.escape(view['next_step'])}</div></div>",
                 unsafe_allow_html=True,

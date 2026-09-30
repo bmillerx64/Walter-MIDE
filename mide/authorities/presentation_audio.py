@@ -1075,6 +1075,44 @@ def pe_strength_score(record: dict) -> float | None:
     return (participation + expansion) / 2.0
 
 
+def pe_strength_display_value(record: dict, view: dict | None = None) -> int | None:
+    """Return the operator-facing whole-number P/E Strength value."""
+    score = None
+    if isinstance(view, dict):
+        score = _pe_number(view.get("pe_strength_score"))
+    if score is None:
+        score = pe_strength_score(record)
+    if score is None:
+        return None
+    # P/E Strength is a 0-100 mean. Half-up rounding matches the trader-facing
+    # whole-number cue better than Python's banker rounding at x.5.
+    return int(score + 0.5)
+
+
+def opportunity_description_line(record: dict, view: dict | None = None) -> str:
+    """Return the canonical visible second line for one Opportunity State card.
+
+    GS607 restores the combined Participation/Expansion number the operator uses
+    without putting it back inside the underlying reason string. Keeping the score
+    separate preserves GS599's warm-runtime anti-nesting fix while making displayed
+    copy and canonical live voice share the same P/E fact.
+    """
+    if view is None:
+        try:
+            from mide import gs310_unified_opportunity_state as unified
+
+            view = unified.opportunity_state(record)
+        except Exception:
+            view = {}
+    view = view if isinstance(view, dict) else {}
+    reason = " ".join(str(view.get("reason") or "").split())
+    score = pe_strength_display_value(record, view)
+    if score is None:
+        return reason
+    prefix = f"P/E Strength {score}/100"
+    return f"{prefix} · {reason}" if reason else prefix
+
+
 def _pe_halted(record: dict) -> bool:
     if any(
         record.get(key) is True
@@ -5838,6 +5876,9 @@ def canonical_opportunity_audio_phrase(records: list[dict]) -> str:
         return ""
 
     parts = [f"{symbol}.", f"{state}."]
+    score = pe_strength_display_value(record, view)
+    if score is not None:
+        parts.append(f"P E strength {score}.")
     if context and context.casefold() not in state.casefold():
         parts.append(f"{context}.")
     if reason:
@@ -6039,6 +6080,8 @@ __all__ = [
     "current_render_audio_focus",
     "current_render_audio_event",
     "canonical_opportunity_audio_phrase",
+    "opportunity_description_line",
+    "pe_strength_display_value",
     "visual_audio_focus_record",
     "operator_scoped_market_events",
     "reset_retest_awareness_copy",
