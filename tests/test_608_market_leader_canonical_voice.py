@@ -220,7 +220,7 @@ def test_gs608_market_leader_is_once_per_symbol_state_headline_until_changed(mon
 def test_gs608_app_marks_secondary_delivery_inside_single_live_authority():
     source = Path("app.py").read_text(encoding="utf-8")
     start = source.index("_audio_scan_token = (")
-    end = source.index("\ntab_names = [", start)
+    end = source.index("\n# GS601: consume process-scan audio only after the entire dashboard render", start)
     block = source[start:end]
 
     assert "current_render_audio_event(" in block
