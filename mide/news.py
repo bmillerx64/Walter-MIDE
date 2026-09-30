@@ -29,6 +29,7 @@ TRUSTED_CATALYST_SOURCE_TERMS = (
     "reuters",
     "benzinga",
     "tipranks",
+    "nasdaq",
     "company press release",
 )
 
