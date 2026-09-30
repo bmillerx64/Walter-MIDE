@@ -65,12 +65,12 @@ STRATEGY_LEADER_MAX_DAY_GAINER_RANK = 10
 STRATEGY_LEADER_PRICE_CEILING = 5.0
 STRATEGY_LEADER_LIMIT = 5
 
-# GS563 reuses the established strategy-leader gain/price boundaries for the
-# faster native five-minute-movers feed. This is operator attention only: a
-# native fast mover can be surfaced even when free-float/reference data keeps it
-# out of the trade-qualified pipeline.
-FAST_MOVER_MIN_GAIN_PCT = STRATEGY_LEADER_MIN_GAIN_PCT
-FAST_MOVER_MAX_RANK = 10
+# GS619: the MIN_5 feed must use five-minute semantics, not the established
+# +15% DAY_1 leader threshold. A top-five +3% five-minute move is already a
+# meaningful intraday attention event; downstream trajectory/flow evidence
+# decides whether it earns a main LOOK NOW card. This remains attention only.
+FAST_MOVER_MIN_GAIN_PCT = 3.0
+FAST_MOVER_MAX_RANK = 5
 FAST_MOVER_PRICE_CEILING = STRATEGY_LEADER_PRICE_CEILING
 FAST_MOVER_LIMIT = 5
 
@@ -398,9 +398,10 @@ def fast_mover_rows(
 ) -> list[dict]:
     """Return current native five-minute movers that deserve chart attention.
 
-    GS563 deliberately uses already-fetched Webull radar rows and the same 15%
-    move / $5 strategy context already accepted by GS377. Free-float, readiness,
-    anti-chase and entry authority are not consulted or changed here.
+    GS619 reads the MIN_5 feed's own rank/change measurement when the current
+    radar generation provides it. The legacy top-level fields remain a fallback
+    for retained runtimes/tests. Free-float, readiness, anti-chase and entry
+    authority are not consulted or changed here.
     """
     movers: list[dict] = []
     for source in native_rows or []:
@@ -409,14 +410,33 @@ def fast_mover_rows(
         if not symbol or "five_minute_movers" not in sources:
             continue
 
-        pct_change = _market_event_number(source.get("change_ratio"))
-        price = _market_event_number(source.get("price"))
-        volume = _market_event_number(source.get("volume"))
+        feed_metrics = source.get("feed_metrics") or {}
+        five = (
+            feed_metrics.get("five_minute_movers")
+            if isinstance(feed_metrics, dict)
+            else None
+        )
+        five = five if isinstance(five, dict) else {}
+        pct_change = _market_event_number(
+            five.get("change_ratio"),
+            default=_market_event_number(source.get("change_ratio")),
+        )
+        price = _market_event_number(
+            five.get("price"),
+            default=_market_event_number(source.get("price")),
+        )
+        volume = _market_event_number(
+            five.get("volume"),
+            default=_market_event_number(source.get("volume")),
+        )
         ranks = source.get("ranks") or {}
         rank = (
             _market_event_number(
-                ranks.get("five_minute_movers"),
-                default=999.0,
+                five.get("rank"),
+                default=_market_event_number(
+                    ranks.get("five_minute_movers"),
+                    default=999.0,
+                ),
             )
             or 999.0
         )
@@ -425,7 +445,21 @@ def fast_mover_rows(
         if rank > int(max_rank):
             continue
 
-        prior_close = implied_previous_close(price, pct_change)
+        # For a current price already above the strategy range, only DAY_1
+        # context can prove it launched from <=$5. A five-minute percentage is
+        # not a valid previous-close proxy.
+        day = (
+            feed_metrics.get("day_gainers")
+            if isinstance(feed_metrics, dict)
+            else None
+        )
+        day = day if isinstance(day, dict) else {}
+        day_change = _market_event_number(day.get("change_ratio"))
+        if day_change is None and not feed_metrics:
+            # Compatibility fallback for retained pre-GS619 rows where the
+            # generic change_ratio historically represented the only evidence.
+            day_change = _market_event_number(source.get("change_ratio"))
+        prior_close = implied_previous_close(price, day_change)
         currently_in_range = (
             price is not None
             and 0 < price <= float(price_ceiling)
