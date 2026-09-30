@@ -6610,6 +6610,15 @@ def catalyst_brief_provider_caption(report: dict) -> str:
                 detail += " / PAGE CAP — coverage may be incomplete"
             elif info.get("coverage_complete") is True:
                 detail += " / full requested window covered"
+            if name == "fmp":
+                wires = info.get("priority_source_counts") or {}
+                if isinstance(wires, dict):
+                    detail += (
+                        " / wires "
+                        f"Reuters {int(wires.get('Reuters') or 0)}, "
+                        f"TipRanks {int(wires.get('TipRanks') or 0)}, "
+                        f"Benzinga {int(wires.get('Benzinga') or 0)}"
+                    )
             parts.append(f"{label}: {detail}")
         elif disposition == "UNAVAILABLE":
             parts.append(f"{label}: unavailable")
