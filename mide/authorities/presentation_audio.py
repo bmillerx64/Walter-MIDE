@@ -6202,7 +6202,79 @@ def bind_final_enriched_opportunity_order(
     setattr(ui, attr, render_with_final_enriched_order)
 
 
+
+# ---------------------------------------------------------------------------
+# GS609 on-demand Catalyst Brief presentation
+# ---------------------------------------------------------------------------
+
+_CATALYST_CATEGORY_LABELS = {
+    "REGULATORY_CLINICAL": "Regulatory / Clinical",
+    "CONTRACT_ORDER": "Contract / Order",
+    "PARTNERSHIP_EXPANSION": "Partnership / Expansion",
+    "M_AND_A_INVESTMENT": "M&A / Investment",
+    "FINANCIAL_GROWTH": "Financial Growth",
+    "IP_LICENSE": "IP / License",
+    "NON_DILUTIVE_FUNDING": "Non-dilutive Funding",
+    "DILUTION_RISK": "Dilution / Financing Risk",
+    "DISTRESS_RISK": "Distress Risk",
+    "MATERIAL_CATALYST": "Material Catalyst",
+}
+
+
+def catalyst_brief_table(report: dict) -> list[dict]:
+    """Return compact trader-facing rows from the read-only Catalyst Brief."""
+    from zoneinfo import ZoneInfo
+
+    eastern = ZoneInfo("America/New_York")
+    rows = []
+    for item in list((report or {}).get("clusters") or []):
+        stamp = item.get("published_at")
+        if isinstance(stamp, datetime):
+            time_text = stamp.astimezone(eastern).strftime("%-I:%M %p")
+        else:
+            time_text = str(stamp or "")
+        category = str(item.get("event_category") or "MATERIAL_CATALYST")
+        sources = ", ".join(item.get("sources") or []) or "Unknown"
+        rows.append({
+            "Time ET": time_text,
+            "Ticker": str(item.get("symbol") or ""),
+            "Event": _CATALYST_CATEGORY_LABELS.get(
+                category,
+                category.replace("_", " ").title(),
+            ),
+            "Class": str(item.get("news_class") or ""),
+            "Confirmations": int(item.get("confirmations") or 0),
+            "Sources": sources,
+            "Headline": str(item.get("headline") or ""),
+        })
+    return rows
+
+
+def catalyst_brief_provider_caption(report: dict) -> str:
+    """Summarize provider coverage without exposing credentials or raw failures."""
+    parts = []
+    for name, label in (("benzinga", "Benzinga"), ("fmp", "FMP")):
+        info = ((report or {}).get("providers") or {}).get(name) or {}
+        disposition = str(info.get("transport_disposition") or "UNKNOWN")
+        count = int(info.get("articles_received") or 0)
+        if disposition == "SUCCESS":
+            detail = f"{count} articles"
+            if info.get("page_cap_reached"):
+                detail += ", page cap reached"
+            parts.append(f"{label}: {detail}")
+        elif disposition == "UNAVAILABLE":
+            parts.append(f"{label}: unavailable")
+        else:
+            parts.append(f"{label}: {disposition.lower().replace('_', ' ')}")
+    elapsed = (report or {}).get("elapsed_ms")
+    if elapsed is not None:
+        parts.append(f"{float(elapsed) / 1000.0:.1f}s")
+    return " · ".join(parts)
+
+
 __all__ = [
+    "catalyst_brief_table",
+    "catalyst_brief_provider_caption",
     "current_render_audio_focus",
     "current_render_audio_event",
     "mark_render_audio_event_spoken",
