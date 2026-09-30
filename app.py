@@ -3492,6 +3492,88 @@ active_tab = st.radio(
 )
 if active_tab == "Radar":
     view_scan = completed_scan_for_view(st.session_state, "Radar")
+
+    @st.fragment
+    def render_on_demand_catalyst_brief() -> None:
+        """Run the GS609 news brief only on an explicit operator click."""
+        from mide.authorities.discovery_news import build_on_demand_catalyst_brief
+        from mide.authorities.presentation_audio import (
+            catalyst_brief_provider_caption,
+            catalyst_brief_table,
+        )
+
+        state_key = "_walter_on_demand_catalyst_brief"
+        report = st.session_state.get(state_key)
+        button_label = (
+            "⚡ Refresh 4-Hour Catalyst Brief"
+            if isinstance(report, dict)
+            else "⚡ Run 4-Hour Catalyst Brief"
+        )
+        if st.button(
+            button_label,
+            key="walter-gs609-catalyst-brief",
+            type="secondary",
+            use_container_width=True,
+            help=(
+                "On-demand news intelligence only. This does not run AutoScan, "
+                "change candidates, or grant Entry authority."
+            ),
+        ):
+            with st.spinner("Pulling significant company news from the last 4 hours…"):
+                report = build_on_demand_catalyst_brief(hours=4)
+                st.session_state[state_key] = report
+
+        if not isinstance(report, dict):
+            st.caption(
+                "On demand only · scans Benzinga/FMP news when you click · "
+                "does not affect AutoScan or Entry authority."
+            )
+            return
+
+        generated = report.get("generated_at")
+        generated_text = (
+            generated.astimezone().strftime("%Y-%m-%d %H:%M:%S %Z")
+            if isinstance(generated, datetime)
+            else str(generated or "")
+        )
+        st.markdown("### ⚡ 4-Hour Catalyst Brief")
+        st.caption(
+            f"Generated {generated_text} · "
+            f"{int(report.get('cluster_count') or 0)} significant ticker/event clusters · "
+            "news intelligence only; no trading authority."
+        )
+        rows = catalyst_brief_table(report)
+        if rows:
+            st.dataframe(
+                rows,
+                width="stretch",
+                hide_index=True,
+                column_config={
+                    "Headline": st.column_config.TextColumn(width="large"),
+                    "Sources": st.column_config.TextColumn(width="medium"),
+                },
+            )
+            with st.expander("Catalyst details / corroborating headlines", expanded=False):
+                for cluster in report.get("clusters") or []:
+                    symbol = str(cluster.get("symbol") or "")
+                    category = str(cluster.get("event_category") or "").replace("_", " ")
+                    st.markdown(
+                        f"**{symbol} · {category.title()} · "
+                        f"{int(cluster.get('confirmations') or 0)} confirmation(s)**"
+                    )
+                    for item in cluster.get("headlines") or []:
+                        st.caption(
+                            f"{item.get('created_at', '')} · "
+                            f"{item.get('source') or item.get('provider') or 'Unknown'} · "
+                            f"{item.get('headline', '')}"
+                        )
+        else:
+            st.info("No significant company-news catalyst matched Walter's material-event rules in this 4-hour window.")
+
+        st.caption(catalyst_brief_provider_caption(report))
+
+    render_on_demand_catalyst_brief()
+    st.divider()
     if not display_records:
         st.success("No stock currently deserves elevated attention.")
     else:
