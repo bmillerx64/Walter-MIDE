@@ -72,4 +72,19 @@ def test_gs601_browser_scanning_label_includes_process_stage():
 
     assert 'getattr(process_snapshot, "current_stage", None)' in source
     assert 'f"● SCANNING {live_elapsed}s · {live_stage}"' in source
-    assert "● SCANNING ${{elapsedSeconds}}s · ${{processStage}}" in source
+
+    # GS611 keeps GS601 stage truth but moves process-owned label authority to the
+    # fresh 5-second observer. The full-render JavaScript carries a static process
+    # snapshot and may no longer overwrite that live label with stale SCANNING /
+    # SCAN OVERDUE presentation.
+    fragment_start = source.index("def refresh_process_stage_indicator()")
+    fragment_end = source.index("adopt_newer_process_scan()", fragment_start)
+    fragment = source[fragment_start:fragment_end]
+    assert "live_process_snapshot.running" in fragment
+    assert "next_due_monotonic" in fragment
+
+    static_start = source.index("const remainingMs = deadline - now;")
+    static_end = source.index("// GS576 transport failover.", static_start)
+    static_display = source[static_start:static_end]
+    assert "if (!processOwned)" in static_display
+    assert "processStage" not in static_display

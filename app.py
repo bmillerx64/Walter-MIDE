@@ -1490,29 +1490,49 @@ def arm_live_clock_engine(
                 ).snapshot()
             except Exception:
                 return
-            if not live_process_snapshot.running:
-                return
-            live_stage = str(
-                getattr(live_process_snapshot, "current_stage", None)
-                or "Working"
-            )
-            live_started = getattr(live_process_snapshot, "last_started_at", None)
-            live_elapsed = (
-                max(
-                    0,
-                    int(
-                        (
-                            datetime.now().astimezone()
-                            - live_started.astimezone()
-                        ).total_seconds()
-                    ),
+            if live_process_snapshot.running:
+                live_stage = str(
+                    getattr(live_process_snapshot, "current_stage", None)
+                    or "Working"
                 )
-                if live_started is not None
-                else 0
-            )
-            live_label = json.dumps(
-                f"● SCANNING {live_elapsed}s · {live_stage}"
-            )
+                live_started = getattr(live_process_snapshot, "last_started_at", None)
+                live_elapsed = (
+                    max(
+                        0,
+                        int(
+                            (
+                                datetime.now().astimezone()
+                                - live_started.astimezone()
+                            ).total_seconds()
+                        ),
+                    )
+                    if live_started is not None
+                    else 0
+                )
+                live_text = f"● SCANNING {live_elapsed}s · {live_stage}"
+                live_color = "#facc15"
+            else:
+                from time import monotonic as _process_monotonic
+
+                next_due = getattr(
+                    live_process_snapshot, "next_due_monotonic", None
+                )
+                if next_due is None:
+                    live_text = "Process scheduler idle"
+                    live_color = "#94a3b8"
+                else:
+                    remaining = max(
+                        0,
+                        int(math.ceil(float(next_due) - _process_monotonic())),
+                    )
+                    live_text = (
+                        f"Next {remaining}s"
+                        if remaining > 0
+                        else "Process scan due"
+                    )
+                    live_color = "#e2e8f0" if remaining > 0 else "#facc15"
+            live_label = json.dumps(live_text)
+            live_color_json = json.dumps(live_color)
             st.components.v1.html(
                 f"""<script>
                 (() => {{
@@ -1521,7 +1541,7 @@ def arm_live_clock_engine(
                   );
                   if (node) {{
                     node.textContent = {live_label};
-                    node.style.color = '#facc15';
+                    node.style.color = {live_color_json};
                   }}
                 }})();
                 </script>""",
@@ -1668,23 +1688,24 @@ def arm_live_clock_engine(
                     : (updatedAt ? updatedAt + refreshMs : now)
                 );
             const remainingMs = deadline - now;
-            if (processOwned && processRunning && processStartedAt > 0) {{
-              const elapsedSeconds = Math.max(
-                0, Math.floor((now - processStartedAt) / 1000)
-              );
-              setAutoScan(`● SCANNING ${{elapsedSeconds}}s · ${{processStage}}`, '#facc15');
-              return;
-            }}
-            if (remainingMs > 0) {{
-              const remainingSeconds = Math.max(1, Math.ceil(remainingMs / 1000));
-              setAutoScan(`Next ${{remainingSeconds}}s`, '#e2e8f0');
-              return;
-            }}
             const overdueSeconds = Math.max(0, Math.floor((-remainingMs) / 1000));
-            if (overdueSeconds <= 15) {{
-              setAutoScan(`● SCANNING ${{overdueSeconds}}s`, '#facc15');
-            }} else {{
-              setAutoScan(`SCAN OVERDUE +${{overdueSeconds}}s`, '#f87171');
+            // GS611: in process-owned mode the 5-second observer fragment above
+            // owns this label from a fresh GS585 snapshot. This full-render
+            // JavaScript carries only a static snapshot and therefore must not
+            // manufacture SCANNING/SCAN OVERDUE text after the process advances.
+            // Keep calculating overdueSeconds only for the existing websocket
+            // recovery guard below; no scan cadence or authority changes here.
+            if (!processOwned) {{
+              if (remainingMs > 0) {{
+                const remainingSeconds = Math.max(1, Math.ceil(remainingMs / 1000));
+                setAutoScan(`Next ${{remainingSeconds}}s`, '#e2e8f0');
+                return;
+              }}
+              if (overdueSeconds <= 15) {{
+                setAutoScan(`● SCANNING ${{overdueSeconds}}s`, '#facc15');
+              }} else {{
+                setAutoScan(`SCAN OVERDUE +${{overdueSeconds}}s`, '#f87171');
+              }}
             }}
 
             // GS576 transport failover. The HAR showed the app process healthy
@@ -3186,9 +3207,6 @@ with market_session_slot:
     )
 with early_setup_slot:
     render_early_setups(records)
-with mission_plan_slot:
-    render_walter_mission_control(actionable_records)
-
 focus_records = [
     item["record"]
     for item in (mission["primary"], mission["secondary"])
@@ -3205,9 +3223,6 @@ if updated:
     st.session_state.opportunity_feed_events = feed_events
 with opportunity_feed_slot:
     render_live_opportunity_feed(st.session_state.opportunity_feed_events)
-
-with escalation_engine_slot:
-    render_escalation_engine(actionable_records)
 
 with system_status_panel:
     st.markdown(
@@ -4410,6 +4425,17 @@ if active_tab == "Webull Debug":
 # clock/observer is armed immediately after CompletedScan adoption above so a heavy
 # dashboard render cannot leave Last Scan and Auto Scan presentation minutes stale.
 
+
+
+# GS611: commit the two authoritative completed-scan operator surfaces only after
+# the rest of the full-app rerun has finished its heavy work. GS408 keeps these
+# st.empty() placeholders lazy, so the prior completed Opportunity State and
+# recommendation remain mounted throughout the rerun instead of being cleared or
+# briefly replaced while a background process scan is still running.
+with mission_plan_slot:
+    render_walter_mission_control(actionable_records)
+with escalation_engine_slot:
+    render_escalation_engine(actionable_records)
 
 
 # GS601: consume process-scan audio only after the entire dashboard render has
