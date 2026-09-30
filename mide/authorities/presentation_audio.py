@@ -2184,6 +2184,8 @@ MAJOR_MOVER_PCT = 20.0
 MIN_DOLLAR_VOLUME = 250_000.0
 LEADER_DOMINANCE = 78.0
 _MARKET_LEADER_CONTINUITY_OWNER = "_walter_gs443_market_leader_radar_continuity"
+_MARKET_LEADER_AUDIO_KEY = "_walter_render_market_leader_audio"
+_MARKET_LEADER_LAST_SPOKEN_KEY = "_walter_last_spoken_market_leader_signature"
 
 
 def _market_leader_number(
@@ -2303,6 +2305,8 @@ def market_leader_candidate(
             "dominance": round(dominance, 1),
             "vwap_distance_pct": None if distance is None else round(distance, 1),
             "alignment_score": alignment,
+            "pe_strength": pe_strength_display_value(record),
+            "headline": _extreme_headline(record),
             "guidance": guidance,
             "provenance": provenance,
         }
@@ -2322,6 +2326,15 @@ def market_leader_markup(event: dict) -> str:
         if distance is None
         else f"{abs(float(distance)):.1f}% {'above' if float(distance) >= 0 else 'below'} VWAP"
     )
+    pe = event.get("pe_strength")
+    pe_text = f" · P/E Strength {int(pe)}/100" if pe is not None else ""
+    headline = " ".join(str(event.get("headline") or "").split())
+    catalyst = (
+        f"<div style='color:#c7d7e5;font-size:.82rem;margin-top:5px'><b>Catalyst:</b> "
+        f"{html.escape(headline)}</div>"
+        if headline
+        else ""
+    )
     return (
         "<div style='background:#0b1119;border:1px solid #36566f;border-radius:12px;"
         "margin:8px 0 14px;padding:10px 12px'>"
@@ -2330,12 +2343,29 @@ def market_leader_markup(event: dict) -> str:
         f"<div style='margin-top:5px;font-weight:900;color:#e6f4ff'>{html.escape(str(event['symbol']))}"
         f" · {html.escape(str(event['state']))}</div>"
         f"<div style='color:#c7d7e5;font-size:.86rem;margin-top:3px'>"
-        f"Move +{float(event['pct_change']):.1f}% · Dominance {float(event['dominance']):.1f}/100 · "
-        f"Alignment {int(event['alignment_score'])}/3 · {html.escape(vwap_text)}</div>"
+        f"Move +{float(event['pct_change']):.1f}% · Dominance {float(event['dominance']):.1f}/100"
+        f"{pe_text} · Alignment {int(event['alignment_score'])}/3 · {html.escape(vwap_text)}</div>"
+        f"{catalyst}"
         f"<div style='color:#93a4b8;font-size:.81rem;margin-top:5px'>{html.escape(str(event['guidance']))}</div>"
         "</div>"
     )
 
+
+def _publish_market_leader_audio_event(event: dict | None) -> None:
+    """Publish the visible leader strip into the same canonical live voice authority."""
+    from mide import ui
+
+    try:
+        from mide.gs366_rerun_alert_dedupe import completed_scan_token
+
+        token = completed_scan_token(ui.st.session_state)
+    except Exception:
+        token = "no-completed-scan"
+
+    ui.st.session_state[_MARKET_LEADER_AUDIO_KEY] = {
+        "scan_token": token,
+        "event": deepcopy(event) if isinstance(event, dict) else None,
+    }
 
 def install_market_leader_continuity() -> None:
     """Bind GS443 at its historical presentation position."""
@@ -2351,6 +2381,7 @@ def install_market_leader_continuity() -> None:
             return result
         mission = ui.walter_mission_control(records)
         _record, event = market_leader_candidate(records, mission=mission)
+        _publish_market_leader_audio_event(event)
         if event is not None:
             ui.st.markdown(market_leader_markup(event), unsafe_allow_html=True)
         return result
