@@ -163,7 +163,7 @@ def test_gs605_extreme_banner_voice_matches_banner_label():
 def test_gs605_live_app_has_no_legacy_semantic_voice_producer():
     source = (ROOT / "app.py").read_text(encoding="utf-8")
     start = source.index("_audio_scan_token = (")
-    end = source.index("\ntab_names = [", start)
+    end = source.index("\n# GS601: consume process-scan audio only after the entire dashboard render", start)
     block = source[start:end]
 
     forbidden = (
