@@ -86,11 +86,19 @@ def install() -> None:
                         "change_ratio": row.get("change_ratio"), "volume": row.get("volume"),
                         "relative_volume_10d": row.get("relative_volume_10d"),
                         "market_value": row.get("market_value"),
-                        "sources": [], "ranks": {},
+                        "sources": [], "ranks": {}, "feed_metrics": {},
                     })
                     if key not in entry["sources"]:
                         entry["sources"].append(key)
                     entry["ranks"][key] = row["rank"]
+                    entry["feed_metrics"][key] = {
+                        "rank": row.get("rank"),
+                        "price": row.get("price"),
+                        "change_ratio": row.get("change_ratio"),
+                        "volume": row.get("volume"),
+                        "relative_volume_10d": row.get("relative_volume_10d"),
+                        "market_value": row.get("market_value"),
+                    }
                     for field in ("name", "price", "change_ratio", "volume", "relative_volume_10d", "market_value"):
                         if entry.get(field) is None and row.get(field) is not None:
                             entry[field] = row[field]
