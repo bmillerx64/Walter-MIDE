@@ -1126,7 +1126,6 @@ scan_trust_slot = st.empty()
 market_session_slot = st.empty()
 early_setup_slot = st.empty()
 mission_plan_slot = st.empty()
-opportunity_feed_slot = st.empty()
 escalation_engine_slot = st.empty()
 system_status_panel = st.expander("System Status", expanded=False)
 scan_runtime_slot = system_status_panel.container()
@@ -3225,9 +3224,6 @@ if updated:
     )
     st.session_state.opportunity_feed_snapshot = feed_snapshot
     st.session_state.opportunity_feed_events = feed_events
-with opportunity_feed_slot:
-    render_live_opportunity_feed(st.session_state.opportunity_feed_events)
-
 with system_status_panel:
     st.markdown(
         f"**Last Scan:** <span id='walter-last-scan'>{html.escape(updated_text)}</span>",
@@ -3630,6 +3626,14 @@ if active_tab == "Radar":
                 st.dataframe(
                     radar_table(sorted_records), width="stretch", hide_index=True
                 )
+
+    # GS616: reserve and render the Live Opportunity Feed only after the viable
+    # candidate/result sections. Keeping the named GS408 lazy slot preserves the
+    # completed feed across reruns without allowing it to occupy prime operator
+    # real estate above the actionable data.
+    opportunity_feed_slot = st.empty()
+    with opportunity_feed_slot:
+        render_live_opportunity_feed(st.session_state.opportunity_feed_events)
 
 # Secondary navigation and research controls live below viable Radar data.
 active_tab = st.radio(
