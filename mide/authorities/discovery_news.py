@@ -2001,6 +2001,32 @@ def fetch_fmp_marketwide_latest_for_brief(
         trace["newest_article_at"] = _utc(ordered[0].created_at).isoformat()
         trace["oldest_article_at"] = _utc(ordered[-1].created_at).isoformat()
 
+    # Source coverage is diagnostic/presentation evidence only. Preserve the
+    # publisher labels carried by FMP so we can see whether high-value wires such
+    # as Reuters and TipRanks were actually present in the fetched window instead
+    # of guessing from the provider name.
+    source_counts: dict[str, int] = {}
+    for article in ordered:
+        label = str(getattr(article, "source", "") or "Unknown").strip() or "Unknown"
+        source_counts[label] = source_counts.get(label, 0) + 1
+    trace["source_counts"] = dict(
+        sorted(source_counts.items(), key=lambda item: (-item[1], item[0].casefold()))
+    )
+    trace["priority_source_counts"] = {
+        "Reuters": sum(
+            count for source, count in source_counts.items()
+            if "reuters" in source.casefold()
+        ),
+        "TipRanks": sum(
+            count for source, count in source_counts.items()
+            if "tipranks" in source.casefold()
+        ),
+        "Benzinga": sum(
+            count for source, count in source_counts.items()
+            if "benzinga" in source.casefold()
+        ),
+    }
+
     cap_reached = (
         trace["pages_requested"] >= cap
         and not reached_cutoff
@@ -2101,6 +2127,11 @@ def _cluster_brief_rows(rows: list[dict], *, max_rows: int) -> list[dict]:
         representative = max(
             ordered,
             key=lambda item: (
+                # Prefer a recognized wire/press source when multiple headlines
+                # describe the same ticker/event cluster. This changes only the
+                # trader-facing representative headline, never cluster inclusion
+                # or any downstream trading authority.
+                bool(item.get("trusted_source")),
                 abs(float(item.get("catalyst_score") or 0.0)),
                 item.get("created_at") or datetime.min.replace(tzinfo=UTC),
             ),
