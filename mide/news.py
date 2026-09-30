@@ -43,6 +43,10 @@ GUIDANCE_RAISE_RE = re.compile(
     r"\s+guidance\b",
     re.IGNORECASE,
 )
+ACQUISITION_VERB_RE = re.compile(
+    r"\b(?:acquire|acquires|acquired|acquiring)\b",
+    re.IGNORECASE,
+)
 
 
 def classify_headline(headline: str):
@@ -60,6 +64,14 @@ def classify_headline(headline: str):
     if "raises guidance" not in flags and GUIDANCE_RAISE_RE.search(text):
         score += POSITIVE["raises guidance"]
         flags.append("raises guidance")
+
+    # GS618: common wire headlines use the acquisition verb ("to acquire",
+    # "acquires") rather than the noun. Normalize those ordinary variants to the
+    # existing acquisition weight; do not double-count headlines that already use
+    # "acquisition".
+    if "acquisition" not in flags and ACQUISITION_VERB_RE.search(text):
+        score += POSITIVE["acquisition"]
+        flags.append("acquisition")
 
     for phrase, weight in NEGATIVE.items():
         if phrase in text:
