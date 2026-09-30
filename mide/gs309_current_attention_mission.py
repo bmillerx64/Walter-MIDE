@@ -28,6 +28,9 @@ WEBULL_NATIVE_REASON_PREFIX = "Webull native: "
 FRESH_NEWS_REASON_TOKENS = (
     "FMP material news seed",
     "FMP morning mover attention seed",
+    "Alpaca live material news seed",
+    "Alpaca live morning mover attention seed",
+    "Alpaca live story material attention seed",
 )
 
 
