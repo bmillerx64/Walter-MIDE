@@ -2695,7 +2695,10 @@ def _run_live_pipeline(
         1
         for item in ledger
         if str(item.get("terminal_stage")) == "Free-Float Gate"
-        and "unavailable" in str(item.get("terminal_reason") or "").lower()
+        and any(
+            marker in str(item.get("terminal_reason") or "").lower()
+            for marker in ("unavailable", "unresolved")
+        )
     )
     client.diagnostics["funnel_counts"] = {
         "universe": int(
