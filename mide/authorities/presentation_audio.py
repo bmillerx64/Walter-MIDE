@@ -5937,6 +5937,90 @@ def _canonical_extreme_audio_phrase(event: dict) -> str:
     return " ".join(parts)
 
 
+def _canonical_market_leader_audio_phrase(event: dict) -> str:
+    symbol = str(event.get("symbol") or "").strip().upper()
+    state_label = " ".join(str(event.get("state") or "").split())
+    headline = " ".join(str(event.get("headline") or "").split())
+    guidance = " ".join(str(event.get("guidance") or "").split())
+    if not symbol or not state_label:
+        return ""
+
+    parts = [f"{symbol}.", "Market leader radar.", f"{state_label}."]
+    try:
+        parts.append(f"Move plus {float(event.get('pct_change') or 0.0):.1f} percent.")
+    except (TypeError, ValueError):
+        pass
+    try:
+        parts.append(f"Dominance {float(event.get('dominance') or 0.0):.0f}.")
+    except (TypeError, ValueError):
+        pass
+    if event.get("pe_strength") is not None:
+        parts.append(f"P E strength {int(event['pe_strength'])}.")
+    if headline:
+        parts.append(f"Catalyst. {headline}.")
+    if guidance:
+        parts.append(guidance if guidance.endswith((".", "!", "?")) else f"{guidance}.")
+    return " ".join(parts)
+
+
+def _current_market_leader_audio_event(
+    state,
+    *,
+    expected_scan_token: str,
+) -> dict:
+    payload = state.get(_MARKET_LEADER_AUDIO_KEY) or {}
+    if str(payload.get("scan_token") or "") != str(expected_scan_token or ""):
+        return {
+            "triggered": False,
+            "phrase": "",
+            "symbol": "",
+            "surface": "market_leader_radar",
+            "state_label": "",
+            "signature": "",
+            "reason": "leader_token_mismatch",
+        }
+
+    event = payload.get("event")
+    if not isinstance(event, dict):
+        return {
+            "triggered": False,
+            "phrase": "",
+            "symbol": "",
+            "surface": "market_leader_radar",
+            "state_label": "",
+            "signature": "",
+            "reason": "no_market_leader",
+        }
+
+    symbol = str(event.get("symbol") or "").strip().upper()
+    state_label = str(event.get("state") or "").strip()
+    headline = " ".join(str(event.get("headline") or "").split())
+    signature = "|".join(("market_leader_radar", symbol, state_label, headline))
+    phrase = _canonical_market_leader_audio_phrase(event)
+    last_spoken = str(state.get(_MARKET_LEADER_LAST_SPOKEN_KEY) or "")
+    return {
+        "triggered": bool(phrase and signature and signature != last_spoken),
+        "phrase": phrase,
+        "symbol": symbol,
+        "surface": "market_leader_radar",
+        "state_label": state_label,
+        "signature": signature,
+        "reason": (
+            "new_market_leader_attention"
+            if signature != last_spoken
+            else "market_leader_already_spoken"
+        ),
+    }
+
+
+def mark_render_audio_event_spoken(state, event: dict) -> None:
+    """Persist delivery memory for secondary canonical attention surfaces."""
+    if str(event.get("surface") or "") == "market_leader_radar":
+        signature = str(event.get("signature") or "")
+        if signature:
+            state[_MARKET_LEADER_LAST_SPOKEN_KEY] = signature
+
+
 def current_render_audio_event(
     state,
     *,
@@ -5944,12 +6028,18 @@ def current_render_audio_event(
 ) -> dict:
     """Return the single canonical live voice event for the rendered scan.
 
-    GS605 collapses live speech onto the exact first operator surface. Historical
-    escalation/audio wrappers remain available for compatibility and tests, but
-    they no longer decide what the live browser says.
+    GS605 keeps one live semantic authority. GS608 allows one secondary visible
+    attention surface -- Market Leader Radar -- to speak only when the primary
+    rendered Opportunity surface has no new state to announce.
     """
+    leader_audio = _current_market_leader_audio_event(
+        state,
+        expected_scan_token=expected_scan_token,
+    )
     payload = state.get(_RENDER_AUDIO_FOCUS_KEY) or {}
     if str(payload.get("scan_token") or "") != str(expected_scan_token or ""):
+        if leader_audio.get("triggered"):
+            return leader_audio
         return {
             "triggered": False,
             "phrase": "",
@@ -5962,6 +6052,8 @@ def current_render_audio_event(
 
     record = payload.get("record")
     if not isinstance(record, dict):
+        if leader_audio.get("triggered"):
+            return leader_audio
         return {
             "triggered": False,
             "phrase": "",
@@ -5992,25 +6084,28 @@ def current_render_audio_event(
         )
     )
 
-    # Speak only when the rendered operator focus or its state changes. The first
-    # completed surface after a reboot is also a real operator-context change.
     triggered = bool(phrase and signature and signature != previous_signature)
-    reason = (
-        "first_rendered_focus"
-        if triggered and not previous_signature.strip("|")
-        else "rendered_focus_or_state_changed"
-        if triggered
-        else "rendered_focus_unchanged"
-    )
-    return {
+    primary = {
         "triggered": triggered,
         "phrase": phrase,
         "symbol": symbol,
         "surface": surface,
         "state_label": state_label,
         "signature": signature,
-        "reason": reason,
+        "reason": (
+            "first_rendered_focus"
+            if triggered and not previous_signature.strip("|")
+            else "rendered_focus_or_state_changed"
+            if triggered
+            else "rendered_focus_unchanged"
+        ),
     }
+    if triggered:
+        return primary
+    if leader_audio.get("triggered"):
+        return leader_audio
+    return primary
+
 
 
 def operator_scoped_market_events(
@@ -6110,6 +6205,7 @@ def bind_final_enriched_opportunity_order(
 __all__ = [
     "current_render_audio_focus",
     "current_render_audio_event",
+    "mark_render_audio_event_spoken",
     "canonical_opportunity_audio_phrase",
     "opportunity_description_line",
     "pe_strength_display_value",
