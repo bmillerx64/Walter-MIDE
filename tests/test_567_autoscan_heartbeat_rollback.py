@@ -60,6 +60,9 @@ def test_gs581_scheduler_change_remains_orchestration_only():
 def test_gs581_keeps_gs580_transport_proof_requirement():
     scheduler = _scheduler_source()
 
-    recovery = scheduler[scheduler.index("const recoveryDue = attemptedAt > 0"):]
+    recovery = scheduler[scheduler.index("const recoveryBaselinePresent = processOwned"):]
+    assert "? processStartedAt > 0" in recovery
+    assert ": attemptedAt > 0" in recovery
+    assert "const recoveryDue = recoveryBaselinePresent" in recovery
     assert "&& nativeStreamlitConnecting()" in recovery
     assert "&& overdueSeconds * 1000 >= transportRecoveryMs" in recovery

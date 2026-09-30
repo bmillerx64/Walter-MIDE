@@ -1714,7 +1714,14 @@ def arm_live_clock_engine(
             // overdue for 45 seconds, replace this browser document once to create
             // a fresh websocket/session. This does not execute scan logic; the
             // server-side watchdog and existing scheduler remain authoritative.
-            const recoveryDue = attemptedAt > 0
+            // GS621: process-owned AutoScan deliberately does not require this
+            // browser session to own a scan attempt. Requiring attemptedAt here
+            // disabled transport recovery in exactly the passive-observer failure
+            // mode: the backend kept scanning while the browser stayed CONNECTING.
+            const recoveryBaselinePresent = processOwned
+              ? processStartedAt > 0
+              : attemptedAt > 0;
+            const recoveryDue = recoveryBaselinePresent
               && nativeStreamlitConnecting()
               && overdueSeconds * 1000 >= transportRecoveryMs;
             const recoveryAllowed = !recoveryState
@@ -3417,11 +3424,18 @@ with system_status_panel:
 
     st.caption(f"{clock.phase} — Rankings describe evidence only.")
 
-# GS612: GS611 intentionally delays the actual Opportunity State DOM replacement
-# until the heavy rerun is finished. Publish the exact same final P/E-ordered focus
-# now, without rendering anything, so canonical audio can evaluate the new completed
-# scan before the delayed visual commit. This restores the pre-GS611 lifecycle
-# ordering while preserving GS611 surface persistence and every stale-scan guard.
+# GS621: commit the authoritative completed-scan State surfaces before any
+# semantic speech is emitted. Live evidence showed Walter could speak a newly
+# completed scan while the State box was still absent because play_alert() ran
+# before these lazy placeholders were resolved. These are the small critical
+# surfaces; the heavy Radar/diagnostic body still renders afterward.
+with mission_plan_slot:
+    render_walter_mission_control(actionable_records)
+with escalation_engine_slot:
+    render_escalation_engine(actionable_records)
+
+# Publish the exact same final P/E-ordered focus used by the visible State surface
+# so canonical audio evaluates only what has just been committed above.
 prepare_completed_scan_audio_focus(actionable_records)
 
 # GS602: semantic speech must be bound to the exact completed evidence the
@@ -3496,15 +3510,56 @@ if alerts and audio_triggered and alert_phrase:
             mark_render_audio_event_spoken(st.session_state, _audio_event)
             st.session_state.last_escalation_alert = alert_delivery_key
 
-# GS617: the authoritative completed-scan decision surfaces are the primary
-# operator output. Resolve the GS408 lazy placeholders here, after completed-scan
-# adoption and semantic-audio validation but before any Radar sections, feed,
-# navigation, sort, or news controls. The previous completed surface remains
-# mounted until this point on each rerun; no scan/trading authority changes.
-with mission_plan_slot:
-    render_walter_mission_control(actionable_records)
-with escalation_engine_slot:
-    render_escalation_engine(actionable_records)
+# GS621: register routine completed-scan browser audio immediately after the
+# critical State/audio surface, not after the entire Radar/diagnostics/news render.
+# The exact-token + no-newer-process-start guard is unchanged, so stale evidence
+# still cannot speak; this only stops heavy rendering from consuming the safe
+# between-scan delivery window.
+_process_audio_pending = str(
+    st.session_state.get("_walter_process_scan_audio_pending_token") or ""
+)
+_process_audio_current = (
+    completed_scan.completed_at.isoformat() if completed_scan is not None else ""
+)
+if _process_audio_pending:
+    try:
+        _process_audio_snapshot = _gs585.snapshot()
+        _newer_process_scan_started = bool(
+            completed_scan is not None
+            and _process_audio_snapshot.last_started_at is not None
+            and _process_audio_snapshot.last_started_at > completed_scan.completed_at
+        )
+    except Exception:
+        _newer_process_scan_started = True
+
+    _process_audio_matches_visible = (
+        bool(_process_audio_current)
+        and _process_audio_pending == _process_audio_current
+    )
+    if _process_audio_matches_visible and not _newer_process_scan_started:
+        if alerts:
+            from mide.gs419_completed_scan_heartbeat import heartbeat_markup
+
+            _process_audio_markup = heartbeat_markup(st.session_state)
+            if _process_audio_markup:
+                st.components.v1.html(
+                    _process_audio_markup,
+                    height=0,
+                    scrolling=False,
+                )
+                print(
+                    "[WALTER AUDIO] process scan browser registration "
+                    f"token={_process_audio_current}",
+                    flush=True,
+                )
+    else:
+        print(
+            "[WALTER AUDIO] dropped stale process scan token "
+            f"pending={_process_audio_pending} visible={_process_audio_current} "
+            f"newer_scan_started={_newer_process_scan_started}",
+            flush=True,
+        )
+    st.session_state.pop("_walter_process_scan_audio_pending_token", None)
 
 tab_names = [
         "Radar",
@@ -4472,52 +4527,3 @@ if active_tab == "Webull Debug":
 
 
 
-# GS601: consume process-scan audio only after the entire dashboard render has
-# completed. The token must exactly match the visible CompletedScan and no newer
-# process scan may have started. Mismatches are discarded, not carried across
-# future reruns, so old evidence can never speak during a succeeding scan/repaint.
-_process_audio_pending = str(
-    st.session_state.get("_walter_process_scan_audio_pending_token") or ""
-)
-_process_audio_current = (
-    completed_scan.completed_at.isoformat() if completed_scan is not None else ""
-)
-if _process_audio_pending:
-    try:
-        _process_audio_snapshot = _gs585.snapshot()
-        _newer_process_scan_started = bool(
-            completed_scan is not None
-            and _process_audio_snapshot.last_started_at is not None
-            and _process_audio_snapshot.last_started_at > completed_scan.completed_at
-        )
-    except Exception:
-        _newer_process_scan_started = True
-
-    _process_audio_matches_visible = (
-        bool(_process_audio_current)
-        and _process_audio_pending == _process_audio_current
-    )
-    if _process_audio_matches_visible and not _newer_process_scan_started:
-        if alerts:
-            from mide.gs419_completed_scan_heartbeat import heartbeat_markup
-
-            _process_audio_markup = heartbeat_markup(st.session_state)
-            if _process_audio_markup:
-                st.components.v1.html(
-                    _process_audio_markup,
-                    height=0,
-                    scrolling=False,
-                )
-                print(
-                    "[WALTER AUDIO] process scan browser registration "
-                    f"token={_process_audio_current}",
-                    flush=True,
-                )
-    else:
-        print(
-            "[WALTER AUDIO] dropped stale process scan token "
-            f"pending={_process_audio_pending} visible={_process_audio_current} "
-            f"newer_scan_started={_newer_process_scan_started}",
-            flush=True,
-        )
-    st.session_state.pop("_walter_process_scan_audio_pending_token", None)

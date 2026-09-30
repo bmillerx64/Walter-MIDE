@@ -11,13 +11,12 @@ def test_gs611_completed_scan_surfaces_commit_once_after_completed_scan_handoff(
     escalation = source.index("with escalation_engine_slot:")
     radar = source.index("tab_names = [")
     process_audio_boundary = source.index(
-        "# GS601: consume process-scan audio only after the entire dashboard render"
+        "# GS621: register routine completed-scan browser audio immediately"
     )
 
     assert source.count("with mission_plan_slot:") == 1
     assert source.count("with escalation_engine_slot:") == 1
-    assert prepare < mission < radar < process_audio_boundary
-    assert prepare < escalation < radar < process_audio_boundary
+    assert mission < escalation < prepare < process_audio_boundary < radar
 
 
 def test_gs611_process_clock_uses_live_fragment_not_static_full_render_overdue():

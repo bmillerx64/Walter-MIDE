@@ -32,7 +32,7 @@ def test_gs612_prepares_focus_from_same_final_order(monkeypatch):
     assert calls["published"] == [{"symbol": "FNGR"}, {"symbol": "BIYA"}]
 
 
-def test_gs612_audio_focus_precedes_semantic_delivery_and_visual_commit():
+def test_gs621_visual_commit_precedes_audio_focus_and_semantic_delivery():
     source = Path("app.py").read_text(encoding="utf-8")
 
     prepare = source.index(
@@ -45,9 +45,10 @@ def test_gs612_audio_focus_precedes_semantic_delivery_and_visual_commit():
         'play_alert("assets/alert.wav", alert_phrase',
         consume,
     )
-    visual = source.index("with mission_plan_slot:", delivery)
+    visual = source.index("with mission_plan_slot:")
+    escalation = source.index("with escalation_engine_slot:", visual)
 
-    assert prepare < consume < delivery < visual
+    assert visual < escalation < prepare < consume < delivery
     assert source.count("with mission_plan_slot:") == 1
 
 
