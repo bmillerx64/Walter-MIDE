@@ -46,6 +46,16 @@ def _entry_from_row(row: dict[str, Any], key: str) -> dict[str, Any]:
         "market_value": row.get("market_value"),
         "sources": [key],
         "ranks": {key: row.get("rank")},
+        "feed_metrics": {
+            key: {
+                "rank": row.get("rank"),
+                "price": row.get("price"),
+                "change_ratio": row.get("change_ratio"),
+                "volume": row.get("volume"),
+                "relative_volume_10d": row.get("relative_volume_10d"),
+                "market_value": row.get("market_value"),
+            }
+        },
     }
 
 
@@ -58,6 +68,23 @@ def _merge_existing(entry: dict[str, Any], row: dict[str, Any], key: str) -> Non
     if rank is not None:
         prior_rank = ranks.get(key)
         ranks[key] = min(prior_rank, rank) if prior_rank is not None else rank
+    feed_metrics = entry.setdefault("feed_metrics", {})
+    prior_metrics = feed_metrics.get(key) if isinstance(feed_metrics, dict) else None
+    if not isinstance(prior_metrics, dict) or (
+        rank is not None
+        and (
+            prior_metrics.get("rank") is None
+            or rank < prior_metrics.get("rank")
+        )
+    ):
+        feed_metrics[key] = {
+            "rank": rank,
+            "price": row.get("price"),
+            "change_ratio": row.get("change_ratio"),
+            "volume": row.get("volume"),
+            "relative_volume_10d": row.get("relative_volume_10d"),
+            "market_value": row.get("market_value"),
+        }
     for field in ("name", "price", "change_ratio", "volume", "relative_volume_10d", "market_value"):
         if entry.get(field) is None and row.get(field) is not None:
             entry[field] = row[field]

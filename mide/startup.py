@@ -59,6 +59,7 @@ def ensure_late_runtime_installers() -> None:
     from .gs486_top_level_transport_truth import install as install_gs486
     from .gs483_resource_containment import install as install_gs483
     from .gs563_native_fast_mover_attention import install as install_gs563
+    from .gs619_early_mover_tape_priority import install as install_gs619
 
     install_late_chain()
     # GS453 is deliberately outside the established GS392->GS404 presentation chain.
@@ -188,6 +189,12 @@ def ensure_late_runtime_installers() -> None:
     # audio while still surfacing a fast mover that never reached qualification.
     # It consumes only the native radar already fetched by discovery.
     install_gs563()
+    # GS619 sits outside GS563/final ordering. It corrects MIN_5 attention semantics
+    # to use the five-minute feed's own measurement, injects only trajectory/flow-
+    # confirmed current fast movers into the critical card stack, and prevents a
+    # news-only short burst from visually becoming WATCH FOR ENTRY without broad
+    # tape or sustained 3m+5m confirmation. Trading authority remains unchanged.
+    install_gs619()
 
 
 def log_startup(component: str, message: str = "starting") -> None:
