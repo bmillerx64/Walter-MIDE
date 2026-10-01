@@ -152,9 +152,11 @@ def configure_news_credentials(api_key: str, secret_key: str) -> bool:
     secret = str(secret_key or "").strip()
     if not key or not secret:
         return False
+    previous = builtins.__dict__.get(_CREDENTIALS_KEY)
     builtins.__dict__[_CREDENTIALS_KEY] = (key, secret)
-    # A credential refresh invalidates only the news-only REST helper.
-    builtins.__dict__.pop(_REST_CLIENT_KEY, None)
+    # Only a real credential change invalidates the news-only REST helper.
+    if previous != (key, secret):
+        builtins.__dict__.pop(_REST_CLIENT_KEY, None)
     runtime = _runtime()
     with runtime["lock"]:
         runtime["credential_source"] = "dedicated news credentials"
