@@ -179,6 +179,12 @@ def claim_process_live_provider(
         return provider, created_now
 
 
+def process_live_provider() -> Any:
+    """Return the process-owned live provider without claiming/replacing ownership."""
+    with _PROCESS_LIVE_PROVIDER_LOCK:
+        return _PROCESS_LIVE_PROVIDER
+
+
 def _safe_copy_scan(scan: CompletedScan | None) -> CompletedScan | None:
     if scan is None:
         return None
@@ -204,6 +210,11 @@ def _publish_process_live_scan(scan: CompletedScan) -> None:
 def _process_live_scan_snapshot() -> CompletedScan | None:
     with _PROCESS_LIVE_SCAN_LOCK:
         return _safe_copy_scan(_PROCESS_LIVE_SCAN)
+
+
+def process_live_scan_snapshot() -> CompletedScan | None:
+    """Return detached last completed live evidence for awareness-only consumers."""
+    return _process_live_scan_snapshot()
 
 
 def _newer_process_live_scan_snapshot(
