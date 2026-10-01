@@ -340,6 +340,13 @@ def schedule_live_news_poll(client: Any, *, now=None) -> dict:
     current = _now(now)
     news_client = getattr(client, "_universe_client", None)
     if not callable(getattr(news_client, "news", None)):
+        try:
+            from . import gs624_realtime_news_transport as gs624
+
+            news_client = gs624.rest_news_client()
+        except Exception:
+            news_client = None
+    if not callable(getattr(news_client, "news", None)):
         with _LOCK:
             _RUNTIME.update(
                 status="unavailable",
@@ -347,7 +354,7 @@ def schedule_live_news_poll(client: Any, *, now=None) -> dict:
                 latest_poll={
                     "authority": AUTHORITY,
                     "request_made": False,
-                    "reason": "retained Alpaca news client unavailable",
+                    "reason": "dedicated Alpaca news credentials unavailable",
                     "trading_authority_changed": False,
                 },
             )
