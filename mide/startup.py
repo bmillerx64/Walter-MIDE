@@ -61,6 +61,7 @@ def ensure_late_runtime_installers() -> None:
     from .gs563_native_fast_mover_attention import install as install_gs563
     from .gs619_early_mover_tape_priority import install as install_gs619
     from .gs620_live_news_stream import install as install_gs620
+    from .gs624_realtime_news_transport import install as install_gs624
 
     install_late_chain()
     # GS453 is deliberately outside the established GS392->GS404 presentation chain.
@@ -201,6 +202,10 @@ def ensure_late_runtime_installers() -> None:
     # cache. Completed polls may add symbol identity only; AutoScan never waits for
     # news I/O and all Webull/downstream gates remain authoritative.
     install_gs620()
+    # GS624 sits outside GS620 and starts one process-owned push-news socket. It
+    # only fills GS620's completed cache; capability/auth failures remain news-
+    # transport diagnostics and never alter AutoScan or trading authority.
+    install_gs624()
 
 
 def log_startup(component: str, message: str = "starting") -> None:

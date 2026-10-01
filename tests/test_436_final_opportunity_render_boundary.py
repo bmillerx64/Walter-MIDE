@@ -94,4 +94,5 @@ def test_gs436_deployment_marker_changes_no_dependency_pins():
         "requests==2.34.2",
         "paho-mqtt==1.6.1",
         "webull-openapi-python-sdk==2.0.16",
+        "websocket-client==1.9.2",
     ]
