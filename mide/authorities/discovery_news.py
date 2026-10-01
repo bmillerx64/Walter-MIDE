@@ -1910,6 +1910,8 @@ def fetch_fmp_marketwide_latest_for_brief(
         "coverage_complete": False,
         "oldest_article_at": None,
         "newest_article_at": None,
+        "newest_age_seconds": None,
+        "tipranks_zero_reason": None,
         "transport_disposition": "UNAVAILABLE" if not key else "NOT_STARTED",
     }
     if not key:
@@ -1998,7 +2000,11 @@ def fetch_fmp_marketwide_latest_for_brief(
     )
     trace["articles_received"] = len(ordered)
     if ordered:
-        trace["newest_article_at"] = _utc(ordered[0].created_at).isoformat()
+        newest = _utc(ordered[0].created_at)
+        trace["newest_article_at"] = newest.isoformat()
+        trace["newest_age_seconds"] = round(
+            max(0.0, (now - newest).total_seconds()), 1
+        )
         trace["oldest_article_at"] = _utc(ordered[-1].created_at).isoformat()
 
     # Source coverage is diagnostic/presentation evidence only. Preserve the
@@ -2038,6 +2044,13 @@ def fetch_fmp_marketwide_latest_for_brief(
         (reached_cutoff or exhausted)
         and trace["page_failures"] == 0
     )
+    if (
+        trace["coverage_complete"]
+        and int(trace["priority_source_counts"].get("TipRanks") or 0) == 0
+    ):
+        trace["tipranks_zero_reason"] = (
+            "complete FMP window contained no source label matching TipRanks"
+        )
     if trace["transport_disposition"] != "PROVIDER_FAILURE":
         trace["transport_disposition"] = "SUCCESS"
     return ordered, trace
@@ -2192,11 +2205,30 @@ def _cluster_brief_rows(rows: list[dict], *, max_rows: int) -> list[dict]:
     return clusters[: max(1, int(max_rows))]
 
 
+def _brief_freshness_fields(rows, *, now: datetime) -> dict:
+    """Return newest provider timestamp/age for diagnostics only."""
+    stamps = [
+        _utc(getattr(article, "created_at", None))
+        for article in rows or []
+    ]
+    stamps = [stamp for stamp in stamps if stamp is not None]
+    newest = max(stamps) if stamps else None
+    return {
+        "newest_article_at": newest.isoformat() if newest else None,
+        "newest_age_seconds": (
+            round(max(0.0, (now - newest).total_seconds()), 1)
+            if newest
+            else None
+        ),
+    }
+
+
 def build_on_demand_catalyst_brief(
     *,
     hours: int = CATALYST_BRIEF_DEFAULT_HOURS,
     now=None,
     max_rows: int = CATALYST_BRIEF_MAX_ROWS,
+    live_cache_fetcher=None,
     benzinga_fetcher=None,
     fmp_fetcher=None,
 ) -> dict:
@@ -2215,6 +2247,40 @@ def build_on_demand_catalyst_brief(
     articles = []
     started = perf_counter()
 
+    # GS623: consume only GS620's last completed process-owned cache. This is
+    # read-only and never schedules/waits for network I/O, so the brief can see
+    # Walter's freshest completed Alpaca/Benzinga frontier without touching
+    # AutoScan cadence or discovery authority.
+    try:
+        if live_cache_fetcher is not None:
+            live_rows, live_trace = live_cache_fetcher(current)
+        else:
+            from mide import gs620_live_news_stream as gs620
+
+            live_rows, live_trace = gs620.cache_snapshot(now=current)
+        live_rows = list(live_rows or [])
+        live_trace = dict(live_trace or {})
+        live_trace.setdefault("configured", True)
+        live_trace.setdefault("request_made", False)
+        live_trace.setdefault("cache_only", True)
+        live_trace.setdefault("articles_received", len(live_rows))
+        live_trace.setdefault(
+            "transport_disposition", "SUCCESS" if live_rows else "EMPTY"
+        )
+        for key, value in _brief_freshness_fields(live_rows, now=current).items():
+            live_trace.setdefault(key, value)
+        articles.extend(live_rows)
+        diagnostics["alpaca_live"] = live_trace
+    except Exception as exc:
+        diagnostics["alpaca_live"] = {
+            "configured": True,
+            "request_made": False,
+            "cache_only": True,
+            "articles_received": 0,
+            "transport_disposition": "PROVIDER_FAILURE",
+            "exception_type": type(exc).__name__,
+        }
+
     if benzinga_fetcher is not None:
         try:
             rows = list(benzinga_fetcher(cutoff, current) or [])
@@ -2224,6 +2290,7 @@ def build_on_demand_catalyst_brief(
                 "request_made": True,
                 "articles_received": len(rows),
                 "transport_disposition": "SUCCESS",
+                **_brief_freshness_fields(rows, now=current),
             }
         except Exception as exc:
             diagnostics["benzinga"] = {
@@ -2258,6 +2325,7 @@ def build_on_demand_catalyst_brief(
                     "articles_received": len(rows),
                     "page_cap_reached": len(rows) >= BENZINGA_PAGE_SIZE,
                     "transport_disposition": "SUCCESS",
+                    **_brief_freshness_fields(rows, now=current),
                 }
             except Exception as exc:
                 diagnostics["benzinga"] = {
@@ -2277,6 +2345,7 @@ def build_on_demand_catalyst_brief(
                 "request_made": True,
                 "articles_received": len(rows),
                 "transport_disposition": "SUCCESS",
+                **_brief_freshness_fields(rows, now=current),
             }
         except Exception as exc:
             diagnostics["fmp"] = {
@@ -2318,6 +2387,7 @@ def build_on_demand_catalyst_brief(
         normalized,
         max_rows=max_rows,
     )
+    frontier = _brief_freshness_fields(articles, now=current)
     return {
         "authority": AUTHORITY,
         "generated_at": current,
@@ -2328,6 +2398,8 @@ def build_on_demand_catalyst_brief(
         "cluster_count": len(clusters),
         "clusters": clusters,
         "providers": diagnostics,
+        "newest_article_at": frontier["newest_article_at"],
+        "newest_age_seconds": frontier["newest_age_seconds"],
         "elapsed_ms": round((perf_counter() - started) * 1000.0, 1),
         "on_demand_only": True,
         "autoscan_changed": False,

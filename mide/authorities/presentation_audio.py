@@ -6597,12 +6597,29 @@ def catalyst_brief_table(report: dict) -> list[dict]:
 def catalyst_brief_provider_caption(report: dict) -> str:
     """Summarize provider coverage without exposing credentials or raw failures."""
     parts = []
-    for name, label in (("benzinga", "Benzinga"), ("fmp", "FMP")):
+    for name, label in (
+        ("alpaca_live", "Live cache"),
+        ("benzinga", "Benzinga"),
+        ("fmp", "FMP"),
+    ):
         info = ((report or {}).get("providers") or {}).get(name) or {}
+        if not info and name == "alpaca_live":
+            continue
         disposition = str(info.get("transport_disposition") or "UNKNOWN")
         count = int(info.get("articles_received") or 0)
-        if disposition == "SUCCESS":
+        if disposition in {"SUCCESS", "EMPTY"}:
             detail = f"{count} articles"
+            newest = str(info.get("newest_article_at") or "").strip()
+            newest_age = info.get("newest_age_seconds")
+            if newest:
+                detail += f" / newest {newest}"
+            if newest_age is not None:
+                detail += f" ({float(newest_age) / 60.0:.1f}m old)"
+            if name == "alpaca_live":
+                completed = str(info.get("last_completed_at") or "").strip()
+                if completed:
+                    detail += f" / poll completed {completed}"
+                detail += " / completed-cache read only"
             pages = int(info.get("pages_requested") or 0)
             if pages:
                 detail += f" / {pages} page{'s' if pages != 1 else ''}"
@@ -6619,6 +6636,8 @@ def catalyst_brief_provider_caption(report: dict) -> str:
                         f"TipRanks {int(wires.get('TipRanks') or 0)}, "
                         f"Benzinga {int(wires.get('Benzinga') or 0)}"
                     )
+                if info.get("tipranks_zero_reason"):
+                    detail += " / TipRanks absent from complete FMP window"
             parts.append(f"{label}: {detail}")
         elif disposition == "UNAVAILABLE":
             parts.append(f"{label}: unavailable")
