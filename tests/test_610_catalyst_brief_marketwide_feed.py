@@ -72,6 +72,10 @@ def test_gs610_uses_fmp_stock_latest_not_symbol_search_endpoint():
         "TipRanks": 0,
         "Benzinga": 0,
     }
+    assert trace["newest_age_seconds"] == 4200.0
+    assert trace["tipranks_zero_reason"] == (
+        "complete FMP window contained no source label matching TipRanks"
+    )
 
 
 def test_gs610_paginates_until_four_hour_cutoff_and_recovers_cntb():
