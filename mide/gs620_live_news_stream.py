@@ -200,6 +200,57 @@ def cached_articles(*, now=None) -> list[Any]:
     )
 
 
+def cache_snapshot(*, now=None) -> tuple[list[Any], dict]:
+    """Return a read-only snapshot of the last completed GS620 cache.
+
+    This never schedules or waits for network I/O. It exists so operator-facing
+    news surfaces can consume the same completed marketwide cache as discovery
+    without entering AutoScan's critical path or mutating discovery state.
+    """
+    current = _now(now)
+    articles = cached_articles(now=current)
+    newest = (
+        _utc(getattr(articles[0], "created_at", None))
+        if articles
+        else None
+    )
+    with _LOCK:
+        runtime = deepcopy(_RUNTIME)
+    status = str(runtime.get("status") or "cold")
+    disposition = (
+        "SUCCESS"
+        if articles
+        else "UNAVAILABLE"
+        if status == "unavailable"
+        else "EMPTY"
+    )
+    return articles, {
+        "authority": AUTHORITY,
+        "configured": status != "unavailable",
+        "request_made": False,
+        "cache_only": True,
+        "endpoint": "/v1beta1/news",
+        "provider": "Alpaca market news",
+        "marketwide": True,
+        "transport_disposition": disposition,
+        "status": status,
+        "articles_received": len(articles),
+        "cache_articles": len(articles),
+        "newest_article_at": newest.isoformat() if newest else None,
+        "newest_age_seconds": (
+            round(max(0.0, (current - newest).total_seconds()), 1)
+            if newest
+            else None
+        ),
+        "last_started_at": runtime.get("last_started_at"),
+        "last_completed_at": runtime.get("last_completed_at"),
+        "last_error_type": runtime.get("last_error_type"),
+        "latest_poll": deepcopy(runtime.get("latest_poll") or {}),
+        "scan_blocked": False,
+        "trading_authority_changed": False,
+    }
+
+
 def _worker(news_client: Any) -> None:
     global _JOB
     try:
@@ -404,6 +455,7 @@ __all__ = [
     "POLL_INTERVAL",
     "poll_alpaca_live_news",
     "cached_articles",
+    "cache_snapshot",
     "schedule_live_news_poll",
     "merge_cached_live_news",
     "install",
