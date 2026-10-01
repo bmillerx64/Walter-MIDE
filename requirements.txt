@@ -117,3 +117,5 @@ numpy==2.5.1
 requests==2.34.2
 paho-mqtt==1.6.1
 webull-openapi-python-sdk==2.0.16
+# GS624: dedicated process-owned Alpaca/Benzinga real-time news WebSocket.
+websocket-client==1.9.2
