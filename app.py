@@ -1123,6 +1123,7 @@ mission_header_slot = st.empty()
 scan_activity_slot = st.empty()
 scan_progress_slot = st.empty()
 scan_trust_slot = st.empty()
+live_awareness_slot = st.empty()
 market_session_slot = st.empty()
 early_setup_slot = st.empty()
 mission_plan_slot = st.empty()
@@ -1827,6 +1828,17 @@ def _run_live_pipeline(
             build_webull_process_provider,
         )
         context.provider_instance = client
+        # GS627: start one process-owned awareness observer. It reads only the
+        # existing tick/30s cache and last completed scan; no network or scan calls.
+        try:
+            importlib.import_module(
+                "mide.gs627_live_ignition_awareness"
+            ).ensure_running()
+        except Exception as exc:
+            logging.getLogger(__name__).warning(
+                "GS627 awareness observer unavailable error_type=%s",
+                type(exc).__name__,
+            )
         # GS545: every Walter Next deployment uses one stable Webull MQTT
         # session identity. Webull replaces the prior connection when the same
         # session_id reconnects, preventing hot deployments from consuming another
@@ -3212,6 +3224,53 @@ with mission_header_slot:
         ),
         unsafe_allow_html=True,
     )
+
+
+@st.fragment(run_every=timedelta(seconds=2))
+def render_live_ignition_watch() -> None:
+    if not mode.startswith("Live "):
+        live_awareness_slot.empty()
+        return
+    try:
+        awareness = importlib.import_module(
+            "mide.gs627_live_ignition_awareness"
+        ).snapshot()
+    except Exception:
+        awareness = {}
+    observations = list(awareness.get("observations") or [])
+    with live_awareness_slot:
+        st.markdown("### ⚡ LIVE IGNITION WATCH")
+        st.caption(
+            "Awareness only — does not change Walter state, Entry authority, audio, "
+            "AutoScan, or orders. Live price/30s evidence updates independently; "
+            "VWAP, Participation and Expansion are inherited from the last completed scan."
+        )
+        if not observations:
+            st.caption("No current candidate has reached the 3-of-5 live-awareness threshold.")
+            return
+        rows = []
+        for item in observations:
+            flip_age = item.get("thirty_second_flip_age_seconds")
+            rows.append({
+                "Ticker": item.get("symbol"),
+                "Boxes": f"{int(item.get('boxes_checked') or 0)}/{int(item.get('boxes_total') or 5)}",
+                "Live": item.get("live_price"),
+                "Δ scan %": item.get("move_from_scan_pct"),
+                "VWAP*": "✓" if (item.get("boxes") or {}).get("live_price_above_last_scan_vwap") else "○",
+                "30s ST": "✓" if item.get("thirty_second_st_bullish") else "○",
+                "30s flip": (
+                    f"✓ {float(flip_age):.0f}s" if item.get("thirty_second_fresh_flip") and flip_age is not None
+                    else "✓" if item.get("thirty_second_fresh_flip") else "○"
+                ),
+                "Part.*": item.get("participation_last_scan"),
+                "Exp.*": item.get("expansion_last_scan"),
+                "30s flow": item.get("thirty_second_volume_acceleration"),
+                "Walter state": item.get("canonical_state"),
+            })
+        st.dataframe(rows, use_container_width=True, hide_index=True)
+
+
+render_live_ignition_watch()
 integrity_report = scan_integrity_report(
     records,
     live=mode.startswith("Live "),
