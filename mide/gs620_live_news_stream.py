@@ -200,6 +200,46 @@ def cached_articles(*, now=None) -> list[Any]:
     )
 
 
+def ingest_realtime_articles(articles: Iterable[Any], *, received_at=None) -> dict:
+    """Store completed push-news articles without scheduling or waiting on I/O."""
+    current = _now(received_at)
+    rows = list(articles or [])
+    _store_articles(rows, now=current)
+    newest = max(
+        (
+            stamp
+            for article in rows
+            if (stamp := _utc(getattr(article, "created_at", None))) is not None
+        ),
+        default=None,
+    )
+    with _LOCK:
+        _RUNTIME["last_push_received_at"] = current.isoformat()
+        _RUNTIME["push_articles_received"] = int(
+            _RUNTIME.get("push_articles_received") or 0
+        ) + len(rows)
+        if newest is not None:
+            _RUNTIME["last_push_article_at"] = newest.isoformat()
+            _RUNTIME["last_push_article_age_seconds"] = round(
+                max(0.0, (current - newest).total_seconds()), 3
+            )
+        cached = len(_CACHE)
+    return {
+        "authority": AUTHORITY,
+        "articles_ingested": len(rows),
+        "cache_articles": cached,
+        "received_at": current.isoformat(),
+        "newest_article_at": newest.isoformat() if newest else None,
+        "newest_age_seconds": (
+            round(max(0.0, (current - newest).total_seconds()), 3)
+            if newest
+            else None
+        ),
+        "scan_blocked": False,
+        "trading_authority_changed": False,
+    }
+
+
 def cache_snapshot(*, now=None) -> tuple[list[Any], dict]:
     """Return a read-only snapshot of the last completed GS620 cache.
 
@@ -216,6 +256,12 @@ def cache_snapshot(*, now=None) -> tuple[list[Any], dict]:
     )
     with _LOCK:
         runtime = deepcopy(_RUNTIME)
+    realtime = {}
+    try:
+        from . import gs624_realtime_news_transport as gs624
+        realtime = gs624.snapshot()
+    except Exception:
+        realtime = {}
     status = str(runtime.get("status") or "cold")
     disposition = (
         "SUCCESS"
@@ -246,6 +292,11 @@ def cache_snapshot(*, now=None) -> tuple[list[Any], dict]:
         "last_completed_at": runtime.get("last_completed_at"),
         "last_error_type": runtime.get("last_error_type"),
         "latest_poll": deepcopy(runtime.get("latest_poll") or {}),
+        "realtime_transport": deepcopy(realtime),
+        "last_push_received_at": runtime.get("last_push_received_at"),
+        "last_push_article_at": runtime.get("last_push_article_at"),
+        "last_push_article_age_seconds": runtime.get("last_push_article_age_seconds"),
+        "push_articles_received": int(runtime.get("push_articles_received") or 0),
         "scan_blocked": False,
         "trading_authority_changed": False,
     }
@@ -456,6 +507,7 @@ __all__ = [
     "poll_alpaca_live_news",
     "cached_articles",
     "cache_snapshot",
+    "ingest_realtime_articles",
     "schedule_live_news_poll",
     "merge_cached_live_news",
     "install",
