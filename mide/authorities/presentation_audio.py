@@ -6657,7 +6657,26 @@ def catalyst_brief_provider_caption(report: dict) -> str:
                     detail += " / TipRanks absent from complete FMP window"
             parts.append(f"{label}: {detail}")
         elif disposition == "UNAVAILABLE":
-            parts.append(f"{label}: unavailable")
+            if name == "alpaca_live":
+                realtime = info.get("realtime_transport") or {}
+                if isinstance(realtime, dict) and realtime:
+                    stream_status = str(realtime.get("status") or "unknown")
+                    subscription = str(
+                        realtime.get("subscription_status") or ""
+                    ).strip()
+                    error_category = str(
+                        realtime.get("last_error_category") or ""
+                    ).strip()
+                    detail = f"unavailable / stream {stream_status}"
+                    if subscription and subscription != "unknown":
+                        detail += f" / {subscription}"
+                    if error_category:
+                        detail += f" / {error_category}"
+                    parts.append(f"{label}: {detail}")
+                else:
+                    parts.append(f"{label}: unavailable")
+            else:
+                parts.append(f"{label}: unavailable")
         else:
             parts.append(f"{label}: {disposition.lower().replace('_', ' ')}")
     elapsed = (report or {}).get("elapsed_ms")
