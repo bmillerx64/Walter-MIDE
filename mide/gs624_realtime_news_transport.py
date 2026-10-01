@@ -29,6 +29,8 @@ DIAGNOSTIC_KEY = "gs624_realtime_news_transport"
 STREAM_URL = "wss://stream.data.alpaca.markets/v1beta1/news"
 _BUILD_OWNER = "_walter_gs624_realtime_news_transport_owner"
 _RUNTIME_KEY = "_walter_gs624_realtime_news_runtime"
+_CREDENTIALS_KEY = "_walter_gs624_realtime_news_credentials"
+_REST_CLIENT_KEY = "_walter_gs624_realtime_news_rest_client"
 _RUNTIME_SCHEMA = 1
 _MAX_BACKOFF_SECONDS = 60.0
 
@@ -142,6 +144,52 @@ def _record_error(value: Any, *, code: Any = None) -> None:
         runtime["last_error_code"] = str(code) if code is not None else None
         if runtime["status"] not in {"stopped", "unavailable"}:
             runtime["status"] = "degraded"
+
+
+def configure_news_credentials(api_key: str, secret_key: str) -> bool:
+    """Store Alpaca credentials for news transport only, never on Webull provider state."""
+    key = str(api_key or "").strip()
+    secret = str(secret_key or "").strip()
+    if not key or not secret:
+        return False
+    previous = builtins.__dict__.get(_CREDENTIALS_KEY)
+    builtins.__dict__[_CREDENTIALS_KEY] = (key, secret)
+    # Only a real credential change invalidates the news-only REST helper.
+    if previous != (key, secret):
+        builtins.__dict__.pop(_REST_CLIENT_KEY, None)
+    runtime = _runtime()
+    with runtime["lock"]:
+        runtime["credential_source"] = "dedicated news credentials"
+        if runtime.get("status") == "unavailable":
+            runtime["status"] = "cold"
+            runtime["auth_status"] = "unknown"
+            runtime["subscription_status"] = "unknown"
+            runtime["last_error_category"] = None
+    return True
+
+
+def _configured_credentials() -> tuple[str, str] | None:
+    value = builtins.__dict__.get(_CREDENTIALS_KEY)
+    if not isinstance(value, tuple) or len(value) != 2:
+        return None
+    key, secret = (str(value[0] or "").strip(), str(value[1] or "").strip())
+    return (key, secret) if key and secret else None
+
+
+def rest_news_client():
+    """Return one process-stable Alpaca REST client used only for news fallback."""
+    credentials = _configured_credentials()
+    if credentials is None:
+        return None
+    current = builtins.__dict__.get(_REST_CLIENT_KEY)
+    if current is not None and callable(getattr(current, "news", None)):
+        return current
+    from .alpaca import AlpacaClient
+
+    key, secret = credentials
+    current = AlpacaClient(key, secret, feed="iex", timeout=8)
+    builtins.__dict__[_REST_CLIENT_KEY] = current
+    return current
 
 
 def _credentials_from_client(client: Any) -> tuple[str, str] | None:
@@ -310,15 +358,19 @@ def _connection_loop(api_key: str, secret: str) -> None:
         backoff = min(_MAX_BACKOFF_SECONDS, max(1.0, backoff * 2.0))
 
 
-def ensure_realtime_news_stream(client: Any) -> dict:
+def ensure_realtime_news_stream(client: Any = None) -> dict:
     """Start exactly one process-owned news stream when credentials are available."""
     runtime = _runtime()
-    credentials = _credentials_from_client(client)
+    credentials = _configured_credentials()
+    credential_source = "dedicated news credentials"
+    if credentials is None and client is not None:
+        credentials = _credentials_from_client(client)
+        credential_source = "retained Alpaca client headers"
     if credentials is None:
         with runtime["lock"]:
             runtime["status"] = "unavailable"
             runtime["auth_status"] = "credentials_missing"
-            runtime["credential_source"] = "retained Alpaca client unavailable"
+            runtime["credential_source"] = "news credentials unavailable"
             runtime["last_error_category"] = "credentials_missing"
         return snapshot()
 
@@ -330,7 +382,7 @@ def ensure_realtime_news_stream(client: Any) -> dict:
         runtime["status"] = "starting"
         runtime["auth_status"] = "pending"
         runtime["subscription_status"] = "pending"
-        runtime["credential_source"] = "retained Alpaca client headers"
+        runtime["credential_source"] = credential_source
         runtime["last_error_type"] = None
         runtime["last_error_category"] = None
         runtime["last_error_code"] = None
@@ -394,6 +446,8 @@ def _reset_for_tests() -> None:
         fresh = _new_runtime()
         # Keep the same lock/stop objects only long enough to release a test thread.
         builtins.__dict__[_RUNTIME_KEY] = fresh
+        builtins.__dict__.pop(_CREDENTIALS_KEY, None)
+        builtins.__dict__.pop(_REST_CLIENT_KEY, None)
     if isinstance(thread, threading.Thread) and thread.is_alive():
         thread.join(timeout=0.2)
 
@@ -403,6 +457,8 @@ __all__ = [
     "DIAGNOSTIC_KEY",
     "STREAM_URL",
     "snapshot",
+    "configure_news_credentials",
+    "rest_news_client",
     "ensure_realtime_news_stream",
     "install",
 ]

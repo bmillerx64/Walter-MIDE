@@ -1786,9 +1786,23 @@ def _run_live_pipeline(
         context = scan_context(runtime_state)
         session_client = context.provider_instance
 
+        # GS626: Alpaca credentials remain completely outside the Live Webull
+        # provider. GS258 intentionally strips any retained Alpaca client from
+        # market-data state; news gets a separate process-owned credential seam.
+        alpaca_key = str(runtime_secrets.get("ALPACA_API_KEY") or "")
+        alpaca_secret = str(runtime_secrets.get("ALPACA_SECRET_KEY") or "")
+        if alpaca_key and alpaca_secret:
+            try:
+                importlib.import_module(
+                    "mide.gs624_realtime_news_transport"
+                ).configure_news_credentials(alpaca_key, alpaca_secret)
+            except Exception as exc:
+                logging.getLogger(__name__).warning(
+                    "GS626 news credential configuration unavailable error_type=%s",
+                    type(exc).__name__,
+                )
+
         def build_webull_process_provider():
-            alpaca_key = str(runtime_secrets.get("ALPACA_API_KEY") or "")
-            alpaca_secret = str(runtime_secrets.get("ALPACA_SECRET_KEY") or "")
             if not alpaca_key or not alpaca_secret:
                 raise RuntimeError("Alpaca credentials are required for the temporary /v2/assets symbol master.")
             provider_module = importlib.import_module("mide.market_data_providers")
