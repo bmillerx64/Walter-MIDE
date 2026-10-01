@@ -4,8 +4,9 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 from datetime import datetime, timezone
+import builtins
 import logging
-from threading import Timer
+from threading import RLock, Timer
 from time import monotonic
 from typing import Callable, Iterator, TypeVar
 
@@ -15,6 +16,12 @@ LOGGER.setLevel(logging.INFO)
 STARTED_AT = monotonic()
 SLOW_STARTUP_SECONDS = 10.0
 _T = TypeVar("_T")
+_STARTUP_CONVERGENCE_LOCK_KEY = "_walter_startup_convergence_lock"
+
+
+def _startup_convergence_lock() -> RLock:
+    """Return one startup installer lock shared by every warm module generation."""
+    return builtins.__dict__.setdefault(_STARTUP_CONVERGENCE_LOCK_KEY, RLock())
 
 
 def ensure_late_runtime_installers() -> None:
@@ -223,13 +230,20 @@ def log_startup(component: str, message: str = "starting") -> None:
     # parent package import lock. Keep ordinary provider/startup logging side-effect
     # free so background workers can never trigger the late import chain.
     if component == "entering app.py":
-        # GS587: none of Walter's presentation installers may execute while this
-        # module is being imported from webull_live during mide package startup.
-        # At this boundary the parent package import is complete, so both the
-        # historical pre-app presentation wrappers and the late runtime chain can
-        # safely converge before app.py binds UI callables.
-        ensure_pre_app_runtime_installers()
-        ensure_late_runtime_installers()
+        # GS625: Streamlit can briefly run old and new script generations together
+        # while a hot deploy rebuilds dependencies/module state. Serialize this
+        # entire convergence boundary on process-stable builtins state so two
+        # generations cannot partially reinstall the same historical wrapper chain.
+        # RLock preserves safe same-thread installer recursion. This boundary is
+        # startup-only and never participates in AutoScan/trading execution.
+        with _startup_convergence_lock():
+            # GS587: none of Walter's presentation installers may execute while this
+            # module is being imported from webull_live during mide package startup.
+            # At this boundary the parent package import is complete, so both the
+            # historical pre-app presentation wrappers and the late runtime chain can
+            # safely converge before app.py binds UI callables.
+            ensure_pre_app_runtime_installers()
+            ensure_late_runtime_installers()
 
 
 @contextmanager
