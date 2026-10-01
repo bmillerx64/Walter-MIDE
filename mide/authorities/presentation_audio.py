@@ -6616,9 +6616,26 @@ def catalyst_brief_provider_caption(report: dict) -> str:
             if newest_age is not None:
                 detail += f" ({float(newest_age) / 60.0:.1f}m old)"
             if name == "alpaca_live":
+                realtime = info.get("realtime_transport") or {}
+                if isinstance(realtime, dict) and realtime:
+                    stream_status = str(realtime.get("status") or "unknown")
+                    detail += f" / stream {stream_status}"
+                    subscription = str(
+                        realtime.get("subscription_status") or ""
+                    ).strip()
+                    if subscription and subscription != "unknown":
+                        detail += f" / {subscription}"
+                    error_category = str(
+                        realtime.get("last_error_category") or ""
+                    ).strip()
+                    if error_category:
+                        detail += f" / {error_category}"
+                    push_count = int(realtime.get("articles_ingested") or 0)
+                    if push_count:
+                        detail += f" / push {push_count}"
                 completed = str(info.get("last_completed_at") or "").strip()
                 if completed:
-                    detail += f" / poll completed {completed}"
+                    detail += f" / REST poll completed {completed}"
                 detail += " / completed-cache read only"
             pages = int(info.get("pages_requested") or 0)
             if pages:
