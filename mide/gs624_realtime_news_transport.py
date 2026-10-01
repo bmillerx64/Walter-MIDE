@@ -361,10 +361,16 @@ def install() -> None:
         *,
         universe_verification=None,
     ):
-        trace = ensure_realtime_news_stream(client)
-        diagnostics = getattr(client, "diagnostics", None)
-        if isinstance(diagnostics, dict):
-            diagnostics[DIAGNOSTIC_KEY] = deepcopy(trace)
+        provider = str(getattr(client, "provider_name", "") or "").upper()
+        is_webull = (
+            "WEBULL" in provider
+            or "WEBULL" in client.__class__.__name__.upper()
+        )
+        if is_webull:
+            trace = ensure_realtime_news_stream(client)
+            diagnostics = getattr(client, "diagnostics", None)
+            if isinstance(diagnostics, dict):
+                diagnostics[DIAGNOSTIC_KEY] = deepcopy(trace)
 
         if universe_verification is None:
             return current(client, settings, news_items)
