@@ -167,8 +167,8 @@ def test_app_installs_gs629_after_window_guard_before_snapshot_retry():
     assert block.index("gs629.install_for_provider(client)") < block.index(
         "gs494.install_for_provider(client)"
     )
-    assert block.index("gs629.install_for_provider(client)") < block.index(
-        "client.initialize_quotes(seeds"
+    assert source.index("gs629.install_for_provider(client)", start) < source.index(
+        "client.initialize_quotes(seeds", start
     )
 
 
