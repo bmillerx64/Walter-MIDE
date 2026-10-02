@@ -1579,6 +1579,12 @@ def arm_live_clock_engine(
     # plenty of room, then recycle only the browser session if no new baseline
     # arrives. Cross-session completed-scan handoff preserves backend evidence.
     transport_recovery_ms = 45_000
+    # GS632: a passive observer can freeze without Streamlit ever painting its
+    # native CONNECTING banner. Friday live evidence showed the browser stuck
+    # >4 minutes while process-owned scans had previously proven able to continue.
+    # Give real scans/renders two full minutes beyond cadence, then recycle only
+    # the browser document. Backend scheduler/scan ownership remains untouched.
+    passive_observer_recovery_ms = 120_000
     transport_recovery_cooldown_ms = 90_000
     st.components.v1.html(
         f"""<script>
@@ -1595,6 +1601,7 @@ def arm_live_clock_engine(
           const refreshMs = {refresh_ms};
           const retryMs = {retry_ms};
           const transportRecoveryMs = {transport_recovery_ms};
+          const passiveObserverRecoveryMs = {passive_observer_recovery_ms};
           const transportRecoveryCooldownMs = {transport_recovery_cooldown_ms};
           // Browser state is presentation/recovery only. The Streamlit fragment
           // remains the normal scheduler owner; this key merely prevents a dead
@@ -1722,19 +1729,35 @@ def arm_live_clock_engine(
             const recoveryBaselinePresent = processOwned
               ? processStartedAt > 0
               : attemptedAt > 0;
+            // Preserve GS580/GS621's proven native-CONNECTING recovery
+            // contract verbatim. GS632 adds a separate passive-observer fallback
+            // below rather than weakening or renaming that existing proof.
             const recoveryDue = recoveryBaselinePresent
               && nativeStreamlitConnecting()
               && overdueSeconds * 1000 >= transportRecoveryMs;
+            // GS632: process-owned AutoScan makes a stale passive browser safe to
+            // recycle even when Streamlit never exposes CONNECTING. This branch
+            // cannot request or cancel a scan; it only reconnects the observer.
+            const passiveObserverRecoveryDue = recoveryBaselinePresent
+              && processOwned
+              && overdueSeconds * 1000 >= passiveObserverRecoveryMs;
+            const browserRecoveryDue = recoveryDue
+              || passiveObserverRecoveryDue;
             const recoveryAllowed = !recoveryState
               || recoveryState.baselineAt !== baselineAt
               || now - Number(recoveryState.recoveredAt || 0)
                  >= transportRecoveryCooldownMs;
-            if (recoveryDue && recoveryAllowed) {{
+            if (browserRecoveryDue && recoveryAllowed) {{
               root.sessionStorage.setItem(
                 recoveryKey,
                 JSON.stringify({{baselineAt, recoveredAt: now}})
               );
-              setAutoScan('RECONNECTING STREAMLIT…', '#f87171');
+              setAutoScan(
+                passiveObserverRecoveryDue
+                  ? 'REFRESHING STALE VIEW…'
+                  : 'RECONNECTING STREAMLIT…',
+                '#f87171'
+              );
               root.location.replace(root.location.href);
               return;
             }}
