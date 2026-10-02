@@ -1898,6 +1898,22 @@ def _run_live_pipeline(
                 "GS490 Webull stream-window bind unavailable error_type=%s",
                 type(exc).__name__,
             )
+        # GS629 constrains only the optional Webull TICK membership. Friday live
+        # evidence proved >100/invalid-symbol subscription requests could starve
+        # the entire 30s lane while REST scans stayed healthy. Filter/cap the
+        # stream request before it reaches the established GS490/GS489 lifecycle;
+        # discovery, snapshots/history and all trading authority remain unchanged.
+        try:
+            gs629 = importlib.import_module(
+                "mide.gs629_webull_stream_membership_guard"
+            )
+            gs629.install_for_provider(client)
+        except Exception as exc:
+            logging.getLogger(__name__).warning(
+                "GS629 Webull stream-membership bind unavailable error_type=%s",
+                type(exc).__name__,
+            )
+
         # GS494 gives a partially returned official Webull snapshot batch one
         # bounded retry for only the omitted symbols before Price Gate evaluates.
         try:
