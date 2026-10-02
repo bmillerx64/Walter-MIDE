@@ -45,6 +45,7 @@ import platform
 from pathlib import Path
 import re
 import sys
+import traceback
 from time import perf_counter
 memory_checkpoint("app.py standard-library imports")
 
@@ -2906,6 +2907,41 @@ def run_live(
         return [], 0, 0, [f"Recovered live scan failure: {exc}"], diagnostics
 
 
+
+WEBULL_AUTH_BLOCK_SECONDS = 600
+WEBULL_AUTH_REQUIRED_KEY = "webull_auth_required"
+WEBULL_AUTH_RETRY_AT_KEY = "webull_auth_retry_at"
+WEBULL_AUTH_FAILURE_KEY = "webull_auth_failure"
+
+
+def _is_webull_token_creation_failure(exc: Exception) -> bool:
+    """Recognize the SDK create-token failure without treating every 417 as auth."""
+    message = str(exc)
+    if "HTTP Status: 417" not in message:
+        return False
+    trace = traceback.format_exc()
+    return (
+        "token_manager.py" in trace
+        and "create_token" in trace
+        and "init_token" in trace
+    )
+
+
+def _webull_auth_backoff_active(runtime_state: dict) -> bool:
+    if not runtime_state.get(WEBULL_AUTH_REQUIRED_KEY):
+        return False
+    retry_at = runtime_state.get(WEBULL_AUTH_RETRY_AT_KEY)
+    if not isinstance(retry_at, datetime):
+        return False
+    return datetime.now().astimezone() < retry_at
+
+
+def _clear_webull_auth_backoff(runtime_state: dict) -> None:
+    runtime_state.pop(WEBULL_AUTH_REQUIRED_KEY, None)
+    runtime_state.pop(WEBULL_AUTH_RETRY_AT_KEY, None)
+    runtime_state.pop(WEBULL_AUTH_FAILURE_KEY, None)
+
+
 def _run_process_autoscan(
     scanner_version: str,
     provider_name: str,
@@ -2929,6 +2965,19 @@ def _run_process_autoscan(
     runtime_state[DATA_MODE_KEY] = f"Live {provider_name.title()}"
     runtime_state[PROVIDER_KEY] = provider_name
     runtime_state[AUTO_SCAN_KEY] = True
+
+    if _webull_auth_backoff_active(runtime_state):
+        retry_at = runtime_state.get(WEBULL_AUTH_RETRY_AT_KEY)
+        print(
+            "[WALTER AUTOSCAN] Webull auth backoff active; "
+            f"next provider retry no earlier than {retry_at.isoformat()}",
+            flush=True,
+        )
+        return False
+    if runtime_state.get(WEBULL_AUTH_REQUIRED_KEY):
+        # The bounded backoff has elapsed. Permit exactly this scheduled worker
+        # attempt; another token-creation failure will re-arm the block.
+        _clear_webull_auth_backoff(runtime_state)
 
     watchdog = importlib.import_module("mide.watchdog").PROCESS_SCAN_WATCHDOG
 
@@ -2981,6 +3030,25 @@ def _run_process_autoscan(
         return False
     except Exception as exc:
         logging.getLogger(__name__).exception("Process AutoScan failed")
+        if provider_name.upper() == "WEBULL" and _is_webull_token_creation_failure(exc):
+            blocked_at = datetime.now().astimezone()
+            retry_at = blocked_at + timedelta(seconds=WEBULL_AUTH_BLOCK_SECONDS)
+            runtime_state[WEBULL_AUTH_REQUIRED_KEY] = True
+            runtime_state[WEBULL_AUTH_RETRY_AT_KEY] = retry_at
+            runtime_state[WEBULL_AUTH_FAILURE_KEY] = (
+                "Webull OpenAPI token creation returned HTTP 417 before verification. "
+                "Automatic provider retries are temporarily paused."
+            )
+            record_scan_failure(
+                runtime_state,
+                message=runtime_state[WEBULL_AUTH_FAILURE_KEY],
+                attempted_at=runtime_state.get("last_scan_attempt"),
+            )
+            print(
+                "[WALTER AUTOSCAN] Webull authorization circuit opened; "
+                f"retry_at={retry_at.isoformat()}",
+                flush=True,
+            )
         print(
             f"[WALTER AUTOSCAN] failed {type(exc).__name__}: {exc}",
             flush=True,
@@ -3021,6 +3089,7 @@ def _run_process_autoscan(
         statement="GS585 process scan = CompletedScan(records=records, ...)",
     )
     publish_scan_result(runtime_state, scan)
+    _clear_webull_auth_backoff(runtime_state)
     runtime_state["scan_failure_count"] = 0
     print(
         f"[WALTER AUTOSCAN] published {completed_at.isoformat()} "
@@ -3074,6 +3143,25 @@ _gs585_snapshot = _gs585.configure(
 )
 if _gs585_snapshot.last_started_at is not None:
     st.session_state.last_scan_attempt = _gs585_snapshot.last_started_at
+
+_webull_auth_state = _gs585.process_state()
+if (
+    mode.startswith("Live ")
+    and selected_provider.upper() == "WEBULL"
+    and _webull_auth_state.get(WEBULL_AUTH_REQUIRED_KEY)
+):
+    retry_at = _webull_auth_state.get(WEBULL_AUTH_RETRY_AT_KEY)
+    retry_text = (
+        format_eastern_time(retry_at)
+        if isinstance(retry_at, datetime)
+        else "after the bounded auth backoff"
+    )
+    st.error(
+        "WEBULL AUTHORIZATION REQUIRED — token creation returned HTTP 417 before "
+        "verification. Walter has paused repeated automatic provider attempts. "
+        f"Next automatic provider retry: {retry_text}. "
+        "A manual Run live scan remains available for one controlled retry."
+    )
 
 
 should_scan = False
@@ -3131,6 +3219,7 @@ if mode.startswith("Live ") and should_scan and not st.session_state[STOP_REQUES
                 statement="scan = CompletedScan(records=records, ...)",
             )
             publish_scan_result(st.session_state, scan)
+            _clear_webull_auth_backoff(_gs585.process_state())
             st.session_state.scan_failure_count = 0
         else:
             st.session_state.scan_failure_count += 1
