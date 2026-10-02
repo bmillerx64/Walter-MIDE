@@ -3729,7 +3729,12 @@ if active_tab == "Radar":
                 width="stretch",
                 hide_index=True,
                 column_config={
+                    "Time ET": st.column_config.TextColumn(width="small"),
+                    "Ticker": st.column_config.TextColumn(width="small"),
                     "Headline": st.column_config.TextColumn(width="large"),
+                    "Event": st.column_config.TextColumn(width="medium"),
+                    "Class": st.column_config.TextColumn(width="medium"),
+                    "Confirmations": st.column_config.NumberColumn(width="small"),
                     "Sources": st.column_config.TextColumn(width="medium"),
                 },
             )

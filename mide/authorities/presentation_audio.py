@@ -6579,9 +6579,13 @@ def catalyst_brief_table(report: dict) -> list[dict]:
             time_text = str(stamp or "")
         category = str(item.get("event_category") or "MATERIAL_CATALYST")
         sources = ", ".join(item.get("sources") or []) or "Unknown"
+        # GS630: operator-first column order. Time/ticker/headline are the
+        # three fields needed for rapid premarket triage; classification and
+        # provenance remain available to the right without consuming prime width.
         rows.append({
             "Time ET": time_text,
             "Ticker": str(item.get("symbol") or ""),
+            "Headline": str(item.get("headline") or ""),
             "Event": _CATALYST_CATEGORY_LABELS.get(
                 category,
                 category.replace("_", " ").title(),
@@ -6589,7 +6593,6 @@ def catalyst_brief_table(report: dict) -> list[dict]:
             "Class": str(item.get("news_class") or ""),
             "Confirmations": int(item.get("confirmations") or 0),
             "Sources": sources,
-            "Headline": str(item.get("headline") or ""),
         })
     return rows
 
