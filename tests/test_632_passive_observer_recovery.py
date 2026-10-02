@@ -22,7 +22,7 @@ def test_gs632_adds_passive_observer_stale_view_recovery():
 
 def test_existing_connecting_recovery_remains_intact():
     block = _live_clock_block()
-    assert "const connectingRecoveryDue =" in block
+    assert "const recoveryDue = recoveryBaselinePresent" in block
     assert "nativeStreamlitConnecting()" in block
     assert "overdueSeconds * 1000 >= transportRecoveryMs" in block
     assert "RECONNECTING STREAMLIT" in block
@@ -47,4 +47,4 @@ def test_recovery_keeps_same_baseline_cooldown_guard():
     block = _live_clock_block()
     assert "recoveryState.baselineAt !== baselineAt" in block
     assert "transportRecoveryCooldownMs" in block
-    assert "JSON.stringify({baselineAt, recoveredAt: now})" in block
+    assert "JSON.stringify({{baselineAt, recoveredAt: now}})" in block
