@@ -6,3 +6,7 @@ cache/
 .env
 .env.*
 !.env.example
+
+# Webull SDK verified-token runtime material (never commit)
+conf/token.txt
+.walter_webull_token/

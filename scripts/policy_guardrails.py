@@ -18,7 +18,7 @@ PROVIDER_GUARD_FILES = {
     "mide/webull_connection.py",
     "mide/webull_live.py",
 }
-SECRET_NAMES = ("WEBULL_APP_KEY", "WEBULL_APP_SECRET")
+SECRET_NAMES = ("WEBULL_APP_KEY", "WEBULL_APP_SECRET", "WEBULL_OPENAPI_PERSISTED_TOKEN")
 LOG_SINK = re.compile(
     r"\b(?:print|logging\.(?:debug|info|warning|error|exception|critical)|"
     r"logger\.(?:debug|info|warning|error|exception|critical)|"
