@@ -1729,7 +1729,10 @@ def arm_live_clock_engine(
             const recoveryBaselinePresent = processOwned
               ? processStartedAt > 0
               : attemptedAt > 0;
-            const connectingRecoveryDue = recoveryBaselinePresent
+            // Preserve GS580/GS621's proven native-CONNECTING recovery
+            // contract verbatim. GS632 adds a separate passive-observer fallback
+            // below rather than weakening or renaming that existing proof.
+            const recoveryDue = recoveryBaselinePresent
               && nativeStreamlitConnecting()
               && overdueSeconds * 1000 >= transportRecoveryMs;
             // GS632: process-owned AutoScan makes a stale passive browser safe to
@@ -1738,13 +1741,13 @@ def arm_live_clock_engine(
             const passiveObserverRecoveryDue = recoveryBaselinePresent
               && processOwned
               && overdueSeconds * 1000 >= passiveObserverRecoveryMs;
-            const recoveryDue = connectingRecoveryDue
+            const browserRecoveryDue = recoveryDue
               || passiveObserverRecoveryDue;
             const recoveryAllowed = !recoveryState
               || recoveryState.baselineAt !== baselineAt
               || now - Number(recoveryState.recoveredAt || 0)
                  >= transportRecoveryCooldownMs;
-            if (recoveryDue && recoveryAllowed) {{
+            if (browserRecoveryDue && recoveryAllowed) {{
               root.sessionStorage.setItem(
                 recoveryKey,
                 JSON.stringify({{baselineAt, recoveredAt: now}})
