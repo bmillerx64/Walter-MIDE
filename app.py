@@ -3147,7 +3147,7 @@ if _gs585_snapshot.last_started_at is not None:
 _webull_auth_state = _gs585.process_state()
 if (
     mode.startswith("Live ")
-    and selected_provider.upper() == "WEBULL"
+    and str(selected_provider or "").upper() == "WEBULL"
     and _webull_auth_state.get(WEBULL_AUTH_REQUIRED_KEY)
 ):
     retry_at = _webull_auth_state.get(WEBULL_AUTH_RETRY_AT_KEY)
