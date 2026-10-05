@@ -1632,6 +1632,27 @@ def arm_live_clock_engine(
               return false;
             }}
           }};
+          // GS635: st.components.v1.html runs inside a sandboxed iframe. Friday's
+          // GS632 recovery proved the stale condition was detected, but live Monday
+          // evidence showed parent location.replace could remain trapped after the
+          // label changed to REFRESHING STALE VIEW. Ask the parent document itself
+          // to navigate via a one-shot meta refresh, while retaining location.replace
+          // as a best-effort fallback. This is browser recovery only.
+          const forceTopLevelRecovery = () => {{
+            const href = root.location.href;
+            try {{
+              if (!root.document.getElementById('walter-stale-view-recovery')) {{
+                const meta = root.document.createElement('meta');
+                meta.id = 'walter-stale-view-recovery';
+                meta.httpEquiv = 'refresh';
+                meta.content = `0;url=${{href}}`;
+                (root.document.head || root.document.documentElement).appendChild(meta);
+              }}
+            }} catch (_) {{}}
+            try {{
+              root.location.replace(href);
+            }} catch (_) {{}}
+          }};
           const marketNow = now => {{
             const parts = new Intl.DateTimeFormat('en-US', {{
               timeZone: 'America/New_York', weekday: 'short', hour: 'numeric', minute: '2-digit',
@@ -1759,7 +1780,7 @@ def arm_live_clock_engine(
                   : 'RECONNECTING STREAMLIT…',
                 '#f87171'
               );
-              root.location.replace(root.location.href);
+              forceTopLevelRecovery();
               return;
             }}
 
