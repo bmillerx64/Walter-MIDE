@@ -30,7 +30,8 @@ def test_existing_connecting_recovery_remains_intact():
 
 def test_gs632_recycles_browser_only_and_does_not_request_scans():
     block = _live_clock_block()
-    assert "root.location.replace(root.location.href)" in block
+    assert "forceTopLevelRecovery()" in block
+    assert "root.location.replace(href)" in block
     forbidden = (
         "run_live_scan(",
         "_run_live_pipeline(",
@@ -48,3 +49,12 @@ def test_recovery_keeps_same_baseline_cooldown_guard():
     assert "recoveryState.baselineAt !== baselineAt" in block
     assert "transportRecoveryCooldownMs" in block
     assert "JSON.stringify({{baselineAt, recoveredAt: now}})" in block
+
+
+def test_gs635_stale_recovery_escapes_component_iframe_sandbox():
+    block = _live_clock_block()
+    assert "const forceTopLevelRecovery = () =>" in block
+    assert "walter-stale-view-recovery" in block
+    assert "meta.httpEquiv = 'refresh'" in block
+    assert "meta.content = `0;url=${{href}}`" in block
+    assert "(root.document.head || root.document.documentElement).appendChild(meta)" in block
