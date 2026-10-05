@@ -27,6 +27,7 @@ def test_gs636_does_not_change_process_scan_ownership():
 
     # GS636 protects only the browser-document recovery path. Existing process
     # ownership and scheduler authority remain the same.
-    assert "backend process-owned AutoScan continues untouched" in source
+    assert "alert is actively speaking. Defer only the browser reload; backend" in source
+    assert "process-owned AutoScan continues untouched" in source
     assert "const processOwned =" in source
     assert "const browserRecoveryDue = recoveryDue" in source
