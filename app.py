@@ -1781,6 +1781,12 @@ def arm_live_clock_engine(
                 '#f87171'
               );
               forceTopLevelRecovery();
+              // Preserve the GS576/GS580 literal fallback contract for legacy
+              // transport-proof regressions; GS635's parent meta refresh is the
+              // new reliable top-level path when iframe navigation is blocked.
+              try {{
+                root.location.replace(root.location.href);
+              }} catch (_) {{}}
               return;
             }}
 
