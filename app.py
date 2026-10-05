@@ -2005,6 +2005,21 @@ def _run_live_pipeline(
                 type(exc).__name__,
             )
 
+        # GS637 recovers only the confirmed Webull MQTT INVALID_SESSION path.
+        # It wraps the completed GS629/GS490/GS489 stream lifecycle and permits
+        # one immediate retry on the same process-owned provider; canonical REST
+        # scanning and all trading/LIW/audio authority remain unchanged.
+        try:
+            gs637 = importlib.import_module(
+                "mide.gs637_webull_invalid_session_recovery"
+            )
+            gs637.install_for_provider(client)
+        except Exception as exc:
+            logging.getLogger(__name__).warning(
+                "GS637 Webull INVALID_SESSION recovery bind unavailable error_type=%s",
+                type(exc).__name__,
+            )
+
         # GS494 gives a partially returned official Webull snapshot batch one
         # bounded retry for only the omitted symbols before Price Gate evaluates.
         try:
