@@ -10,14 +10,11 @@ GS627 Live Ignition Watch intentionally makes no network calls, so a dead TICK
 transport leaves LIW without fresh cached price/30-second evidence even while the
 60-second scanner continues normally.
 
-GS637 is deliberately narrow:
-- recognize only the observed MQTT INVALID_SESSION signature;
-- reuse the exact process-owned provider and existing GS469/GS489/GS490/GS629
-  reconnect/membership chain;
-- retire any partially retained subscription, then allow exactly one immediate
-  retry through that already-installed chain;
-- never create another provider, scheduler, scan, or authority path;
-- retain REST snapshot/history fallback when recovery fails.
+The observed failure occurs at the SDK HTTP subscribe step immediately after MQTT
+connect. GS637 therefore gives that exact connected MQTT transport one short,
+bounded re-subscribe attempt before retiring it. It does not open a second provider,
+second scheduler, or parallel reconnect owner. If the retry fails, the transport is
+closed and Walter's existing GS469 lifecycle remains the sole later reconnect owner.
 
 No discovery, ranking, thresholds, Walter state, Entry authority, LIW thresholds,
 audio authority, execution, or orders are changed.
@@ -27,12 +24,15 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from functools import wraps
-from typing import Callable, Iterable
+import time
+from typing import Iterable
 
 
 AUTHORITY = "WEBULL_MQTT_INVALID_SESSION_RECOVERY"
 _OWNER = "_walter_gs637_invalid_session_recovery"
-REVISION = 1
+_TRANSPORT_OWNER = "_walter_gs637_transport_subscribe"
+REVISION = 2
+INVALID_SESSION_RETRY_DELAY_SECONDS = 0.75
 
 
 def _symbols(values: Iterable[str]) -> list[str]:
@@ -75,19 +75,21 @@ def _trace(provider) -> dict:
     if not isinstance(trace, dict):
         trace = {
             "authority": AUTHORITY,
-            "detected_total": 0,
-            "recovery_attempts": 0,
-            "recovery_successes": 0,
-            "recovery_failures": 0,
+            "same_transport_retry_attempts": 0,
+            "same_transport_retry_successes": 0,
+            "terminal_invalid_session_failures": 0,
             "last_detected_at": None,
             "last_failure": None,
             "last_retry_result": None,
             "last_tick_timestamp_ms": None,
             "tick_messages_received": 0,
+            "retry_delay_seconds": INVALID_SESSION_RETRY_DELAY_SECONDS,
             "one_retry_only": True,
+            "same_mqtt_transport_retry": True,
             "process_provider_reused": True,
             "second_provider_created": False,
             "second_scheduler_created": False,
+            "gs469_remains_reconnect_owner": True,
             "rest_snapshot_history_unchanged": True,
             "liw_thresholds_changed": False,
             "trading_authority_changed": False,
@@ -110,113 +112,156 @@ def _refresh_tick_truth(provider, trace: dict) -> None:
     trace["stream_connection_status"] = stream.get("stream_connection_status")
 
 
-def ensure_stream_with_invalid_session_recovery(
-    original: Callable,
-    provider,
-    symbols: Iterable[str],
-):
-    """Delegate normally, then make one bounded retry for a fresh INVALID_SESSION."""
-    requested = _symbols(symbols)
-    stream = _stream(provider)
-    trace = _trace(provider)
-    _refresh_tick_truth(provider, trace)
+def _install_transport_patch() -> bool:
+    """Patch only GS379's SDK TICK subscribe seam; never create a connection."""
+    from mide import gs379_webull_stream_data_truth as gs379
 
-    failures_before = len(list(stream.get("subscription_failures") or []))
-    result = original(requested)
-    failures_after = list(stream.get("subscription_failures") or [])
-    _refresh_tick_truth(provider, trace)
-    trace["last_result"] = bool(result)
+    owner = gs379.OfficialWebullTickTransport
+    current = owner.subscribe
+    if getattr(current, _TRANSPORT_OWNER, None) == REVISION:
+        return False
 
-    if result:
-        trace["last_retry_result"] = True if trace.get("last_retry_result") else None
-        return result
+    @wraps(current)
+    def subscribe(self, symbols) -> None:
+        wanted = self._symbols(symbols)
+        if not wanted:
+            return
 
-    newest = (
-        failures_after[-1]
-        if len(failures_after) > failures_before
-        else None
-    )
-    if not _invalid_session_failure(newest):
-        return result
+        self._subscribed.clear()
+        recovered_event = None
+        try:
+            self.client.subscribe(wanted, "US_STOCK", ["TICK"])
+            if not self._subscribed.wait(gs379.SUBSCRIBE_TIMEOUT_SECONDS):
+                raise RuntimeError(
+                    "Webull OpenAPI tick subscription did not confirm"
+                )
+            return
+        except BaseException as first_exc:
+            if not _invalid_session_failure(first_exc):
+                self.close()
+                raise
 
-    trace["detected_total"] = int(trace.get("detected_total") or 0) + 1
-    trace["last_detected_at"] = datetime.now(timezone.utc).isoformat()
-    trace["last_failure"] = str(newest)
-    trace["recovery_attempts"] = int(trace.get("recovery_attempts") or 0) + 1
+            recovered_event = {
+                "detected_at": datetime.now(timezone.utc).isoformat(),
+                "first_failure": str(first_exc),
+                "retry_attempted": True,
+                "retry_result": False,
+                "consumed": False,
+            }
+            self._gs637_recovery_event = recovered_event
 
-    # Recycle only the exact process-owned stream object. The existing provider,
-    # scan scheduler, REST clients, state machine, and GS627 observer stay intact.
-    try:
-        from mide import gs379_webull_stream_data_truth as gs379
+            # The MQTT connection callback has already fired. The failure is the
+            # Webull HTTP subscription registry not yet recognizing that session.
+            # Keep the same transport alive briefly and retry only that HTTP
+            # subscription once; do not create another MQTT connection here.
+            time.sleep(INVALID_SESSION_RETRY_DELAY_SECONDS)
+            self._subscribed.clear()
+            try:
+                self.client.subscribe(wanted, "US_STOCK", ["TICK"])
+                if not self._subscribed.wait(gs379.SUBSCRIBE_TIMEOUT_SECONDS):
+                    raise RuntimeError(
+                        "Webull OpenAPI tick subscription did not confirm "
+                        "after INVALID_SESSION retry"
+                    )
+            except BaseException:
+                self.close()
+                raise
 
-        gs379._retire_provider_stream(provider)
-        trace["dead_subscription_retired"] = True
-    except Exception as exc:
-        trace["dead_subscription_retired"] = False
-        trace["retire_error_type"] = type(exc).__name__
+            recovered_event["retry_result"] = True
+            recovered_event["recovered_at"] = (
+                datetime.now(timezone.utc).isoformat()
+            )
+            return
 
-    retry_failures_before = len(
-        list(stream.get("subscription_failures") or [])
-    )
-    retry_result = original(requested)
-    retry_failures_after = list(stream.get("subscription_failures") or [])
-    _refresh_tick_truth(provider, trace)
-    trace["last_retry_result"] = bool(retry_result)
+    setattr(subscribe, _TRANSPORT_OWNER, REVISION)
+    subscribe._gs637_original = current
+    owner.subscribe = subscribe
+    return True
 
-    if retry_result:
-        trace["recovery_successes"] = int(
-            trace.get("recovery_successes") or 0
+
+def _consume_transport_recovery(provider, trace: dict) -> None:
+    subscription = getattr(provider, "_subscription", None)
+    transport = getattr(subscription, "transport", None)
+    event = getattr(transport, "_gs637_recovery_event", None)
+    if not isinstance(event, dict) or event.get("consumed"):
+        return
+
+    event["consumed"] = True
+    trace["same_transport_retry_attempts"] = int(
+        trace.get("same_transport_retry_attempts") or 0
+    ) + 1
+    if event.get("retry_result"):
+        trace["same_transport_retry_successes"] = int(
+            trace.get("same_transport_retry_successes") or 0
         ) + 1
-        trace["last_retry_failure"] = None
-    else:
-        trace["recovery_failures"] = int(
-            trace.get("recovery_failures") or 0
-        ) + 1
-        trace["last_retry_failure"] = (
-            retry_failures_after[-1]
-            if len(retry_failures_after) > retry_failures_before
-            else None
-        )
-
-    # Never recurse or perform a third connection attempt here. If the one fresh
-    # transport does not recover, existing GS469 remains the sole later retry owner.
-    return retry_result
+    trace["last_detected_at"] = event.get("detected_at")
+    trace["last_failure"] = event.get("first_failure")
+    trace["last_retry_result"] = bool(event.get("retry_result"))
 
 
 def install_for_provider(provider) -> bool:
-    """Install outside the existing stream guard chain on one retained provider."""
+    """Install diagnostics outside the existing stream guard chain."""
+    transport_changed = _install_transport_patch()
     if provider is None:
-        return False
+        return transport_changed
+
     current = getattr(provider, "ensure_stream", None)
     if not callable(current):
-        return False
+        return transport_changed
     function = getattr(current, "__func__", current)
     if (
         getattr(function, _OWNER, None) == REVISION
         or getattr(current, _OWNER, None) == REVISION
     ):
-        return False
+        return transport_changed
 
     @wraps(current)
     def guarded(symbols):
-        return ensure_stream_with_invalid_session_recovery(
-            current,
-            provider,
-            symbols,
+        stream = _stream(provider)
+        trace = _trace(provider)
+        _refresh_tick_truth(provider, trace)
+        failures_before = len(
+            list(stream.get("subscription_failures") or [])
         )
+        result = current(_symbols(symbols))
+        failures_after = list(stream.get("subscription_failures") or [])
+
+        _consume_transport_recovery(provider, trace)
+        if not result:
+            newest = (
+                failures_after[-1]
+                if len(failures_after) > failures_before
+                else None
+            )
+            if _invalid_session_failure(newest):
+                trace["terminal_invalid_session_failures"] = int(
+                    trace.get("terminal_invalid_session_failures") or 0
+                ) + 1
+                trace["same_transport_retry_attempts"] = int(
+                    trace.get("same_transport_retry_attempts") or 0
+                ) + 1
+                trace["last_detected_at"] = (
+                    datetime.now(timezone.utc).isoformat()
+                )
+                trace["last_failure"] = str(newest)
+                trace["last_retry_result"] = False
+
+        _refresh_tick_truth(provider, trace)
+        trace["last_result"] = bool(result)
+        return result
 
     setattr(guarded, _OWNER, REVISION)
     guarded._gs637_original = current
     try:
         provider.ensure_stream = guarded
     except (AttributeError, TypeError):
-        return False
+        return transport_changed
     return True
 
 
 __all__ = [
     "AUTHORITY",
+    "INVALID_SESSION_RETRY_DELAY_SECONDS",
     "REVISION",
-    "ensure_stream_with_invalid_session_recovery",
     "install_for_provider",
 ]
