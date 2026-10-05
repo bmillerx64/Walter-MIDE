@@ -1632,6 +1632,42 @@ def arm_live_clock_engine(
               return false;
             }}
           }};
+          // GS636: browser transport recovery must never cut off Walter while an
+          // alert is actively speaking. Defer only the browser reload; backend
+          // process-owned AutoScan continues untouched. Bound the deferral so a
+          // wedged browser speech engine cannot suppress recovery indefinitely.
+          const voiceRecoveryDeferralKey = 'walterVoiceRecoveryDeferral';
+          const voiceTransportSpeaking = now => {{
+            let active = false;
+            try {{
+              const synth = root.speechSynthesis;
+              const transport = root.__walterVoiceTransport || {{}};
+              active = Boolean(
+                (synth && synth.speaking) ||
+                transport.status === 'speaking'
+              );
+            }} catch (_) {{}}
+            if (!active) {{
+              try {{ root.sessionStorage.removeItem(voiceRecoveryDeferralKey); }} catch (_) {{}}
+              return false;
+            }}
+            let startedAt = 0;
+            try {{
+              startedAt = Number(
+                root.sessionStorage.getItem(voiceRecoveryDeferralKey) || 0
+              );
+            }} catch (_) {{}}
+            if (!startedAt) {{
+              startedAt = now;
+              try {{
+                root.sessionStorage.setItem(
+                  voiceRecoveryDeferralKey,
+                  String(startedAt)
+                );
+              }} catch (_) {{}}
+            }}
+            return now - startedAt < 45_000;
+          }};
           // GS635: st.components.v1.html runs inside a sandboxed iframe. Friday's
           // GS632 recovery proved the stale condition was detected, but live Monday
           // evidence showed parent location.replace could remain trapped after the
@@ -1770,6 +1806,10 @@ def arm_live_clock_engine(
               || now - Number(recoveryState.recoveredAt || 0)
                  >= transportRecoveryCooldownMs;
             if (browserRecoveryDue && recoveryAllowed) {{
+              if (voiceTransportSpeaking(now)) {{
+                setAutoScan('VOICE ACTIVE · RECOVERY DEFERRED', '#facc15');
+                return;
+              }}
               root.sessionStorage.setItem(
                 recoveryKey,
                 JSON.stringify({{baselineAt, recoveredAt: now}})
