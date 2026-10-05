@@ -2981,6 +2981,10 @@ WEBULL_AUTH_RETRY_AT_KEY = "webull_auth_retry_at"
 WEBULL_AUTH_FAILURE_KEY = "webull_auth_failure"
 
 
+class WebullAuthorizationRequired(RuntimeError):
+    """Internal marker used to stop watchdog retry amplification for Webull auth."""
+
+
 def _is_webull_token_creation_failure(exc: Exception) -> bool:
     """Recognize the SDK create-token failure without treating every 417 as auth."""
     message = str(exc)
@@ -2994,13 +2998,35 @@ def _is_webull_token_creation_failure(exc: Exception) -> bool:
     )
 
 
+def _is_webull_expired_token_failure(exc: Exception) -> bool:
+    """Recognize the official SDK's expired-token check path narrowly."""
+    message = str(exc)
+    if "ERROR_CHECK_TOKEN" not in message or "status:EXPIRED" not in message:
+        return False
+    trace = traceback.format_exc()
+    return (
+        "token_manager.py" in trace
+        and "init_token" in trace
+        and "fetch_token_from_server" in trace
+        and "check_token" in trace
+    )
+
+
+def _is_webull_authorization_required_failure(exc: Exception) -> bool:
+    """Return true only for the two observed Webull authorization-required paths."""
+    return (
+        _is_webull_token_creation_failure(exc)
+        or _is_webull_expired_token_failure(exc)
+    )
+
+
 def _webull_auth_backoff_active(runtime_state: dict) -> bool:
-    if not runtime_state.get(WEBULL_AUTH_REQUIRED_KEY):
-        return False
-    retry_at = runtime_state.get(WEBULL_AUTH_RETRY_AT_KEY)
-    if not isinstance(retry_at, datetime):
-        return False
-    return datetime.now().astimezone() < retry_at
+    """Latch automatic Webull provider retries until an operator-controlled success.
+
+    WEBULL_AUTH_RETRY_AT_KEY is retained as diagnostic/backward-compatible
+    evidence from GS634, but elapsed wall-clock time no longer clears the circuit.
+    """
+    return bool(runtime_state.get(WEBULL_AUTH_REQUIRED_KEY))
 
 
 def _clear_webull_auth_backoff(runtime_state: dict) -> None:
@@ -3035,16 +3061,16 @@ def _run_process_autoscan(
 
     if _webull_auth_backoff_active(runtime_state):
         retry_at = runtime_state.get(WEBULL_AUTH_RETRY_AT_KEY)
+        retry_context = (
+            retry_at.isoformat() if isinstance(retry_at, datetime) else "not scheduled"
+        )
         print(
-            "[WALTER AUTOSCAN] Webull auth backoff active; "
-            f"next provider retry no earlier than {retry_at.isoformat()}",
+            "[WALTER AUTOSCAN] Webull auth backoff active/latched; "
+            "automatic provider retries are paused until a controlled manual "
+            f"retry succeeds (GS634 diagnostic retry_at={retry_context})",
             flush=True,
         )
         return False
-    if runtime_state.get(WEBULL_AUTH_REQUIRED_KEY):
-        # The bounded backoff has elapsed. Permit exactly this scheduled worker
-        # attempt; another token-creation failure will re-arm the block.
-        _clear_webull_auth_backoff(runtime_state)
 
     watchdog = importlib.import_module("mide.watchdog").PROCESS_SCAN_WATCHDOG
 
@@ -3073,10 +3099,9 @@ def _run_process_autoscan(
             flush=True,
         )
 
-    try:
-        repair_mide_module_links()
-        records, universe_count, prefiltered, warnings, diagnostics = watchdog.run(
-            lambda: scanner_implementation(scanner_version).for_runtime(
+    def _scan_once_with_auth_guard():
+        try:
+            return scanner_implementation(scanner_version).for_runtime(
                 lambda: _run_live_pipeline(
                     scanner_version,
                     status=None,
@@ -3087,8 +3112,30 @@ def _run_process_autoscan(
                     flight_recorder=flight_recorder,
                     ui_enabled=False,
                 )
-            ).run(),
-            before_retry=repair_mide_module_links,
+            ).run()
+        except Exception as exc:
+            if (
+                provider_name.upper() == "WEBULL"
+                and _is_webull_authorization_required_failure(exc)
+            ):
+                raise WebullAuthorizationRequired(str(exc)) from exc
+            raise
+
+    def _before_process_retry() -> None:
+        repair_mide_module_links()
+        if watchdog.last_failures:
+            last_failure = watchdog.last_failures[-1]
+            if last_failure.error_type == "WebullAuthorizationRequired":
+                # Abort the watchdog envelope after the first auth-required
+                # provider construction failure. The process circuit below then
+                # latches future automatic attempts until manual recovery.
+                raise WebullAuthorizationRequired(last_failure.message)
+
+    try:
+        repair_mide_module_links()
+        records, universe_count, prefiltered, warnings, diagnostics = watchdog.run(
+            _scan_once_with_auth_guard,
+            before_retry=_before_process_retry,
             on_acquired=acquired,
             on_finished=finished,
         )
@@ -3097,14 +3144,21 @@ def _run_process_autoscan(
         return False
     except Exception as exc:
         logging.getLogger(__name__).exception("Process AutoScan failed")
-        if provider_name.upper() == "WEBULL" and _is_webull_token_creation_failure(exc):
+        if provider_name.upper() == "WEBULL" and (
+            isinstance(exc, WebullAuthorizationRequired)
+            or _is_webull_authorization_required_failure(exc)
+        ):
             blocked_at = datetime.now().astimezone()
             retry_at = blocked_at + timedelta(seconds=WEBULL_AUTH_BLOCK_SECONDS)
             runtime_state[WEBULL_AUTH_REQUIRED_KEY] = True
+            # Retain GS634's timestamp for diagnostics only. GS635 deliberately
+            # does not auto-unlatch when this timestamp passes.
             runtime_state[WEBULL_AUTH_RETRY_AT_KEY] = retry_at
             runtime_state[WEBULL_AUTH_FAILURE_KEY] = (
-                "Webull OpenAPI token creation returned HTTP 417 before verification. "
-                "Automatic provider retries are temporarily paused."
+                "Webull OpenAPI authorization is required: token creation failed "
+                "or the official SDK reported an expired access token. Automatic "
+                "provider retries are latched off until a controlled manual retry "
+                "completes successfully."
             )
             record_scan_failure(
                 runtime_state,
@@ -3217,17 +3271,13 @@ if (
     and str(selected_provider or "").upper() == "WEBULL"
     and _webull_auth_state.get(WEBULL_AUTH_REQUIRED_KEY)
 ):
-    retry_at = _webull_auth_state.get(WEBULL_AUTH_RETRY_AT_KEY)
-    retry_text = (
-        format_eastern_time(retry_at)
-        if isinstance(retry_at, datetime)
-        else "after the bounded auth backoff"
-    )
     st.error(
-        "WEBULL AUTHORIZATION REQUIRED — token creation returned HTTP 417 before "
-        "verification. Walter has paused repeated automatic provider attempts. "
-        f"Next automatic provider retry: {retry_text}. "
-        "A manual Run live scan remains available for one controlled retry."
+        "WEBULL AUTHORIZATION REQUIRED — Webull token creation failed or the "
+        "official SDK reported an expired access token. Walter has latched "
+        "automatic Webull provider attempts off to prevent repeated authorization "
+        "prompts. No automatic provider retry will occur while this circuit is "
+        "latched. A manual Run live scan remains available for one controlled retry. "
+        "The first successful completed scan clears the circuit immediately."
     )
 
 
