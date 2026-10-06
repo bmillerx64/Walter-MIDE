@@ -144,3 +144,84 @@ def test_gs627_ui_is_fragment_owned_and_explicitly_awareness_only():
     assert "def render_live_ignition_watch()" in source
     assert "Awareness only — does not change Walter state" in source
     assert ".ensure_running()" in source
+
+
+
+def test_gs640_ostx_style_runner_gets_live_regime_without_changing_scan_state(monkeypatch):
+    original = base_record(
+        symbol="OSTX",
+        price=1.92,
+        vwap_value=1.78,
+        participation_score=76.8,
+        expansion_quality=80.2,
+        candidate_status="Strengthening",
+    )
+    frozen = deepcopy(original)
+
+    def enrich(record, provider, scan_time):
+        enriched = dict(record)
+        enriched["thirty_second_tripwire"] = {
+            "bullish": True,
+            "fresh_flip": False,
+            "last_flip_age_seconds": 145.0,
+            "volume_acceleration_30s": 2.59,
+            "dollar_flow_acceleration_30s": 2.2,
+        }
+        return enriched
+
+    monkeypatch.setattr(gs396, "enrich_record_with_live_30s", enrich)
+
+    result = gs627._evaluate_record(
+        original,
+        FakeProvider({"OSTX": 1.91}),
+        NOW,
+    )
+
+    assert result is not None
+    assert result["boxes_checked"] == 4
+    assert result["live_regime"] == "ACTIVE RUNNER · EXTENDED"
+    assert result["canonical_state"] == "Strengthening"
+    assert result["candidate_state_changed"] is False
+    assert result["qualified_for_entry_changed"] is False
+    assert original == frozen
+
+
+def test_gs640_breakout_active_near_vwap_is_distinct_from_extended_runner(monkeypatch):
+    def enrich(record, provider, scan_time):
+        enriched = dict(record)
+        enriched["thirty_second_tripwire"] = {
+            "bullish": True,
+            "fresh_flip": True,
+            "last_flip_age_seconds": 18.0,
+            "volume_acceleration_30s": 2.0,
+            "dollar_flow_acceleration_30s": 2.4,
+        }
+        return enriched
+
+    monkeypatch.setattr(gs396, "enrich_record_with_live_30s", enrich)
+
+    result = gs627._evaluate_record(
+        base_record(
+            symbol="EARLY",
+            price=2.10,
+            vwap_value=2.10,
+            participation_score=82.0,
+            expansion_quality=72.0,
+            candidate_status="Strengthening",
+        ),
+        FakeProvider({"EARLY": 2.12}),
+        NOW,
+    )
+
+    assert result is not None
+    assert result["live_regime"] == "BREAKOUT ACTIVE"
+    assert result["canonical_state"] == "Strengthening"
+
+
+def test_gs640_live_regime_ui_keeps_canonical_state_explicitly_scan_scoped():
+    source = Path("app.py").read_text(encoding="utf-8")
+
+    assert '"Live regime": item.get("live_regime")' in source
+    assert '"Scan state*": item.get("canonical_state")' in source
+    assert '"Walter state": item.get("canonical_state")' not in source
+    assert "Scan state*, VWAP, Participation and Expansion are inherited" in source
