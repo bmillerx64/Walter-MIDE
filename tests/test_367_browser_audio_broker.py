@@ -2,6 +2,7 @@ from datetime import datetime, timezone
 from types import SimpleNamespace
 
 from mide import ui
+from mide.authorities.presentation_audio import critical_only_audio_markup
 from mide.gs367_browser_audio_broker import (
     BROKER_SETTLE_MS,
     broker_scan_token,
@@ -79,3 +80,22 @@ def test_gs367_is_final_installed_audio_layer():
     assert getattr(ui.play_alert, "_gs367_browser_audio_broker", False)
     assert getattr(ui.play_alert, "_gs366_rerun_alert_dedupe", False)
     assert getattr(ui.play_alert, "_gs365_chime_semantics", False)
+
+
+
+def test_gs642_final_tier_routes_to_guard_after_routine_suppression():
+    markup = critical_only_audio_markup(
+        browser_broker_markup("scan-guard", 2)
+    )
+
+    assert "if (tier === 1) return;" in markup
+    assert "walterAudioGuardHeartbeat" in markup
+    assert "walter-audio-guard-v1" in markup
+    assert "kind: 'tone'" in markup
+    assert "broker.emittedToken = token" in markup
+    assert markup.index("if (tier === 1) return;") < markup.index(
+        "walterAudioGuardHeartbeat"
+    )
+    assert markup.index("walterAudioGuardHeartbeat") < markup.index(
+        "const AudioContextCtor ="
+    )
