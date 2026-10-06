@@ -28,6 +28,13 @@ MAX_RECORDS = 20
 MAX_VISIBLE = 8
 MIN_BOXES_VISIBLE = 3
 
+# GS640: presentation-only live-regime semantics. These thresholds do not alter
+# scanner qualification or Entry authority; they classify already-visible GS627
+# observations using cached evidence only.
+LIVE_BREAKOUT_MIN_BOXES = 4
+LIVE_BREAKOUT_FLOW_MIN = 1.5
+LIVE_EXTENDED_VWAP_PCT = 2.0
+
 
 def _utc_now() -> datetime:
     return datetime.now(timezone.utc)
@@ -112,6 +119,46 @@ def _canonical_label(record: dict) -> str:
     return "Current scan candidate"
 
 
+def _live_regime(
+    *,
+    checked: int,
+    above_vwap: bool,
+    st_bullish: bool,
+    fresh_flip: bool,
+    participation_ok: bool,
+    expansion_ok: bool,
+    flow_accel: float | None,
+    dollar_flow_accel: float | None,
+    live_vwap_distance: float | None,
+) -> str:
+    """Describe live tape regime without changing Walter's canonical scan state."""
+    flow = max(
+        value
+        for value in (
+            flow_accel if flow_accel is not None else float("-inf"),
+            dollar_flow_accel if dollar_flow_accel is not None else float("-inf"),
+        )
+    )
+    breakout = bool(
+        checked >= LIVE_BREAKOUT_MIN_BOXES
+        and above_vwap
+        and st_bullish
+        and participation_ok
+        and expansion_ok
+        and flow >= LIVE_BREAKOUT_FLOW_MIN
+    )
+    if breakout:
+        if (
+            live_vwap_distance is not None
+            and live_vwap_distance > LIVE_EXTENDED_VWAP_PCT
+        ):
+            return "ACTIVE RUNNER · EXTENDED"
+        return "BREAKOUT ACTIVE"
+    if fresh_flip:
+        return "IGNITION"
+    return "WATCHING"
+
+
 def _evaluate_record(record: dict, provider, now: datetime) -> dict | None:
     symbol = str(record.get("symbol") or "").strip().upper()
     if not symbol:
@@ -181,9 +228,22 @@ def _evaluate_record(record: dict, provider, now: datetime) -> dict | None:
     if live_price is not None and scan_price not in (None, 0):
         move_from_scan = (live_price / float(scan_price) - 1.0) * 100.0
 
+    live_regime = _live_regime(
+        checked=checked,
+        above_vwap=above_last_scan_vwap,
+        st_bullish=st_bullish,
+        fresh_flip=fresh_flip,
+        participation_ok=participation_ok,
+        expansion_ok=expansion_ok,
+        flow_accel=flow_accel,
+        dollar_flow_accel=dollar_flow_accel,
+        live_vwap_distance=live_vwap_distance,
+    )
+
     return {
         "symbol": symbol,
         "canonical_state": _canonical_label(record),
+        "live_regime": live_regime,
         "live_price": live_price,
         "last_scan_price": scan_price,
         "move_from_scan_pct": (
