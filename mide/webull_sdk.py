@@ -28,6 +28,8 @@ _HISTORY_BAR_MIN_INTERVAL_SECONDS = 1.05
 _PERSISTED_TOKEN_ENV = "WEBULL_OPENAPI_PERSISTED_TOKEN"
 _RUNTIME_TOKEN_DIR_ENV = "WEBULL_OPENAPI_TOKEN_DIR"
 _RUNTIME_TOKEN_DIR_DEFAULT = ".walter_webull_token"
+_FRESH_AUTH_LOCK = Lock()
+_BYPASS_PERSISTED_TOKEN_ONCE = False
 
 
 def _suppress_official_sdk_logging() -> None:
@@ -191,6 +193,63 @@ def _install_http_trace(sdk_client) -> bool:
     return False
 
 
+def _token_file_candidates() -> tuple[Path, ...]:
+    """Return only Walter/Webull SDK token-file locations, never token contents."""
+    candidates: list[Path] = []
+    configured_dir = str(os.getenv(_RUNTIME_TOKEN_DIR_ENV) or "").strip()
+    if configured_dir:
+        candidates.append(Path(configured_dir).expanduser() / "token.txt")
+    candidates.append(Path(_RUNTIME_TOKEN_DIR_DEFAULT).expanduser() / "token.txt")
+    candidates.append(Path("conf") / "token.txt")
+
+    unique: list[Path] = []
+    seen: set[str] = set()
+    for candidate in candidates:
+        key = str(candidate)
+        if key not in seen:
+            unique.append(candidate)
+            seen.add(key)
+    return tuple(unique)
+
+
+def prepare_fresh_authorization() -> dict[str, object]:
+    """Arm one explicit fresh-auth reconstruction and remove expired runtime state.
+
+    Webull's official recovery for an expired access token is to remove the SDK
+    token file and authenticate again. GS645 invokes this only from an explicit
+    operator Run live scan while GS635's auth circuit is latched. The persisted
+    token secret is bypassed exactly once so an expired durable seed cannot be
+    written straight back into the just-cleared runtime store.
+    """
+    global _BYPASS_PERSISTED_TOKEN_ONCE
+
+    removed = 0
+    with _FRESH_AUTH_LOCK:
+        for token_file in _token_file_candidates():
+            try:
+                token_file.unlink()
+                removed += 1
+            except FileNotFoundError:
+                pass
+            except OSError:
+                # Fail closed: the fresh client may still report auth required,
+                # and GS635 will keep the circuit latched.
+                pass
+        _BYPASS_PERSISTED_TOKEN_ONCE = True
+    return {
+        "runtime_token_files_removed": removed,
+        "persisted_seed_bypassed_once": True,
+    }
+
+
+def _consume_fresh_authorization_bypass() -> bool:
+    global _BYPASS_PERSISTED_TOKEN_ONCE
+    with _FRESH_AUTH_LOCK:
+        bypass = bool(_BYPASS_PERSISTED_TOKEN_ONCE)
+        _BYPASS_PERSISTED_TOKEN_ONCE = False
+        return bypass
+
+
 def _seed_persisted_token(api_client) -> tuple[bool, bool]:
     """Restore a durable Webull SDK token into the runtime token store.
 
@@ -205,10 +264,25 @@ def _seed_persisted_token(api_client) -> tuple[bool, bool]:
     returned, or written into repository files.
     """
     token = str(os.getenv(_PERSISTED_TOKEN_ENV) or "").strip()
+    configured_dir = str(os.getenv(_RUNTIME_TOKEN_DIR_ENV) or "").strip()
+    bypass_persisted_seed = _consume_fresh_authorization_bypass()
+
+    if bypass_persisted_seed:
+        # Preserve the configured SDK storage directory, but deliberately do not
+        # restore the durable token on this one operator-controlled rebuild.
+        if configured_dir or token:
+            token_dir = Path(configured_dir or _RUNTIME_TOKEN_DIR_DEFAULT).expanduser()
+            token_dir.mkdir(parents=True, exist_ok=True)
+            try:
+                token_dir.chmod(0o700)
+            except OSError:
+                pass
+            api_client.set_token_dir(str(token_dir))
+        return bool(token), False
+
     if not token:
         return False, False
 
-    configured_dir = str(os.getenv(_RUNTIME_TOKEN_DIR_ENV) or "").strip()
     token_dir = Path(configured_dir or _RUNTIME_TOKEN_DIR_DEFAULT).expanduser()
     token_dir.mkdir(parents=True, exist_ok=True)
     try:
