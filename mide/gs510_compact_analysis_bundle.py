@@ -571,7 +571,12 @@ def latest_analysis_bundle_job_status(
     return job
 
 
-def _render(candidate_path: Path, flight_path: Path) -> None:
+def _render(
+    candidate_path: Path,
+    flight_path: Path,
+    *,
+    allow_prepare: bool = True,
+) -> None:
     import streamlit as st
 
     st.caption(
@@ -596,7 +601,7 @@ def _render(candidate_path: Path, flight_path: Path) -> None:
                 )
     running = bool(job and job.get("status") == "running")
 
-    if st.button(
+    if allow_prepare and st.button(
         "Prepare Compact Analysis Bundle",
         key="walter-gs510-prepare-analysis-bundle",
         width="stretch",
@@ -709,12 +714,13 @@ def render_compact_analysis_bundle_controls(
                 st.session_state[JOB_SESSION_KEY] = job_id
     polling = bool(job and job.get("status") == "running")
 
+    # GS639: the operator's Prepare click lives on the ordinary full-app widget
+    # path, not inside the quiescent fragment. A process-observer repaint can
+    # supersede an idle fragment rerun; the full-app button avoids losing that
+    # click. The worker/status remains process-owned and recoverable after reload.
     if not polling:
-        # GS639: keep the idle Prepare control on the ordinary full-app path.
-        # A fragment click can be superseded by the process observer's own
-        # full-app repaint. Starting the worker from the normal widget rerun makes
-        # the operator click authoritative; only the active worker uses 2s polling.
-        _render(candidate_path, flight_path)
+        _render(candidate_path, flight_path, allow_prepare=True)
+
         current_job_id = str(st.session_state.get(JOB_SESSION_KEY) or "")
         current_job = (
             analysis_bundle_job_status(current_job_id)
@@ -723,15 +729,19 @@ def render_compact_analysis_bundle_controls(
         )
         if current_job and current_job.get("status") == "running":
             st.rerun(scope="app")
-        return
 
-    @fragment(run_every=JOB_POLL_SECONDS)
     def analysis_bundle_fragment() -> None:
-        _render(candidate_path, flight_path)
+        if polling:
+            _render(
+                candidate_path,
+                flight_path,
+                allow_prepare=False,
+            )
 
-        # GS542/GS639: poll only while the background worker is active. Once it
-        # completes or fails, rebuild the ordinary app so the download is stable
-        # and quiescent.
+        # GS542/GS639: poll only while the background worker is active. The
+        # quiescent fragment has no timer and no Prepare button; it only preserves
+        # the validated state-transition seam. When running changes state, rebuild
+        # the ordinary app so the stable download surface is rendered there.
         current_job_id = str(st.session_state.get(JOB_SESSION_KEY) or "")
         current_job = (
             analysis_bundle_job_status(current_job_id)
@@ -741,7 +751,10 @@ def render_compact_analysis_bundle_controls(
         now_running = bool(
             current_job and current_job.get("status") == "running"
         )
-        if not now_running:
+        if now_running != polling:
             st.rerun(scope="app")
 
-    analysis_bundle_fragment()
+    if polling:
+        fragment(run_every=JOB_POLL_SECONDS)(analysis_bundle_fragment)()
+    else:
+        fragment(analysis_bundle_fragment)()
