@@ -3502,8 +3502,8 @@ def render_live_ignition_watch() -> None:
         st.markdown("### ⚡ LIVE IGNITION WATCH")
         st.caption(
             "Awareness only — does not change Walter state, Entry authority, audio, "
-            "AutoScan, or orders. Live price/30s evidence updates independently; "
-            "VWAP, Participation and Expansion are inherited from the last completed scan."
+            "AutoScan, or orders. Live regime uses current cached price/30s evidence; "
+            "Scan state*, VWAP, Participation and Expansion are inherited from the last completed scan."
         )
         if not observations:
             st.caption("No current candidate has reached the 3-of-5 live-awareness threshold.")
@@ -3525,7 +3525,8 @@ def render_live_ignition_watch() -> None:
                 "Part.*": item.get("participation_last_scan"),
                 "Exp.*": item.get("expansion_last_scan"),
                 "30s flow": item.get("thirty_second_volume_acceleration"),
-                "Walter state": item.get("canonical_state"),
+                "Live regime": item.get("live_regime"),
+                "Scan state*": item.get("canonical_state"),
             })
         st.dataframe(rows, use_container_width=True, hide_index=True)
 
