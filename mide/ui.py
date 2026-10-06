@@ -1721,6 +1721,13 @@ def render_walter_mission_control(records: list[dict]) -> None:
     )
 
 
+# GS638: retain one raw mission-control renderer beneath every dynamic/warm wrapper.
+# Presentation + Audio normally resolves the current ui renderer at call time. If a
+# retained wrapper graph ever points back into that facade, the facade uses this
+# stable base only for the recursive re-entry instead of looping indefinitely.
+_walter_base_render_walter_mission_control = render_walter_mission_control
+
+
 def render_live_opportunity_feed(events: list[dict]) -> None:
     """Render the compact, newest-first mission log beneath Today's Mission."""
     rows = []
