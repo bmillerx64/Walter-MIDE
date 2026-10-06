@@ -13,7 +13,7 @@ def test_visible_audio_health_reads_exact_gs367_parent_broker():
 
 def test_visible_audio_health_exposes_stale_reload_state_and_direct_rearm():
     markup = alert_audio_health_markup()
-    assert "AUDIO DISARMED AFTER RELOAD · RE-ARM" in markup
+    assert "VOICE ARMED · BELL RE-ARMS ON NEXT WALTER CLICK" in markup
     assert "AUDIO NOT ARMED · RE-ARM" in markup
     assert "AUDIO READY · TEST PLAYING" in markup
     assert "Re-arm / test" in markup
@@ -149,3 +149,60 @@ def test_gs597_voice_diagnostic_scope_is_explicit_not_free_variable():
     assert "scope=${scope}" in markup
     assert "scope=${speechScope}" not in markup
     assert markup.count("voiceEngineDetail(synth, speechScope)") >= 5
+
+
+
+def test_gs641_reload_health_distinguishes_voice_arm_from_bell_context():
+    markup = alert_audio_health_markup()
+
+    assert "VOICE ARMED · BELL RE-ARMS ON NEXT WALTER CLICK" in markup
+    assert "AUDIO DISARMED AFTER RELOAD · RE-ARM" not in markup
+    assert "if (!readArmed() || audioReady())" in markup
+    assert "bindRecoveryGesture();" in markup
+
+
+def test_gs641_passive_recovery_uses_next_parent_user_activation_once():
+    markup = alert_audio_health_markup()
+
+    assert "healthRecoveryBound" in markup
+    assert "healthRecoveryHandler" in markup
+    assert "root.addEventListener('pointerdown', handler, true)" in markup
+    assert "root.addEventListener('keydown', handler, true)" in markup
+    assert "root.addEventListener('touchstart', handler, true)" in markup
+    assert "root.removeEventListener('pointerdown', handler, true)" in markup
+    assert "clearRecoveryBinding();" in markup
+
+
+def test_gs641_passive_recovery_reuses_gs367_context_without_test_audio_or_voice():
+    markup = alert_audio_health_markup()
+    start = markup.index("const recoverAudioFromGesture = () => {")
+    end = markup.index("const bindRecoveryGesture = () => {", start)
+    block = markup[start:end]
+
+    assert "broker.audioContext = ctx" in block
+    assert "ctx.resume()" in block
+    assert "markArmed();" in block
+    assert "testVoice();" not in block
+    assert "createOscillator" not in block
+    assert "synth.speak" not in block
+
+
+def test_gs641_scope_lock_remains_browser_transport_only():
+    source = Path("mide/authorities/presentation_audio.py").read_text(
+        encoding="utf-8"
+    )
+    start = source.index("// GS641: a true document reload destroys Web Audio")
+    end = source.index("const paint = (kind, text) => {", start)
+    block = source[start:end]
+
+    forbidden = (
+        "qualified_for_entry",
+        "qualified_for_alert",
+        "candidate_status",
+        "participation_score",
+        "expansion_score",
+        "request_scan(",
+        "place_order(",
+        "submit_order(",
+    )
+    assert not any(token in block for token in forbidden)
