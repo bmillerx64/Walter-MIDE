@@ -231,8 +231,8 @@ def test_gs642_guard_owns_voice_and_bell_transport_in_popup_realm():
     assert "new BroadcastChannel(CHANNEL_NAME)" in block
     assert "window.speechSynthesis" in block
     assert "new AudioContextCtor()" in block
-    assert "emitTone(data.tier, data.token)" in block
-    assert "speak(data.phrase, data.preferred || '')" in block
+    assert "emitTone(data.tier, data.token, false)" in block
+    assert "speak(data.phrase, data.preferred || '', false)" in block
     assert "window.setInterval(heartbeat, 2500)" in block
     assert "Walter audio guard ready." in block
 
@@ -245,3 +245,61 @@ def test_gs642_rearm_button_prefers_guard_but_preserves_local_fallback():
     assert "if (launchAudioGuard()) return;" in block
     assert block.index("launchAudioGuard()") < block.index("testVoice();")
     assert block.index("testVoice();") < block.index("rearm();")
+
+
+
+def test_gs643_guard_health_separates_alive_voice_and_bell_truth():
+    markup = alert_audio_health_markup()
+
+    assert "walterAudioGuardVoiceReady" in markup
+    assert "walterAudioGuardBellReady" in markup
+    assert "const guardHealth = () => {" in markup
+    assert "voice: alive && root.localStorage.getItem(guardVoiceReadyKey) === '1'" in markup
+    assert "bell: alive && root.localStorage.getItem(guardBellReadyKey) === '1'" in markup
+    assert "AUDIO GUARD ACTIVE · VOICE + BELL" in markup
+    assert "AUDIO GUARD · BELL READY · CLICK GUARD FOR VOICE" in markup
+    assert "AUDIO GUARD ALIVE · CLICK GUARD ENABLE BUTTON" in markup
+
+
+def test_gs643_new_guard_requires_its_own_direct_enable_click():
+    markup = alert_audio_health_markup()
+    start = markup.index("script.textContent =")
+    end = markup.index("doc.body.appendChild(script);", start)
+    block = markup[start:end]
+
+    assert 'id="arm"' in markup
+    assert "Enable voice + bell" in markup
+    assert "const armFromDirectClick = () => {" in block
+    assert "armNode.addEventListener('click', armFromDirectClick)" in block
+    direct = block[
+        block.index("const armFromDirectClick = () => {"):
+        block.index("const channel = new BroadcastChannel", block.index("const armFromDirectClick = () => {"))
+    ]
+    assert "emitTone(2, 'guard-arm-' + Date.now(), true)" in direct
+    assert "speak('Walter audio guard ready.', '', true)" in direct
+
+
+def test_gs643_voice_and_bell_ready_only_after_real_transport_callbacks():
+    markup = alert_audio_health_markup()
+    start = markup.index("script.textContent =")
+    end = markup.index("doc.body.appendChild(script);", start)
+    block = markup[start:end]
+
+    assert "setStored(BELL_READY_KEY, true)" in block
+    assert "utterance.onstart = () => {" in block
+    assert "setStored(VOICE_READY_KEY, true)" in block
+    assert "utterance.onerror = (event) => {" in block
+    assert "setStored(VOICE_READY_KEY, false)" in block
+    assert "VOICE BLOCKED (" in block
+
+
+def test_gs643_guard_bootstrap_does_not_auto_claim_voice_ready():
+    markup = alert_audio_health_markup()
+    start = markup.index("script.textContent =")
+    end = markup.index("doc.body.appendChild(script);", start)
+    block = markup[start:end]
+
+    tail = block[block.index("window.__walterAudioGuardInstalled = true;"):]
+    assert "setStored(VOICE_READY_KEY, false);" in tail
+    assert "setStored(BELL_READY_KEY, false);" in tail
+    assert "test();" not in tail
