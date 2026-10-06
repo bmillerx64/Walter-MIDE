@@ -154,8 +154,12 @@ def _speech_component(sound_path: str, phrase: str, voice_name: str = "") -> str
           );
           const age = Date.now() - stamp;
           const fresh = Number.isFinite(stamp) && age >= 0 && age < 10000;
+          const voiceReady = Boolean(
+            host.localStorage &&
+            host.localStorage.getItem('walterAudioGuardVoiceReady') === '1'
+          );
           const GuardChannel = host.BroadcastChannel || window.BroadcastChannel;
-          if (!fresh || !GuardChannel) return false;
+          if (!fresh || !voiceReady || !GuardChannel) return false;
           const channel = new GuardChannel('walter-audio-guard-v1');
           channel.postMessage({{
             kind: 'voice',
