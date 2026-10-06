@@ -3,10 +3,20 @@ from pathlib import Path
 import mide.completed_scan as completed_scan
 
 
+class _Subscription:
+    def __init__(self):
+        self.closed = 0
+
+    def close(self):
+        self.closed += 1
+
+
 class _Provider:
     def __init__(self, label):
         self.label = label
         self.diagnostics = {}
+        self._subscription = None
+        self._subscribed = set()
 
 
 def _reset_process_owner(monkeypatch):
@@ -79,3 +89,33 @@ def test_app_rebinds_session_context_to_process_provider_owner():
     assert '"WEBULL_OPENAPI_PRIMARY"' in source
     assert "context.provider_instance = client" in source
     assert "build_webull_process_provider" in source
+
+
+
+def test_gs645_retire_process_provider_detaches_owner_and_closes_stream(monkeypatch):
+    _reset_process_owner(monkeypatch)
+    provider, _ = completed_scan.claim_process_live_provider(
+        "WEBULL_OPENAPI_PRIMARY", None, lambda: _Provider("stale")
+    )
+    provider._subscription = _Subscription()
+    provider._subscribed.update({"AAPL", "TSLA"})
+    subscription = provider._subscription
+
+    retired = completed_scan.retire_process_live_provider("WEBULL_OPENAPI_PRIMARY")
+
+    assert retired is True
+    assert subscription.closed == 1
+    assert provider._subscription is None
+    assert provider._subscribed == set()
+    assert completed_scan.process_live_provider() is None
+    assert provider.diagnostics["runtime_provider_owner"]["retired_for_auth_recovery"] is True
+
+
+def test_gs645_retire_wrong_identity_does_not_touch_current_owner(monkeypatch):
+    _reset_process_owner(monkeypatch)
+    provider, _ = completed_scan.claim_process_live_provider(
+        "WEBULL_OPENAPI_PRIMARY", None, lambda: _Provider("current")
+    )
+
+    assert completed_scan.retire_process_live_provider("OTHER_PROVIDER") is False
+    assert completed_scan.process_live_provider() is provider
