@@ -5419,7 +5419,11 @@ def alert_audio_health_markup() -> str:
         }
 
         try {
-          if (!guard.__walterAudioGuardInstalled) {
+          if (
+            !guard.__walterAudioGuardInstalled ||
+            !guard.__walterAudioGuard ||
+            typeof guard.__walterAudioGuard.ready !== 'function'
+          ) {
             const doc = guard.document;
             doc.open();
             doc.write(
