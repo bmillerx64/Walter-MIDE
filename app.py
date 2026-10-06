@@ -1921,6 +1921,19 @@ def _run_live_pipeline(
             build_webull_process_provider,
         )
         context.provider_instance = client
+
+        # GS646: a freshly constructed official Webull DataClient has already
+        # completed the SDK token initializer successfully. During GS645's
+        # explicit recovery that is the authoritative proof that Webull
+        # authorization is healthy again; do not keep the GS635 circuit latched
+        # until an unrelated full market scan also happens to finish.
+        if (
+            _provider_created
+            and runtime_state.get(WEBULL_AUTH_RECOVERY_MARKER_KEY)
+        ):
+            _clear_webull_auth_backoff(_gs585.process_state())
+            runtime_state.pop(WEBULL_AUTH_RECOVERY_MARKER_KEY, None)
+            log("GS646 fresh Webull SDK authorization succeeded; auth circuit cleared")
         # GS627: start one process-owned awareness observer. It reads only the
         # existing tick/30s cache and last completed scan; no network or scan calls.
         try:
@@ -2996,6 +3009,7 @@ WEBULL_AUTH_BLOCK_SECONDS = 600
 WEBULL_AUTH_REQUIRED_KEY = "webull_auth_required"
 WEBULL_AUTH_RETRY_AT_KEY = "webull_auth_retry_at"
 WEBULL_AUTH_FAILURE_KEY = "webull_auth_failure"
+WEBULL_AUTH_RECOVERY_MARKER_KEY = "webull_auth_recovery_manual"
 
 
 class WebullAuthorizationRequired(RuntimeError):
@@ -3337,10 +3351,11 @@ if mode.startswith("Live ") and should_scan and not st.session_state[STOP_REQUES
     st.session_state.last_scan_attempt = datetime.now().astimezone()
 
     if _webull_auth_latched and _explicit_manual_scan_request:
-        # GS645: this is the sole recovery path allowed to tear down expired
-        # Webull auth state. Detach both process owner and session alias before
-        # clearing the SDK token so claim_process_live_provider() must build one
-        # genuinely fresh official-SDK client for this operator click.
+        # GS645/GS646: this is the sole recovery path allowed to tear down expired
+        # Webull auth state. Mark this explicit operator recovery before the
+        # provider is rebuilt so successful SDK initialization can clear the
+        # process-owned auth circuit immediately.
+        st.session_state[WEBULL_AUTH_RECOVERY_MARKER_KEY] = True
         retire_process_live_provider("WEBULL_OPENAPI_PRIMARY")
         scan_context(st.session_state).provider_instance = None
         auth_reset = importlib.import_module(
