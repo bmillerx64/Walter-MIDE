@@ -219,7 +219,8 @@ def test_gs642_health_launches_independent_named_audio_guard():
     assert "Walter Audio Guard" in markup
     assert "Keep this small window open" in markup
     assert "AUDIO GUARD ACTIVE · VOICE + BELL" in markup
-    assert "guardHeartbeatFresh()" in markup
+    assert "const guardHealth = () => {" in markup
+    assert "const guardHeartbeatFresh = () => guardHealth().alive;" in markup
 
 
 def test_gs642_guard_owns_voice_and_bell_transport_in_popup_realm():
