@@ -139,6 +139,39 @@ def _speech_component(sound_path: str, phrase: str, voice_name: str = "") -> str
         return;
       }}
 
+      // GS642: prefer the independently persistent Audio Guard when its heartbeat
+      // is fresh. The guard lives in a separate named browser window, so Walter's
+      // main Streamlit document may reload or remain behind Webull without losing
+      // the voice transport. Fall back to the established local speech path when
+      // the guard is absent or stale.
+      const routeVoiceToGuard = () => {{
+        let host = window;
+        try {{ if (window.parent) host = window.parent; }} catch (_) {{ host = window; }}
+        try {{
+          const stamp = Number(
+            host.localStorage &&
+            host.localStorage.getItem('walterAudioGuardHeartbeat')
+          );
+          const age = Date.now() - stamp;
+          const fresh = Number.isFinite(stamp) && age >= 0 && age < 10000;
+          const GuardChannel = host.BroadcastChannel || window.BroadcastChannel;
+          if (!fresh || !GuardChannel) return false;
+          const channel = new GuardChannel('walter-audio-guard-v1');
+          channel.postMessage({{
+            kind: 'voice',
+            phrase,
+            preferred,
+            requestedAt: new Date().toISOString(),
+          }});
+          channel.close();
+          setStatus('guarded', 'persistent Audio Guard');
+          return true;
+        }} catch (_) {{
+          return false;
+        }}
+      }};
+      if (routeVoiceToGuard()) return;
+
       let speechWindow = window;
       try {{
         if (window.parent && 'speechSynthesis' in window.parent) speechWindow = window.parent;
