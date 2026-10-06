@@ -288,3 +288,44 @@ def test_gs594_invalid_static_link_fallback_remains_removed():
     assert "download_data = materialize_compact_bundle" in source
     assert 'STATIC_DIR = Path("static")' in source
 
+
+
+def test_gs639_latest_running_job_survives_streamlit_session_replacement(monkeypatch):
+    job_id = "gs639-running"
+    monkeypatch.setattr(
+        gs510,
+        "_JOBS",
+        {
+            job_id: {
+                "job_id": job_id,
+                "status": "running",
+                "started_at_utc": datetime.now(UTC).isoformat(),
+                "source_bytes_total": 123,
+            }
+        },
+    )
+    monkeypatch.setattr(gs510, "_LATEST_JOB_ID", job_id)
+
+    recovered = gs510.latest_analysis_bundle_job_status()
+
+    assert recovered is not None
+    assert recovered["job_id"] == job_id
+    assert recovered["status"] == "running"
+
+
+def test_gs639_idle_prepare_control_uses_full_app_rerun_not_idle_fragment():
+    source = Path("mide/gs510_compact_analysis_bundle.py").read_text(
+        encoding="utf-8"
+    )
+    start = source.index("def render_compact_analysis_bundle_controls")
+    block = source[start:]
+
+    assert "if not polling:" in block
+    assert (
+        "# GS639: the operator's Prepare click lives on the ordinary full-app widget"
+        in block
+    )
+    assert "fragment(run_every=JOB_POLL_SECONDS)(analysis_bundle_fragment)()" in block
+    assert "fragment(analysis_bundle_fragment)()" in block
+    assert "allow_prepare=False" in block
+    assert "latest_analysis_bundle_job_status()" in block

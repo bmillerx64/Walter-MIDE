@@ -66,6 +66,12 @@ STRIPPED_CUMULATIVE_FIELDS = (
 )
 _JOB_LOCK = threading.Lock()
 _JOBS: dict[str, dict[str, Any]] = {}
+# GS639: a browser/session reload can replace Streamlit session_state while the
+# Python process and background CAB worker remain alive. Keep one process-owned
+# pointer to the newest CAB job so a replacement session can reclaim its status
+# and completed download instead of orphaning the worker.
+_LATEST_JOB_ID: str | None = None
+JOB_RECOVERY_MAX_AGE_SECONDS = 30 * 60
 
 
 def _captured_size(path: Path) -> int:
@@ -432,6 +438,7 @@ def start_analysis_bundle_job(
     *,
     output_dir: str | Path = STATIC_DIR,
 ) -> dict[str, Any]:
+    global _LATEST_JOB_ID
     candidate_path = Path(candidate_history_path)
     flight_path = Path(flight_recorder_path)
     captured = {
@@ -451,6 +458,13 @@ def start_analysis_bundle_job(
     }
     with _JOB_LOCK:
         _JOBS[job_id] = dict(initial)
+        _LATEST_JOB_ID = job_id
+
+    print(
+        f"[WALTER CAB] started job={job_id} "
+        f"source_bytes={int(initial['source_bytes_total'])}",
+        flush=True,
+    )
 
     def worker() -> None:
         try:
@@ -471,6 +485,11 @@ def start_analysis_bundle_job(
                 error_type=type(exc).__name__,
                 error_message=str(exc)[:500],
             )
+            print(
+                f"[WALTER CAB] failed job={job_id} "
+                f"error={type(exc).__name__}:{str(exc)[:200]}",
+                flush=True,
+            )
             return
         _set_job(
             job_id,
@@ -478,6 +497,11 @@ def start_analysis_bundle_job(
             finished_at_utc=datetime.now(timezone.utc).isoformat(),
             elapsed_seconds=round(monotonic() - started, 2),
             result=info,
+        )
+        print(
+            f"[WALTER CAB] completed job={job_id} "
+            f"archive_bytes={int(info.get('archive_bytes') or 0)}",
+            flush=True,
         )
 
     threading.Thread(
@@ -503,7 +527,56 @@ def analysis_bundle_job_status(job_id: str) -> dict[str, Any] | None:
     return job
 
 
-def _render(candidate_path: Path, flight_path: Path) -> None:
+def latest_analysis_bundle_job_status(
+    *,
+    max_age_seconds: float = JOB_RECOVERY_MAX_AGE_SECONDS,
+) -> dict[str, Any] | None:
+    """Return the newest recoverable process CAB job after session replacement."""
+    with _JOB_LOCK:
+        latest_id = str(_LATEST_JOB_ID or "")
+    if not latest_id:
+        return None
+
+    job = analysis_bundle_job_status(latest_id)
+    if not isinstance(job, dict):
+        return None
+    if job.get("status") == "running":
+        return job
+    if job.get("status") not in {"completed", "failed"}:
+        return None
+
+    stamp_text = str(
+        job.get("finished_at_utc")
+        or job.get("started_at_utc")
+        or ""
+    )
+    try:
+        stamp = datetime.fromisoformat(stamp_text)
+        age = (
+            datetime.now(timezone.utc)
+            - stamp.astimezone(timezone.utc)
+        ).total_seconds()
+    except Exception:
+        return None
+    if age < 0 or age > max(0.0, float(max_age_seconds)):
+        return None
+
+    if job.get("status") == "completed":
+        result = job.get("result")
+        if not isinstance(result, dict):
+            return None
+        filename = str(result.get("filename") or "")
+        if not filename or not (STATIC_DIR / filename).exists():
+            return None
+    return job
+
+
+def _render(
+    candidate_path: Path,
+    flight_path: Path,
+    *,
+    allow_prepare: bool = True,
+) -> None:
     import streamlit as st
 
     st.caption(
@@ -514,9 +587,21 @@ def _render(candidate_path: Path, flight_path: Path) -> None:
 
     job_id = str(st.session_state.get(JOB_SESSION_KEY) or "")
     job = analysis_bundle_job_status(job_id) if job_id else None
+    if not isinstance(job, dict):
+        recovered = latest_analysis_bundle_job_status()
+        if isinstance(recovered, dict):
+            job = recovered
+            job_id = str(recovered.get("job_id") or "")
+            if job_id:
+                st.session_state[JOB_SESSION_KEY] = job_id
+                print(
+                    f"[WALTER CAB] reclaimed process job after session replacement "
+                    f"job={job_id} status={job.get('status')}",
+                    flush=True,
+                )
     running = bool(job and job.get("status") == "running")
 
-    if st.button(
+    if allow_prepare and st.button(
         "Prepare Compact Analysis Bundle",
         key="walter-gs510-prepare-analysis-bundle",
         width="stretch",
@@ -621,14 +706,42 @@ def render_compact_analysis_bundle_controls(
 
     job_id = str(st.session_state.get(JOB_SESSION_KEY) or "")
     job = analysis_bundle_job_status(job_id) if job_id else None
+    if not isinstance(job, dict):
+        job = latest_analysis_bundle_job_status()
+        if isinstance(job, dict):
+            job_id = str(job.get("job_id") or "")
+            if job_id:
+                st.session_state[JOB_SESSION_KEY] = job_id
     polling = bool(job and job.get("status") == "running")
 
-    def analysis_bundle_fragment() -> None:
-        _render(candidate_path, flight_path)
+    # GS639: the operator's Prepare click lives on the ordinary full-app widget
+    # path, not inside the quiescent fragment. A process-observer repaint can
+    # supersede an idle fragment rerun; the full-app button avoids losing that
+    # click. The worker/status remains process-owned and recoverable after reload.
+    if not polling:
+        _render(candidate_path, flight_path, allow_prepare=True)
 
-        # GS542: the analysis bundle needs a 2-second poll only while its worker
-        # is active. Rebuild the app fragment once when job state crosses that
-        # boundary, then remain quiescent while idle/completed.
+        current_job_id = str(st.session_state.get(JOB_SESSION_KEY) or "")
+        current_job = (
+            analysis_bundle_job_status(current_job_id)
+            if current_job_id
+            else None
+        )
+        if current_job and current_job.get("status") == "running":
+            st.rerun(scope="app")
+
+    def analysis_bundle_fragment() -> None:
+        if polling:
+            _render(
+                candidate_path,
+                flight_path,
+                allow_prepare=False,
+            )
+
+        # GS542/GS639: poll only while the background worker is active. The
+        # quiescent fragment has no timer and no Prepare button; it only preserves
+        # the validated state-transition seam. When running changes state, rebuild
+        # the ordinary app so the stable download surface is rendered there.
         current_job_id = str(st.session_state.get(JOB_SESSION_KEY) or "")
         current_job = (
             analysis_bundle_job_status(current_job_id)
