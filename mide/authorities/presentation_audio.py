@@ -16,6 +16,12 @@ from time import monotonic
 from typing import Any
 
 
+_MISSION_CONTROL_FACADE_DEPTH = ContextVar(
+    "walter_gs638_mission_control_facade_depth",
+    default=0,
+)
+
+
 def _ui_call(name: str, *args, **kwargs):
     from mide import ui
     return getattr(ui, name)(*args, **kwargs)
@@ -82,7 +88,28 @@ def render_live_opportunity_feed(*args, **kwargs):
 
 
 def render_walter_mission_control(*args, **kwargs):
-    return _ui_call("render_walter_mission_control", *args, **kwargs)
+    """Resolve the live renderer dynamically without permitting a retained cycle."""
+    depth = int(_MISSION_CONTROL_FACADE_DEPTH.get() or 0)
+    if depth:
+        from mide import ui
+
+        base = getattr(
+            ui,
+            "_walter_base_render_walter_mission_control",
+            None,
+        )
+        if callable(base) and base is not render_walter_mission_control:
+            return base(*args, **kwargs)
+        raise RuntimeError(
+            "Walter mission-control presentation recursion detected without "
+            "a stable base renderer"
+        )
+
+    token = _MISSION_CONTROL_FACADE_DEPTH.set(depth + 1)
+    try:
+        return _ui_call("render_walter_mission_control", *args, **kwargs)
+    finally:
+        _MISSION_CONTROL_FACADE_DEPTH.reset(token)
 
 
 def scanner_v2_dashboard_counts(*args, **kwargs):
