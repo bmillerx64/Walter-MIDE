@@ -13,7 +13,7 @@ def test_visible_audio_health_reads_exact_gs367_parent_broker():
 
 def test_visible_audio_health_exposes_stale_reload_state_and_direct_rearm():
     markup = alert_audio_health_markup()
-    assert "VOICE ARMED · BELL RE-ARMS ON NEXT WALTER CLICK" in markup
+    assert "LOCAL VOICE FLAG ONLY · ARM AUDIO GUARD" in markup
     assert "AUDIO NOT ARMED · RE-ARM" in markup
     assert "AUDIO READY · TEST PLAYING" in markup
     assert "Re-arm / test" in markup
@@ -155,7 +155,7 @@ def test_gs597_voice_diagnostic_scope_is_explicit_not_free_variable():
 def test_gs641_reload_health_distinguishes_voice_arm_from_bell_context():
     markup = alert_audio_health_markup()
 
-    assert "VOICE ARMED · BELL RE-ARMS ON NEXT WALTER CLICK" in markup
+    assert "LOCAL VOICE FLAG ONLY · ARM AUDIO GUARD" in markup
     assert "AUDIO DISARMED AFTER RELOAD · RE-ARM" not in markup
     assert "if (!readArmed() || audioReady())" in markup
     assert "bindRecoveryGesture();" in markup
@@ -206,3 +206,42 @@ def test_gs641_scope_lock_remains_browser_transport_only():
         "submit_order(",
     )
     assert not any(token in block for token in forbidden)
+
+
+
+def test_gs642_health_launches_independent_named_audio_guard():
+    markup = alert_audio_health_markup()
+
+    assert "walter-audio-guard-v1" in markup
+    assert "walterAudioGuardHeartbeat" in markup
+    assert "walter-audio-guard" in markup
+    assert "root.open(" in markup
+    assert "Walter Audio Guard" in markup
+    assert "Keep this small window open" in markup
+    assert "AUDIO GUARD ACTIVE · VOICE + BELL" in markup
+    assert "guardHeartbeatFresh()" in markup
+
+
+def test_gs642_guard_owns_voice_and_bell_transport_in_popup_realm():
+    markup = alert_audio_health_markup()
+    start = markup.index("script.textContent =")
+    end = markup.index("doc.body.appendChild(script);", start)
+    block = markup[start:end]
+
+    assert "new BroadcastChannel(CHANNEL_NAME)" in block
+    assert "window.speechSynthesis" in block
+    assert "new AudioContextCtor()" in block
+    assert "emitTone(data.tier, data.token)" in block
+    assert "speak(data.phrase, data.preferred || '')" in block
+    assert "window.setInterval(heartbeat, 2500)" in block
+    assert "Walter audio guard ready." in block
+
+
+def test_gs642_rearm_button_prefers_guard_but_preserves_local_fallback():
+    markup = alert_audio_health_markup()
+    listener = markup.index("button.addEventListener('click', () => {")
+    block = markup[listener:listener + 700]
+
+    assert "if (launchAudioGuard()) return;" in block
+    assert block.index("launchAudioGuard()") < block.index("testVoice();")
+    assert block.index("testVoice();") < block.index("rearm();")
