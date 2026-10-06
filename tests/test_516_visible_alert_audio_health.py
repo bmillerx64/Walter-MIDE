@@ -303,3 +303,12 @@ def test_gs643_guard_bootstrap_does_not_auto_claim_voice_ready():
     assert "setStored(VOICE_READY_KEY, false);" in tail
     assert "setStored(BELL_READY_KEY, false);" in tail
     assert "test();" not in tail
+
+
+
+def test_gs643_replaces_stale_gs642_popup_generation():
+    markup = alert_audio_health_markup()
+
+    assert "!guard.__walterAudioGuardInstalled ||" in markup
+    assert "!guard.__walterAudioGuard ||" in markup
+    assert "typeof guard.__walterAudioGuard.ready !== 'function'" in markup
