@@ -156,8 +156,9 @@ def critical_only_audio_markup(markup: str) -> str:
         "    try {\n"
         "      const guardStamp = Number(host.localStorage && host.localStorage.getItem('walterAudioGuardHeartbeat'));\n"
         "      const guardFresh = Number.isFinite(guardStamp) && (Date.now() - guardStamp) >= 0 && (Date.now() - guardStamp) < 10000;\n"
+        "      const guardBellReady = Boolean(host.localStorage && host.localStorage.getItem('walterAudioGuardBellReady') === '1');\n"
         "      const GuardChannel = host.BroadcastChannel || window.BroadcastChannel;\n"
-        "      if (guardFresh && GuardChannel) {\n"
+        "      if (guardFresh && guardBellReady && GuardChannel) {\n"
         "        const guardChannel = new GuardChannel('walter-audio-guard-v1');\n"
         "        guardChannel.postMessage({ kind: 'tone', token, tier });\n"
         "        guardChannel.close();\n"
@@ -5252,16 +5253,26 @@ def alert_audio_health_markup() -> str:
 
       const guardChannelName = 'walter-audio-guard-v1';
       const guardHeartbeatKey = 'walterAudioGuardHeartbeat';
+      const guardVoiceReadyKey = 'walterAudioGuardVoiceReady';
+      const guardBellReadyKey = 'walterAudioGuardBellReady';
       const guardWindowName = 'walter-audio-guard';
-      const guardHeartbeatFresh = () => {
+      const guardHealth = () => {
         try {
           const stamp = Number(
             root.localStorage && root.localStorage.getItem(guardHeartbeatKey)
           );
           const age = Date.now() - stamp;
-          return Number.isFinite(stamp) && age >= 0 && age < 10000;
-        } catch (_) { return false; }
+          const alive = Number.isFinite(stamp) && age >= 0 && age < 10000;
+          return {
+            alive,
+            voice: alive && root.localStorage.getItem(guardVoiceReadyKey) === '1',
+            bell: alive && root.localStorage.getItem(guardBellReadyKey) === '1',
+          };
+        } catch (_) {
+          return { alive: false, voice: false, bell: false };
+        }
       };
+      const guardHeartbeatFresh = () => guardHealth().alive;
 
       const brokerKey = '__walterGS367ChimeBroker';
       const ensureBroker = () => {
@@ -5397,7 +5408,7 @@ def alert_audio_health_markup() -> str:
           guard = root.open(
             '',
             guardWindowName,
-            'popup=yes,width=360,height=220'
+            'popup=yes,width=390,height=250'
           );
         } catch (_) {
           guard = null;
@@ -5416,9 +5427,13 @@ def alert_audio_health_markup() -> str:
               '<meta charset="utf-8"><style>' +
               'body{margin:0;padding:18px;background:#07111d;color:#e5eef8;' +
               'font:14px -apple-system,BlinkMacSystemFont,Segoe UI,sans-serif}' +
-              'h2{margin:0 0 8px;font-size:18px}#state{color:#86efac;font-weight:800}' +
+              'h2{margin:0 0 8px;font-size:18px}#state{color:#fbbf24;font-weight:800;margin-bottom:12px}' +
+              'button{border:1px solid #64748b;border-radius:7px;background:#172033;' +
+              'color:#f8fafc;padding:8px 12px;cursor:pointer;font-weight:800;margin-bottom:10px}' +
               'p{color:#94a3b8;line-height:1.35}</style></head><body>' +
-              '<h2>Walter Audio Guard</h2><div id="state">Starting…</div>' +
+              '<h2>Walter Audio Guard</h2>' +
+              '<div id="state">GUARD ALIVE · CLICK ENABLE VOICE + BELL ONCE</div>' +
+              '<button id="arm" type="button">Enable voice + bell</button>' +
               '<p>Keep this small window open. Walter can reload or stay behind Webull; ' +
               'this window remains the independent voice + bell transport.</p></body></html>'
             );
@@ -5429,7 +5444,10 @@ def alert_audio_health_markup() -> str:
 (() => {
   const CHANNEL_NAME = 'walter-audio-guard-v1';
   const HEARTBEAT_KEY = 'walterAudioGuardHeartbeat';
+  const VOICE_READY_KEY = 'walterAudioGuardVoiceReady';
+  const BELL_READY_KEY = 'walterAudioGuardBellReady';
   const stateNode = document.getElementById('state');
+  const armNode = document.getElementById('arm');
   const patterns = {
     1: [[880, 0.00]],
     2: [[880, 0.00], [1175, 0.18]],
@@ -5441,12 +5459,40 @@ def alert_audio_health_markup() -> str:
   let context = null;
   let emittedToken = null;
 
-  const setState = (text) => {
-    if (stateNode) stateNode.textContent = text;
+  const setStored = (key, ready) => {
+    try {
+      if (ready) localStorage.setItem(key, '1');
+      else localStorage.removeItem(key);
+    } catch (_) {}
   };
-
+  const storedReady = (key) => {
+    try { return localStorage.getItem(key) === '1'; } catch (_) { return false; }
+  };
   const heartbeat = () => {
     try { localStorage.setItem(HEARTBEAT_KEY, String(Date.now())); } catch (_) {}
+  };
+  const updateState = (detail = '') => {
+    const voice = storedReady(VOICE_READY_KEY);
+    const bell = storedReady(BELL_READY_KEY);
+    if (voice && bell) {
+      if (stateNode) {
+        stateNode.style.color = '#86efac';
+        stateNode.textContent = detail || 'ACTIVE · VOICE + BELL';
+      }
+      if (armNode) armNode.textContent = 'Test / re-arm';
+      return;
+    }
+    if (stateNode) {
+      stateNode.style.color = '#fbbf24';
+      if (bell && !voice) {
+        stateNode.textContent = detail || 'BELL READY · VOICE NEEDS THIS CLICK';
+      } else if (voice && !bell) {
+        stateNode.textContent = detail || 'VOICE READY · BELL NEEDS THIS CLICK';
+      } else {
+        stateNode.textContent = detail || 'GUARD ALIVE · CLICK ENABLE VOICE + BELL ONCE';
+      }
+    }
+    if (armNode) armNode.textContent = 'Enable voice + bell';
   };
 
   const ensureContext = () => {
@@ -5455,24 +5501,28 @@ def alert_audio_health_markup() -> str:
       if (!context || context.state === 'closed') {
         context = new AudioContextCtor();
       }
-      if (context.state !== 'running' && context.resume) {
-        const resumed = context.resume();
-        if (resumed && resumed.catch) resumed.catch(() => {});
-      }
       return context;
     } catch (_) {
       return null;
     }
   };
 
-  const emitTone = (tier, token) => {
+  const emitTone = (tier, token, proveReady = false) => {
     const normalized = Math.max(1, Math.min(3, Number(tier || 1)));
     if (token && emittedToken === token) return;
     const ctx = ensureContext();
-    if (!ctx) return;
+    if (!ctx) {
+      if (proveReady) setStored(BELL_READY_KEY, false);
+      updateState('BELL BLOCKED · CLICK ENABLE VOICE + BELL');
+      return;
+    }
 
     const play = () => {
-      if (ctx.state !== 'running') return;
+      if (ctx.state !== 'running') {
+        if (proveReady) setStored(BELL_READY_KEY, false);
+        updateState('BELL BLOCKED · CLICK ENABLE VOICE + BELL');
+        return;
+      }
       try {
         const startBase = ctx.currentTime + 0.035;
         const pattern = patterns[String(normalized)] || patterns[1];
@@ -5491,15 +5541,26 @@ def alert_audio_health_markup() -> str:
           oscillator.stop(start + 0.145);
         });
         if (token) emittedToken = token;
-        setState('ACTIVE · bell delivered');
-      } catch (_) {}
+        if (proveReady) setStored(BELL_READY_KEY, true);
+        updateState();
+      } catch (_) {
+        if (proveReady) setStored(BELL_READY_KEY, false);
+        updateState('BELL ERROR · CLICK ENABLE VOICE + BELL');
+      }
     };
 
     if (ctx.state === 'running') {
       play();
     } else if (ctx.resume) {
       const resumed = ctx.resume();
-      if (resumed && resumed.then) resumed.then(play).catch(() => {});
+      if (resumed && resumed.then) {
+        resumed.then(play).catch(() => {
+          if (proveReady) setStored(BELL_READY_KEY, false);
+          updateState('BELL BLOCKED · CLICK ENABLE VOICE + BELL');
+        });
+      } else {
+        play();
+      }
     }
   };
 
@@ -5514,8 +5575,12 @@ def alert_audio_health_markup() -> str:
     ) || null;
   };
 
-  const speak = (phrase, preferred = '') => {
-    if (!phrase || !synth || !Utterance) return;
+  const speak = (phrase, preferred = '', proveReady = false) => {
+    if (!phrase || !synth || !Utterance) {
+      if (proveReady) setStored(VOICE_READY_KEY, false);
+      updateState('VOICE UNAVAILABLE · BELL MAY STILL WORK');
+      return;
+    }
     try {
       const utterance = new Utterance(String(phrase));
       utterance.rate = 0.95;
@@ -5523,14 +5588,36 @@ def alert_audio_health_markup() -> str:
       utterance.volume = 1.0;
       const selected = resolveVoice(preferred);
       if (selected) utterance.voice = selected;
-      utterance.onstart = () => setState('ACTIVE · Walter speaking');
-      utterance.onend = () => setState('ACTIVE · listening for Walter alerts');
-      utterance.onerror = () => setState('ACTIVE · voice error; bell remains armed');
+      utterance.onstart = () => {
+        setStored(VOICE_READY_KEY, true);
+        updateState('ACTIVE · WALTER SPEAKING');
+      };
+      utterance.onend = () => {
+        setStored(VOICE_READY_KEY, true);
+        updateState();
+      };
+      utterance.onerror = (event) => {
+        setStored(VOICE_READY_KEY, false);
+        const detail = event && event.error ? String(event.error) : 'voice error';
+        updateState('VOICE BLOCKED (' + detail + ') · CLICK ENABLE VOICE + BELL');
+      };
       if (synth.paused && synth.resume) synth.resume();
       synth.speak(utterance);
     } catch (_) {
-      setState('ACTIVE · voice error; bell remains armed');
+      setStored(VOICE_READY_KEY, false);
+      updateState('VOICE ERROR · CLICK ENABLE VOICE + BELL');
     }
+  };
+
+  const armFromDirectClick = () => {
+    heartbeat();
+    setStored(VOICE_READY_KEY, false);
+    setStored(BELL_READY_KEY, false);
+    // Critical GS643 invariant: both transport requests originate directly in
+    // the Audio Guard's own user-activation click stack.
+    emitTone(2, 'guard-arm-' + Date.now(), true);
+    speak('Walter audio guard ready.', '', true);
+    updateState('ARMING VOICE + BELL…');
   };
 
   const channel = new BroadcastChannel(CHANNEL_NAME);
@@ -5538,31 +5625,39 @@ def alert_audio_health_markup() -> str:
     const data = event && event.data ? event.data : {};
     heartbeat();
     if (data.kind === 'tone') {
-      emitTone(data.tier, data.token);
+      if (storedReady(BELL_READY_KEY)) emitTone(data.tier, data.token, false);
       return;
     }
     if (data.kind === 'voice') {
-      speak(data.phrase, data.preferred || '');
+      if (storedReady(VOICE_READY_KEY)) {
+        speak(data.phrase, data.preferred || '', false);
+      }
     }
   };
 
-  const test = () => {
-    heartbeat();
-    emitTone(2, 'guard-test-' + Date.now());
-    speak('Walter audio guard ready.');
-    setState('ACTIVE · voice + bell guard');
-  };
+  if (armNode) armNode.addEventListener('click', armFromDirectClick);
 
   const heartbeatTimer = window.setInterval(heartbeat, 2500);
-  window.__walterAudioGuard = { test, heartbeat };
+  window.__walterAudioGuard = {
+    heartbeat,
+    refresh: updateState,
+    ready: () => ({
+      voice: storedReady(VOICE_READY_KEY),
+      bell: storedReady(BELL_READY_KEY),
+    }),
+  };
   window.__walterAudioGuardInstalled = true;
+  setStored(VOICE_READY_KEY, false);
+  setStored(BELL_READY_KEY, false);
   heartbeat();
-  test();
+  updateState();
 
   window.addEventListener('beforeunload', () => {
     window.clearInterval(heartbeatTimer);
     try { channel.close(); } catch (_) {}
     try { localStorage.removeItem(HEARTBEAT_KEY); } catch (_) {}
+    try { localStorage.removeItem(VOICE_READY_KEY); } catch (_) {}
+    try { localStorage.removeItem(BELL_READY_KEY); } catch (_) {}
   });
 })();
 `;
@@ -5570,14 +5665,20 @@ def alert_audio_health_markup() -> str:
             guard.__walterAudioGuardInstalled = true;
           } else if (
             guard.__walterAudioGuard &&
-            typeof guard.__walterAudioGuard.test === 'function'
+            typeof guard.__walterAudioGuard.refresh === 'function'
           ) {
-            guard.__walterAudioGuard.test();
+            guard.__walterAudioGuard.refresh();
           }
 
           markArmed();
-          paint('warn', 'AUDIO GUARD STARTING…');
-          try { guard.blur(); root.focus(); } catch (_) {}
+          const health = guardHealth();
+          if (health.voice && health.bell) {
+            paint('ready', 'AUDIO GUARD ACTIVE · VOICE + BELL');
+            try { guard.blur(); root.focus(); } catch (_) {}
+          } else {
+            paint('warn', 'AUDIO GUARD OPEN · CLICK ENABLE VOICE + BELL');
+            try { guard.focus(); } catch (_) {}
+          }
           window.setTimeout(refresh, 450);
           return true;
         } catch (_) {
@@ -5589,9 +5690,18 @@ def alert_audio_health_markup() -> str:
       let voiceTestState = 'idle';
       let voiceTestDetail = '';
       const refresh = () => {
-        if (guardHeartbeatFresh()) {
+        const guard = guardHealth();
+        if (guard.alive) {
           clearRecoveryBinding();
-          paint('ready', 'AUDIO GUARD ACTIVE · VOICE + BELL');
+          if (guard.voice && guard.bell) {
+            paint('ready', 'AUDIO GUARD ACTIVE · VOICE + BELL');
+          } else if (guard.bell) {
+            paint('warn', 'AUDIO GUARD · BELL READY · CLICK GUARD FOR VOICE');
+          } else if (guard.voice) {
+            paint('warn', 'AUDIO GUARD · VOICE READY · CLICK GUARD FOR BELL');
+          } else {
+            paint('warn', 'AUDIO GUARD ALIVE · CLICK GUARD ENABLE BUTTON');
+          }
           return;
         }
         if (audioReady()) {
