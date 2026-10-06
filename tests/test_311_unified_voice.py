@@ -174,3 +174,29 @@ def test_voice_transport_status_is_accessible_and_visible():
     assert 'role="status"' in markup
     assert 'aria-live="polite"' in markup
     assert "height:38px" in markup
+
+
+
+def test_gs642_voice_prefers_fresh_persistent_guard_before_local_synth():
+    markup = _speech_component(
+        "missing-alert.wav",
+        "OSTX. LOOK NOW.",
+        "Samantha",
+    )
+
+    assert "walterAudioGuardHeartbeat" in markup
+    assert "walter-audio-guard-v1" in markup
+    assert "kind: 'voice'" in markup
+    assert "persistent Audio Guard" in markup
+    assert "if (routeVoiceToGuard()) return;" in markup
+    assert markup.index("if (routeVoiceToGuard()) return;") < markup.index(
+        "let speechWindow = window;"
+    )
+
+
+def test_gs642_voice_guard_has_stale_heartbeat_local_fallback():
+    markup = _speech_component("missing-alert.wav", "TEST. DEVELOPING.")
+
+    assert "age >= 0 && age < 10000" in markup
+    assert "if (!fresh || !GuardChannel) return false;" in markup
+    assert "synth.speak(utterance)" in markup
