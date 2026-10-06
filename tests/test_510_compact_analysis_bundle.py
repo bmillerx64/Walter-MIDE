@@ -322,7 +322,7 @@ def test_gs639_idle_prepare_control_uses_full_app_rerun_not_idle_fragment():
 
     assert "if not polling:" in block
     assert (
-        "# GS639: keep the idle Prepare control on the ordinary full-app path."
+        "# GS639: the operator's Prepare click lives on the ordinary full-app widget"
         in block
     )
     assert "fragment(run_every=JOB_POLL_SECONDS)(analysis_bundle_fragment)()" in block
