@@ -185,6 +185,57 @@ def process_live_provider() -> Any:
         return _PROCESS_LIVE_PROVIDER
 
 
+def retire_process_live_provider(identity: str | None = None) -> bool:
+    """Detach one stale process-owned provider so the next claim must rebuild it.
+
+    GS645 uses this only for an explicit operator-controlled Webull
+    reauthorization recovery after GS635 has latched an expired-token failure.
+    Detach ownership under the process lock first, then retire only the provider's
+    existing streaming subscription. Scanner cadence and trading authority remain
+    elsewhere.
+    """
+    global _PROCESS_LIVE_PROVIDER
+    global _PROCESS_LIVE_PROVIDER_IDENTITY
+
+    wanted = str(identity or "").strip()
+    with _PROCESS_LIVE_PROVIDER_LOCK:
+        provider = _PROCESS_LIVE_PROVIDER
+        if provider is None:
+            return False
+        if wanted and _PROCESS_LIVE_PROVIDER_IDENTITY != wanted:
+            return False
+        _PROCESS_LIVE_PROVIDER = None
+        _PROCESS_LIVE_PROVIDER_IDENTITY = None
+
+    subscription = getattr(provider, "_subscription", None)
+    if subscription is not None:
+        try:
+            subscription.close()
+        except Exception:
+            # The provider is already detached. A stale transport cleanup failure
+            # must not resurrect it or prevent the one controlled reconstruction.
+            pass
+        finally:
+            try:
+                provider._subscription = None
+            except Exception:
+                pass
+
+    subscribed = getattr(provider, "_subscribed", None)
+    if hasattr(subscribed, "clear"):
+        try:
+            subscribed.clear()
+        except Exception:
+            pass
+
+    diagnostics = getattr(provider, "diagnostics", None)
+    if isinstance(diagnostics, dict):
+        owner = diagnostics.setdefault("runtime_provider_owner", {})
+        owner["retired_for_auth_recovery"] = True
+        owner["process_singleton"] = False
+    return True
+
+
 def _safe_copy_scan(scan: CompletedScan | None) -> CompletedScan | None:
     if scan is None:
         return None

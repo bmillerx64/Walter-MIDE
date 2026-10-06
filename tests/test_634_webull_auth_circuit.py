@@ -34,7 +34,7 @@ def test_gs634_process_worker_has_bounded_auth_backoff():
 
 
 def test_gs634_keeps_manual_retry_available_and_clears_after_success():
-    assert "A manual Run live scan remains available for one controlled retry." in SOURCE
+    assert "Use Run live scan once to retire the expired SDK runtime and request one " in SOURCE
     assert "_clear_webull_auth_backoff(_gs585.process_state())" in SOURCE
 
 

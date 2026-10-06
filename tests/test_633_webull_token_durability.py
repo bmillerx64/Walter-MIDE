@@ -96,3 +96,65 @@ def test_scope_does_not_change_market_or_trading_authority():
         "execute_order(",
     )
     assert not any(token in source for token in forbidden)
+
+
+
+def test_gs645_fresh_authorization_removes_runtime_tokens_and_bypasses_seed_once(
+    monkeypatch, tmp_path
+):
+    monkeypatch.chdir(tmp_path)
+    token_dir = tmp_path / "custom-token-dir"
+    token_dir.mkdir()
+    default_dir = tmp_path / ".walter_webull_token"
+    default_dir.mkdir()
+    conf_dir = tmp_path / "conf"
+    conf_dir.mkdir()
+
+    for token_file in (
+        token_dir / "token.txt",
+        default_dir / "token.txt",
+        conf_dir / "token.txt",
+    ):
+        token_file.write_text("expired-token\n0\nNORMAL\n", encoding="utf-8")
+
+    monkeypatch.setenv("WEBULL_OPENAPI_PERSISTED_TOKEN", "durable-but-expired")
+    monkeypatch.setenv("WEBULL_OPENAPI_TOKEN_DIR", str(token_dir))
+    monkeypatch.setattr(webull_sdk, "_BYPASS_PERSISTED_TOKEN_ONCE", False)
+
+    result = webull_sdk.prepare_fresh_authorization()
+
+    assert result["runtime_token_files_removed"] == 3
+    assert result["persisted_seed_bypassed_once"] is True
+    assert not (token_dir / "token.txt").exists()
+    assert not (default_dir / "token.txt").exists()
+    assert not (conf_dir / "token.txt").exists()
+
+    client = ApiClient()
+    configured, seeded = webull_sdk._seed_persisted_token(client)
+    assert configured is True
+    assert seeded is False
+    assert client.token_dir == str(token_dir)
+    assert not (token_dir / "token.txt").exists()
+
+    # The bypass is exactly one client construction. Ordinary GS633 durability
+    # behavior remains intact afterward.
+    second = ApiClient()
+    configured, seeded = webull_sdk._seed_persisted_token(second)
+    assert configured is True
+    assert seeded is True
+    assert (token_dir / "token.txt").read_text(encoding="utf-8").splitlines() == [
+        "durable-but-expired",
+        "0",
+        "NORMAL",
+    ]
+
+
+def test_gs645_fresh_authorization_does_not_expose_token_material():
+    source = Path("mide/webull_sdk.py").read_text(encoding="utf-8")
+    helper = source.split("def prepare_fresh_authorization", 1)[1].split(
+        "\ndef _consume_fresh_authorization_bypass", 1
+    )[0]
+
+    assert "read_text" not in helper
+    assert "LOGGER." not in helper
+    assert "print(" not in helper

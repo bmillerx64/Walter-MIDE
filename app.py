@@ -170,6 +170,7 @@ from mide.session_controls import (
     DATA_MODE_KEY,
     PROVIDER_KEY,
     SCAN_REQUESTED_KEY,
+    SCAN_REQUESTED_AT_KEY,
     STOP_REQUESTED_KEY,
     autoscan_request_due,
     autoscan_wait_seconds,
@@ -189,6 +190,7 @@ from mide.completed_scan import (
     record_scan_failure,
     scan_context,
     claim_process_live_provider,
+    retire_process_live_provider,
     store_completed_scan,
 )
 from mide.authorities.discovery_news import (
@@ -3291,8 +3293,10 @@ if (
         "official SDK reported an expired access token. Walter has latched "
         "automatic Webull provider attempts off to prevent repeated authorization "
         "prompts. No automatic provider retry will occur while this circuit is "
-        "latched. A manual Run live scan remains available for one controlled retry. "
-        "The first successful completed scan clears the circuit immediately."
+        "latched. Browser refresh does not clear this process-owned circuit. "
+        "Use Run live scan once to retire the expired SDK runtime and request one "
+        "fresh Webull authorization. The first successful completed scan clears "
+        "the circuit immediately."
     )
 
 
@@ -3312,8 +3316,41 @@ else:
     due = False
     should_scan = bool(st.session_state[SCAN_REQUESTED_KEY])
 
+_explicit_manual_scan_request = bool(
+    st.session_state.get(SCAN_REQUESTED_AT_KEY) is not None
+)
+_webull_auth_latched = bool(
+    mode.startswith("Live ")
+    and str(selected_provider or "").upper() == "WEBULL"
+    and _webull_auth_state.get(WEBULL_AUTH_REQUIRED_KEY)
+)
+
+# GS645: GS635 promised that a latched auth circuit has no automatic provider
+# retry. A legacy browser rerun timer can still set SCAN_REQUESTED_KEY without the
+# manual-request timestamp. Consume that presentation-owned request instead of
+# letting it bypass the process latch. Only request_scan() writes the timestamp.
+if _webull_auth_latched and should_scan and not _explicit_manual_scan_request:
+    st.session_state[SCAN_REQUESTED_KEY] = False
+    should_scan = False
+
 if mode.startswith("Live ") and should_scan and not st.session_state[STOP_REQUESTED_KEY]:
     st.session_state.last_scan_attempt = datetime.now().astimezone()
+
+    if _webull_auth_latched and _explicit_manual_scan_request:
+        # GS645: this is the sole recovery path allowed to tear down expired
+        # Webull auth state. Detach both process owner and session alias before
+        # clearing the SDK token so claim_process_live_provider() must build one
+        # genuinely fresh official-SDK client for this operator click.
+        retire_process_live_provider("WEBULL_OPENAPI_PRIMARY")
+        scan_context(st.session_state).provider_instance = None
+        auth_reset = importlib.import_module(
+            "mide.webull_sdk"
+        ).prepare_fresh_authorization()
+        log(
+            "GS645 controlled Webull auth recovery armed "
+            f"removed_runtime_token_files={int(auth_reset.get('runtime_token_files_removed', 0) or 0)}"
+        )
+
     try:
         repair_mide_module_links()
         watchdog = importlib.import_module("mide.watchdog").PROCESS_SCAN_WATCHDOG
