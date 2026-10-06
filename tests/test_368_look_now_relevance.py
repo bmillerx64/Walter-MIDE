@@ -2,6 +2,7 @@ from mide import gs310_unified_opportunity_state as unified
 from mide import gs311_unified_voice as voice
 from mide import gs314_state_consistency as consistency
 from mide import gs363_operator_attention_hierarchy as hierarchy
+from mide import gs368_look_now_relevance as gs368
 
 
 def _top_mover(
@@ -92,3 +93,45 @@ def test_every_trader_facing_binding_uses_gs368_relevance_calibration():
     assert voice.opportunity_state is unified.opportunity_state
     assert consistency.opportunity_state is unified.opportunity_state
     assert hierarchy.opportunity_state is unified.opportunity_state
+
+
+
+def test_gs644_skips_gs369_while_parent_package_is_initializing(monkeypatch):
+    calls = []
+    monkeypatch.setattr(gs368, "_package_initializing", lambda: True)
+
+    import builtins
+    original_import = builtins.__import__
+
+    def guarded_import(name, *args, **kwargs):
+        if name.endswith("gs369_escalation_priority_order"):
+            calls.append(name)
+            raise AssertionError("GS369 must not import under parent package lock")
+        return original_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", guarded_import)
+
+    assert gs368._install_gs369_if_safe() is False
+    assert calls == []
+
+
+def test_gs644_installs_gs369_after_parent_package_initialization(monkeypatch):
+    monkeypatch.setattr(gs368, "_package_initializing", lambda: False)
+
+    from mide import gs369_escalation_priority_order as gs369
+
+    calls = []
+    monkeypatch.setattr(gs369, "install", lambda: calls.append("installed"))
+
+    assert gs368._install_gs369_if_safe() is True
+    assert calls == ["installed"]
+
+
+def test_gs644_startup_has_authoritative_post_package_gs369_boundary():
+    from pathlib import Path
+
+    source = Path("mide/startup.py").read_text(encoding="utf-8")
+    assert "def ensure_operator_card_order()" in source
+    assert "from .gs369_escalation_priority_order import install" in source
+    assert "ensure_operator_card_order()" in source
+    assert "ensure_pre_app_runtime_installers()" in source
