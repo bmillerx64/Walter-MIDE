@@ -5244,6 +5244,7 @@ def alert_audio_health_markup() -> str:
             token: null, tier: 0, timer: null, emittedToken: null,
             audioContext: null, pendingToken: null, pendingTier: 0,
             pendingEmit: null, unlockBound: false,
+            healthRecoveryBound: false, healthRecoveryHandler: null,
           };
         }
         return broker;
@@ -5267,6 +5268,95 @@ def alert_audio_health_markup() -> str:
           return Boolean(broker.audioContext && broker.audioContext.state === 'running');
         } catch (_) { return false; }
       };
+
+      // GS641: a true document reload destroys Web Audio even though Walter's
+      // browser-session voice arm survives in sessionStorage. Chrome still
+      // requires a user activation before a new/suspended AudioContext can run.
+      // Recover the shared GS367 bell context silently on the next ordinary
+      // Walter interaction instead of forcing a dedicated Re-arm / test click.
+      const clearRecoveryBinding = () => {
+        try {
+          const broker = ensureBroker();
+          const handler = broker.healthRecoveryHandler;
+          if (handler) {
+            try { root.removeEventListener('pointerdown', handler, true); } catch (_) {}
+            try { root.removeEventListener('keydown', handler, true); } catch (_) {}
+            try { root.removeEventListener('touchstart', handler, true); } catch (_) {}
+          }
+          broker.healthRecoveryHandler = null;
+          broker.healthRecoveryBound = false;
+        } catch (_) {}
+      };
+
+      const recoverAudioFromGesture = () => {
+        clearRecoveryBinding();
+        try {
+          if (!readArmed()) return false;
+          const AudioContextCtor =
+            root.AudioContext || root.webkitAudioContext ||
+            window.AudioContext || window.webkitAudioContext;
+          if (!AudioContextCtor) return false;
+
+          const broker = ensureBroker();
+          let ctx = broker.audioContext;
+          if (!ctx || ctx.state === 'closed') {
+            ctx = new AudioContextCtor();
+            broker.audioContext = ctx;
+          }
+
+          const confirm = () => {
+            if (!ctx || ctx.state !== 'running') return false;
+            markArmed();
+            clearRecoveryBinding();
+            refresh();
+            return true;
+          };
+
+          if (confirm()) return true;
+          if (ctx.resume) {
+            const resumed = ctx.resume();
+            if (resumed && resumed.then) {
+              resumed.then(() => {
+                if (!confirm()) bindRecoveryGesture();
+              }).catch(() => {
+                bindRecoveryGesture();
+                refresh();
+              });
+            } else if (!confirm()) {
+              bindRecoveryGesture();
+            }
+          } else {
+            bindRecoveryGesture();
+          }
+          return true;
+        } catch (_) {
+          bindRecoveryGesture();
+          return false;
+        }
+      };
+
+      const bindRecoveryGesture = () => {
+        try {
+          if (!readArmed() || audioReady()) {
+            clearRecoveryBinding();
+            return;
+          }
+          const broker = ensureBroker();
+          if (
+            broker.healthRecoveryBound &&
+            typeof broker.healthRecoveryHandler === 'function'
+          ) return;
+
+          clearRecoveryBinding();
+          const handler = () => { recoverAudioFromGesture(); };
+          broker.healthRecoveryHandler = handler;
+          broker.healthRecoveryBound = true;
+          try { root.addEventListener('pointerdown', handler, true); } catch (_) {}
+          try { root.addEventListener('keydown', handler, true); } catch (_) {}
+          try { root.addEventListener('touchstart', handler, true); } catch (_) {}
+        } catch (_) {}
+      };
+
       const paint = (kind, text) => {
         if (!box || !status) return;
         box.className = 'walter-audio-health ' + kind;
@@ -5292,8 +5382,12 @@ def alert_audio_health_markup() -> str:
             paint('ready', 'AUDIO READY');
           }
         } else if (readArmed()) {
-          paint('bad', 'AUDIO DISARMED AFTER RELOAD · RE-ARM');
+          // Voice remains logically armed across the browser session. Only the
+          // reload-destroyed Web Audio bell context needs a fresh user gesture.
+          paint('warn', 'VOICE ARMED · BELL RE-ARMS ON NEXT WALTER CLICK');
+          bindRecoveryGesture();
         } else {
+          clearRecoveryBinding();
           paint('warn', 'AUDIO NOT ARMED · RE-ARM');
         }
       };
@@ -5531,6 +5625,7 @@ def alert_audio_health_markup() -> str:
             strike(base, 523.25);
             strike(base + 0.42, 783.99);
             markArmed();
+            clearRecoveryBinding();
             paint('ready', 'AUDIO READY · TEST PLAYING');
             window.setTimeout(refresh, 1800);
           };
@@ -5560,7 +5655,10 @@ def alert_audio_health_markup() -> str:
       });
       refresh();
       const timer = window.setInterval(refresh, 1000);
-      window.addEventListener('beforeunload', () => window.clearInterval(timer));
+      window.addEventListener('beforeunload', () => {
+        window.clearInterval(timer);
+        clearRecoveryBinding();
+      });
     })();
     </script>
     """
