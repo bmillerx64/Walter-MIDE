@@ -24,6 +24,7 @@ acceleration 1.74 while still below the later entry thresholds.
 from __future__ import annotations
 
 from copy import deepcopy
+import sys
 
 
 def _number(record: dict, *keys: str) -> float | None:
@@ -96,13 +97,31 @@ def _inherit(wrapper, wrapped) -> None:
             setattr(wrapper, name, value)
 
 
+def _package_initializing() -> bool:
+    """Return whether Python still owns the parent mide package import lock."""
+    package = sys.modules.get("mide")
+    spec = getattr(package, "__spec__", None) if package is not None else None
+    return bool(getattr(spec, "_initializing", False))
+
+
+def _install_gs369_if_safe() -> bool:
+    """Defer GS369 until app.py's post-package startup convergence boundary."""
+    if _package_initializing():
+        return False
+
+    from .gs369_escalation_priority_order import (
+        install as _install_gs369_escalation_priority_order,
+    )
+
+    _install_gs369_escalation_priority_order()
+    return True
+
 def install() -> None:
     """Install GS368 consistently across every trader-facing state binding."""
     from . import gs310_unified_opportunity_state as unified
     from . import gs311_unified_voice as voice
     from . import gs314_state_consistency as consistency
     from . import gs363_operator_attention_hierarchy as hierarchy
-    from .gs369_escalation_priority_order import install as _install_gs369_escalation_priority_order
 
     current = unified.opportunity_state
     if getattr(current, "_gs368_look_now_relevance", False):
@@ -163,4 +182,10 @@ def install() -> None:
     voice.opportunity_state = calibrated
     consistency.opportunity_state = calibrated
     hierarchy.opportunity_state = calibrated
-    _install_gs369_escalation_priority_order()
+
+    # GS644: never acquire GS369's module lock while the parent mide package
+    # lock is held. Streamlit hot deployments can briefly run old/new script
+    # generations concurrently, creating the same lock inversion previously fixed
+    # for GS384+. startup.ensure_operator_card_order() re-enters GS369 from the
+    # authoritative entering-app.py boundary after package initialization completes.
+    _install_gs369_if_safe()
