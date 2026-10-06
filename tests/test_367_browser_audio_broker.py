@@ -99,3 +99,17 @@ def test_gs642_final_tier_routes_to_guard_after_routine_suppression():
     assert markup.index("walterAudioGuardHeartbeat") < markup.index(
         "const AudioContextCtor ="
     )
+
+
+
+def test_gs643_final_tier_requires_proven_guard_bell_readiness():
+    markup = critical_only_audio_markup(
+        browser_broker_markup("scan-guard-ready", 2)
+    )
+
+    assert "walterAudioGuardBellReady" in markup
+    assert "guardBellReady" in markup
+    assert "if (guardFresh && guardBellReady && GuardChannel)" in markup
+    assert markup.index("walterAudioGuardBellReady") < markup.index(
+        "new GuardChannel('walter-audio-guard-v1')"
+    )

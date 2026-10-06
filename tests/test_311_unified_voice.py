@@ -198,5 +198,17 @@ def test_gs642_voice_guard_has_stale_heartbeat_local_fallback():
     markup = _speech_component("missing-alert.wav", "TEST. DEVELOPING.")
 
     assert "age >= 0 && age < 10000" in markup
-    assert "if (!fresh || !GuardChannel) return false;" in markup
+    assert "walterAudioGuardVoiceReady" in markup
+    assert "if (!fresh || !voiceReady || !GuardChannel) return false;" in markup
     assert "synth.speak(utterance)" in markup
+
+
+
+def test_gs643_voice_needs_proven_guard_voice_readiness_not_heartbeat_alone():
+    markup = _speech_component("missing-alert.wav", "TEST. LOOK NOW.")
+
+    heartbeat = markup.index("walterAudioGuardHeartbeat")
+    voice_ready = markup.index("walterAudioGuardVoiceReady")
+    route = markup.index("new GuardChannel('walter-audio-guard-v1')")
+    assert heartbeat < voice_ready < route
+    assert "host.localStorage.getItem('walterAudioGuardVoiceReady') === '1'" in markup
