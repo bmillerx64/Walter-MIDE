@@ -42,7 +42,7 @@ def test_phase53_presentation_audio_owns_health_markup_and_renderer():
     assert "def alert_audio_health_markup(" in authority
     assert "def render_sidebar_audio_health(" in authority
     assert "__walterGS367ChimeBroker" in authority
-    assert "VOICE ARMED · BELL RE-ARMS ON NEXT WALTER CLICK" in authority
+    assert "AUDIO GUARD ACTIVE · VOICE + BELL" in authority
     assert "strike(base, 523.25)" in authority
     assert "strike(base + 0.42, 783.99)" in authority
 
