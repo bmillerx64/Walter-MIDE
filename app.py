@@ -3309,8 +3309,8 @@ if (
         "prompts. No automatic provider retry will occur while this circuit is "
         "latched. Browser refresh does not clear this process-owned circuit. "
         "Use Run live scan once to retire the expired SDK runtime and request one "
-        "fresh Webull authorization. The first successful completed scan clears "
-        "the circuit immediately."
+        "fresh Webull authorization. Once the official SDK confirms that fresh "
+        "authorization, the circuit clears immediately and AutoScan can resume."
     )
 
 
