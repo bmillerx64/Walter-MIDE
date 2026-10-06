@@ -5274,6 +5274,7 @@ def alert_audio_health_markup() -> str:
       // requires a user activation before a new/suspended AudioContext can run.
       // Recover the shared GS367 bell context silently on the next ordinary
       // Walter interaction instead of forcing a dedicated Re-arm / test click.
+      // Passive recovery never synthesizes speech or emits a confirmation tone.
       const clearRecoveryBinding = () => {
         try {
           const broker = ensureBroker();
