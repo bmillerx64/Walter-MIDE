@@ -151,6 +151,20 @@ def critical_only_audio_markup(markup: str) -> str:
         "    // GS402: routine tier remains semantically valid but is acoustically silent.\n"
         "    // LOOK NOW (tier 2) and entry urgency (tier 3) are the only browser tones.\n"
         "    if (tier === 1) return;\n\n"
+        "    // GS642: when the independently persistent Audio Guard is alive, route\n"
+        "    // the final semantic tier there so a Walter document reload cannot mute it.\n"
+        "    try {\n"
+        "      const guardStamp = Number(host.localStorage && host.localStorage.getItem('walterAudioGuardHeartbeat'));\n"
+        "      const guardFresh = Number.isFinite(guardStamp) && (Date.now() - guardStamp) >= 0 && (Date.now() - guardStamp) < 10000;\n"
+        "      const GuardChannel = host.BroadcastChannel || window.BroadcastChannel;\n"
+        "      if (guardFresh && GuardChannel) {\n"
+        "        const guardChannel = new GuardChannel('walter-audio-guard-v1');\n"
+        "        guardChannel.postMessage({ kind: 'tone', token, tier });\n"
+        "        guardChannel.close();\n"
+        "        broker.emittedToken = token;\n"
+        "        return;\n"
+        "      }\n"
+        "    } catch (_) {}\n\n"
         "    const AudioContextCtor ="
     )
     if needle in text:
@@ -5236,6 +5250,19 @@ def alert_audio_health_markup() -> str:
       let root = window;
       try { if (window.parent) root = window.parent; } catch (_) { root = window; }
 
+      const guardChannelName = 'walter-audio-guard-v1';
+      const guardHeartbeatKey = 'walterAudioGuardHeartbeat';
+      const guardWindowName = 'walter-audio-guard';
+      const guardHeartbeatFresh = () => {
+        try {
+          const stamp = Number(
+            root.localStorage && root.localStorage.getItem(guardHeartbeatKey)
+          );
+          const age = Date.now() - stamp;
+          return Number.isFinite(stamp) && age >= 0 && age < 10000;
+        } catch (_) { return false; }
+      };
+
       const brokerKey = '__walterGS367ChimeBroker';
       const ensureBroker = () => {
         let broker = root[brokerKey];
@@ -5363,9 +5390,210 @@ def alert_audio_health_markup() -> str:
         box.className = 'walter-audio-health ' + kind;
         status.textContent = text;
       };
+
+      const launchAudioGuard = () => {
+        let guard = null;
+        try {
+          guard = root.open(
+            '',
+            guardWindowName,
+            'popup=yes,width=360,height=220'
+          );
+        } catch (_) {
+          guard = null;
+        }
+        if (!guard) {
+          paint('bad', 'AUDIO GUARD BLOCKED · ALLOW POP-UPS');
+          return false;
+        }
+
+        try {
+          if (!guard.__walterAudioGuardInstalled) {
+            const doc = guard.document;
+            doc.open();
+            doc.write(
+              '<!doctype html><html><head><title>Walter Audio Guard</title>' +
+              '<meta charset="utf-8"><style>' +
+              'body{margin:0;padding:18px;background:#07111d;color:#e5eef8;' +
+              'font:14px -apple-system,BlinkMacSystemFont,Segoe UI,sans-serif}' +
+              'h2{margin:0 0 8px;font-size:18px}#state{color:#86efac;font-weight:800}' +
+              'p{color:#94a3b8;line-height:1.35}</style></head><body>' +
+              '<h2>Walter Audio Guard</h2><div id="state">Starting…</div>' +
+              '<p>Keep this small window open. Walter can reload or stay behind Webull; ' +
+              'this window remains the independent voice + bell transport.</p></body></html>'
+            );
+            doc.close();
+
+            const script = doc.createElement('script');
+            script.textContent = `
+(() => {
+  const CHANNEL_NAME = 'walter-audio-guard-v1';
+  const HEARTBEAT_KEY = 'walterAudioGuardHeartbeat';
+  const stateNode = document.getElementById('state');
+  const patterns = {
+    1: [[880, 0.00]],
+    2: [[880, 0.00], [1175, 0.18]],
+    3: [[740, 0.00], [988, 0.16], [1319, 0.32]],
+  };
+  const AudioContextCtor = window.AudioContext || window.webkitAudioContext;
+  const synth = window.speechSynthesis;
+  const Utterance = window.SpeechSynthesisUtterance;
+  let context = null;
+  let emittedToken = null;
+
+  const setState = (text) => {
+    if (stateNode) stateNode.textContent = text;
+  };
+
+  const heartbeat = () => {
+    try { localStorage.setItem(HEARTBEAT_KEY, String(Date.now())); } catch (_) {}
+  };
+
+  const ensureContext = () => {
+    if (!AudioContextCtor) return null;
+    try {
+      if (!context || context.state === 'closed') {
+        context = new AudioContextCtor();
+      }
+      if (context.state !== 'running' && context.resume) {
+        const resumed = context.resume();
+        if (resumed && resumed.catch) resumed.catch(() => {});
+      }
+      return context;
+    } catch (_) {
+      return null;
+    }
+  };
+
+  const emitTone = (tier, token) => {
+    const normalized = Math.max(1, Math.min(3, Number(tier || 1)));
+    if (token && emittedToken === token) return;
+    const ctx = ensureContext();
+    if (!ctx) return;
+
+    const play = () => {
+      if (ctx.state !== 'running') return;
+      try {
+        const startBase = ctx.currentTime + 0.035;
+        const pattern = patterns[String(normalized)] || patterns[1];
+        pattern.forEach(([frequency, offset]) => {
+          const start = startBase + Number(offset || 0);
+          const oscillator = ctx.createOscillator();
+          const gain = ctx.createGain();
+          oscillator.type = 'sine';
+          oscillator.frequency.setValueAtTime(Number(frequency), start);
+          gain.gain.setValueAtTime(0.0001, start);
+          gain.gain.exponentialRampToValueAtTime(0.24, start + 0.014);
+          gain.gain.exponentialRampToValueAtTime(0.0001, start + 0.13);
+          oscillator.connect(gain);
+          gain.connect(ctx.destination);
+          oscillator.start(start);
+          oscillator.stop(start + 0.145);
+        });
+        if (token) emittedToken = token;
+        setState('ACTIVE · bell delivered');
+      } catch (_) {}
+    };
+
+    if (ctx.state === 'running') {
+      play();
+    } else if (ctx.resume) {
+      const resumed = ctx.resume();
+      if (resumed && resumed.then) resumed.then(play).catch(() => {});
+    }
+  };
+
+  const resolveVoice = (preferred) => {
+    if (!synth || !synth.getVoices || !preferred) return null;
+    const wanted = String(preferred).toLowerCase();
+    const voices = synth.getVoices() || [];
+    return voices.find((voice) =>
+      voice.voiceURI === preferred ||
+      voice.name === preferred ||
+      String(voice.name || '').toLowerCase().includes(wanted)
+    ) || null;
+  };
+
+  const speak = (phrase, preferred = '') => {
+    if (!phrase || !synth || !Utterance) return;
+    try {
+      const utterance = new Utterance(String(phrase));
+      utterance.rate = 0.95;
+      utterance.pitch = 0.9;
+      utterance.volume = 1.0;
+      const selected = resolveVoice(preferred);
+      if (selected) utterance.voice = selected;
+      utterance.onstart = () => setState('ACTIVE · Walter speaking');
+      utterance.onend = () => setState('ACTIVE · listening for Walter alerts');
+      utterance.onerror = () => setState('ACTIVE · voice error; bell remains armed');
+      if (synth.paused && synth.resume) synth.resume();
+      synth.speak(utterance);
+    } catch (_) {
+      setState('ACTIVE · voice error; bell remains armed');
+    }
+  };
+
+  const channel = new BroadcastChannel(CHANNEL_NAME);
+  channel.onmessage = (event) => {
+    const data = event && event.data ? event.data : {};
+    heartbeat();
+    if (data.kind === 'tone') {
+      emitTone(data.tier, data.token);
+      return;
+    }
+    if (data.kind === 'voice') {
+      speak(data.phrase, data.preferred || '');
+    }
+  };
+
+  const test = () => {
+    heartbeat();
+    emitTone(2, 'guard-test-' + Date.now());
+    speak('Walter audio guard ready.');
+    setState('ACTIVE · voice + bell guard');
+  };
+
+  const heartbeatTimer = window.setInterval(heartbeat, 2500);
+  window.__walterAudioGuard = { test, heartbeat };
+  window.__walterAudioGuardInstalled = true;
+  heartbeat();
+  test();
+
+  window.addEventListener('beforeunload', () => {
+    window.clearInterval(heartbeatTimer);
+    try { channel.close(); } catch (_) {}
+    try { localStorage.removeItem(HEARTBEAT_KEY); } catch (_) {}
+  });
+})();
+`;
+            doc.body.appendChild(script);
+            guard.__walterAudioGuardInstalled = true;
+          } else if (
+            guard.__walterAudioGuard &&
+            typeof guard.__walterAudioGuard.test === 'function'
+          ) {
+            guard.__walterAudioGuard.test();
+          }
+
+          markArmed();
+          paint('warn', 'AUDIO GUARD STARTING…');
+          try { guard.blur(); root.focus(); } catch (_) {}
+          window.setTimeout(refresh, 450);
+          return true;
+        } catch (_) {
+          paint('bad', 'AUDIO GUARD FAILED · USE LOCAL RE-ARM');
+          return false;
+        }
+      };
+
       let voiceTestState = 'idle';
       let voiceTestDetail = '';
       const refresh = () => {
+        if (guardHeartbeatFresh()) {
+          clearRecoveryBinding();
+          paint('ready', 'AUDIO GUARD ACTIVE · VOICE + BELL');
+          return;
+        }
         if (audioReady()) {
           if (voiceTestState === 'error') {
             paint(
@@ -5385,7 +5613,7 @@ def alert_audio_health_markup() -> str:
         } else if (readArmed()) {
           // Voice remains logically armed across the browser session. Only the
           // reload-destroyed Web Audio bell context needs a fresh user gesture.
-          paint('warn', 'VOICE ARMED · BELL RE-ARMS ON NEXT WALTER CLICK');
+          paint('warn', 'LOCAL VOICE FLAG ONLY · ARM AUDIO GUARD');
           bindRecoveryGesture();
         } else {
           clearRecoveryBinding();
@@ -5649,8 +5877,10 @@ def alert_audio_health_markup() -> str:
       };
 
       if (button) button.addEventListener('click', () => {
-        // Keep speech inside the actual user gesture. AudioContext recovery may
-        // continue asynchronously, but Walter voice must not wait for that Promise.
+        // GS642: one explicit gesture launches an independent same-origin window
+        // whose speech + Web Audio context survives Walter document reloads.
+        // If pop-ups are blocked, preserve the established local re-arm fallback.
+        if (launchAudioGuard()) return;
         testVoice();
         rearm();
       });
