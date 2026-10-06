@@ -325,6 +325,7 @@ def test_gs639_idle_prepare_control_uses_full_app_rerun_not_idle_fragment():
         "# GS639: keep the idle Prepare control on the ordinary full-app path."
         in block
     )
-    assert "@fragment(run_every=JOB_POLL_SECONDS)" in block
-    assert "fragment(analysis_bundle_fragment)()" not in block
+    assert "fragment(run_every=JOB_POLL_SECONDS)(analysis_bundle_fragment)()" in block
+    assert "fragment(analysis_bundle_fragment)()" in block
+    assert "allow_prepare=False" in block
     assert "latest_analysis_bundle_job_status()" in block
