@@ -58,8 +58,9 @@ def test_gs635_process_autoscan_stays_latched_until_success():
 
 def test_gs635_operator_message_promises_no_automatic_retry():
     assert "No automatic provider retry will occur while this circuit is " in SOURCE
-    assert "latched. A manual Run live scan remains available for one controlled retry. " in SOURCE
-    assert "The first successful completed scan clears the circuit immediately." in SOURCE
+    assert "Browser refresh does not clear this process-owned circuit." in SOURCE
+    assert "Use Run live scan once to retire the expired SDK runtime and request one " in SOURCE
+    assert "fresh Webull authorization. The first successful completed scan clears " in SOURCE
 
 
 def test_gs635_does_not_change_trading_liw_or_audio_authority():
