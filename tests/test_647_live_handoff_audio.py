@@ -22,7 +22,7 @@ def test_gs647_process_observer_polls_fast_without_scan_authority():
 
 def test_gs647_started_scan_does_not_invalidate_latest_completed_audio():
     source = _source()
-    semantic_start = source.index("# GS647: semantic speech stays bound to completed evidence")
+    semantic_start = source.index("# GS602: semantic speech must be bound to the exact completed evidence")
     semantic_end = source.index("# GS605:", semantic_start)
     semantic = source[semantic_start:semantic_end]
     assert "process_live_scan_snapshot()" in semantic
@@ -32,7 +32,7 @@ def test_gs647_started_scan_does_not_invalidate_latest_completed_audio():
 
 def test_gs647_process_audio_drops_only_superseded_completed_scan():
     source = _source()
-    start = source.index("# GS647: register routine completed-scan browser audio")
+    start = source.index("# GS621: register routine completed-scan browser audio immediately")
     end = source.index("tab_names = [", start)
     block = source[start:end]
     assert "process_live_scan_snapshot()" in block
