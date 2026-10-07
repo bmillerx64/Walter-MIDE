@@ -3832,11 +3832,12 @@ with escalation_engine_slot:
 # so canonical audio evaluates only what has just been committed above.
 prepare_completed_scan_audio_focus(actionable_records)
 
-# GS647: semantic speech stays bound to completed evidence, but an in-progress
-# next scan no longer invalidates the newest completed scan. The prior start-time
-# guard routinely silenced Walter at the opening bell because the next 60s cadence
-# began before Streamlit finished repainting. Only a *newer completed publication*
-# can supersede the visible CompletedScan.
+# GS602: semantic speech must be bound to the exact completed evidence.
+# GS647 refines the freshness boundary: an in-progress next scan no longer
+# invalidates the newest completed scan. The prior start-time guard routinely
+# silenced Walter at the opening bell because the next 60s cadence began before
+# Streamlit finished repainting. Only a *newer completed publication* can
+# supersede the visible CompletedScan.
 _audio_visible_scan_is_current = False
 if completed_scan is not None:
     try:
@@ -3905,11 +3906,12 @@ if alerts and audio_triggered and alert_phrase:
             mark_render_audio_event_spoken(st.session_state, _audio_event)
             st.session_state.last_escalation_alert = alert_delivery_key
 
-# GS647: register routine completed-scan browser audio immediately after the
-# critical State/audio surface. A scan that has merely started does not supersede
-# the newest completed evidence; only a newer completed process publication does.
-# This preserves exact-token delivery without turning normal 60s cadence into a
-# voice-suppression race under opening-bell render load.
+# GS621: register routine completed-scan browser audio immediately after the
+# critical State/audio surface, not after the entire Radar/diagnostics/news render.
+# GS647 refines the freshness boundary: a scan that has merely started does not
+# supersede the newest completed evidence; only a newer completed process
+# publication does. This preserves exact-token delivery without turning normal
+# 60s cadence into a voice-suppression race under opening-bell render load.
 _process_audio_pending = str(
     st.session_state.get("_walter_process_scan_audio_pending_token") or ""
 )
