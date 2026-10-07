@@ -16,7 +16,7 @@ def test_gs647_process_observer_polls_fast_without_scan_authority():
     observer = source[observer_start:observer_end]
     assert "completed_scan_for_view(" in observer
     assert "st.rerun(scope=\"app\")" in observer
-    assert "SCAN_REQUESTED_KEY" not in observer
+    assert "st.session_state[SCAN_REQUESTED_KEY] = True" not in observer
     assert "request_scan(" not in observer
 
 
