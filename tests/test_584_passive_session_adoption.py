@@ -11,7 +11,7 @@ def _scheduler_source() -> str:
 def test_gs584_passive_observer_adopts_newer_process_scan_only():
     scheduler = _scheduler_source()
 
-    assert "observer_poll_seconds = 5" in scheduler
+    assert "observer_poll_seconds = 1" in scheduler
     assert "@st.fragment(run_every=timedelta(seconds=observer_poll_seconds))" in scheduler
     assert "def adopt_newer_process_scan()" in scheduler
     observer = scheduler[
