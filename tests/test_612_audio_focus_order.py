@@ -69,6 +69,6 @@ def test_gs612_preserves_stale_scan_audio_guard():
 
     assert prepare < stale_guard < semantic_delivery
     assert (
-        "_audio_process_snapshot.last_started_at > completed_scan.completed_at"
+        "_audio_latest_process_scan.completed_at > completed_scan.completed_at"
         in source
     )
