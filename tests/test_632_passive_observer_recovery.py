@@ -12,7 +12,7 @@ def _live_clock_block() -> str:
 
 def test_gs632_adds_passive_observer_stale_view_recovery():
     block = _live_clock_block()
-    assert "passive_observer_recovery_ms = 120_000" in block
+    assert "passive_observer_recovery_ms = 45_000" in block
     assert "const passiveObserverRecoveryMs =" in block
     assert "const passiveObserverRecoveryDue =" in block
     assert "&& processOwned" in block
