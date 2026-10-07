@@ -14,12 +14,12 @@ def test_gs601_observer_arms_audio_only_when_completed_scan_is_still_current():
     )
     observer = source[start:end]
 
-    assert "audio_snapshot" in observer
-    assert "audio_snapshot.last_started_at > observed.completed_at" in observer
-    assert "skipped stale completed scan before repaint" in observer
+    assert "latest_process_scan = process_live_scan_snapshot()" in observer
+    assert "latest_process_scan.completed_at > observed.completed_at" in observer
+    assert "skipped superseded completed scan before repaint" in observer
     marker = 'st.session_state["_walter_process_scan_audio_pending_token"] = ('
     assert marker in observer
-    assert observer.index("newer_scan_started = bool(") < observer.index(marker)
+    assert observer.index("newer_completed_scan = bool(") < observer.index(marker)
     assert observer.index(marker) < observer.index('st.rerun(scope="app")')
 
 
@@ -36,10 +36,10 @@ def test_gs621_registers_process_audio_after_critical_surface_before_heavy_dashb
     handoff = source[marker:radar]
 
     assert mission < semantic < marker < radar
-    assert "_process_audio_snapshot = _gs585.snapshot()" in handoff
+    assert "_process_audio_latest_completed = process_live_scan_snapshot()" in handoff
     assert "_process_audio_pending == _process_audio_current" in handoff
     assert (
-        "_process_audio_snapshot.last_started_at > completed_scan.completed_at"
+        "_process_audio_latest_completed.completed_at > completed_scan.completed_at"
         in handoff
     )
     assert 'from mide.gs419_completed_scan_heartbeat import heartbeat_markup' in handoff
@@ -56,7 +56,7 @@ def test_gs601_stale_process_audio_token_is_always_consumed():
     boundary = source.index("tab_names = [", marker)
     handoff = source[marker:boundary]
 
-    assert "[WALTER AUDIO] dropped stale process scan token" in handoff
+    assert "[WALTER AUDIO] dropped superseded process scan token" in handoff
     pop = 'st.session_state.pop("_walter_process_scan_audio_pending_token", None)'
     assert pop in handoff
     assert handoff.rindex(pop) > handoff.index("_process_audio_matches_visible")
