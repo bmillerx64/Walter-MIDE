@@ -5470,6 +5470,7 @@ def alert_audio_health_markup() -> str:
   let voiceQueue = [];
   let activeVoiceJob = null;
   let voiceStartWatchdog = null;
+  let voiceCompletionWatchdog = null;
   let voiceGeneration = 0;
 
   const setStored = (key, ready) => {
@@ -5595,9 +5596,17 @@ def alert_audio_health_markup() -> str:
     }
   };
 
+  const clearVoiceCompletionWatchdog = () => {
+    if (voiceCompletionWatchdog !== null) {
+      window.clearTimeout(voiceCompletionWatchdog);
+      voiceCompletionWatchdog = null;
+    }
+  };
+
   const resetVoiceTransport = (clearQueued = true) => {
     voiceGeneration += 1;
     clearVoiceStartWatchdog();
+    clearVoiceCompletionWatchdog();
     activeVoiceJob = null;
     if (clearQueued) voiceQueue = [];
     try { if (synth && synth.cancel) synth.cancel(); } catch (_) {}
@@ -5624,6 +5633,7 @@ def alert_audio_health_markup() -> str:
       const release = () => {
         if (generation !== voiceGeneration) return;
         clearVoiceStartWatchdog();
+        clearVoiceCompletionWatchdog();
         if (activeVoiceJob === job) activeVoiceJob = null;
         job.utterance = null;
       };
@@ -5640,15 +5650,59 @@ def alert_audio_health_markup() -> str:
         updateState(detail);
       };
 
+      // GS649: GS648 covered a queued utterance that never starts, but a second
+      // Chrome failure mode can fire onstart and then never deliver onend/onerror.
+      // That leaves activeVoiceJob occupied forever, so every later Walter phrase
+      // queues silently until the operator manually re-arms the guard.
+      const completionBudgetMs = () => {
+        const words = String(job.phrase || '').trim().split(/\\s+/).filter(Boolean).length;
+        return Math.min(45000, Math.max(10000, 6000 + words * 700));
+      };
+
+      const watchForCompletion = () => {
+        if (generation !== voiceGeneration || settled || !started) return;
+        const startedAt = Number(job.startedAt || Date.now());
+        const elapsed = Math.max(0, Date.now() - startedAt);
+
+        if (!synth.speaking) {
+          // Speech has actually stopped but Chrome lost the completion callback.
+          // Release the guard-local job and keep voice readiness true.
+          settled = true;
+          release();
+          setStored(VOICE_READY_KEY, true);
+          updateState('ACTIVE · VOICE AUTO-RECOVERED');
+          continueQueue();
+          return;
+        }
+
+        if (elapsed >= completionBudgetMs()) {
+          // A started utterance is still reported as speaking far beyond the
+          // phrase-specific budget. Cancel only the wedged guard speech engine,
+          // drop this stale phrase, and allow newer market alerts to continue.
+          settled = true;
+          release();
+          try { if (synth.cancel) synth.cancel(); } catch (_) {}
+          try { if (synth.paused && synth.resume) synth.resume(); } catch (_) {}
+          setStored(VOICE_READY_KEY, true);
+          updateState('VOICE STALL · AUTO-RECOVERED');
+          continueQueue();
+          return;
+        }
+
+        voiceCompletionWatchdog = window.setTimeout(watchForCompletion, 1200);
+      };
+
       utterance.onstart = () => {
-        if (generation !== voiceGeneration) return;
+        if (generation !== voiceGeneration || settled) return;
         started = true;
+        job.startedAt = Date.now();
         clearVoiceStartWatchdog();
         setStored(VOICE_READY_KEY, true);
         updateState('ACTIVE · WALTER SPEAKING');
+        voiceCompletionWatchdog = window.setTimeout(watchForCompletion, 1200);
       };
       utterance.onend = () => {
-        if (generation !== voiceGeneration) return;
+        if (generation !== voiceGeneration || settled) return;
         settled = true;
         release();
         setStored(VOICE_READY_KEY, true);
@@ -5656,7 +5710,7 @@ def alert_audio_health_markup() -> str:
         continueQueue();
       };
       utterance.onerror = (event) => {
-        if (generation !== voiceGeneration) return;
+        if (generation !== voiceGeneration || settled) return;
         const detail = event && event.error ? String(event.error) : 'voice error';
         hardFail('VOICE BLOCKED (' + detail + ') · CLICK ENABLE VOICE + BELL');
       };
