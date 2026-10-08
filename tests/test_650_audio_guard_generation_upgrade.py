@@ -6,9 +6,9 @@ from mide.gs516_visible_alert_audio_health import alert_audio_health_markup
 def test_gs650_guard_generation_forces_warm_popup_upgrade():
     markup = alert_audio_health_markup()
 
-    assert "const guardVersion = 'GS650';" in markup
+    assert "const guardVersion = 'GS651';" in markup
     assert "guard.__walterAudioGuardVersion !== guardVersion" in markup
-    assert "window.__walterAudioGuardVersion = 'GS650';" in markup
+    assert "window.__walterAudioGuardVersion = 'GS651';" in markup
 
 
 def test_gs650_upgrade_check_precedes_guard_reuse():
