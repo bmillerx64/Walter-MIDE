@@ -5256,7 +5256,7 @@ def alert_audio_health_markup() -> str:
       const guardVoiceReadyKey = 'walterAudioGuardVoiceReady';
       const guardBellReadyKey = 'walterAudioGuardBellReady';
       const guardWindowName = 'walter-audio-guard';
-      const guardVersion = 'GS650';
+      const guardVersion = 'GS651';
       const guardHealth = () => {
         try {
           const stamp = Number(
@@ -5719,17 +5719,28 @@ def alert_audio_health_markup() -> str:
 
       const watchForStart = () => {
         if (generation !== voiceGeneration || started || settled) return;
-        // A legitimately speaking utterance may precede this job. Do not disturb
-        // working speech; recheck after it has had time to finish.
+
+        // GS651: Chrome can report speechSynthesis.speaking=true for this exact
+        // utterance while never firing onstart. GS650 treated that flag as proof
+        // that some earlier utterance was legitimately speaking and therefore
+        // rescheduled this watchdog forever. The guard owns a serialized queue:
+        // if this job is active and still has no onstart after the bounded start
+        // window, speaking=true is a wedged pre-start state, not healthy progress.
+        const requestedAt = Number(job.requestedAt || Date.now());
+        const startElapsed = Math.max(0, Date.now() - requestedAt);
         if (synth.speaking) {
-          voiceStartWatchdog = window.setTimeout(watchForStart, 1200);
-          return;
+          if (startElapsed < 3500) {
+            voiceStartWatchdog = window.setTimeout(watchForStart, 1200);
+            return;
+          }
+          // speaking=true without this job's onstart past the bounded grace
+          // period is exactly the Chrome limbo GS651 must recover.
         }
 
         if (Number(job.recoveryAttempt || 0) < 1) {
-          // Proven no-start stall: no utterance is speaking, yet this queued job
-          // never received onstart. Reset only the guard engine, preserve queued
-          // Walter alerts, and retry this same phrase once without user action.
+          // Proven no-start stall, including Chrome's false speaking=true limbo.
+          // Reset only the guard speech engine, preserve queued Walter alerts, and
+          // retry this same phrase once without requiring another operator click.
           const pendingJobs = voiceQueue.slice();
           voiceGeneration += 1;
           clearVoiceStartWatchdog();
@@ -5750,6 +5761,7 @@ def alert_audio_health_markup() -> str:
       };
 
       if (synth.paused && synth.resume) synth.resume();
+      job.requestedAt = Date.now();
       synth.speak(utterance);
       voiceStartWatchdog = window.setTimeout(watchForStart, 2200);
     } catch (_) {
@@ -5818,7 +5830,7 @@ def alert_audio_health_markup() -> str:
     }),
   };
   window.__walterAudioGuardInstalled = true;
-  window.__walterAudioGuardVersion = 'GS650';
+  window.__walterAudioGuardVersion = 'GS651';
   setStored(VOICE_READY_KEY, false);
   setStored(BELL_READY_KEY, false);
   heartbeat();
