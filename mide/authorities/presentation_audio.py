@@ -5728,9 +5728,13 @@ def alert_audio_health_markup() -> str:
         // window, speaking=true is a wedged pre-start state, not healthy progress.
         const requestedAt = Number(job.requestedAt || Date.now());
         const startElapsed = Math.max(0, Date.now() - requestedAt);
-        if (synth.speaking && startElapsed < 3500) {
-          voiceStartWatchdog = window.setTimeout(watchForStart, 700);
-          return;
+        if (synth.speaking) {
+          if (startElapsed < 3500) {
+            voiceStartWatchdog = window.setTimeout(watchForStart, 700);
+            return;
+          }
+          // speaking=true without this job's onstart past the bounded grace
+          // period is exactly the Chrome limbo GS651 must recover.
         }
 
         if (Number(job.recoveryAttempt || 0) < 1) {
