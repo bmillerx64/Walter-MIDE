@@ -122,11 +122,19 @@ def test_gs655_rejects_untrusted_source_for_prominent_flash():
     assert rows == []
 
 
-def test_gs655_is_wired_beside_persistent_sidebar_audio_health():
+def test_gs656_pins_fresh_catalyst_then_audio_above_system_status():
     source = Path("app.py").read_text()
-    health = source.index("render_sidebar_audio_health(st)")
-    flash = source.index("render_fresh_catalyst_sidebar(st, st.session_state)")
-    diagnostics = source.index('with st.expander("Diagnostics"', flash)
 
-    assert health < flash < diagnostics
+    fresh_slot = source.index("fresh_catalyst_slot = st.container()")
+    audio_slot = source.index("audio_guard_slot = st.container()")
+    status = source.index('system_status_panel = st.expander("System Status"')
+    control = source.index('st.header("Control")')
+
+    assert fresh_slot < audio_slot < status < control
+    assert source.index("with fresh_catalyst_slot:") < source.index(
+        "render_fresh_catalyst_sidebar(st, st.session_state)"
+    )
+    assert source.index("with audio_guard_slot:") < source.index(
+        "render_sidebar_audio_health(st)"
+    )
     assert "from mide.gs655_fresh_catalyst_flash import render_fresh_catalyst_sidebar" in source
