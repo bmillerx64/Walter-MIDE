@@ -5730,7 +5730,7 @@ def alert_audio_health_markup() -> str:
         const startElapsed = Math.max(0, Date.now() - requestedAt);
         if (synth.speaking) {
           if (startElapsed < 3500) {
-            voiceStartWatchdog = window.setTimeout(watchForStart, 700);
+            voiceStartWatchdog = window.setTimeout(watchForStart, 1200);
             return;
           }
           // speaking=true without this job's onstart past the bounded grace
