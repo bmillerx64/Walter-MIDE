@@ -270,7 +270,7 @@ def render_fresh_catalyst_sidebar(st, session_state, *, now=None) -> list[dict]:
     quantity = f" · {escape(str(lead.get('quantity_label') or ''))}" if lead.get("quantity_label") else ""
     st.markdown(
         (
-            '<div style="margin-top:0.65rem;padding:0.65rem 0.75rem;'
+            '<div style="margin-top:0.10rem;padding:0.58rem 0.68rem;'
             'border:2px solid #f5b700;border-radius:0.55rem;'
             'background:rgba(245,183,0,0.10);line-height:1.25;">'
             '<div style="font-weight:800;color:#ffd34e;letter-spacing:.02em;">'
