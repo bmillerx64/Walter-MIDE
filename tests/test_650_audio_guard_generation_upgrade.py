@@ -3,28 +3,23 @@ from pathlib import Path
 from mide.gs516_visible_alert_audio_health import alert_audio_health_markup
 
 
-def test_gs650_guard_generation_forces_warm_popup_upgrade():
+def test_gs653_guard_generation_forces_warm_popup_upgrade():
     markup = alert_audio_health_markup()
+    assert "const VERSION = 'GS653';" in markup
+    assert "guard.__walterAudioGuardVersion !== VERSION" in markup
+    assert "guard.__walterAudioGuardVersion = VERSION;" in markup
+    assert "walterAudioGuardVersion" in markup
 
-    assert "const guardVersion = 'GS652';" in markup
-    assert "guard.__walterAudioGuardVersion !== guardVersion" in markup
-    assert "window.__walterAudioGuardVersion = 'GS652';" in markup
 
-
-def test_gs650_upgrade_check_precedes_guard_reuse():
+def test_gs653_upgrade_check_precedes_guard_reuse():
     markup = alert_audio_health_markup()
-
-    condition = markup.index("guard.__walterAudioGuardVersion !== guardVersion")
+    condition = markup.index("guard.__walterAudioGuardVersion !== VERSION")
     reuse = markup.index("typeof guard.__walterAudioGuard.refresh === 'function'")
     assert condition < reuse
 
 
-def test_gs650_scope_lock_is_audio_guard_transport_only():
-    source = Path("mide/authorities/presentation_audio.py").read_text(encoding="utf-8")
-    start = source.index("const guardVersion = 'GS652';")
-    end = source.index("const guardHealth = () => {", start)
-    block = source[start:end]
-
+def test_gs653_scope_lock_is_audio_guard_transport_only():
+    source = Path("mide/audio_guard_v2.py").read_text(encoding="utf-8")
     forbidden = (
         "qualified_for_entry",
         "qualified_for_alert",
@@ -35,4 +30,4 @@ def test_gs650_scope_lock_is_audio_guard_transport_only():
         "place_order(",
         "submit_order(",
     )
-    assert not any(token in block for token in forbidden)
+    assert not any(token in source for token in forbidden)
