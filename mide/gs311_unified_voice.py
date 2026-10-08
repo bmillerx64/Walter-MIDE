@@ -5,9 +5,12 @@ qualification, readiness, thresholds, or execution.
 """
 from __future__ import annotations
 
-import base64
+import hashlib
 import json
-from pathlib import Path
+from functools import lru_cache
+import re
+import shutil
+import subprocess
 
 from .gs296_first_print_alert_patch import _explicit_first_observation
 from .gs310_unified_opportunity_state import opportunity_state
@@ -83,24 +86,93 @@ def unified_alert_phrase(records: list[dict]) -> str:
     return phrase
 
 
-def _speech_component(sound_path: str, phrase: str, voice_name: str = "") -> str:
-    """Build resilient browser speech markup with visible transport diagnostics.
+def _compact_guard_phrase(phrase: str) -> str:
+    """Reduce a verbose Walter sentence to the fast operator heads-up."""
+    raw = " ".join(str(phrase or "").split()).strip()
+    if not raw:
+        return ""
 
-    GS321 exposes actual browser transport state and a manual replay control.
-    GS322 adds an explicit one-time browser-session arm contract so Chrome/user
-    activation is never silently assumed.
-    """
-    encoded = ""
-    path = Path(sound_path)
-    if path.exists():
-        encoded = base64.b64encode(path.read_bytes()).decode()
-    audio = (
-        f'<audio autoplay><source src="data:audio/wav;base64,{encoded}" type="audio/wav"></audio>'
-        if encoded
-        else ""
+    first = raw.split(".", 1)[0].strip().upper()
+    symbol = first if re.fullmatch(r"[A-Z][A-Z0-9.-]{0,7}", first) else ""
+    if not symbol:
+        match = re.match(r"^([A-Z][A-Z0-9.-]{0,7})\\b", raw.upper())
+        symbol = match.group(1) if match else ""
+
+    upper = raw.upper()
+    states = (
+        ("ENTRY READY", "entry ready"),
+        ("ENTRY WINDOW", "entry ready"),
+        ("LOOK NOW", "look now"),
+        ("WATCH FOR ENTRY", "watch for entry"),
+        ("IGNITION", "ignition"),
+        ("DEVELOPING", "developing"),
+        ("PULLBACK", "pullback"),
+        ("VWAP RECLAIM", "V wap reclaimed"),
+        ("SUPER TREND", "super trend flip"),
+        ("SUPERTREND", "super trend flip"),
+        ("ACTIVE RUNNER", "active runner"),
+        ("BREAKOUT", "breakout"),
+        ("CHASE / WAIT", "chase wait"),
+        ("CHASE/WAIT", "chase wait"),
     )
-    phrase_json = json.dumps(str(phrase))
-    voice_json = json.dumps(str(voice_name or ""))
+    state = next((spoken for needle, spoken in states if needle in upper), "alert")
+    if symbol:
+        spelled = " ".join(ch for ch in symbol if ch.isalnum())
+        return f"{spelled}. {state}."
+    return f"Walter. {state}."
+
+
+@lru_cache(maxsize=256)
+def _synthesize_phrase_wav(phrase: str) -> str:
+    """Return base64 WAV rendered by the deployment's local eSpeak binary.
+
+    GS653 deliberately moves speech generation out of Chrome SpeechSynthesis.
+    The browser only plays ordinary PCM through the already-proven Web Audio path.
+    """
+    text = str(phrase or "").strip()
+    if not text:
+        return ""
+    binary = shutil.which("espeak-ng") or shutil.which("espeak")
+    if not binary:
+        return ""
+    try:
+        result = subprocess.run(
+            [
+                binary,
+                "-v", "en-us",
+                "-s", "160",
+                "-p", "46",
+                "-a", "180",
+                "--stdout",
+                text,
+            ],
+            check=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            timeout=4,
+        )
+    except Exception:
+        return ""
+    data = bytes(result.stdout or b"")
+    if len(data) < 44:
+        return ""
+    import base64
+
+    return base64.b64encode(data).decode("ascii")
+
+
+def _speech_component(sound_path: str, phrase: str, voice_name: str = "") -> str:
+    """Publish one deterministic WAV voice request to the persistent Audio Guard.
+
+    There is intentionally no local SpeechSynthesis fallback. GS653 makes one owner
+    authoritative so Chrome's hidden speech queue can no longer fight Walter.
+    """
+    compact = _compact_guard_phrase(phrase)
+    audio_base64 = _synthesize_phrase_wav(compact)
+    audio_key = hashlib.sha1(compact.encode("utf-8")).hexdigest()[:16] if compact else ""
+    phrase_json = json.dumps(compact)
+    audio_json = json.dumps(audio_base64)
+    key_json = json.dumps(audio_key)
     return f"""
     <style>
       .walter-voice-diag {{
@@ -111,260 +183,71 @@ def _speech_component(sound_path: str, phrase: str, voice_name: str = "") -> str
       }}
       .walter-voice-status {{font-weight:800; white-space:nowrap;}}
       .walter-voice-detail {{color:#94a3b8; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; flex:1;}}
-      .walter-voice-test {{
-        border:1px solid #475569; border-radius:6px; background:#172033;
-        color:#f8fafc; padding:3px 7px; cursor:pointer; font-weight:700;
-      }}
     </style>
     <div class="walter-voice-diag" role="status" aria-live="polite">
-      <span id="walter-voice-status" class="walter-voice-status">Voice: initializing</span>
+      <span id="walter-voice-status" class="walter-voice-status">Voice: routing</span>
       <span id="walter-voice-detail" class="walter-voice-detail"></span>
-      <button id="walter-voice-test" class="walter-voice-test" type="button">Replay test</button>
     </div>
-    {audio}
     <script>
     (() => {{
+      const VERSION = 'GS653';
       const phrase = {phrase_json};
-      const preferred = {voice_json};
+      const audioBase64 = {audio_json};
+      const audioKey = {key_json};
       const statusNode = document.getElementById('walter-voice-status');
       const detailNode = document.getElementById('walter-voice-detail');
-      const replayNode = document.getElementById('walter-voice-test');
-      const setStatus = (status, detail = '') => {{
-        if (statusNode) statusNode.textContent = `Voice: ${{status}}`;
+      const setStatus = (state, detail = '') => {{
+        if (statusNode) statusNode.textContent = 'Voice: ' + state;
         if (detailNode) detailNode.textContent = detail;
       }};
       if (!phrase) {{
         setStatus('idle', 'No phrase requested');
-        if (replayNode) replayNode.disabled = true;
+        return;
+      }}
+      if (!audioBase64) {{
+        setStatus('unavailable', 'eSpeak voice asset unavailable');
         return;
       }}
 
-      // GS642: prefer the independently persistent Audio Guard when its heartbeat
-      // is fresh. The guard lives in a separate named browser window, so Walter's
-      // main Streamlit document may reload or remain behind Webull without losing
-      // the voice transport. Fall back to the established local speech path when
-      // the guard is absent or stale.
-      const routeVoiceToGuard = () => {{
-        let host = window;
-        try {{ if (window.parent) host = window.parent; }} catch (_) {{ host = window; }}
-        try {{
-          const stamp = Number(
-            host.localStorage &&
-            host.localStorage.getItem('walterAudioGuardHeartbeat')
-          );
-          const age = Date.now() - stamp;
-          const fresh = Number.isFinite(stamp) && age >= 0 && age < 10000;
-          const voiceReady = Boolean(
-            host.localStorage &&
-            host.localStorage.getItem('walterAudioGuardVoiceReady') === '1'
-          );
-          const GuardChannel = host.BroadcastChannel || window.BroadcastChannel;
-          if (!fresh || !voiceReady || !GuardChannel) return false;
-          const channel = new GuardChannel('walter-audio-guard-v1');
-          channel.postMessage({{
-            kind: 'voice',
-            phrase,
-            preferred,
-            requestedAt: new Date().toISOString(),
-          }});
-          channel.close();
-          setStatus('guarded', 'persistent Audio Guard');
-          return true;
-        }} catch (_) {{
-          return false;
-        }}
-      }};
-      if (routeVoiceToGuard()) return;
-
-      let speechWindow = window;
+      let host = window;
+      try {{ if (window.parent) host = window.parent; }} catch (_) {{ host = window; }}
       try {{
-        if (window.parent && 'speechSynthesis' in window.parent) speechWindow = window.parent;
-      }} catch (_) {{ speechWindow = window; }}
-      if (!('speechSynthesis' in speechWindow)) {{
-        console.warn('[Walter voice] speechSynthesis unavailable');
-        setStatus('unavailable', 'Browser Web Speech API is not available');
-        return;
-      }}
-
-      const synth = speechWindow.speechSynthesis;
-      const Utterance = speechWindow.SpeechSynthesisUtterance || window.SpeechSynthesisUtterance;
-      if (!Utterance) {{
-        console.warn('[Walter voice] SpeechSynthesisUtterance unavailable');
-        setStatus('unavailable', 'SpeechSynthesisUtterance is not available');
-        return;
-      }}
-
-      const readStoredArmed = () => {{
-        try {{
-          return speechWindow.sessionStorage &&
-            speechWindow.sessionStorage.getItem('walterVoiceArmed') === '1';
-        }} catch (_) {{
-          return false;
-        }}
-      }};
-      const markArmed = () => {{
-        speechWindow.__walterVoiceArmed = true;
-        try {{
-          if (speechWindow.sessionStorage) {{
-            speechWindow.sessionStorage.setItem('walterVoiceArmed', '1');
-          }}
-        }} catch (_) {{}}
-      }};
-      const isArmed = () => Boolean(speechWindow.__walterVoiceArmed || readStoredArmed());
-
-      const resolveVoice = () => {{
-        const voices = synth.getVoices ? synth.getVoices() : [];
-        if (!preferred || !voices.length) return null;
-        const preferredLower = preferred.toLowerCase();
-        return voices.find(v =>
-          v.voiceURI === preferred ||
-          v.name === preferred ||
-          v.name.toLowerCase().includes(preferredLower)
-        ) || null;
-      }};
-
-      const speak = (source) => {{
-        const utterance = new Utterance(phrase);
-        utterance.rate = 0.95;
-        utterance.pitch = 0.9;
-        utterance.volume = 1.0;
-        const selectedVoice = resolveVoice();
-        if (selectedVoice) utterance.voice = selectedVoice;
-        const actualVoice = selectedVoice ? selectedVoice.name : (preferred || 'System Default');
-        speechWindow.__walterActiveUtterance = utterance;
-        speechWindow.__walterVoiceTransport = {{
-          phrase,
-          preferred,
-          actualVoice,
-          source,
-          requestedAt: new Date().toISOString(),
-          status: 'requested',
-          armed: isArmed(),
-        }};
-        setStatus('requested', `${{actualVoice}} · ${{source}}`);
-
-        const release = (status) => {{
-          speechWindow.__walterVoiceTransport = {{
-            ...speechWindow.__walterVoiceTransport,
-            status,
-            completedAt: new Date().toISOString(),
-          }};
-          setStatus(status, `${{actualVoice}} · ${{source}}`);
-          if (speechWindow.__walterActiveUtterance === utterance) {{
-            speechWindow.__walterActiveUtterance = null;
-          }}
-        }};
-        const releaseError = (detail) => {{
-          release('error');
-          speechWindow.__walterVoiceTransport = {{
-            ...speechWindow.__walterVoiceTransport,
-            detail,
-          }};
-          setStatus('error', detail);
-        }};
-        utterance.onstart = () => {{
-          markArmed();
-          speechWindow.__walterVoiceTransport = {{
-            ...speechWindow.__walterVoiceTransport,
-            status: 'speaking',
-            armed: true,
-            startedAt: new Date().toISOString(),
-          }};
-          setStatus('speaking', `${{actualVoice}} · ${{source}}`);
-          if (replayNode) replayNode.textContent = 'Replay test';
-          console.info('[Walter voice] speaking', phrase);
-        }};
-        utterance.onend = () => release('ended');
-        utterance.onerror = (event) => {{
-          const error = event && event.error ? String(event.error) : 'unknown synthesis error';
-          console.warn('[Walter voice] synthesis error', error);
-          releaseError(error);
-        }};
-
-        try {{
-          if (synth.paused && synth.resume) synth.resume();
-          if (synth.cancel) synth.cancel();
-          if (synth.resume) synth.resume();
-          console.info('[Walter voice] request accepted by component', phrase);
-          // Chrome can race a newly queued utterance against the preceding cancel().
-          // Give cancellation one event-loop turn to settle before speaking.
-          speechWindow.setTimeout(() => {{
-            try {{
-              synth.speak(utterance);
-            }} catch (primaryError) {{
-              console.warn('[Walter voice] parent synth failed; using frame fallback', primaryError);
-              try {{
-                window.speechSynthesis.speak(utterance);
-              }} catch (fallbackError) {{
-                console.warn('[Walter voice] frame fallback failed', fallbackError);
-                releaseError(String(fallbackError));
-              }}
-            }}
-          }}, 75);
-        }} catch (setupError) {{
-          console.warn('[Walter voice] synth setup failed; using frame fallback', setupError);
-          try {{
-            window.speechSynthesis.speak(utterance);
-          }} catch (fallbackError) {{
-            console.warn('[Walter voice] frame fallback failed', fallbackError);
-            releaseError(String(fallbackError));
-          }}
-        }}
-      }};
-
-      let initialSpoken = false;
-      const speakInitialOnce = () => {{
-        if (initialSpoken) return;
-        initialSpoken = true;
-        speak('Walter alert');
-      }};
-
-      const manualReplayOrArm = () => {{
-        if (!isArmed()) {{
-          markArmed();
-          setStatus('requested', 'user activation · pending alert');
-          speak('manual replay');
+        const stamp = Number(
+          host.localStorage &&
+          host.localStorage.getItem('walterAudioGuardHeartbeat')
+        );
+        const age = Date.now() - stamp;
+        const fresh = Number.isFinite(stamp) && age >= 0 && age < 10000;
+        const version = host.localStorage &&
+          host.localStorage.getItem('walterAudioGuardVersion');
+        const voiceReady = Boolean(
+          host.localStorage &&
+          host.localStorage.getItem('walterAudioGuardVoiceReady') === '1'
+        );
+        const GuardChannel = host.BroadcastChannel || window.BroadcastChannel;
+        if (!fresh || version !== VERSION || !voiceReady || !GuardChannel) {{
+          setStatus('blocked', 'Open / test Audio Guard');
           return;
         }}
-        speak('manual replay');
-      }};
-      if (replayNode) {{
-        replayNode.addEventListener('click', manualReplayOrArm);
-      }}
-
-      if (!isArmed()) {{
-        speechWindow.__walterVoiceTransport = {{
+        const channel = new GuardChannel('walter-audio-guard-v1');
+        channel.postMessage({{
+          kind: 'voice_wav',
           phrase,
-          preferred,
+          audioKey,
+          audioBase64,
           requestedAt: new Date().toISOString(),
-          status: 'blocked',
-          armed: false,
-          detail: 'user activation required',
-        }};
-        setStatus('blocked', 'Click Enable voice once');
-        if (replayNode) replayNode.textContent = 'Enable voice';
-        console.warn('[Walter voice] blocked pending user activation');
-        return;
-      }}
-
-      if (synth.getVoices && synth.getVoices().length) {{
-        speakInitialOnce();
-      }} else {{
-        let attempts = 0;
-        const retry = () => {{
-          attempts += 1;
-          if ((synth.getVoices && synth.getVoices().length) || attempts >= 12) {{
-            speakInitialOnce();
-            return;
-          }}
-          speechWindow.setTimeout(retry, 125);
-        }};
-        if ('onvoiceschanged' in synth) synth.onvoiceschanged = speakInitialOnce;
-        speechWindow.setTimeout(retry, 125);
+        }});
+        channel.close();
+        setStatus('guarded', phrase);
+      }} catch (error) {{
+        setStatus('error', String(error));
       }}
     }})();
     </script>
     """
+
+
+_speech_component._gs653_guard_only = True
 
 
 def install() -> None:
