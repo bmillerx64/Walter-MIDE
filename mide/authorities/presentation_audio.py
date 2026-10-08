@@ -5748,7 +5748,7 @@ def alert_audio_health_markup() -> str:
           job.utterance = null;
           try { if (synth.cancel) synth.cancel(); } catch (_) {}
           try { if (synth.resume) synth.resume(); } catch (_) {}
-          updateState('VOICE PRE-START STALL · AUTO-RECOVERING…');
+          updateState('VOICE STALL · AUTO-RECOVERING…');
           voiceQueue = [
             { ...job, recoveryAttempt: Number(job.recoveryAttempt || 0) + 1, utterance: null },
             ...pendingJobs,
