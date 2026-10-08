@@ -5256,6 +5256,7 @@ def alert_audio_health_markup() -> str:
       const guardVoiceReadyKey = 'walterAudioGuardVoiceReady';
       const guardBellReadyKey = 'walterAudioGuardBellReady';
       const guardWindowName = 'walter-audio-guard';
+      const guardVersion = 'GS650';
       const guardHealth = () => {
         try {
           const stamp = Number(
@@ -5422,7 +5423,8 @@ def alert_audio_health_markup() -> str:
           if (
             !guard.__walterAudioGuardInstalled ||
             !guard.__walterAudioGuard ||
-            typeof guard.__walterAudioGuard.ready !== 'function'
+            typeof guard.__walterAudioGuard.ready !== 'function' ||
+            guard.__walterAudioGuardVersion !== guardVersion
           ) {
             const doc = guard.document;
             doc.open();
@@ -5816,6 +5818,7 @@ def alert_audio_health_markup() -> str:
     }),
   };
   window.__walterAudioGuardInstalled = true;
+  window.__walterAudioGuardVersion = 'GS650';
   setStored(VOICE_READY_KEY, false);
   setStored(BELL_READY_KEY, false);
   heartbeat();
