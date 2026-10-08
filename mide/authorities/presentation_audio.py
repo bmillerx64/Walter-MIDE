@@ -5256,7 +5256,7 @@ def alert_audio_health_markup() -> str:
       const guardVoiceReadyKey = 'walterAudioGuardVoiceReady';
       const guardBellReadyKey = 'walterAudioGuardBellReady';
       const guardWindowName = 'walter-audio-guard';
-      const guardVersion = 'GS651';
+      const guardVersion = 'GS652';
       const guardHealth = () => {
         try {
           const stamp = Number(
@@ -5606,12 +5606,20 @@ def alert_audio_health_markup() -> str:
   };
 
   const resetVoiceTransport = (clearQueued = true) => {
+    // GS652: do not poison a fresh direct user-activation request with an
+    // unconditional speechSynthesis.cancel(). Walter proved in GS323/GS324 that
+    // cancel immediately before speak can strand Chrome's speech engine. Only
+    // cancel when this guard actually owns speech/queue state that must be
+    // discarded; a clean re-arm stays entirely inside the click's live gesture.
+    const hadGuardSpeech = Boolean(activeVoiceJob || voiceQueue.length);
     voiceGeneration += 1;
     clearVoiceStartWatchdog();
     clearVoiceCompletionWatchdog();
     activeVoiceJob = null;
     if (clearQueued) voiceQueue = [];
-    try { if (synth && synth.cancel) synth.cancel(); } catch (_) {}
+    try {
+      if (hadGuardSpeech && synth && synth.cancel) synth.cancel();
+    } catch (_) {}
     try { if (synth && synth.paused && synth.resume) synth.resume(); } catch (_) {}
   };
 
@@ -5830,7 +5838,7 @@ def alert_audio_health_markup() -> str:
     }),
   };
   window.__walterAudioGuardInstalled = true;
-  window.__walterAudioGuardVersion = 'GS651';
+  window.__walterAudioGuardVersion = 'GS652';
   setStored(VOICE_READY_KEY, false);
   setStored(BELL_READY_KEY, false);
   heartbeat();

@@ -33,8 +33,8 @@ def test_gs651_records_speak_request_time_before_browser_speak():
 
 def test_gs651_forces_guard_popup_upgrade():
     markup = alert_audio_health_markup()
-    assert "const guardVersion = 'GS651';" in markup
-    assert "window.__walterAudioGuardVersion = 'GS651';" in markup
+    assert "const guardVersion = 'GS652';" in markup
+    assert "window.__walterAudioGuardVersion = 'GS652';" in markup
 
 
 def test_gs651_scope_lock_is_audio_transport_only():
