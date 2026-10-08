@@ -5463,6 +5463,15 @@ def alert_audio_health_markup() -> str:
   let context = null;
   let emittedToken = null;
 
+  // GS648: keep the guard's speech transport alive across opening-bell load.
+  // Chrome can silently strand a queued utterance without onstart/onerror while
+  // the guard's last-known ready flag stays green. Own a tiny JS queue here,
+  // retain the active utterance strongly, and recover one proven no-start stall.
+  let voiceQueue = [];
+  let activeVoiceJob = null;
+  let voiceStartWatchdog = null;
+  let voiceGeneration = 0;
+
   const setStored = (key, ready) => {
     try {
       if (ready) localStorage.setItem(key, '1');
@@ -5579,38 +5588,140 @@ def alert_audio_health_markup() -> str:
     ) || null;
   };
 
+  const clearVoiceStartWatchdog = () => {
+    if (voiceStartWatchdog !== null) {
+      window.clearTimeout(voiceStartWatchdog);
+      voiceStartWatchdog = null;
+    }
+  };
+
+  const resetVoiceTransport = (clearQueued = true) => {
+    voiceGeneration += 1;
+    clearVoiceStartWatchdog();
+    activeVoiceJob = null;
+    if (clearQueued) voiceQueue = [];
+    try { if (synth && synth.cancel) synth.cancel(); } catch (_) {}
+    try { if (synth && synth.paused && synth.resume) synth.resume(); } catch (_) {}
+  };
+
+  const drainVoiceQueue = () => {
+    if (activeVoiceJob || !voiceQueue.length || !synth || !Utterance) return;
+    const job = voiceQueue.shift();
+    const generation = voiceGeneration;
+    let started = false;
+    let settled = false;
+
+    try {
+      const utterance = new Utterance(String(job.phrase));
+      job.utterance = utterance; // strong reference until onend/onerror/recovery
+      activeVoiceJob = job;
+      utterance.rate = 0.95;
+      utterance.pitch = 0.9;
+      utterance.volume = 1.0;
+      const selected = resolveVoice(job.preferred);
+      if (selected) utterance.voice = selected;
+
+      const release = () => {
+        if (generation !== voiceGeneration) return;
+        clearVoiceStartWatchdog();
+        if (activeVoiceJob === job) activeVoiceJob = null;
+        job.utterance = null;
+      };
+
+      const continueQueue = () => {
+        window.setTimeout(drainVoiceQueue, 0);
+      };
+
+      const hardFail = (detail) => {
+        settled = true;
+        release();
+        voiceQueue = [];
+        setStored(VOICE_READY_KEY, false);
+        updateState(detail);
+      };
+
+      utterance.onstart = () => {
+        if (generation !== voiceGeneration) return;
+        started = true;
+        clearVoiceStartWatchdog();
+        setStored(VOICE_READY_KEY, true);
+        updateState('ACTIVE · WALTER SPEAKING');
+      };
+      utterance.onend = () => {
+        if (generation !== voiceGeneration) return;
+        settled = true;
+        release();
+        setStored(VOICE_READY_KEY, true);
+        updateState();
+        continueQueue();
+      };
+      utterance.onerror = (event) => {
+        if (generation !== voiceGeneration) return;
+        const detail = event && event.error ? String(event.error) : 'voice error';
+        hardFail('VOICE BLOCKED (' + detail + ') · CLICK ENABLE VOICE + BELL');
+      };
+
+      const watchForStart = () => {
+        if (generation !== voiceGeneration || started || settled) return;
+        // A legitimately speaking utterance may precede this job. Do not disturb
+        // working speech; recheck after it has had time to finish.
+        if (synth.speaking) {
+          voiceStartWatchdog = window.setTimeout(watchForStart, 1200);
+          return;
+        }
+
+        if (Number(job.recoveryAttempt || 0) < 1) {
+          // Proven no-start stall: no utterance is speaking, yet this queued job
+          // never received onstart. Reset only the guard engine, preserve queued
+          // Walter alerts, and retry this same phrase once without user action.
+          const pendingJobs = voiceQueue.slice();
+          voiceGeneration += 1;
+          clearVoiceStartWatchdog();
+          activeVoiceJob = null;
+          job.utterance = null;
+          try { if (synth.cancel) synth.cancel(); } catch (_) {}
+          try { if (synth.resume) synth.resume(); } catch (_) {}
+          updateState('VOICE STALL · AUTO-RECOVERING…');
+          voiceQueue = [
+            { ...job, recoveryAttempt: Number(job.recoveryAttempt || 0) + 1, utterance: null },
+            ...pendingJobs,
+          ];
+          window.setTimeout(drainVoiceQueue, 125);
+          return;
+        }
+
+        hardFail('VOICE STALLED · CLICK ENABLE VOICE + BELL');
+      };
+
+      if (synth.paused && synth.resume) synth.resume();
+      synth.speak(utterance);
+      voiceStartWatchdog = window.setTimeout(watchForStart, 2200);
+    } catch (_) {
+      activeVoiceJob = null;
+      setStored(VOICE_READY_KEY, false);
+      updateState('VOICE ERROR · CLICK ENABLE VOICE + BELL');
+    }
+  };
+
   const speak = (phrase, preferred = '', proveReady = false) => {
     if (!phrase || !synth || !Utterance) {
       if (proveReady) setStored(VOICE_READY_KEY, false);
       updateState('VOICE UNAVAILABLE · BELL MAY STILL WORK');
       return;
     }
-    try {
-      const utterance = new Utterance(String(phrase));
-      utterance.rate = 0.95;
-      utterance.pitch = 0.9;
-      utterance.volume = 1.0;
-      const selected = resolveVoice(preferred);
-      if (selected) utterance.voice = selected;
-      utterance.onstart = () => {
-        setStored(VOICE_READY_KEY, true);
-        updateState('ACTIVE · WALTER SPEAKING');
-      };
-      utterance.onend = () => {
-        setStored(VOICE_READY_KEY, true);
-        updateState();
-      };
-      utterance.onerror = (event) => {
-        setStored(VOICE_READY_KEY, false);
-        const detail = event && event.error ? String(event.error) : 'voice error';
-        updateState('VOICE BLOCKED (' + detail + ') · CLICK ENABLE VOICE + BELL');
-      };
-      if (synth.paused && synth.resume) synth.resume();
-      synth.speak(utterance);
-    } catch (_) {
-      setStored(VOICE_READY_KEY, false);
-      updateState('VOICE ERROR · CLICK ENABLE VOICE + BELL');
-    }
+
+    // A direct re-arm is an explicit user request to discard any stale browser
+    // queue and prove the transport immediately. Normal market alerts never cancel
+    // working speech; they are serialized through voiceQueue.
+    if (proveReady) resetVoiceTransport(true);
+    voiceQueue.push({
+      phrase: String(phrase),
+      preferred: String(preferred || ''),
+      proveReady: Boolean(proveReady),
+      recoveryAttempt: 0,
+      utterance: null,
+    });
+    drainVoiceQueue();
   };
 
   const armFromDirectClick = () => {
