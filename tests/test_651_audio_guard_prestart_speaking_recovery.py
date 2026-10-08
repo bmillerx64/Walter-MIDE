@@ -20,7 +20,7 @@ def test_gs651_bounds_false_speaking_prestart_limbo():
     assert "const startElapsed = Math.max(0, Date.now() - requestedAt);" in watch
     assert "if (synth.speaking) {" in watch
     assert "if (startElapsed < 3500) {" in watch
-    assert "VOICE PRE-START STALL · AUTO-RECOVERING…" in watch
+    assert "VOICE STALL · AUTO-RECOVERING…" in watch
     assert "window.setTimeout(drainVoiceQueue, 125);" in watch
 
 
