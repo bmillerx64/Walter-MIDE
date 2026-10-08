@@ -21,7 +21,7 @@ def test_gs650_upgrade_check_precedes_guard_reuse():
 
 def test_gs650_scope_lock_is_audio_guard_transport_only():
     source = Path("mide/authorities/presentation_audio.py").read_text(encoding="utf-8")
-    start = source.index("const guardVersion = 'GS650';")
+    start = source.index("const guardVersion = 'GS651';")
     end = source.index("const guardHealth = () => {", start)
     block = source[start:end]
 
