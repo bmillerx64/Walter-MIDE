@@ -35,7 +35,7 @@ def test_gs653_live_alert_markup_contains_audio_payload_handoff(monkeypatch):
         lambda phrase: base64.b64encode(b"RIFF" + b"\x00" * 64).decode("ascii"),
     )
     markup = voice._speech_component("", "JZ. LOOK NOW.")
-    assert "J Z. look now." in markup
+    assert "Ticker J. Z. look now." in markup
     assert "kind: 'voice_wav'" in markup
     assert "audioBase64" in markup
     assert "speechSynthesis" not in markup
