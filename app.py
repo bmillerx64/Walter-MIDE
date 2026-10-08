@@ -1133,7 +1133,13 @@ market_session_slot = st.empty()
 early_setup_slot = st.empty()
 mission_plan_slot = st.empty()
 escalation_engine_slot = st.empty()
-system_status_panel = st.expander("System Status", expanded=False)
+# GS656: operator-priority sidebar stack. Anchor the two persistent awareness
+# surfaces before status/controls so live catalyst + audio health stay visible
+# without scrolling while housekeeping remains below.
+with st.sidebar:
+    fresh_catalyst_slot = st.container()
+    audio_guard_slot = st.container()
+    system_status_panel = st.expander("System Status", expanded=False)
 scan_runtime_slot = system_status_panel.container()
 with startup_step("loading Webull secrets"):
     webull_credentials = load_credentials(
@@ -1223,11 +1229,13 @@ with st.sidebar:
     )
     if NAMED_VOICE_QUARANTINE:
         st.caption("System Default locked for stability; named voices are temporarily quarantined.")
-    # GS520: keep browser audio transport status beside its controls. Rendering
-    # here stays inside the sidebar context and cannot replace mission_plan_slot.
-    render_sidebar_audio_health(st)
-    # GS655: persistent no-scroll Fresh Catalyst Flash from completed live-news cache.
-    render_fresh_catalyst_sidebar(st, st.session_state)
+    # GS656: render into the pre-anchored operator-priority slots. The Fresh
+    # Catalyst surface stays first, Audio Guard directly beneath it, and both
+    # remain presentation-only.
+    with fresh_catalyst_slot:
+        render_fresh_catalyst_sidebar(st, st.session_state)
+    with audio_guard_slot:
+        render_sidebar_audio_health(st)
     active_voice = active_voice_identifier(
         (
             requested_voice
