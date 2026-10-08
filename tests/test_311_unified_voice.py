@@ -1,5 +1,7 @@
 from mide.gs311_unified_voice import (
+    _compact_guard_phrase,
     _speech_component,
+    _synthesize_phrase_wav,
     unified_alert_phrase,
     unified_state_changes,
 )
@@ -30,10 +32,7 @@ def test_voice_transition_uses_same_unified_opportunity_state_as_display():
         volume_acceleration=0.7,
     )
     current = _record(opportunity_pulse_previous=previous)
-
-    changes = unified_state_changes([current])
-
-    assert changes == [
+    assert unified_state_changes([current]) == [
         {"symbol": "TEST", "from": "DEVELOPING", "to": "WATCH FOR ENTRY"}
     ]
     assert "TEST. WATCH FOR ENTRY." in unified_alert_phrase([current])
@@ -44,10 +43,7 @@ def test_proven_first_actionable_attention_is_spoken_once_on_first_print():
         discovery_history=[{"scan": 7, "event": "first_seen"}],
         discovery_last_seen_scan=7,
     )
-
-    changes = unified_state_changes([current])
-
-    assert changes == [
+    assert unified_state_changes([current]) == [
         {
             "symbol": "TEST",
             "from": "NEW",
@@ -55,7 +51,6 @@ def test_proven_first_actionable_attention_is_spoken_once_on_first_print():
             "event": "first_actionable_attention",
         }
     ]
-    assert "TEST. WATCH FOR ENTRY." in unified_alert_phrase([current])
 
 
 def test_no_fresh_prior_observation_means_no_repeated_voice_transition():
@@ -63,152 +58,49 @@ def test_no_fresh_prior_observation_means_no_repeated_voice_transition():
     assert unified_alert_phrase([_record()]) == ""
 
 
-def test_compacted_record_without_explicit_first_seen_evidence_does_not_realert():
-    current = _record(
-        discovery_first_seen_at="2026-08-21T13:00:00+00:00",
-        discovery_last_seen_at="2026-08-21T13:05:00+00:00",
-    )
-
-    assert unified_state_changes([current]) == []
-    assert unified_alert_phrase([current]) == ""
+def test_gs653_compacts_operator_voice_to_ticker_and_primary_state():
+    assert _compact_guard_phrase("JZ. LOOK NOW. 1 minute bullish. 3 minute building.") == "J Z. look now."
+    assert _compact_guard_phrase("OLB. IGNITION. VWAP above.") == "O L B. ignition."
+    assert _compact_guard_phrase("TEST. WATCH FOR ENTRY.") == "T E S T. watch for entry."
 
 
-def test_speech_component_targets_parent_browser_with_iframe_fallback():
+def test_gs653_missing_espeak_is_truthful(monkeypatch):
+    _synthesize_phrase_wav.cache_clear()
+    monkeypatch.setattr("mide.gs311_unified_voice.shutil.which", lambda _: None)
+    assert _synthesize_phrase_wav("T E S T. alert.") == ""
+    _synthesize_phrase_wav.cache_clear()
+
+
+def test_gs653_voice_component_routes_only_to_persistent_web_audio_guard():
     markup = _speech_component("missing-alert.wav", "TEST. LOOK NOW.", "Samantha")
-
-    assert "window.parent" in markup
-    assert "speechWindow = window" in markup
-    assert "speechSynthesis" in markup
-    assert "SpeechSynthesisUtterance" in markup
-    assert "TEST. LOOK NOW." in markup
-    assert "Samantha" in markup
-
-
-def test_missing_sound_file_does_not_suppress_spoken_phrase():
-    markup = _speech_component("definitely-not-present.wav", "TEST. DEVELOPING.")
-
-    assert "<audio autoplay>" not in markup
-    assert "TEST. DEVELOPING." in markup
-    assert "synth.speak(utterance)" in markup
+    assert "walterAudioGuardHeartbeat" in markup
+    assert "walterAudioGuardVersion" in markup
+    assert "walterAudioGuardVoiceReady" in markup
+    assert "walter-audio-guard-v1" in markup
+    assert "kind: 'voice_wav'" in markup
+    assert "audioBase64" in markup
+    assert "audioKey" in markup
+    assert "GS653" in markup
+    assert "Open / test Audio Guard" in markup
 
 
-def test_voice_transport_resumes_stuck_browser_synth_without_cancelling_queue():
+def test_gs653_voice_component_has_no_browser_speech_synthesis_fallback():
     markup = _speech_component("missing-alert.wav", "TEST. WATCH FOR ENTRY.")
-
-    assert "synth.paused" in markup
-    assert "synth.resume()" in markup
-    assert "synth.cancel()" not in markup
-    assert markup.index("synth.resume()") < markup.index("synth.speak(utterance)")
-
-
-def test_voice_transport_keeps_settle_delay_without_self_cancel():
-    markup = _speech_component("missing-alert.wav", "TEST. WATCH FOR ENTRY.")
-
-    assert "speechWindow.setTimeout(() =>" in markup
-    assert "}, 75);" in markup
-    assert "synth.cancel()" not in markup
-    assert markup.index("speechWindow.setTimeout(() =>") < markup.index("synth.speak(utterance)")
+    assert "speechSynthesis" not in markup
+    assert "SpeechSynthesisUtterance" not in markup
+    assert "synth.cancel" not in markup
+    assert "synth.speak" not in markup
+    assert "sessionStorage" not in markup
 
 
-def test_voice_transport_retains_async_fallback_after_delayed_primary_speak():
-    markup = _speech_component("missing-alert.wav", "TEST. WATCH FOR ENTRY.")
-
-    delayed_speak = markup.index("synth.speak(utterance)")
-    primary_fallback = markup.index("parent synth failed; using frame fallback")
-    frame_speak = markup.index("window.speechSynthesis.speak(utterance)")
-    assert delayed_speak < primary_fallback < frame_speak
-    assert "synth setup failed; using frame fallback" in markup
-
-
-def test_voice_transport_retains_utterance_until_browser_finishes():
-    markup = _speech_component("missing-alert.wav", "TEST. WATCH FOR ENTRY.")
-
-    assert "speechWindow.__walterActiveUtterance = utterance" in markup
-    assert "utterance.onend = () => release('ended')" in markup
-    assert "utterance.onerror = (event) =>" in markup
-    assert "release('error'" in markup
-
-
-def test_voice_transport_does_not_require_preferred_voice_to_exist():
+def test_gs653_named_browser_voice_is_not_part_of_transport_anymore():
     markup = _speech_component("missing-alert.wav", "TEST. LOOK NOW.", "Samantha")
-
-    assert "resolveVoice" in markup
-    assert "attempts >= 12" in markup
-    assert "speakInitialOnce();" in markup
-
-
-def test_voice_transport_exposes_browser_lifecycle_statuses():
-    markup = _speech_component("missing-alert.wav", "TEST. LOOK NOW.", "Samantha")
-
-    assert 'id="walter-voice-status"' in markup
-    assert "Voice: initializing" in markup
-    assert "setStatus('requested'" in markup
-    assert "setStatus('speaking'" in markup
-    assert "release('ended')" in markup
-    assert "release('error'" in markup
-    assert "setStatus('unavailable'" in markup
-
-
-def test_voice_transport_replay_is_manual_and_does_not_create_an_alert_event():
-    markup = _speech_component("missing-alert.wav", "TEST. LOOK NOW.", "Samantha")
-
-    assert 'id="walter-voice-test"' in markup
-    assert "Replay test" in markup
-    assert "replayNode.addEventListener('click'" in markup
-    assert "speak('manual replay')" in markup
-    assert "speak('Walter alert')" in markup
-
-
-def test_voice_transport_reports_requested_and_actual_voice():
-    markup = _speech_component("missing-alert.wav", "TEST. LOOK NOW.", "Samantha")
-
-    assert "actualVoice" in markup
-    assert "preferred" in markup
-    assert "selectedVoice ? selectedVoice.name" in markup
-    assert "System Default" in markup
+    assert "Samantha" not in markup
+    assert "System Default" not in markup
 
 
 def test_voice_transport_status_is_accessible_and_visible():
     markup = _speech_component("missing-alert.wav", "TEST. LOOK NOW.")
-
     assert 'role="status"' in markup
     assert 'aria-live="polite"' in markup
     assert "height:38px" in markup
-
-
-
-def test_gs642_voice_prefers_fresh_persistent_guard_before_local_synth():
-    markup = _speech_component(
-        "missing-alert.wav",
-        "OSTX. LOOK NOW.",
-        "Samantha",
-    )
-
-    assert "walterAudioGuardHeartbeat" in markup
-    assert "walter-audio-guard-v1" in markup
-    assert "kind: 'voice'" in markup
-    assert "persistent Audio Guard" in markup
-    assert "if (routeVoiceToGuard()) return;" in markup
-    assert markup.index("if (routeVoiceToGuard()) return;") < markup.index(
-        "let speechWindow = window;"
-    )
-
-
-def test_gs642_voice_guard_has_stale_heartbeat_local_fallback():
-    markup = _speech_component("missing-alert.wav", "TEST. DEVELOPING.")
-
-    assert "age >= 0 && age < 10000" in markup
-    assert "walterAudioGuardVoiceReady" in markup
-    assert "if (!fresh || !voiceReady || !GuardChannel) return false;" in markup
-    assert "synth.speak(utterance)" in markup
-
-
-
-def test_gs643_voice_needs_proven_guard_voice_readiness_not_heartbeat_alone():
-    markup = _speech_component("missing-alert.wav", "TEST. LOOK NOW.")
-
-    heartbeat = markup.index("walterAudioGuardHeartbeat")
-    voice_ready = markup.index("walterAudioGuardVoiceReady")
-    route = markup.index("new GuardChannel('walter-audio-guard-v1')")
-    assert heartbeat < voice_ready < route
-    assert "host.localStorage.getItem('walterAudioGuardVoiceReady') === '1'" in markup

@@ -1,4 +1,4 @@
-"""Phase 53: GS516 browser audio health belongs to Presentation + Audio."""
+"""Phase 53/GS653: browser audio health remains behind Presentation + Audio."""
 
 from pathlib import Path
 from types import SimpleNamespace
@@ -20,35 +20,32 @@ def test_gs516_facade_delegates_markup(monkeypatch):
 
 
 def test_phase53_stale_presentation_generation_is_nonfatal(monkeypatch):
-    monkeypatch.setattr(
-        gs516,
-        "_presentation",
-        lambda: SimpleNamespace(),
-    )
-
+    monkeypatch.setattr(gs516, "_presentation", lambda: SimpleNamespace())
     assert gs516.alert_audio_health_markup() == ""
     assert gs516.render_sidebar_audio_health(object()) is None
     assert gs516.install() is None
 
 
-def test_phase53_presentation_audio_owns_health_markup_and_renderer():
+def test_gs653_presentation_authority_delegates_transport_to_single_owner_module():
     authority = (
         ROOT / "mide/authorities/presentation_audio.py"
     ).read_text(encoding="utf-8")
+    guard = (ROOT / "mide/audio_guard_v2.py").read_text(encoding="utf-8")
     facade = (
         ROOT / "mide/gs516_visible_alert_audio_health.py"
     ).read_text(encoding="utf-8")
 
     assert "def alert_audio_health_markup(" in authority
+    assert "from mide.audio_guard_v2 import alert_audio_health_markup as current" in authority
     assert "def render_sidebar_audio_health(" in authority
-    assert "__walterGS367ChimeBroker" in authority
-    assert "AUDIO GUARD ACTIVE · VOICE + BELL" in authority
-    assert "strike(base, 523.25)" in authority
-    assert "strike(base + 0.42, 783.99)" in authority
+
+    assert "AUDIO GUARD ACTIVE · WEB AUDIO VOICE + BELL" in guard
+    assert "decodeAudioData" in guard
+    assert "createBufferSource" in guard
+    assert "speechSynthesis" not in guard
 
     assert "Compatibility facade" in facade
     assert "def _presentation(" in facade
-    assert "__walterGS367ChimeBroker" not in facade
 
 
 def test_phase53_scope_remains_alert_transport_presentation_only():

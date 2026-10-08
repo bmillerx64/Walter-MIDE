@@ -4,17 +4,12 @@ from mide.gs318_voice_observability import record_voice_request, voice_request_s
 
 def test_voice_request_observability_records_transport_handoff_without_trading_state():
     session_state = {}
-
     first = record_voice_request(
         session_state,
         phrase="TEST. WATCH FOR ENTRY.",
         voice_name="Samantha",
     )
-    second = record_voice_request(
-        session_state,
-        phrase="NEXT. LOOK NOW.",
-    )
-
+    second = record_voice_request(session_state, phrase="NEXT. LOOK NOW.")
     snapshot = voice_request_snapshot(session_state)
 
     assert first["count"] == 1
@@ -39,26 +34,20 @@ def test_voice_request_snapshot_is_read_only():
         "_walter_voice_last_requested_at": "2026-08-21T12:00:00+00:00",
     }
     before = dict(session_state)
-
     snapshot = voice_request_snapshot(session_state)
-
     assert snapshot["count"] == 3
     assert snapshot["phrase"] == "ABC. LOOK NOW."
     assert session_state == before
 
 
-def test_browser_voice_component_exposes_delivery_lifecycle_diagnostics():
+def test_gs653_browser_component_exposes_guard_delivery_status():
     markup = _speech_component(
         "definitely-not-present.wav",
         "TEST. WATCH FOR ENTRY.",
         "Samantha",
     )
-
-    assert "__walterVoiceTransport" in markup
-    assert "status: 'requested'" in markup
-    assert "status: 'speaking'" in markup
-    assert "release('ended')" in markup
-    assert "release('error')" in markup
-    assert "[Walter voice] request accepted by component" in markup
-    assert "[Walter voice] speaking" in markup
-    assert "[Walter voice] synthesis error" in markup
+    assert "Voice: routing" in markup
+    assert "setStatus('guarded', phrase)" in markup
+    assert "setStatus('blocked', 'Open / test Audio Guard')" in markup
+    assert "setStatus('unavailable', 'eSpeak voice asset unavailable')" in markup
+    assert "speechSynthesis" not in markup

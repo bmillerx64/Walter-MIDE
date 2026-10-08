@@ -121,10 +121,6 @@ from .gs311_unified_voice import install as _install_gs311_unified_voice  # noqa
 
 _install_gs311_unified_voice()
 
-from .gs323_direct_user_activation_voice import install as _install_gs323_direct_user_activation_voice  # noqa: E402
-
-_install_gs323_direct_user_activation_voice()
-
 from .gs312_scan_stage_timing import install as _install_gs312_scan_stage_timing  # noqa: E402
 
 _install_gs312_scan_stage_timing()
@@ -216,10 +212,6 @@ _install_gs350_download_export_reliability()
 from .gs351_session_rerun_isolation import install as _install_gs351_session_rerun_isolation  # noqa: E402
 
 _install_gs351_session_rerun_isolation()
-
-from .gs352_persistent_alert_arm import install as _install_gs352_persistent_alert_arm  # noqa: E402
-
-_install_gs352_persistent_alert_arm()
 
 from .gs353_entry_lock_clarity import install as _install_gs353_entry_lock_clarity  # noqa: E402
 

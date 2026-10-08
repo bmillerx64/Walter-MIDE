@@ -3,89 +3,91 @@ from pathlib import Path
 from mide.gs516_visible_alert_audio_health import alert_audio_health_markup
 
 
-def test_visible_audio_health_reads_exact_gs367_parent_broker():
+def test_gs653_health_exposes_one_named_persistent_audio_guard():
     markup = alert_audio_health_markup()
-    assert "__walterGS367ChimeBroker" in markup
-    assert "broker.audioContext.state === 'running'" in markup
-    assert "walterVoiceArmed" in markup
-    assert "sessionStorage" in markup
+    assert "walter-audio-guard-v1" in markup
+    assert "walter-audio-guard" in markup
+    assert "root.open('', WINDOW_NAME" in markup
+    assert "Walter Audio Guard" in markup
+    assert "AUDIO GUARD ACTIVE · WEB AUDIO VOICE + BELL" in markup
+    assert "GS653" in markup
 
 
-def test_visible_audio_health_exposes_stale_reload_state_and_direct_rearm():
+def test_gs653_guard_uses_one_web_audio_context_for_voice_and_bell():
     markup = alert_audio_health_markup()
-    assert "LOCAL VOICE FLAG ONLY · ARM AUDIO GUARD" in markup
-    assert "AUDIO NOT ARMED · RE-ARM" in markup
-    assert "AUDIO READY · TEST PLAYING" in markup
-    assert "Re-arm / test" in markup
-    assert "button.addEventListener('click', () => {" in markup
-    assert "testVoice();" in markup
-    assert "rearm();" in markup
-    assert "ctx.resume" in markup
-    assert "createOscillator" in markup
+    start = markup.index("script.textContent =")
+    end = markup.index("doc.body.appendChild(script);", start)
+    block = markup[start:end]
+
+    assert "AudioContextCtor" in block
+    assert "decodeAudioData" in block
+    assert "createBufferSource" in block
+    assert "createOscillator" in block
+    assert "queueVoice" in block
+    assert "emitTone" in block
+    assert "kind === 'voice_wav'" in block
+    assert "kind === 'tone'" in block
 
 
-def test_visible_audio_health_poll_detects_later_context_loss():
+def test_gs653_guard_has_no_chrome_speech_synthesis_dependency():
     markup = alert_audio_health_markup()
-    assert "setInterval(refresh, 1000)" in markup
+    assert "speechSynthesis" not in markup
+    assert "SpeechSynthesisUtterance" not in markup
+    assert "synth.cancel" not in markup
+    assert "synth.speak" not in markup
+    assert "utterance.onstart" not in markup
+
+
+def test_gs653_guard_requires_current_generation_and_real_readiness():
+    markup = alert_audio_health_markup()
+    assert "walterAudioGuardVersion" in markup
+    assert "storageGet(VERSION_KEY) === VERSION" in markup
+    assert "walterAudioGuardVoiceReady" in markup
+    assert "walterAudioGuardBellReady" in markup
+    assert "voice: alive && current" in markup
+    assert "bell: alive && current" in markup
+    assert "AUDIO GUARD UPDATE READY · OPEN / TEST" in markup
+
+
+def test_gs653_direct_click_proves_exact_voice_playback_path_then_bell():
+    markup = alert_audio_health_markup()
+    start = markup.index("const arm = async () => {")
+    end = markup.index("const channel = new BroadcastChannel", start)
+    block = markup[start:end]
+
+    assert "await ensureRunning()" in block
+    assert "await decode('ready', READY_WAV)" in block
+    assert "await playBuffer(readyBuffer)" in block
+    assert "await emitTone(2, 'guard-arm-' + Date.now(), true)" in block
+    assert block.index("await playBuffer(readyBuffer)") < block.index("await emitTone(")
+
+
+def test_gs653_voice_queue_serializes_wav_buffers_without_browser_queue():
+    markup = alert_audio_health_markup()
+    assert "let voiceChain = Promise.resolve();" in markup
+    assert "voiceChain = voiceChain" in markup
+    assert ".then(async () => {" in markup
+    assert "await playBuffer(buffer)" in markup
+    assert "VOICE PLAYBACK ERROR · CLICK ENABLE VOICE + BELL" in markup
+
+
+def test_gs653_context_loss_clears_truth_instead_of_false_green():
+    markup = alert_audio_health_markup()
+    assert "context.onstatechange = () => {" in markup
+    assert "AUDIO PAUSED · CLICK ENABLE VOICE + BELL" in markup
+    assert "put(VOICE_READY_KEY, null);" in markup
+    assert "put(BELL_READY_KEY, null);" in markup
+
+
+def test_visible_audio_health_poll_detects_guard_loss():
+    markup = alert_audio_health_markup()
+    assert "window.setInterval(refresh, 2500)" in markup
+    assert "window.setInterval(heartbeat, 2500)" in markup
     assert "beforeunload" in markup
 
 
-def test_gs596_explicit_rearm_speaks_synchronously_when_queue_is_idle():
-    markup = alert_audio_health_markup()
-    listener = markup.index("button.addEventListener('click', () => {")
-    test_start = markup.index("const testVoice = () => {")
-    rearm_start = markup.index("const rearm = () => {", test_start)
-    block = markup[test_start:rearm_start]
-
-    assert "Walter alerts ready." in block
-    assert "const queueBusy = Boolean(" in block
-    assert "synth.pending || synth.speaking || synth.paused" in block
-    assert "queue cleared · click Re-arm / test again" in block
-    assert "speakFresh(0);" in block
-    assert "window.setTimeout(() => speakFresh(0), 300);" not in block
-    assert "window.setTimeout(() => speakFresh(attempt + 1), 450);" not in block
-    assert "GS596 parent-sync re-arm" in block
-    assert markup.index("testVoice();", listener) < markup.index("rearm();", listener)
-
-
-
-def test_gs596_voice_test_prefers_parent_engine_inside_direct_activation():
-    markup = alert_audio_health_markup()
-    listener = markup.index("button.addEventListener('click', () => {")
-    voice_call = markup.index("testVoice();", listener)
-    rearm_call = markup.index("rearm();", listener)
-    rearm_start = markup.index("const rearm = () => {")
-    play_start = markup.index("const play = () => {", rearm_start)
-    play_end = markup.index("          };", play_start)
-
-    assert listener < voice_call < rearm_call
-    assert "testVoice();" not in markup[play_start:play_end]
-    assert "resumed.then(play)" in markup[rearm_start:listener]
-    assert "GS596: GS595 proved frame-local synchronous speech still reaches" in markup
-    assert "const parentSpeechAvailable = Boolean(" in markup
-    assert "? root.speechSynthesis" in markup
-    assert "? root.SpeechSynthesisUtterance" in markup
-    assert "const speechScope = parentSpeechAvailable ? 'parent' : 'frame';" in markup
-
-
-def test_gs596_audio_health_reports_scope_and_outcome_without_timer_retry():
-    markup = alert_audio_health_markup()
-    assert "BELL READY · VOICE RESETTING" in markup
-    assert "BELL READY · VOICE REQUESTED" in markup
-    assert "AUDIO + VOICE READY" in markup
-    assert "BELL READY · VOICE BLOCKED" in markup
-    assert "utterance.onstart" in markup
-    assert "utterance.onend" in markup
-    assert "utterance.onerror" in markup
-    assert "no start callback" in markup
-    assert "click Re-arm / test again" in markup
-    assert "window.setTimeout(() => speakFresh(attempt + 1), 450);" not in markup
-    assert "GS596 parent-sync re-arm" in markup
-    assert "scope=${scope}" in markup
-
-
 def test_scope_lock_is_alert_transport_presentation_only():
-    source = Path("mide/gs516_visible_alert_audio_health.py").read_text(encoding="utf-8")
+    source = Path("mide/audio_guard_v2.py").read_text(encoding="utf-8")
     forbidden = (
         "qualified_for_entry =",
         "qualified_for_alert =",
@@ -104,7 +106,6 @@ def test_scope_lock_is_alert_transport_presentation_only():
 def test_gs516_installs_after_gs515_discipline_layer():
     chain = Path("mide/gs392_operator_order_audio.py").read_text(encoding="utf-8")
     assert chain.index("install_gs515()") < chain.index("install_gs516()")
-
 
 
 def test_gs520_audio_health_is_anchored_in_sidebar_not_mission_placeholder():
@@ -126,190 +127,11 @@ def test_gs520_preserves_single_child_mission_slot_contract():
     module_source = Path("mide/gs516_visible_alert_audio_health.py").read_text(
         encoding="utf-8"
     )
-
     assert "with mission_plan_slot:" in app_source
     assert "render_walter_mission_control(actionable_records)" in app_source
     assert "mission_plan_slot" not in module_source
 
 
-def test_gs596_audio_health_keeps_bell_and_expands_visible_diagnostics():
-    markup = alert_audio_health_markup()
-    assert "grid-template-columns:minmax(0,1fr) auto" in markup
-    assert "overflow-wrap:anywhere" in markup
-    assert "frequency * 1.5" in markup
-    assert "exponentialRampToValueAtTime(0.30" in markup
-    assert "strike(base, 523.25)" in markup
-    assert "strike(base + 0.42, 783.99)" in markup
-    assert "AUDIO READY · TEST PLAYING" in markup
-
-
-def test_gs597_voice_diagnostic_scope_is_explicit_not_free_variable():
-    markup = alert_audio_health_markup()
-    assert "const voiceEngineDetail = (synth, scope = 'unknown') => {" in markup
-    assert "scope=${scope}" in markup
-    assert "scope=${speechScope}" not in markup
-    assert markup.count("voiceEngineDetail(synth, speechScope)") >= 5
-
-
-
-def test_gs641_reload_health_distinguishes_voice_arm_from_bell_context():
-    markup = alert_audio_health_markup()
-
-    assert "LOCAL VOICE FLAG ONLY · ARM AUDIO GUARD" in markup
-    assert "AUDIO DISARMED AFTER RELOAD · RE-ARM" not in markup
-    assert "if (!readArmed() || audioReady())" in markup
-    assert "bindRecoveryGesture();" in markup
-
-
-def test_gs641_passive_recovery_uses_next_parent_user_activation_once():
-    markup = alert_audio_health_markup()
-
-    assert "healthRecoveryBound" in markup
-    assert "healthRecoveryHandler" in markup
-    assert "root.addEventListener('pointerdown', handler, true)" in markup
-    assert "root.addEventListener('keydown', handler, true)" in markup
-    assert "root.addEventListener('touchstart', handler, true)" in markup
-    assert "root.removeEventListener('pointerdown', handler, true)" in markup
-    assert "clearRecoveryBinding();" in markup
-
-
-def test_gs641_passive_recovery_reuses_gs367_context_without_test_audio_or_voice():
-    markup = alert_audio_health_markup()
-    start = markup.index("const recoverAudioFromGesture = () => {")
-    end = markup.index("const bindRecoveryGesture = () => {", start)
-    block = markup[start:end]
-
-    assert "broker.audioContext = ctx" in block
-    assert "ctx.resume()" in block
-    assert "markArmed();" in block
-    assert "testVoice();" not in block
-    assert "createOscillator" not in block
-    assert "synth.speak" not in block
-
-
-def test_gs641_scope_lock_remains_browser_transport_only():
-    source = Path("mide/authorities/presentation_audio.py").read_text(
-        encoding="utf-8"
-    )
-    start = source.index("// GS641: a true document reload destroys Web Audio")
-    end = source.index("const paint = (kind, text) => {", start)
-    block = source[start:end]
-
-    forbidden = (
-        "qualified_for_entry",
-        "qualified_for_alert",
-        "candidate_status",
-        "participation_score",
-        "expansion_score",
-        "request_scan(",
-        "place_order(",
-        "submit_order(",
-    )
-    assert not any(token in block for token in forbidden)
-
-
-
-def test_gs642_health_launches_independent_named_audio_guard():
-    markup = alert_audio_health_markup()
-
-    assert "walter-audio-guard-v1" in markup
-    assert "walterAudioGuardHeartbeat" in markup
-    assert "walter-audio-guard" in markup
-    assert "root.open(" in markup
-    assert "Walter Audio Guard" in markup
-    assert "Keep this small window open" in markup
-    assert "AUDIO GUARD ACTIVE · VOICE + BELL" in markup
-    assert "const guardHealth = () => {" in markup
-    assert "const guardHeartbeatFresh = () => guardHealth().alive;" in markup
-
-
-def test_gs642_guard_owns_voice_and_bell_transport_in_popup_realm():
-    markup = alert_audio_health_markup()
-    start = markup.index("script.textContent =")
-    end = markup.index("doc.body.appendChild(script);", start)
-    block = markup[start:end]
-
-    assert "new BroadcastChannel(CHANNEL_NAME)" in block
-    assert "window.speechSynthesis" in block
-    assert "new AudioContextCtor()" in block
-    assert "emitTone(data.tier, data.token, false)" in block
-    assert "speak(data.phrase, data.preferred || '', false)" in block
-    assert "window.setInterval(heartbeat, 2500)" in block
-    assert "Walter audio guard ready." in block
-
-
-def test_gs642_rearm_button_prefers_guard_but_preserves_local_fallback():
-    markup = alert_audio_health_markup()
-    listener = markup.index("button.addEventListener('click', () => {")
-    block = markup[listener:listener + 700]
-
-    assert "if (launchAudioGuard()) return;" in block
-    assert block.index("launchAudioGuard()") < block.index("testVoice();")
-    assert block.index("testVoice();") < block.index("rearm();")
-
-
-
-def test_gs643_guard_health_separates_alive_voice_and_bell_truth():
-    markup = alert_audio_health_markup()
-
-    assert "walterAudioGuardVoiceReady" in markup
-    assert "walterAudioGuardBellReady" in markup
-    assert "const guardHealth = () => {" in markup
-    assert "voice: alive && root.localStorage.getItem(guardVoiceReadyKey) === '1'" in markup
-    assert "bell: alive && root.localStorage.getItem(guardBellReadyKey) === '1'" in markup
-    assert "AUDIO GUARD ACTIVE · VOICE + BELL" in markup
-    assert "AUDIO GUARD · BELL READY · CLICK GUARD FOR VOICE" in markup
-    assert "AUDIO GUARD ALIVE · CLICK GUARD ENABLE BUTTON" in markup
-
-
-def test_gs643_new_guard_requires_its_own_direct_enable_click():
-    markup = alert_audio_health_markup()
-    start = markup.index("script.textContent =")
-    end = markup.index("doc.body.appendChild(script);", start)
-    block = markup[start:end]
-
-    assert 'id="arm"' in markup
-    assert "Enable voice + bell" in markup
-    assert "const armFromDirectClick = () => {" in block
-    assert "armNode.addEventListener('click', armFromDirectClick)" in block
-    direct = block[
-        block.index("const armFromDirectClick = () => {"):
-        block.index("const channel = new BroadcastChannel", block.index("const armFromDirectClick = () => {"))
-    ]
-    assert "emitTone(2, 'guard-arm-' + Date.now(), true)" in direct
-    assert "speak('Walter audio guard ready.', '', true)" in direct
-
-
-def test_gs643_voice_and_bell_ready_only_after_real_transport_callbacks():
-    markup = alert_audio_health_markup()
-    start = markup.index("script.textContent =")
-    end = markup.index("doc.body.appendChild(script);", start)
-    block = markup[start:end]
-
-    assert "setStored(BELL_READY_KEY, true)" in block
-    assert "utterance.onstart = () => {" in block
-    assert "setStored(VOICE_READY_KEY, true)" in block
-    assert "utterance.onerror = (event) => {" in block
-    assert "setStored(VOICE_READY_KEY, false)" in block
-    assert "VOICE BLOCKED (" in block
-
-
-def test_gs643_guard_bootstrap_does_not_auto_claim_voice_ready():
-    markup = alert_audio_health_markup()
-    start = markup.index("script.textContent =")
-    end = markup.index("doc.body.appendChild(script);", start)
-    block = markup[start:end]
-
-    tail = block[block.index("window.__walterAudioGuardInstalled = true;"):]
-    assert "setStored(VOICE_READY_KEY, false);" in tail
-    assert "setStored(BELL_READY_KEY, false);" in tail
-    assert "test();" not in tail
-
-
-
-def test_gs643_replaces_stale_gs642_popup_generation():
-    markup = alert_audio_health_markup()
-
-    assert "!guard.__walterAudioGuardInstalled ||" in markup
-    assert "!guard.__walterAudioGuard ||" in markup
-    assert "typeof guard.__walterAudioGuard.ready !== 'function'" in markup
+def test_gs653_runtime_packages_local_espeak_engine():
+    packages = Path("packages.txt").read_text(encoding="utf-8").splitlines()
+    assert "espeak" in packages

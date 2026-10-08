@@ -1,23 +1,16 @@
 from pathlib import Path
 
 
-def test_gs596_health_rearm_uses_parent_sync_click_activation_after_sleep():
-    source = Path("mide/authorities/presentation_audio.py").read_text(
-        encoding="utf-8"
-    )
-    start = source.index("const testVoice = () => {", source.index("def alert_audio_health_markup"))
-    end = source.index("      const rearm = () => {", start)
-    block = source[start:end]
+def test_gs653_health_rearm_uses_direct_web_audio_activation_after_sleep():
+    source = Path("mide/audio_guard_v2.py").read_text(encoding="utf-8")
 
-    assert "const parentSpeechAvailable = Boolean(" in block
-    assert "? root.speechSynthesis" in block
-    assert "GS596: GS595 proved frame-local synchronous speech still reaches" in block
-    assert "const queueBusy = Boolean(" in block
-    assert "if (synth.cancel) synth.cancel();" in block
-    assert "if (synth.resume) synth.resume();" in block
-    assert "synth.speak(utterance);" in block
-    assert "window.setTimeout(() => speakFresh(0), 300);" not in block
-    assert "window.setTimeout(() => speakFresh(attempt + 1), 450);" not in block
+    assert "armNode.addEventListener('click', arm)" in source
+    assert "const arm = async () => {" in source
+    assert "await ensureRunning()" in source
+    assert "await decode('ready', READY_WAV)" in source
+    assert "await playBuffer(readyBuffer)" in source
+    assert "speechSynthesis" not in source
+    assert "synth.cancel" not in source
 
 
 def test_gs589_render_boundary_never_process_globally_freezes_actionable():
