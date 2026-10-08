@@ -271,6 +271,7 @@ memory_checkpoint("scanner import", object_name="mide.scanner_v2")
 from mide.memory import MemoryStore
 from mide.gs496_static_session_backup import render_session_backup_controls
 from mide.gs510_compact_analysis_bundle import render_compact_analysis_bundle_controls
+from mide.gs655_fresh_catalyst_flash import render_fresh_catalyst_sidebar
 memory_checkpoint("cache stores import", object_name="MemoryStore, FlightRecorder")
 from mide.memory_profile import compact_previous_record, profile as memory_profile, release_temporaries
 from mide.timeframe_alignment import alignment_voice
@@ -1225,6 +1226,8 @@ with st.sidebar:
     # GS520: keep browser audio transport status beside its controls. Rendering
     # here stays inside the sidebar context and cannot replace mission_plan_slot.
     render_sidebar_audio_health(st)
+    # GS655: persistent no-scroll Fresh Catalyst Flash from completed live-news cache.
+    render_fresh_catalyst_sidebar(st, st.session_state)
     active_voice = active_voice_identifier(
         (
             requested_voice
