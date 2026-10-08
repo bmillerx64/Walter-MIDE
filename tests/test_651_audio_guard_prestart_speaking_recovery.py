@@ -39,7 +39,7 @@ def test_gs651_forces_guard_popup_upgrade():
 
 def test_gs651_scope_lock_is_audio_transport_only():
     source = Path("mide/authorities/presentation_audio.py").read_text(encoding="utf-8")
-    start = source.index("// GS652: Chrome can report speechSynthesis.speaking=true")
+    start = source.index("// GS651: Chrome can report speechSynthesis.speaking=true")
     end = source.index("if (synth.paused && synth.resume) synth.resume();", start)
     block = source[start:end]
 
