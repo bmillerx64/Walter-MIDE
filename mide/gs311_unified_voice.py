@@ -19,6 +19,7 @@ from .timeframe_alignment import alignment_voice
 
 
 FIRST_ATTENTION_STATES = {"LOOK NOW", "WATCH FOR ENTRY", "ENTRY WINDOW"}
+VOICE_ASSET_VERSION = "GS654"
 
 
 def unified_state_changes(records: list[dict]) -> list[dict]:
@@ -117,8 +118,10 @@ def _compact_guard_phrase(phrase: str) -> str:
     )
     state = next((spoken for needle, spoken in states if needle in upper), "alert")
     if symbol:
-        spelled = " ".join(ch for ch in symbol if ch.isalnum())
-        return f"{spelled}. {state}."
+        # GS654: put a real pause between ticker letters and label the token so
+        # eSpeak does not blur a symbol such as SOAR into an ordinary word.
+        spelled = ". ".join(ch for ch in symbol if ch.isalnum())
+        return f"Ticker {spelled}. {state}."
     return f"Walter. {state}."
 
 
@@ -140,9 +143,12 @@ def _synthesize_phrase_wav(phrase: str) -> str:
             [
                 binary,
                 "-v", "en-us",
-                "-s", "160",
-                "-p", "46",
-                "-a", "180",
+                # GS654 clarity profile: slightly slower cadence, modestly lower
+                # pitch, full renderer amplitude, and a small inter-word gap.
+                "-s", "140",
+                "-p", "42",
+                "-a", "200",
+                "-g", "4",
                 "--stdout",
                 text,
             ],
@@ -169,7 +175,13 @@ def _speech_component(sound_path: str, phrase: str, voice_name: str = "") -> str
     """
     compact = _compact_guard_phrase(phrase)
     audio_base64 = _synthesize_phrase_wav(compact)
-    audio_key = hashlib.sha1(compact.encode("utf-8")).hexdigest()[:16] if compact else ""
+    # Version the browser buffer key so a warm GS653 guard cannot reuse an
+    # older, less-intelligible WAV for the same spoken phrase after deployment.
+    audio_key = (
+        hashlib.sha1(f"{VOICE_ASSET_VERSION}|{compact}".encode("utf-8")).hexdigest()[:16]
+        if compact
+        else ""
+    )
     phrase_json = json.dumps(compact)
     audio_json = json.dumps(audio_base64)
     key_json = json.dumps(audio_key)

@@ -58,10 +58,11 @@ def test_no_fresh_prior_observation_means_no_repeated_voice_transition():
     assert unified_alert_phrase([_record()]) == ""
 
 
-def test_gs653_compacts_operator_voice_to_ticker_and_primary_state():
-    assert _compact_guard_phrase("JZ. LOOK NOW. 1 minute bullish. 3 minute building.") == "J Z. look now."
-    assert _compact_guard_phrase("OLB. IGNITION. VWAP above.") == "O L B. ignition."
-    assert _compact_guard_phrase("TEST. WATCH FOR ENTRY.") == "T E S T. watch for entry."
+def test_gs654_compacts_operator_voice_to_clear_ticker_and_primary_state():
+    assert _compact_guard_phrase("JZ. LOOK NOW. 1 minute bullish. 3 minute building.") == "Ticker J. Z. look now."
+    assert _compact_guard_phrase("OLB. IGNITION. VWAP above.") == "Ticker O. L. B. ignition."
+    assert _compact_guard_phrase("TEST. WATCH FOR ENTRY.") == "Ticker T. E. S. T. watch for entry."
+    assert _compact_guard_phrase("SOAR. DEVELOPING.") == "Ticker S. O. A. R. developing."
 
 
 def test_gs653_missing_espeak_is_truthful(monkeypatch):
