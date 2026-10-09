@@ -81,7 +81,7 @@ def test_gs653_voice_component_routes_only_to_persistent_web_audio_guard():
     assert "kind: 'voice_wav'" in markup
     assert "audioBase64" in markup
     assert "audioKey" in markup
-    assert "GS653" in markup
+    assert "GS662" in markup
     assert "Open / test Audio Guard" in markup
 
 
