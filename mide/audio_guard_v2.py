@@ -382,8 +382,19 @@ def alert_audio_health_markup() -> str:
     try { receiveVoice(JSON.parse(event.newValue)); } catch (_) {}
   });
 
+  // GS661: browser component iframes can disappear before the event dispatch.
+  // Independently inspect the bounded durable request inbox every second.
+  // receiveVoice already rejects duplicates, stale requests and unarmed voice.
+  const pollVoiceInbox = () => {
+    try {
+      const raw = localStorage.getItem(VOICE_REQUEST_KEY);
+      if (raw) receiveVoice(JSON.parse(raw));
+    } catch (_) {}
+  };
   if (armNode) armNode.addEventListener('click', arm);
+  const inboxTimer = window.setInterval(pollVoiceInbox, 1000);
   const timer = window.setInterval(heartbeat, 2500);
+  pollVoiceInbox();
   window.__walterAudioGuard = {
     ready: () => ({ voice: ready(VOICE_READY_KEY), bell: ready(BELL_READY_KEY) }),
     refresh: update,
@@ -397,6 +408,7 @@ def alert_audio_health_markup() -> str:
 
   window.addEventListener('beforeunload', () => {
     window.clearInterval(timer);
+    window.clearInterval(inboxTimer);
     try { channel.close(); } catch (_) {}
     put(HEARTBEAT_KEY, null);
     put(VOICE_READY_KEY, null);
