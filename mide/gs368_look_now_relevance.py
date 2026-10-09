@@ -39,6 +39,23 @@ def _number(record: dict, *keys: str) -> float | None:
     return None
 
 
+def top_mover_look_now_supported(record: dict) -> bool:
+    """Return whether a generic Webull top mover has earned immediate attention."""
+    relation = str(record.get("vwap_relation") or "").lower()
+    distance = _number(record, "vwap_distance_pct")
+    near_vwap = relation == "above" and (
+        distance is None or 0.0 <= distance <= 2.0
+    )
+    trend = bool(record.get("supertrend_bullish") or record.get("supertrend_flip"))
+    participation = (
+        _number(record, "participation_surge_score", "participation_score") or 0.0
+    )
+    volume_acceleration = _number(record, "volume_acceleration") or 0.0
+    dollar_flow = _number(record, "dollar_flow_acceleration") or 0.0
+    fresh_flow = volume_acceleration >= 1.0 or dollar_flow >= 1.25
+    return near_vwap and trend and participation >= 30.0 and fresh_flow
+
+
 def calibrated_opportunity_state(record: dict) -> dict:
     """Downgrade weak top-mover-only LOOK NOW states to DEVELOPING."""
     from . import gs310_unified_opportunity_state as unified
@@ -60,22 +77,7 @@ def calibrated_opportunity_state(record: dict) -> dict:
     if "WEBULL_TOP_MOVER" not in provenance:
         return view
 
-    relation = str(record.get("vwap_relation") or "").lower()
-    distance = _number(record, "vwap_distance_pct")
-    near_vwap = relation == "above" and (
-        distance is None or 0.0 <= distance <= 2.0
-    )
-    trend = bool(record.get("supertrend_bullish") or record.get("supertrend_flip"))
-    participation = (
-        _number(record, "participation_surge_score", "participation_score") or 0.0
-    )
-    volume_acceleration = _number(record, "volume_acceleration") or 0.0
-    dollar_flow = _number(record, "dollar_flow_acceleration") or 0.0
-
-    fresh_flow = volume_acceleration >= 1.0 or dollar_flow >= 1.25
-    participation_support = participation >= 30.0
-
-    if near_vwap and trend and participation_support and fresh_flow:
+    if top_mover_look_now_supported(record):
         return view
 
     downgraded = deepcopy(view)
@@ -142,24 +144,7 @@ def install() -> None:
             if "WEBULL_TOP_MOVER" not in provenance:
                 return view
 
-            relation = str(record.get("vwap_relation") or "").lower()
-            distance = _number(record, "vwap_distance_pct")
-            near_vwap = relation == "above" and (
-                distance is None or 0.0 <= distance <= 2.0
-            )
-            trend = bool(
-                record.get("supertrend_bullish") or record.get("supertrend_flip")
-            )
-            participation = (
-                _number(record, "participation_surge_score", "participation_score")
-                or 0.0
-            )
-            volume_acceleration = _number(record, "volume_acceleration") or 0.0
-            dollar_flow = _number(record, "dollar_flow_acceleration") or 0.0
-
-            fresh_flow = volume_acceleration >= 1.0 or dollar_flow >= 1.25
-            participation_support = participation >= 30.0
-            if near_vwap and trend and participation_support and fresh_flow:
+            if top_mover_look_now_supported(record):
                 return view
 
             downgraded = deepcopy(view)
