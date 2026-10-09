@@ -387,7 +387,7 @@ def alert_audio_health_markup() -> str:
   // receiveVoice already rejects duplicates, stale requests and unarmed voice.
   const pollVoiceInbox = () => {
     try {
-      const raw = get(VOICE_REQUEST_KEY);
+      const raw = localStorage.getItem(VOICE_REQUEST_KEY);
       if (raw) receiveVoice(JSON.parse(raw));
     } catch (_) {}
   };
