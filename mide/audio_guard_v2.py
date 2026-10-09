@@ -361,7 +361,9 @@ def alert_audio_health_markup() -> str:
       if (ready(BELL_READY_KEY)) emitTone(data.tier, data.token, false);
       return;
     }
-    receiveVoice(data);
+    if (data.kind === 'voice_wav') {
+      receiveVoice(data);
+    }
   };
   window.addEventListener('storage', (event) => {
     if (event.key !== VOICE_REQUEST_KEY || !event.newValue) return;
