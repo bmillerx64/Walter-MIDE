@@ -202,7 +202,7 @@ def _speech_component(sound_path: str, phrase: str, voice_name: str = "") -> str
     </div>
     <script>
     (() => {{
-      const VERSION = 'GS653';
+      const VERSION = 'GS662';
       const phrase = {phrase_json};
       const audioBase64 = {audio_json};
       const audioKey = {key_json};

@@ -10,7 +10,7 @@ def test_gs653_health_exposes_one_named_persistent_audio_guard():
     assert "root.open('', WINDOW_NAME" in markup
     assert "Walter Audio Guard" in markup
     assert "AUDIO GUARD ACTIVE · WEB AUDIO VOICE + BELL" in markup
-    assert "GS653" in markup
+    assert "GS662" in markup
 
 
 def test_gs653_guard_uses_one_web_audio_context_for_voice_and_bell():

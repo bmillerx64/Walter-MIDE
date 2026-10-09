@@ -1,4 +1,4 @@
-"""GS653: deterministic Web Audio voice guard.
+"""GS662: deterministic Web Audio voice guard.
 
 This module replaces the accumulated browser SpeechSynthesis recovery stack with one
 transport: server-rendered WAV speech played through the same persistent Web Audio
@@ -9,7 +9,7 @@ from __future__ import annotations
 import json
 
 
-GUARD_VERSION = "GS653"
+GUARD_VERSION = "GS662"
 CHANNEL_NAME = "walter-audio-guard-v1"
 HEARTBEAT_KEY = "walterAudioGuardHeartbeat"
 VOICE_READY_KEY = "walterAudioGuardVoiceReady"
@@ -54,7 +54,7 @@ def alert_audio_health_markup() -> str:
     </div>
     <script>
     (() => {
-      const VERSION = 'GS653';
+      const VERSION = 'GS662';
       const CHANNEL_NAME = 'walter-audio-guard-v1';
       const HEARTBEAT_KEY = 'walterAudioGuardHeartbeat';
       const VOICE_READY_KEY = 'walterAudioGuardVoiceReady';
@@ -152,7 +152,7 @@ def alert_audio_health_markup() -> str:
               '<h2>Walter Audio Guard</h2>' +
               '<div id="state">CLICK ENABLE VOICE + BELL ONCE</div>' +
               '<button id="arm" type="button">Enable voice + bell</button>' +
-              '<p>GS653 uses one persistent Web Audio transport for both voice and bell. ' +
+              '<p>GS662 uses one persistent Web Audio transport for both voice and bell. ' +
               'It does not use Chrome SpeechSynthesis.</p></body></html>'
             );
             doc.close();
@@ -160,7 +160,7 @@ def alert_audio_health_markup() -> str:
             const script = doc.createElement('script');
             script.textContent = `
 (() => {
-  const VERSION = 'GS653';
+  const VERSION = 'GS662';
   const CHANNEL_NAME = 'walter-audio-guard-v1';
   const HEARTBEAT_KEY = 'walterAudioGuardHeartbeat';
   const VOICE_READY_KEY = 'walterAudioGuardVoiceReady';
@@ -443,7 +443,7 @@ def alert_audio_health_markup() -> str:
 
 
 def render_sidebar_audio_health(st_module) -> None:
-    """Render the one authoritative GS653 audio transport control."""
+    """Render the one authoritative GS662 audio transport control."""
     try:
         st_module.components.v1.html(
             alert_audio_health_markup(),
