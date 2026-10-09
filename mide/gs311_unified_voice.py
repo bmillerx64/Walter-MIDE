@@ -237,7 +237,7 @@ def _speech_component(sound_path: str, phrase: str, voice_name: str = "") -> str
           host.localStorage.getItem('walterAudioGuardVoiceReady') === '1'
         );
         const GuardChannel = host.BroadcastChannel || window.BroadcastChannel;
-        if (!fresh || version !== VERSION || !voiceReady || !GuardChannel) {{
+        if (!fresh || version !== VERSION || !voiceReady) {{
           setStatus('blocked', 'Open / test Audio Guard');
           return;
         }}
@@ -253,9 +253,11 @@ def _speech_component(sound_path: str, phrase: str, voice_name: str = "") -> str
           requestedAtMs: Date.now(),
         }};
         host.localStorage.setItem('walterAudioGuardVoiceRequest', JSON.stringify(request));
-        const channel = new GuardChannel('walter-audio-guard-v1');
-        channel.postMessage(request);
-        channel.close();
+        if (GuardChannel) {{
+          const channel = new GuardChannel('walter-audio-guard-v1');
+          channel.postMessage(request);
+          channel.close();
+        }}
         setStatus('guarded', phrase);
       }} catch (error) {{
         setStatus('error', String(error));
