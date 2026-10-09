@@ -252,6 +252,7 @@ def _speech_component(sound_path: str, phrase: str, voice_name: str = "") -> str
           requestId: String(Date.now()) + '-' + Math.random().toString(36).slice(2),
           requestedAtMs: Date.now(),
         }};
+        host.localStorage.setItem('walterAudioGuardVoiceRequestedAt', String(request.requestedAtMs));
         host.localStorage.setItem('walterAudioGuardVoiceRequest', JSON.stringify(request));
         if (GuardChannel) {{
           const channel = new GuardChannel('walter-audio-guard-v1');
