@@ -103,7 +103,7 @@ def alert_audio_health_markup() -> str:
       const refresh = () => {
         const h = health();
         if (h.voice && h.bell) {
-          paint('ready', 'AUDIO GUARD ACTIVE · VOICE + BELL' + deliveryDetail());
+          paint('ready', 'AUDIO GUARD ACTIVE · WEB AUDIO VOICE + BELL' + deliveryDetail());
           if (button) button.textContent = 'Test / re-arm';
         } else if (h.staleGeneration) {
           paint('warn', 'AUDIO GUARD UPDATE READY · OPEN / TEST');
