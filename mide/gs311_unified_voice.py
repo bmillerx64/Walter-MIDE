@@ -237,19 +237,27 @@ def _speech_component(sound_path: str, phrase: str, voice_name: str = "") -> str
           host.localStorage.getItem('walterAudioGuardVoiceReady') === '1'
         );
         const GuardChannel = host.BroadcastChannel || window.BroadcastChannel;
-        if (!fresh || version !== VERSION || !voiceReady || !GuardChannel) {{
+        if (!fresh || version !== VERSION || !voiceReady) {{
           setStatus('blocked', 'Open / test Audio Guard');
           return;
         }}
-        const channel = new GuardChannel('walter-audio-guard-v1');
-        channel.postMessage({{
+        // GS659: persist the short-lived handoff first. BroadcastChannel is
+        // best-effort; a rerender can destroy this iframe before a receiver
+        // handles its message. The guard also listens for storage events.
+        const request = {{
           kind: 'voice_wav',
           phrase,
           audioKey,
           audioBase64,
-          requestedAt: new Date().toISOString(),
-        }});
-        channel.close();
+          requestId: String(Date.now()) + '-' + Math.random().toString(36).slice(2),
+          requestedAtMs: Date.now(),
+        }};
+        host.localStorage.setItem('walterAudioGuardVoiceRequest', JSON.stringify(request));
+        if (GuardChannel) {{
+          const channel = new GuardChannel('walter-audio-guard-v1');
+          channel.postMessage(request);
+          channel.close();
+        }}
         setStatus('guarded', phrase);
       }} catch (error) {{
         setStatus('error', String(error));

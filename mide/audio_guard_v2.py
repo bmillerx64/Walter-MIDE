@@ -338,6 +338,21 @@ def alert_audio_health_markup() -> str:
     }
   };
 
+  // GS659: independent delivery paths share one request identity. The guard
+  // discards duplicates and expired messages, never replaying stale speech.
+  const VOICE_REQUEST_KEY = 'walterAudioGuardVoiceRequest';
+  let lastVoiceRequestId = '';
+  const receiveVoice = (data) => {
+    if (!data || data.kind !== 'voice_wav') return;
+    const id = String(data.requestId || '');
+    const stamp = Number(data.requestedAtMs || 0);
+    const age = Date.now() - stamp;
+    if (!id || id === lastVoiceRequestId || !Number.isFinite(age)
+        || age < -2000 || age > 12000) return;
+    if (!ready(VOICE_READY_KEY)) return;
+    lastVoiceRequestId = id;
+    queueVoice(String(data.audioKey || ''), String(data.audioBase64 || ''));
+  };
   const channel = new BroadcastChannel(CHANNEL_NAME);
   channel.onmessage = (event) => {
     const data = event && event.data ? event.data : {};
@@ -347,9 +362,13 @@ def alert_audio_health_markup() -> str:
       return;
     }
     if (data.kind === 'voice_wav') {
-      queueVoice(String(data.audioKey || ''), String(data.audioBase64 || ''));
+      receiveVoice(data);
     }
   };
+  window.addEventListener('storage', (event) => {
+    if (event.key !== VOICE_REQUEST_KEY || !event.newValue) return;
+    try { receiveVoice(JSON.parse(event.newValue)); } catch (_) {}
+  });
 
   if (armNode) armNode.addEventListener('click', arm);
   const timer = window.setInterval(heartbeat, 2500);
