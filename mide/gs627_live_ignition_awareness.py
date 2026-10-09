@@ -173,14 +173,24 @@ def _evaluate_record(record: dict, provider, now: datetime) -> dict | None:
     if live_price is None:
         live_price = _number(record.get("price") or record.get("last_price"))
 
+    # GS658: the completed scan may already contain a 30s tripwire snapshot.
+    # That snapshot is historical. Never let it masquerade as live evidence if the
+    # process-owned stream cache is unavailable or fails to refresh. Rebuild 30s
+    # evidence from the live provider only; fail closed to no live tripwire.
+    tripwire: dict[str, Any] = {}
     try:
         from . import gs396_live_30s_tripwire as gs396
 
-        enriched = gs396.enrich_record_with_live_30s(record, provider, now)
+        live_source = dict(record)
+        live_source.pop("thirty_second_tripwire", None)
+        enriched = gs396.enrich_record_with_live_30s(
+            live_source,
+            provider,
+            now,
+        )
+        tripwire = dict(enriched.get("thirty_second_tripwire") or {})
     except Exception:
-        enriched = dict(record)
-
-    tripwire = dict(enriched.get("thirty_second_tripwire") or {})
+        tripwire = {}
     vwap = _metric(record, "vwap_value", "current_vwap")
     participation = _metric(
         record,
