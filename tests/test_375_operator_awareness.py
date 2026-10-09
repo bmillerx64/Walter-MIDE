@@ -1,4 +1,4 @@
-from mide.gs310_unified_opportunity_state import LOOK_NOW, WATCH_FOR_ENTRY, opportunity_state
+from mide.gs310_unified_opportunity_state import DEVELOPING, LOOK_NOW, WATCH_FOR_ENTRY, opportunity_state
 from mide.gs375_operator_awareness import (
     AWARENESS_ONLY_KEY,
     REFERENCE_DATA_BLOCKED_KEY,
@@ -29,7 +29,7 @@ def _record(**overrides):
     return record
 
 
-def test_current_day_gainer_remains_visible_as_awareness_without_trade_authorization():
+def test_current_day_gainer_remains_visible_without_false_look_now():
     leader = _record()
 
     rows = augment_operator_records([leader], [])
@@ -40,7 +40,20 @@ def test_current_day_gainer_remains_visible_as_awareness_without_trade_authoriza
     assert rows[0]["qualified_for_entry"] is False
     assert rows[0]["qualified_for_alert"] is False
     assert AWARENESS_ONLY_KEY not in leader
-    assert awareness_safe_opportunity_state(rows[0])["state"] == LOOK_NOW
+    assert awareness_safe_opportunity_state(rows[0])["state"] == DEVELOPING
+
+
+def test_current_day_gainer_earns_look_now_with_fresh_flow_confirmation():
+    leader = _record(
+        supertrend_bullish=True,
+        participation_surge_score=47.0,
+        volume_acceleration=1.20,
+        dollar_flow_acceleration=0.70,
+    )
+
+    awareness = augment_operator_records([leader], [])[0]
+
+    assert awareness_safe_opportunity_state(awareness)["state"] == LOOK_NOW
 
 
 def test_awareness_only_record_can_never_become_watch_for_entry():
