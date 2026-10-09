@@ -119,6 +119,68 @@ def test_gs627_reads_live_price_cache_without_initializing_network(monkeypatch):
     assert calls == [False]
 
 
+def test_gs658_stale_scan_tripwire_cannot_stick_in_live_ignition_watch(monkeypatch):
+    stale = base_record(
+        symbol="XELB",
+        price=0.59,
+        vwap_value=0.58,
+        participation_score=26.0,
+        expansion_quality=44.0,
+        candidate_status="Weakening",
+        thirty_second_tripwire={
+            "available": True,
+            "bullish": True,
+            "fresh_flip": True,
+            "last_flip_age_seconds": 134.0,
+            "volume_acceleration_30s": 43.3273,
+        },
+    )
+
+    def no_live_30s(record, provider, scan_time):
+        # GS658 must strip the scan-time tripwire before asking for live evidence.
+        assert "thirty_second_tripwire" not in record
+        return dict(record)
+
+    monkeypatch.setattr(gs396, "enrich_record_with_live_30s", no_live_30s)
+
+    result = gs627._evaluate_record(
+        stale,
+        FakeProvider({"XELB": 0.59}),
+        NOW,
+    )
+
+    assert result is None
+    assert stale["thirty_second_tripwire"]["last_flip_age_seconds"] == 134.0
+
+
+def test_gs658_live_30s_refresh_failure_fails_closed_instead_of_reusing_scan_snapshot(monkeypatch):
+    stale = base_record(
+        symbol="XELB",
+        price=0.59,
+        vwap_value=0.58,
+        participation_score=26.0,
+        expansion_quality=44.0,
+        thirty_second_tripwire={
+            "available": True,
+            "bullish": True,
+            "fresh_flip": True,
+            "last_flip_age_seconds": 134.0,
+            "volume_acceleration_30s": 43.3273,
+        },
+    )
+
+    def broken_live_30s(record, provider, scan_time):
+        raise RuntimeError("live 30s cache unavailable")
+
+    monkeypatch.setattr(gs396, "enrich_record_with_live_30s", broken_live_30s)
+
+    assert gs627._evaluate_record(
+        stale,
+        FakeProvider({"XELB": 0.59}),
+        NOW,
+    ) is None
+
+
 def test_gs627_runtime_boundary_has_no_scan_trade_audio_authority():
     source = Path("mide/gs627_live_ignition_awareness.py").read_text(encoding="utf-8")
 
