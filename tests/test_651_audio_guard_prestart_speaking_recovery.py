@@ -12,5 +12,5 @@ def test_gs651_prestart_speaking_limbo_is_eliminated_not_retried():
 
 def test_gs653_guard_popup_generation_is_current():
     markup = alert_audio_health_markup()
-    assert "GS653" in markup
+    assert "GS662" in markup
     assert "window.__walterAudioGuardVersion = VERSION;" in markup
