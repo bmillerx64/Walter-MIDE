@@ -90,10 +90,20 @@ def alert_audio_health_markup() -> str:
           bell: alive && current && storageGet(BELL_READY_KEY) === '1',
         };
       };
+      // GS660: transport readiness is not delivery proof. Show the most recent
+      // real alert handoff/played timestamps separately from the test button.
+      const deliveryDetail = () => {
+        const received = Number(storageGet('walterAudioGuardVoiceReceivedAt') || 0);
+        const played = Number(storageGet('walterAudioGuardVoicePlayedAt') || 0);
+        const requested = Number(storageGet('walterAudioGuardVoiceRequestedAt') || 0);
+        const stamp = ms => ms > 0 ? new Date(ms).toLocaleTimeString() : 'none';
+        return ' · alert requested ' + stamp(requested) +
+          ' · received ' + stamp(received) + ' · played ' + stamp(played);
+      };
       const refresh = () => {
         const h = health();
         if (h.voice && h.bell) {
-          paint('ready', 'AUDIO GUARD ACTIVE · WEB AUDIO VOICE + BELL');
+          paint('ready', 'AUDIO GUARD ACTIVE · WEB AUDIO VOICE + BELL' + deliveryDetail());
           if (button) button.textContent = 'Test / re-arm';
         } else if (h.staleGeneration) {
           paint('warn', 'AUDIO GUARD UPDATE READY · OPEN / TEST');
@@ -305,6 +315,7 @@ def alert_audio_health_markup() -> str:
         const buffer = await decode(audioKey || ('voice-' + base64.length), base64);
         paint('ACTIVE · WALTER SPEAKING', true);
         await playBuffer(buffer);
+        put('walterAudioGuardVoicePlayedAt', String(Date.now()));
         update();
       })
       .catch(() => {
@@ -351,6 +362,7 @@ def alert_audio_health_markup() -> str:
         || age < -2000 || age > 12000) return;
     if (!ready(VOICE_READY_KEY)) return;
     lastVoiceRequestId = id;
+    put('walterAudioGuardVoiceReceivedAt', String(Date.now()));
     queueVoice(String(data.audioKey || ''), String(data.audioBase64 || ''));
   };
   const channel = new BroadcastChannel(CHANNEL_NAME);
