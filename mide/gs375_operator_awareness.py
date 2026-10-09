@@ -102,14 +102,19 @@ def augment_operator_records(records: list[dict], actionable: list[dict]) -> lis
 
 
 def _near_above_current_attention(record: dict) -> bool:
-    """Return whether a current-attention row belongs in LOOK NOW rather than DEVELOPING.
+    """Return whether current-attention evidence has actually earned LOOK NOW.
 
-    This deliberately resolves only presentation state.  It is independent of the
-    scanner's watch/entry qualification and makes the result stable even when a warm
-    Streamlit/test runtime still holds an older GS310 wrapper that would otherwise
-    classify the same row as DEVELOPING.
+    GS368 owns the generic Webull top-mover relevance contract.  Reuse that contract
+    here so the later awareness wrapper cannot re-promote a weak DAY_GAINER merely
+    because price is near VWAP.  Fresh news, re-ignition, and fresh volume-regime
+    provenance retain their established early-attention behavior.
     """
     from .gs309_current_attention_mission import current_attention_provenance
+    from .gs368_look_now_relevance import top_mover_look_now_supported
+
+    provenance = set(current_attention_provenance(record))
+    if not provenance:
+        return False
 
     relation = str(record.get("vwap_relation") or "").lower()
     if relation != "above":
@@ -120,7 +125,17 @@ def _near_above_current_attention(record: dict) -> bool:
         distance = None
     if distance is not None and distance > 2.0:
         return False
-    return bool(current_attention_provenance(record))
+
+    fresh_attention = provenance.intersection(
+        {"FRESH_NEWS_SEED", "FRESH_REIGNITION", "FRESH_VOLUME_REGIME"}
+    )
+    if fresh_attention:
+        return True
+
+    if provenance == {"WEBULL_TOP_MOVER"}:
+        return top_mover_look_now_supported(record)
+
+    return True
 
 
 def awareness_safe_opportunity_state(
